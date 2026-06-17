@@ -33,7 +33,8 @@ type Config struct {
 	LLMModel     string
 	ModelTimeout time.Duration
 
-	EmbedMatchThreshold float64
+	EmbedMatchThreshold     float64
+	AliasWriteBackThreshold float64
 
 	Notifier  string
 	NtfyURL   string
@@ -52,6 +53,9 @@ type Config struct {
 	EnableDashboard     bool
 	EnableSTT           bool
 
+	MultiUser    bool
+	APIAuthToken string
+
 	LogLevel string
 }
 
@@ -62,29 +66,32 @@ func Load() (*Config, error) {
 	loadDotEnv(".env")
 
 	c := &Config{
-		MessagingAdapter:    getStr("MESSAGING_ADAPTER", "telegram"),
-		TelegramBotToken:    getStr("TELEGRAM_BOT_TOKEN", ""),
-		NutritionSources:    splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
-		USDAFDCAPIKey:       getStr("USDA_FDC_API_KEY", ""),
-		TacoDataPath:        getStr("TACO_DATA_PATH", ""),
-		ModelAdapter:        getStr("MODEL_ADAPTER", "ollama"),
-		OllamaURL:           getStr("OLLAMA_URL", ""),
-		EmbedModel:          getStr("EMBED_MODEL", "nomic-embed-text"),
-		LLMModel:            getStr("LLM_MODEL", "llama3.1"),
-		ModelTimeout:        getDuration("MODEL_TIMEOUT", 30*time.Second),
-		EmbedMatchThreshold: getFloat("EMBED_MATCH_THRESHOLD", 0.80),
-		Notifier:            getStr("NOTIFIER", "ntfy"),
-		NtfyURL:             getStr("NTFY_URL", ""),
-		NtfyTopic:           getStr("NTFY_TOPIC", ""),
-		NtfyToken:           getStr("NTFY_TOKEN", ""),
-		GotifyURL:           getStr("GOTIFY_URL", ""),
-		GotifyToken:         getStr("GOTIFY_TOKEN", ""),
-		DefaultTimezone:     getStr("DEFAULT_TIMEZONE", "UTC"),
-		DBPath:              getStr("DB_PATH", "/data/dietdaemon.db"),
-		EnableNotifications: getBool("ENABLE_NOTIFICATIONS", true),
-		EnableDashboard:     getBool("ENABLE_DASHBOARD", false),
-		EnableSTT:           getBool("ENABLE_STT", false),
-		LogLevel:            getStr("LOG_LEVEL", "info"),
+		MessagingAdapter:        getStr("MESSAGING_ADAPTER", "telegram"),
+		TelegramBotToken:        getStr("TELEGRAM_BOT_TOKEN", ""),
+		NutritionSources:        splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
+		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
+		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
+		ModelAdapter:            getStr("MODEL_ADAPTER", "ollama"),
+		OllamaURL:               getStr("OLLAMA_URL", ""),
+		EmbedModel:              getStr("EMBED_MODEL", "nomic-embed-text"),
+		LLMModel:                getStr("LLM_MODEL", "llama3.1"),
+		ModelTimeout:            getDuration("MODEL_TIMEOUT", 30*time.Second),
+		EmbedMatchThreshold:     getFloat("EMBED_MATCH_THRESHOLD", 0.80),
+		AliasWriteBackThreshold: getFloat("ALIAS_WRITE_BACK_THRESHOLD", 0.92),
+		Notifier:                getStr("NOTIFIER", "ntfy"),
+		NtfyURL:                 getStr("NTFY_URL", ""),
+		NtfyTopic:               getStr("NTFY_TOPIC", ""),
+		NtfyToken:               getStr("NTFY_TOKEN", ""),
+		GotifyURL:               getStr("GOTIFY_URL", ""),
+		GotifyToken:             getStr("GOTIFY_TOKEN", ""),
+		DefaultTimezone:         getStr("DEFAULT_TIMEZONE", "UTC"),
+		DBPath:                  getStr("DB_PATH", "/data/dietdaemon.db"),
+		EnableNotifications:     getBool("ENABLE_NOTIFICATIONS", true),
+		EnableDashboard:         getBool("ENABLE_DASHBOARD", false),
+		EnableSTT:               getBool("ENABLE_STT", false),
+		MultiUser:               getBool("MULTI_USER", false),
+		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
+		LogLevel:                getStr("LOG_LEVEL", "info"),
 	}
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
@@ -121,8 +128,10 @@ func (c *Config) validate(tierErr error) error {
 	if contains(c.NutritionSources, "usda") && c.USDAFDCAPIKey == "" {
 		add("USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE")
 	}
-	if contains(c.NutritionSources, "taco") && c.TacoDataPath == "" {
-		add("TACO_DATA_PATH is required when 'taco' is in NUTRITION_SOURCE")
+	if contains(c.NutritionSources, "taco") && c.TacoDataPath != "" {
+		if _, err := os.Stat(c.TacoDataPath); err != nil {
+			add("TACO_DATA_PATH %q not found: %v", c.TacoDataPath, err)
+		}
 	}
 
 	if c.ParserTier > types.TierDeterministic {
@@ -154,6 +163,13 @@ func (c *Config) validate(tierErr error) error {
 				add("GOTIFY_TOKEN is required when NOTIFIER=gotify")
 			}
 		}
+	}
+
+	if c.EmbedMatchThreshold <= 0 || c.EmbedMatchThreshold > 1 {
+		add("EMBED_MATCH_THRESHOLD must be between 0 and 1")
+	}
+	if c.AliasWriteBackThreshold <= 0 || c.AliasWriteBackThreshold > 1 {
+		add("ALIAS_WRITE_BACK_THRESHOLD must be between 0 and 1")
 	}
 
 	if c.DBPath == "" {

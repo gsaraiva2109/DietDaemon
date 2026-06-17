@@ -14,9 +14,10 @@ func setEnv(t *testing.T, kv map[string]string) {
 	keys := []string{
 		"MESSAGING_ADAPTER", "TELEGRAM_BOT_TOKEN", "PARSER_TIER",
 		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "TACO_DATA_PATH", "MODEL_ADAPTER", "OLLAMA_URL",
-		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "EMBED_MATCH_THRESHOLD",
+		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
+		"MULTI_USER", "API_AUTH_TOKEN",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
@@ -32,7 +33,6 @@ func validBase() map[string]string {
 		"TELEGRAM_BOT_TOKEN":   "token123",
 		"PARSER_TIER":          "0",
 		"NUTRITION_SOURCE":     "openfoodfacts,taco",
-		"TACO_DATA_PATH":       "/data/taco.csv",
 		"NOTIFIER":             "ntfy",
 		"NTFY_URL":             "https://ntfy.sh",
 		"NTFY_TOPIC":           "diet",
@@ -98,5 +98,40 @@ func TestBadTierFails(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "PARSER_TIER") {
 		t.Fatalf("expected PARSER_TIER error, got %v", err)
+	}
+}
+
+func TestThresholdValidation(t *testing.T) {
+	env := validBase()
+	env["EMBED_MATCH_THRESHOLD"] = "1.5"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "EMBED_MATCH_THRESHOLD") {
+		t.Fatalf("expected EMBED_MATCH_THRESHOLD validation error, got %v", err)
+	}
+
+	env = validBase()
+	env["ALIAS_WRITE_BACK_THRESHOLD"] = "0.0"
+	setEnv(t, env)
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "ALIAS_WRITE_BACK_THRESHOLD") {
+		t.Fatalf("expected ALIAS_WRITE_BACK_THRESHOLD validation error, got %v", err)
+	}
+}
+
+func TestAuthAndMultiUser(t *testing.T) {
+	env := validBase()
+	env["MULTI_USER"] = "true"
+	env["API_AUTH_TOKEN"] = "secure123"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !c.MultiUser {
+		t.Error("expected MultiUser to be true")
+	}
+	if c.APIAuthToken != "secure123" {
+		t.Errorf("APIAuthToken = %q, want secure123", c.APIAuthToken)
 	}
 }

@@ -62,6 +62,9 @@ func (m *Matcher) Match(ctx context.Context, userID, phrase string) (types.FoodM
 	return fm, nil
 }
 
+// SetThreshold overrides the match threshold for benchmarking.
+func (m *Matcher) SetThreshold(t float64) { m.threshold = t }
+
 // EmbedFood embeds the canonical food name and upserts the vector into the
 // index so future embedding queries can match it.
 func (m *Matcher) EmbedFood(ctx context.Context, userID, foodID, name string) error {

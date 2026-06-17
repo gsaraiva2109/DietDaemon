@@ -96,7 +96,7 @@ func chicken() types.FoodMatch {
 func TestLocalFirstHit(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"frango": chicken()}}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, nil, src)
+	r := New(st, nil, nil, 0.92, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 200}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -119,7 +119,7 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	miss := &fakeSource{name: "taco", phr: "nope"}
 	hit := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, nil, miss, hit) // order matters: miss first
+	r := New(st, nil, nil, 0.92, miss, hit) // order matters: miss first
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -140,7 +140,7 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 
 func TestUnresolvedAndCountBased(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"ovo": chicken()}}
-	r := New(st, nil, nil) // no external sources
+	r := New(st, nil, nil, 0.92) // no external sources
 
 	items := []types.ParsedItem{
 		{RawPhrase: "ovo", NormalizedGrams: 0},          // matched food, unknown portion
@@ -168,7 +168,7 @@ func TestMatcherHit(t *testing.T) {
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.85},
 	}}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, m, nil, src)
+	r := New(st, m, nil, 0.92, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -190,7 +190,7 @@ func TestMatcherMissFallsThroughToExternal(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	m := &fakeMatcher{match: map[string]types.FoodMatch{}} // matches nothing
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, m, nil, src)
+	r := New(st, m, nil, 0.92, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -215,7 +215,7 @@ func TestMatcherStrongMatchWritesAlias(t *testing.T) {
 		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.95},
 	}}
-	r := New(st, m, nil)
+	r := New(st, m, nil, 0.92)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, need := r.Resolve(context.Background(), "u1", items)
@@ -238,7 +238,7 @@ func TestMatcherWeakMatchNoAlias(t *testing.T) {
 		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.85},
 	}}
-	r := New(st, m, nil)
+	r := New(st, m, nil, 0.92)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, _ = r.Resolve(context.Background(), "u1", items)
@@ -253,7 +253,7 @@ func TestEmbeddingOnWrite(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	emb := &fakeEmbedder{}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, emb, src)
+	r := New(st, nil, emb, 0.92, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, need := r.Resolve(context.Background(), "u1", items)
@@ -290,7 +290,7 @@ func TestProfileOffRegression(t *testing.T) {
 	stOff := &fakeStore{lib: map[string]types.FoodMatch{}}
 	embOff := &fakeEmbedder{}
 	srcOff := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	rOff := New(stOff, nil, nil, srcOff)
+	rOff := New(stOff, nil, nil, 0.92, srcOff)
 	resOff, needOff := rOff.Resolve(context.Background(), "u1", items)
 
 	if needOff != 0 {
@@ -311,7 +311,7 @@ func TestProfileOffRegression(t *testing.T) {
 	m := spyMatch()
 	stOn := &fakeStore{lib: map[string]types.FoodMatch{}}
 	srcOn := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	rOn := New(stOn, m, &fakeEmbedder{}, srcOn)
+	rOn := New(stOn, m, &fakeEmbedder{}, 0.92, srcOn)
 	resOn, _ := rOn.Resolve(context.Background(), "u1", items)
 
 	if m.calls != 1 {
@@ -328,7 +328,7 @@ func TestProfileOffRegression(t *testing.T) {
 func TestNoEmbedderOnLocalHit(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"frango": chicken()}}
 	emb := &fakeEmbedder{}
-	r := New(st, nil, emb)
+	r := New(st, nil, emb, 0.92)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 200}}
 	_, _ = r.Resolve(context.Background(), "u1", items)

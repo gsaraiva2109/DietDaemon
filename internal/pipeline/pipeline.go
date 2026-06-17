@@ -32,11 +32,15 @@ type Resolver interface {
 // MealStore is the subset of ports.Store the pipeline needs.
 type MealStore interface {
 	UpsertUser(ctx context.Context, u types.User) error
+	GetUser(ctx context.Context, userID string) (types.User, error)
 	SaveMeal(ctx context.Context, m types.Meal) error
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	UpsertRollup(ctx context.Context, r types.DailyRollup) error
+	// Channel mapping (multi-user).
+	GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error)
+	MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error
 }
 
 // Replier sends an in-channel reply. Satisfied by any ports.MessagingAdapter.
@@ -55,13 +59,14 @@ type PendingStore interface {
 // Engine processes one message at a time. It is safe for sequential use by a
 // single consumer goroutine draining the queue.
 type Engine struct {
-	parser    Parser
-	resolver  Resolver
-	store     MealStore
-	pending   PendingStore
-	replier   Replier
-	loc       *time.Location
-	threshold float64 // replies flag low confidence when confidence < threshold
+	parser      Parser
+	resolver    Resolver
+	store       MealStore
+	pending     PendingStore
+	replier     Replier
+	loc         *time.Location
+	threshold   float64 // replies flag low confidence when confidence < threshold
+	channelName string  // e.g. "telegram", used for user_channels mapping
 
 	now   func() time.Time
 	idgen func() string
@@ -70,20 +75,22 @@ type Engine struct {
 // New builds an Engine. loc is the default timezone used for daily rollup
 // boundaries; threshold is the confidence below which a reply nudges the user
 // to double-check amounts. pending holds the clarification loop's state.
-func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64) *Engine {
+// channelName is the messaging adapter identifier used for user_channels mapping.
+func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string) *Engine {
 	if loc == nil {
 		loc = time.UTC
 	}
 	return &Engine{
-		parser:    p,
-		resolver:  r,
-		store:     s,
-		pending:   pending,
-		replier:   replier,
-		loc:       loc,
-		threshold: threshold,
-		now:       time.Now,
-		idgen:     randomID,
+		parser:      p,
+		resolver:    r,
+		store:       s,
+		pending:     pending,
+		replier:     replier,
+		loc:         loc,
+		threshold:   threshold,
+		channelName: channelName,
+		now:         time.Now,
+		idgen:       randomID,
 	}
 }
 
@@ -102,6 +109,17 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	}
 	at = at.UTC()
 
+	// Resolve the internal user ID through the channel mapping table.
+	// In single-user mode this auto-registers any new channel to "default".
+	userID := msg.UserID
+	if mapped, err := e.store.GetUserIDByChannel(ctx, e.channelName, msg.UserID); err == nil {
+		userID = mapped
+	} else {
+		// No mapping exists: auto-register this channel ID to the incoming userID.
+		_ = e.store.MapChannelUser(ctx, e.channelName, msg.UserID, userID)
+	}
+	msg.UserID = userID
+
 	// Ensure the user row exists (single-user today; keyed by user from day one).
 	if err := e.store.UpsertUser(ctx, types.User{ID: msg.UserID, Timezone: e.loc.String(), CreatedAt: e.now().UTC()}); err != nil {
 		return fmt.Errorf("pipeline: upsert user: %w", err)
@@ -113,6 +131,9 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	}
 	if strings.HasPrefix(strings.ToLower(text), "/cancel") {
 		return e.cancelPending(ctx, msg)
+	}
+	if strings.HasPrefix(text, "/timezone") {
+		return e.handleTimezone(ctx, msg, text)
 	}
 
 	// A live pending meal turns the next message into a clarification answer.
@@ -249,6 +270,20 @@ func (e *Engine) cancelPending(ctx context.Context, msg types.InboundMessage) er
 	return e.reply(ctx, msg, "Discarded the pending meal.")
 }
 
+// userLoc returns the user's timezone from the database, falling back to the
+// engine's default location when the user has no timezone set or on error.
+func (e *Engine) userLoc(ctx context.Context, userID string) *time.Location {
+	u, err := e.store.GetUser(ctx, userID)
+	if err != nil || u.Timezone == "" {
+		return e.loc
+	}
+	loc, err := time.LoadLocation(u.Timezone)
+	if err != nil {
+		return e.loc
+	}
+	return loc
+}
+
 // commitMeal persists a fully resolved meal, folds it into the day's rollup, and
 // acknowledges it. Shared by the direct path and the clarification finalize.
 func (e *Engine) commitMeal(ctx context.Context, userID string, meta map[string]string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) error {
@@ -265,7 +300,7 @@ func (e *Engine) commitMeal(ctx context.Context, userID string, meta map[string]
 	if err := e.store.SaveMeal(ctx, meal); err != nil {
 		return fmt.Errorf("pipeline: save meal: %w", err)
 	}
-	if err := e.updateRollup(ctx, userID, at, meal.Total()); err != nil {
+	if err := e.updateRollup(ctx, userID, at, meal.Total(), e.userLoc(ctx, userID)); err != nil {
 		return fmt.Errorf("pipeline: update rollup: %w", err)
 	}
 	return e.replyMeta(ctx, userID, meta, e.summary(meal))
@@ -286,8 +321,8 @@ func splitResolved(items []types.ResolvedItem) (good, open []types.ResolvedItem)
 
 // updateRollup adds the meal's macros to the user's rollup for its local day,
 // creating the row (with current targets) on first meal of the day.
-func (e *Engine) updateRollup(ctx context.Context, userID string, at time.Time, add types.Macros) error {
-	localDate := at.In(e.loc).Format("2006-01-02")
+func (e *Engine) updateRollup(ctx context.Context, userID string, at time.Time, add types.Macros, loc *time.Location) error {
+	localDate := at.In(loc).Format("2006-01-02")
 
 	rollup, err := e.store.GetRollup(ctx, userID, localDate)
 	if err != nil {
@@ -426,6 +461,39 @@ func parseTargetCommand(text string) (types.Macros, bool) {
 		}
 	}
 	return m, found
+}
+
+// handleTimezone sets the user's timezone from a command such as
+// "/timezone America/Sao_Paulo". Validates the IANA name before saving.
+func (e *Engine) handleTimezone(ctx context.Context, msg types.InboundMessage, text string) error {
+	tz := parseTimezoneCommand(text)
+	if tz == "" {
+		return e.reply(ctx, msg, "Usage: /timezone <IANA name> (e.g. /timezone America/Sao_Paulo)")
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return e.reply(ctx, msg, fmt.Sprintf("%q is not a valid IANA timezone.", tz))
+	}
+	// Update the user record with the new timezone.
+	u, err := e.store.GetUser(ctx, msg.UserID)
+	if err != nil {
+		u = types.User{ID: msg.UserID, CreatedAt: e.now().UTC()}
+	}
+	u.Timezone = loc.String()
+	if err := e.store.UpsertUser(ctx, u); err != nil {
+		return fmt.Errorf("pipeline: upsert user timezone: %w", err)
+	}
+	return e.reply(ctx, msg, fmt.Sprintf("Timezone set to %s.", loc.String()))
+}
+
+// parseTimezoneCommand extracts the first word after "/timezone". Returns ""
+// when nothing follows the command.
+func parseTimezoneCommand(text string) string {
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func (e *Engine) reply(ctx context.Context, msg types.InboundMessage, text string) error {

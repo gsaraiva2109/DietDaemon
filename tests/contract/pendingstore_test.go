@@ -12,6 +12,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/pending"
+	"github.com/gsaraiva2109/dietdaemon/internal/pendingstore"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
@@ -34,12 +35,14 @@ func pendingSQLite(t *testing.T) (ports.PendingStore, func()) {
 	f.Close()
 	os.Remove(path)
 
-	s, err := store.New(path)
+	st, err := store.New(path)
 	if err != nil {
 		t.Fatalf("New(%q): %v", path, err)
 	}
+
+	s := pendingstore.New(st.DB(), time.Hour)
 	return s, func() {
-		s.Close()
+		st.Close()
 		os.Remove(path)
 	}
 }

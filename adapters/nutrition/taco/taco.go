@@ -2,10 +2,16 @@
 // Brasileira de Composição de Alimentos) dataset. Supports both CSV and XLSX
 // files (chosen by extension). Data is loaded into memory at construction time
 // and foods are resolved by exact normalized-name match.
+//
+// The default taco.csv is embedded into the binary via go:embed so the dataset
+// is available with zero configuration. An optional TACO_DATA_PATH overrides
+// the embedded data with an external file.
 package taco
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -19,6 +25,9 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+//go:embed taco.csv
+var defaultTacoCSV []byte
+
 // Compile-time interface check.
 var _ ports.NutritionSource = (*Source)(nil)
 
@@ -27,20 +36,25 @@ type Source struct {
 	foods map[string]types.FoodMatch // normalized name → match
 }
 
-// New loads the dataset at dataPath and builds the in-memory index. Format is
-// chosen by file extension: .csv → encoding/csv, .xlsx → excelize. Expected
-// columns (in order): food_id, name, kcal, protein, carb, fat, fiber.
+// New loads the dataset and builds the in-memory index. When dataPath is empty
+// the embedded taco.csv is used; otherwise the file at dataPath is loaded.
+// Format is chosen by file extension: .csv → encoding/csv, .xlsx → excelize.
+// Expected columns (in order): food_id, name, kcal, protein, carb, fat, fiber.
 func New(dataPath string) (*Source, error) {
 	var rows [][]string
 	var err error
 
-	switch strings.ToLower(filepath.Ext(dataPath)) {
-	case ".csv":
-		rows, err = loadCSV(dataPath)
-	case ".xlsx":
-		rows, err = loadXLSX(dataPath)
-	default:
-		return nil, fmt.Errorf("taco: unsupported format %q (want .csv or .xlsx)", filepath.Ext(dataPath))
+	if dataPath == "" {
+		rows, err = loadEmbeddedCSV()
+	} else {
+		switch strings.ToLower(filepath.Ext(dataPath)) {
+		case ".csv":
+			rows, err = loadCSV(dataPath)
+		case ".xlsx":
+			rows, err = loadXLSX(dataPath)
+		default:
+			return nil, fmt.Errorf("taco: unsupported format %q (want .csv or .xlsx)", filepath.Ext(dataPath))
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -48,7 +62,11 @@ func New(dataPath string) (*Source, error) {
 
 	foods := rowsToFoods(rows)
 	if len(foods) == 0 {
-		return nil, fmt.Errorf("taco: no foods loaded from %s", dataPath)
+		src := dataPath
+		if src == "" {
+			src = "embedded taco.csv"
+		}
+		return nil, fmt.Errorf("taco: no foods loaded from %s", src)
 	}
 
 	return &Source{foods: foods}, nil
@@ -75,6 +93,19 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 // ---------------------------------------------------------------------------
 // Loaders
 // ---------------------------------------------------------------------------
+
+func loadEmbeddedCSV() ([][]string, error) {
+	r := csv.NewReader(bytes.NewReader(defaultTacoCSV))
+	r.TrimLeadingSpace = true
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("taco: read embedded csv: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, fmt.Errorf("taco: embedded csv has no data rows")
+	}
+	return records, nil
+}
 
 func loadCSV(path string) ([][]string, error) {
 	f, err := os.Open(path)

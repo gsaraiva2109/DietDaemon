@@ -1,0 +1,82 @@
+[
+  {
+    "phrase": "arroz integral cozido",
+    "expected_food_id": "TACO001",
+    "expected_name": "Arroz, integral, cozido"
+  },
+  {
+    "phrase": "arroz integral",
+    "expected_food_id": "TACO001",
+    "expected_name": "Arroz, integral, cozido"
+  },
+  {
+    "phrase": "aveia em flocos crua",
+    "expected_food_id": "TACO007",
+    "expected_name": "Aveia, flocos, crua"
+  },
+  {
+    "phrase": "aveia",
+    "expected_food_id": "TACO007",
+    "expected_name": "Aveia, flocos, crua"
+  },
+  {
+    "phrase": "biscoito maisena",
+    "expected_food_id": "TACO008",
+    "expected_name": "Biscoito, doce, maisena"
+  },
+  {
+    "phrase": "peito de frango sem pele grelhado",
+    "expected_food_id": "TACO410",
+    "expected_name": "Frango, peito, sem pele, grelhado"
+  },
+  {
+    "phrase": "peito de frango grelhado",
+    "expected_food_id": "TACO410",
+    "expected_name": "Frango, peito, sem pele, grelhado"
+  },
+  {
+    "phrase": "frango grelhado",
+    "expected_food_id": "TACO410",
+    "expected_name": "Frango, peito, sem pele, grelhado"
+  },
+  {
+    "phrase": "ovo cozido",
+    "expected_food_id": "TACO488",
+    "expected_name": "Ovo, de galinha, inteiro, cozido/10minutos"
+  },
+  {
+    "phrase": "ovo frito",
+    "expected_food_id": "TACO490",
+    "expected_name": "Ovo, de galinha, inteiro, frito"
+  },
+  {
+    "phrase": "banana prata",
+    "expected_food_id": "TACO182",
+    "expected_name": "Banana, prata, crua"
+  },
+  {
+    "phrase": "banana prata crua",
+    "expected_food_id": "TACO182",
+    "expected_name": "Banana, prata, crua"
+  },
+  {
+    "phrase": "feijao carioca cozido",
+    "expected_food_id": "TACO561",
+    "expected_name": "Feijão, carioca, cozido"
+  },
+  {
+    "phrase": "feijão carioca",
+    "expected_food_id": "TACO561",
+    "expected_name": "Feijão, carioca, cozido"
+  },
+  {
+    "phrase": "pao frances",
+    "expected_food_id": "TACO053",
+    "expected_name": "Pão, trigo, francês"
+  },
+  {
+    "phrase": "pão francês de trigo",
+    "expected_food_id": "TACO053",
+    "expected_name": "Pão, trigo, francês"
+  }
+]

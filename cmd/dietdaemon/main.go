@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,11 +24,12 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/api"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/llm"
-	"github.com/gsaraiva2109/dietdaemon/internal/pending"
+	"github.com/gsaraiva2109/dietdaemon/internal/pendingstore"
 	"github.com/gsaraiva2109/dietdaemon/internal/pipeline"
 	"github.com/gsaraiva2109/dietdaemon/internal/queue"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
@@ -114,9 +116,9 @@ func run() error {
 		slog.Info("parser tier 0 (deterministic, no model)")
 	}
 
-	res := resolver.New(st, matcher, embed, sources...)
-	pend := pending.New(pendingTTL)
-	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold)
+	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, sources...)
+	pend := pendingstore.New(st.DB(), pendingTTL)
+	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter)
 
 	var notifier ports.Notifier
 	if cfg.EnableNotifications {
@@ -136,6 +138,38 @@ func run() error {
 		sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval)
 		go sched.Run(ctx)
 		slog.Info("scheduler running", "interval", nudgeInterval.String())
+	}
+
+	// --- Dashboard API server ---
+	if cfg.EnableDashboard {
+		apiHandler := api.New(st, engine, cfg.Location, cfg.APIAuthToken, cfg.MultiUser)
+		mux := http.NewServeMux()
+		apiHandler.RegisterRoutes(mux)
+
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		srv := &http.Server{
+			Addr:              ":" + port,
+			Handler:           mux,
+			ReadHeaderTimeout: 3 * time.Second,
+		}
+
+		go func() {
+			slog.Info("dashboard listening", "port", port)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("dashboard server", "err", err)
+			}
+		}()
+
+		// Shutdown on context cancellation.
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
 	}
 
 	q := queue.NewMemory[types.InboundMessage](64)

@@ -53,17 +53,27 @@ type Embedder interface {
 // Resolver orchestrates local-first resolution over a store, an optional
 // embedding matcher, and an ordered list of external sources.
 type Resolver struct {
-	store   FoodStore
-	matcher Matcher  // nil when Tier 0
-	embed   Embedder // nil when Tier 0, called on external write-back
-	sources []Source
+	store          FoodStore
+	matcher        Matcher  // nil when Tier 0
+	embed          Embedder // nil when Tier 0, called on external write-back
+	sources        []Source
+	aliasThreshold float64 // min similarity for alias write-back (default 0.92)
 }
 
 // New builds a resolver. Sources are queried in the given order, only after the
 // local food library and (when configured) the embedding matcher miss. matcher
 // and embedder may be nil for Tier 0 behaviour.
-func New(store FoodStore, matcher Matcher, embed Embedder, sources ...Source) *Resolver {
-	return &Resolver{store: store, matcher: matcher, embed: embed, sources: sources}
+func New(store FoodStore, matcher Matcher, embed Embedder, aliasThreshold float64, sources ...Source) *Resolver {
+	if aliasThreshold <= 0 {
+		aliasThreshold = 0.92
+	}
+	return &Resolver{
+		store:          store,
+		matcher:        matcher,
+		embed:          embed,
+		sources:        sources,
+		aliasThreshold: aliasThreshold,
+	}
 }
 
 // Resolve resolves every parsed item for a user. It returns the resolved items
@@ -103,7 +113,7 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 			_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
 			// Write the new phrasing as an alias when the match is strong so the
 			// next identical phrasing hits the fast exact path.
-			if match.MatchScore >= 0.92 {
+			if match.MatchScore >= r.aliasThreshold {
 				_ = r.store.UpsertFood(ctx, userID, match, []string{item.RawPhrase})
 			}
 			return finalize(item, match)

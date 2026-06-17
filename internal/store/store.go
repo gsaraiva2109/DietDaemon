@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -30,7 +29,6 @@ var (
 	_ ports.Store          = (*Store)(nil)
 	_ scheduler.Store      = (*Store)(nil)
 	_ scheduler.NudgeStore = (*Store)(nil)
-	_ ports.PendingStore   = (*Store)(nil)
 )
 
 // New opens the SQLite database at dbPath, enables foreign keys and WAL mode,
@@ -150,6 +148,55 @@ func scanUser(row *sql.Row) (types.User, error) {
 	return u, nil
 }
 
+// ValidateToken looks up a Bearer token in the api_tokens table and returns the
+// owning userID. Returns types.ErrNotFound when the token is invalid or expired.
+// In single-user mode this method is not called; the static API_AUTH_TOKEN is
+// checked directly.
+func (s *Store) ValidateToken(ctx context.Context, token string) (string, error) {
+	const q = `SELECT user_id FROM api_tokens WHERE token = ?`
+	row := s.db.QueryRowContext(ctx, q, token)
+	var userID string
+	if err := row.Scan(&userID); err == sql.ErrNoRows {
+		return "", types.ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("store: validate token: %w", err)
+	}
+	return userID, nil
+}
+
+// UpsertUserTimezone updates the users.timezone column for a user.
+func (s *Store) UpsertUserTimezone(ctx context.Context, userID, timezone string) error {
+	const q = `UPDATE users SET timezone = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, timezone, userID)
+	return err
+}
+
+// MapChannelUser inserts a mapping from a messaging channel + channel_user_id
+// to an internal user_id. It is idempotent (INSERT OR IGNORE).
+func (s *Store) MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error {
+	const q = `
+		INSERT OR IGNORE INTO user_channels (channel, channel_user_id, user_id)
+		VALUES (?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q, channel, channelUserID, userID)
+	return err
+}
+
+// GetUserIDByChannel returns the internal user_id for a given
+// (channel, channel_user_id) pair. Returns types.ErrNotFound when no mapping
+// exists.
+func (s *Store) GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error) {
+	const q = `SELECT user_id FROM user_channels WHERE channel = ? AND channel_user_id = ?`
+	row := s.db.QueryRowContext(ctx, q, channel, channelUserID)
+	var userID string
+	if err := row.Scan(&userID); err == sql.ErrNoRows {
+		return "", types.ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("store: get user by channel: %w", err)
+	}
+	return userID, nil
+}
+
 // ---------------------------------------------------------------------------
 // Meals
 // ---------------------------------------------------------------------------
@@ -240,6 +287,67 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 	}
 
 	return meals, nil
+}
+
+// GetMeal returns a single meal by ID with its resolved items populated.
+// Returns types.ErrNotFound when the meal does not exist.
+func (s *Store) GetMeal(ctx context.Context, mealID string) (types.Meal, error) {
+	const q = `
+		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
+		FROM meals WHERE id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, mealID)
+
+	var m types.Meal
+	var atUTC, ca string
+	var tier int
+	if err := row.Scan(&m.ID, &m.UserID, &atUTC, &m.RawText, &m.Confidence, &tier, &ca); err != nil {
+		if err == sql.ErrNoRows {
+			return types.Meal{}, types.ErrNotFound
+		}
+		return types.Meal{}, fmt.Errorf("store: get meal: %w", err)
+	}
+	m.At = parseUTC(atUTC)
+	m.ParserTier = types.ParserTier(tier)
+	m.CreatedAt = parseUTC(ca)
+
+	itemsByMeal, err := s.loadItems(ctx, []string{m.ID})
+	if err != nil {
+		return types.Meal{}, err
+	}
+	m.Items = itemsByMeal[m.ID]
+	return m, nil
+}
+
+// GetRollups returns daily rollups for a user between startDate and endDate
+// (inclusive, "YYYY-MM-DD" format). Ordered by date ascending.
+func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error) {
+	const q = `
+		SELECT user_id, date,
+		       consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
+		       target_kcal, target_protein, target_carbs, target_fat, target_fiber
+		FROM daily_rollups
+		WHERE user_id = ? AND date >= ? AND date <= ?
+		ORDER BY date ASC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("store: query rollups: %w", err)
+	}
+	defer rows.Close()
+
+	var out []types.DailyRollup
+	for rows.Next() {
+		var r types.DailyRollup
+		if err := rows.Scan(&r.UserID, &r.Date,
+			&r.Consumed.Calories, &r.Consumed.Protein, &r.Consumed.Carbs, &r.Consumed.Fat, &r.Consumed.Fiber,
+			&r.Targets.Calories, &r.Targets.Protein, &r.Targets.Carbs, &r.Targets.Fat, &r.Targets.Fiber,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan rollup: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func scanMeal(rows *sql.Rows) (types.Meal, error) {
@@ -429,6 +537,154 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 	return err
 }
 
+// CorrectMealItem updates one resolved item's macros for a meal, then
+// recalculates the daily rollup and refreshes the food_library cache so future
+// logs use the corrected values. itemIndex is the 0-based position of the item
+// within the meal's items (ordered by rowid).
+func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Load the meal to get the at time for rollup lookup and the original items.
+	var atUTC string
+	const mealQ = `SELECT at_utc FROM meals WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC); err != nil {
+		if err == sql.ErrNoRows {
+			return types.ErrNotFound
+		}
+		return fmt.Errorf("store: get meal: %w", err)
+	}
+	mealAt := parseUTC(atUTC)
+
+	// Load items by rowid so we can find and update the target item.
+	const itemsQ = `
+		SELECT rowid, raw_phrase, quantity, unit, normalized_grams,
+		       food_id, food_name, source, match_score,
+		       kcal, protein, carbs, fat, fiber
+		FROM resolved_items
+		WHERE meal_id = ?
+		ORDER BY rowid
+	`
+	rows, err := tx.QueryContext(ctx, itemsQ, mealID)
+	if err != nil {
+		return fmt.Errorf("store: query items: %w", err)
+	}
+	defer rows.Close()
+
+	type itemRow struct {
+		rowid int64
+		ri    types.ResolvedItem
+	}
+	var items []itemRow
+	var oldTotal types.Macros
+	for rows.Next() {
+		var ir itemRow
+		var parsedNMG float64
+		if err := rows.Scan(&ir.rowid,
+			&ir.ri.Parsed.RawPhrase, &ir.ri.Parsed.Quantity, &ir.ri.Parsed.Unit, &parsedNMG,
+			&ir.ri.Match.FoodID, &ir.ri.Match.Name, &ir.ri.Match.Source, &ir.ri.Match.MatchScore,
+			&ir.ri.Macros.Calories, &ir.ri.Macros.Protein, &ir.ri.Macros.Carbs, &ir.ri.Macros.Fat, &ir.ri.Macros.Fiber,
+		); err != nil {
+			return fmt.Errorf("store: scan item: %w", err)
+		}
+		ir.ri.Parsed.NormalizedGrams = parsedNMG
+		ir.ri.Match.Per100g = macrosPer100g(ir.ri.Macros, parsedNMG)
+		items = append(items, ir)
+		oldTotal = oldTotal.Add(ir.ri.Macros)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: items rows: %w", err)
+	}
+	if itemIndex < 0 || itemIndex >= len(items) {
+		return fmt.Errorf("store: item index %d out of range [0, %d)", itemIndex, len(items))
+	}
+
+	// Replace the target item's macros and recalculate the new total.
+	oldItemMacros := items[itemIndex].ri.Macros
+	items[itemIndex].ri = corrected
+
+	var newTotal types.Macros
+	for _, ir := range items {
+		newTotal = newTotal.Add(ir.ri.Macros)
+	}
+
+	// Update the resolved_items row.
+	const updateQ = `
+		UPDATE resolved_items SET
+			normalized_grams = ?, food_id = ?, food_name = ?, source = ?, match_score = ?,
+			kcal = ?, protein = ?, carbs = ?, fat = ?, fiber = ?
+		WHERE rowid = ?
+	`
+	_, err = tx.ExecContext(ctx, updateQ,
+		corrected.Parsed.NormalizedGrams,
+		corrected.Match.FoodID, corrected.Match.Name, corrected.Match.Source, corrected.Match.MatchScore,
+		corrected.Macros.Calories, corrected.Macros.Protein, corrected.Macros.Carbs, corrected.Macros.Fat, corrected.Macros.Fiber,
+		items[itemIndex].rowid,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update item: %w", err)
+	}
+
+	// Update the daily rollup: remove old macros, add new ones.
+	localDate := mealAt.Format("2006-01-02")
+	const rollupQ = `
+		INSERT INTO daily_rollups
+			(user_id, date,
+			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
+			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
+		VALUES (?, ?,
+		        ?, ?, ?, ?, ?,
+		        0, 0, 0, 0, 0)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			consumed_kcal   = consumed_kcal   - ? + ?,
+			consumed_protein = consumed_protein - ? + ?,
+			consumed_carbs  = consumed_carbs  - ? + ?,
+			consumed_fat    = consumed_fat    - ? + ?,
+			consumed_fiber  = consumed_fiber  - ? + ?
+	`
+	_, err = tx.ExecContext(ctx, rollupQ,
+		userID, localDate,
+		newTotal.Calories, newTotal.Protein, newTotal.Carbs, newTotal.Fat, newTotal.Fiber,
+		oldItemMacros.Calories, corrected.Macros.Calories,
+		oldItemMacros.Protein, corrected.Macros.Protein,
+		oldItemMacros.Carbs, corrected.Macros.Carbs,
+		oldItemMacros.Fat, corrected.Macros.Fat,
+		oldItemMacros.Fiber, corrected.Macros.Fiber,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update rollup: %w", err)
+	}
+
+	// Refresh the food_library cache: upsert the corrected food so future
+	// alias lookups use the corrected macros.
+	if corrected.Match.FoodID != "" {
+		const foodQ = `
+			INSERT INTO food_library
+				(food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, query_count, last_used)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')
+			ON CONFLICT(user_id, food_id) DO UPDATE SET
+				kcal_100g   = excluded.kcal_100g,
+				protein_100g= excluded.protein_100g,
+				carbs_100g  = excluded.carbs_100g,
+				fat_100g    = excluded.fat_100g,
+				fiber_100g  = excluded.fiber_100g
+		`
+		_, err = tx.ExecContext(ctx, foodQ,
+			corrected.Match.FoodID, userID, corrected.Match.Name, corrected.Match.Source,
+			corrected.Match.Per100g.Calories, corrected.Match.Per100g.Protein,
+			corrected.Match.Per100g.Carbs, corrected.Match.Per100g.Fat, corrected.Match.Per100g.Fiber,
+		)
+		if err != nil {
+			return fmt.Errorf("store: upsert food library: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // ---------------------------------------------------------------------------
 // Targets
 // ---------------------------------------------------------------------------
@@ -539,85 +795,6 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 		VALUES (?, ?, ?, ?)
 	`
 	_, err := s.db.ExecContext(ctx, q, userID, localDate, ruleID, utcNow())
-	return err
-}
-
-// ---------------------------------------------------------------------------
-// Pending meals (durable — survives restart)
-// ---------------------------------------------------------------------------
-
-// Save inserts or replaces the pending meal for the given user.
-func (s *Store) Save(ctx context.Context, pm types.PendingMeal) error {
-	metaJSON, err := json.Marshal(pm.ChannelMeta)
-	if err != nil {
-		return fmt.Errorf("store: marshal channel_meta: %w", err)
-	}
-	resolvedJSON, err := json.Marshal(pm.Resolved)
-	if err != nil {
-		return fmt.Errorf("store: marshal resolved: %w", err)
-	}
-	pendingJSON, err := json.Marshal(pm.Pending)
-	if err != nil {
-		return fmt.Errorf("store: marshal pending: %w", err)
-	}
-
-	const q = `
-		INSERT OR REPLACE INTO pending_meals
-			(user_id, at_utc, raw_text, confidence, parser_tier, channel_meta, resolved, pending, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-	_, err = s.db.ExecContext(ctx, q,
-		pm.UserID, utcStr(pm.At), pm.RawText, pm.Confidence, int(pm.ParserTier),
-		string(metaJSON), string(resolvedJSON), string(pendingJSON), utcStr(pm.CreatedAt),
-	)
-	return err
-}
-
-// Get returns the live pending meal for userID, or types.ErrNotFound.
-func (s *Store) Get(ctx context.Context, userID string) (types.PendingMeal, error) {
-	const q = `
-		SELECT user_id, at_utc, raw_text, confidence, parser_tier,
-		       channel_meta, resolved, pending, created_at
-		FROM pending_meals
-		WHERE user_id = ?
-	`
-	row := s.db.QueryRowContext(ctx, q, userID)
-
-	var pm types.PendingMeal
-	var atUTC, ca string
-	var tier int
-	var metaJSON, resolvedJSON, pendingJSON string
-	err := row.Scan(&pm.UserID, &atUTC, &pm.RawText, &pm.Confidence, &tier,
-		&metaJSON, &resolvedJSON, &pendingJSON, &ca,
-	)
-	if err == sql.ErrNoRows {
-		return types.PendingMeal{}, types.ErrNotFound
-	}
-	if err != nil {
-		return types.PendingMeal{}, fmt.Errorf("store: get pending: %w", err)
-	}
-
-	pm.At = parseUTC(atUTC)
-	pm.ParserTier = types.ParserTier(tier)
-	pm.CreatedAt = parseUTC(ca)
-
-	if err := json.Unmarshal([]byte(metaJSON), &pm.ChannelMeta); err != nil {
-		return types.PendingMeal{}, fmt.Errorf("store: unmarshal channel_meta: %w", err)
-	}
-	if err := json.Unmarshal([]byte(resolvedJSON), &pm.Resolved); err != nil {
-		return types.PendingMeal{}, fmt.Errorf("store: unmarshal resolved: %w", err)
-	}
-	if err := json.Unmarshal([]byte(pendingJSON), &pm.Pending); err != nil {
-		return types.PendingMeal{}, fmt.Errorf("store: unmarshal pending: %w", err)
-	}
-
-	return pm, nil
-}
-
-// Delete removes any pending meal for userID. Idempotent.
-func (s *Store) Delete(ctx context.Context, userID string) error {
-	const q = `DELETE FROM pending_meals WHERE user_id = ?`
-	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
 
