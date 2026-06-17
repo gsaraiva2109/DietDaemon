@@ -1,0 +1,23 @@
+services:
+  dietdaemon:
+    build: .
+    container_name: dietdaemon
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dietdaemon-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - ai
+
+volumes:
+  ollama_data:
