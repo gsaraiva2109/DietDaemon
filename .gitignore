@@ -36,6 +36,7 @@
 .logs/
 .cache/
 tmp/
+testdata/*.csv
 
 # OS junk
 .DS_Store
