@@ -144,7 +144,7 @@ func TestHandleLogsMealAndReplies(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
 		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 
 	msg := types.InboundMessage{
@@ -191,7 +191,7 @@ func TestClarificationHoldsMealAndAsks(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
 		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	msg := types.InboundMessage{UserID: "u1", Text: "2 eggs"}
 	if err := e.Handle(context.Background(), msg); err != nil {
@@ -212,7 +212,7 @@ func TestClarificationPortionCompletesMeal(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
 		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"}); err != nil {
@@ -239,7 +239,7 @@ func TestClarificationEachMultipliesByQuantity(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
 		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
 	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
@@ -258,7 +258,7 @@ func TestClarificationCancelDiscards(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
 		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
 	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
@@ -288,7 +288,7 @@ func TestClarificationUnknownFoodCorrected(t *testing.T) {
 	}}
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "xyz"}}, conf: 0.5},
-		res, st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		res, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "xyz"}); err != nil {
@@ -308,7 +308,7 @@ func TestClarificationUnknownFoodCorrected(t *testing.T) {
 func TestHandleEmptyText(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram")
+	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil)
 	if err := e.Handle(context.Background(), types.InboundMessage{UserID: "u1", Text: "  "}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -323,7 +323,7 @@ func TestHandleEmptyText(t *testing.T) {
 func TestTargetCommandSetsGoals(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram")
+	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil)
 
 	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90"}
 	if err := e.Handle(context.Background(), msg); err != nil {
@@ -347,7 +347,7 @@ func TestRollupAccumulates(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
 		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram",
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	at := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {

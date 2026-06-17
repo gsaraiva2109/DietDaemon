@@ -59,7 +59,8 @@ Key knobs:
 | `PARSER_TIER` | `0` (deterministic), `1` (embeddings), `2` (LLM) |
 | `NUTRITION_SOURCE` | Comma-separated: `openfoodfacts,taco,usda` |
 | `MODEL_ADAPTER` | `ollama` — backing model for Tier 1–2 |
-| `STT_PROVIDER` | `whisper` — speech-to-text for audio messages |
+| `ENABLE_STT` | `true` — enables speech-to-text for audio messages |
+| `WHISPER_URL` | Whisper.cpp HTTP server URL |
 | `NOTIFIER` | `ntfy`, `gotify` |
 | `DEFAULT_TIMEZONE` | IANA timezone for daily rollup boundaries |
 
@@ -80,7 +81,6 @@ formats — core never imports a provider SDK.
                               [Dashboard (opt)]
 ```
 
-Deferred decisions are tracked in [`DEFERRED.md`](DEFERRED.md).
 Full architecture and implementation plan in [`BLUEPRINT.md`](BLUEPRINT.md).
 
 ## License

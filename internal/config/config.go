@@ -18,8 +18,12 @@ import (
 // Config is the fully parsed, validated configuration. Location is derived from
 // DefaultTimezone so the rest of the app never re-parses the tz string.
 type Config struct {
-	MessagingAdapter string
-	TelegramBotToken string
+	MessagingAdapter    string
+	TelegramBotToken    string
+	DiscordBotToken     string
+	MatrixHomeserverURL string
+	MatrixUserID        string
+	MatrixToken         string
 
 	ParserTier types.ParserTier
 
@@ -52,6 +56,7 @@ type Config struct {
 	EnableNotifications bool
 	EnableDashboard     bool
 	EnableSTT           bool
+	WhisperURL          string
 
 	MultiUser    bool
 	APIAuthToken string
@@ -68,6 +73,10 @@ func Load() (*Config, error) {
 	c := &Config{
 		MessagingAdapter:        getStr("MESSAGING_ADAPTER", "telegram"),
 		TelegramBotToken:        getStr("TELEGRAM_BOT_TOKEN", ""),
+		DiscordBotToken:         getStr("DISCORD_BOT_TOKEN", ""),
+		MatrixHomeserverURL:     getStr("MATRIX_HOMESERVER_URL", ""),
+		MatrixUserID:            getStr("MATRIX_USER_ID", ""),
+		MatrixToken:             getStr("MATRIX_TOKEN", ""),
 		NutritionSources:        splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
 		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
 		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
@@ -89,6 +98,7 @@ func Load() (*Config, error) {
 		EnableNotifications:     getBool("ENABLE_NOTIFICATIONS", true),
 		EnableDashboard:         getBool("ENABLE_DASHBOARD", false),
 		EnableSTT:               getBool("ENABLE_STT", false),
+		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
 		MultiUser:               getBool("MULTI_USER", false),
 		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
@@ -120,6 +130,24 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if c.MessagingAdapter == "telegram" && c.TelegramBotToken == "" {
 		add("TELEGRAM_BOT_TOKEN is required when MESSAGING_ADAPTER=telegram")
+	}
+	if c.MessagingAdapter == "discord" && c.DiscordBotToken == "" {
+		add("DISCORD_BOT_TOKEN is required when MESSAGING_ADAPTER=discord")
+	}
+	if c.MessagingAdapter == "matrix" {
+		if c.MatrixHomeserverURL == "" {
+			add("MATRIX_HOMESERVER_URL is required when MESSAGING_ADAPTER=matrix")
+		}
+		if c.MatrixUserID == "" {
+			add("MATRIX_USER_ID is required when MESSAGING_ADAPTER=matrix")
+		}
+		if c.MatrixToken == "" {
+			add("MATRIX_TOKEN is required when MESSAGING_ADAPTER=matrix")
+		}
+	}
+
+	if c.EnableSTT && c.WhisperURL == "" {
+		add("WHISPER_URL is required when ENABLE_STT=true")
 	}
 
 	if len(c.NutritionSources) == 0 {

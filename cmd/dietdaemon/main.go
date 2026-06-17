@@ -16,12 +16,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/discord"
+	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/matrix"
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/telegram"
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/ollama"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/gotify"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/openfoodfacts"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
+	"github.com/gsaraiva2109/dietdaemon/adapters/stt/whisper"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
@@ -118,7 +121,14 @@ func run() error {
 
 	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, sources...)
 	pend := pendingstore.New(st.DB(), pendingTTL)
-	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter)
+
+	var transcriber pipeline.Transcriber
+	if cfg.EnableSTT {
+		transcriber = whisper.New(cfg.WhisperURL)
+		slog.Info("STT enabled", "whisper_url", cfg.WhisperURL)
+	}
+
+	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber)
 
 	var notifier ports.Notifier
 	if cfg.EnableNotifications {
@@ -211,6 +221,10 @@ func buildMessaging(cfg *config.Config) (ports.MessagingAdapter, error) {
 	switch cfg.MessagingAdapter {
 	case "telegram":
 		return telegram.New(cfg.TelegramBotToken), nil
+	case "discord":
+		return discord.New(cfg.DiscordBotToken), nil
+	case "matrix":
+		return matrix.New(cfg.MatrixHomeserverURL, cfg.MatrixUserID, cfg.MatrixToken), nil
 	default:
 		return nil, fmt.Errorf("unsupported MESSAGING_ADAPTER %q", cfg.MessagingAdapter)
 	}

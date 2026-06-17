@@ -48,6 +48,12 @@ type Replier interface {
 	Send(ctx context.Context, reply types.Reply) error
 }
 
+// Transcriber converts audio to text. Optional; when nil, audio messages are
+// replied to with a "text only" prompt. Satisfied by adapters/stt/whisper.Provider.
+type Transcriber interface {
+	Transcribe(ctx context.Context, audio []byte) (text string, locale string, err error)
+}
+
 // PendingStore holds short-lived per-user clarification state. Satisfied by
 // internal/pending and any ports.PendingStore.
 type PendingStore interface {
@@ -64,6 +70,7 @@ type Engine struct {
 	store       MealStore
 	pending     PendingStore
 	replier     Replier
+	transcriber Transcriber // optional STT; nil = audio not supported
 	loc         *time.Location
 	threshold   float64 // replies flag low confidence when confidence < threshold
 	channelName string  // e.g. "telegram", used for user_channels mapping
@@ -76,7 +83,8 @@ type Engine struct {
 // boundaries; threshold is the confidence below which a reply nudges the user
 // to double-check amounts. pending holds the clarification loop's state.
 // channelName is the messaging adapter identifier used for user_channels mapping.
-func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string) *Engine {
+// transcriber is optional (nil = audio messages receive a "text only" reply).
+func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string, transcriber Transcriber) *Engine {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -86,6 +94,7 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 		store:       s,
 		pending:     pending,
 		replier:     replier,
+		transcriber: transcriber,
 		loc:         loc,
 		threshold:   threshold,
 		channelName: channelName,
@@ -98,6 +107,23 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 // problems are reported back to the user rather than returned as errors;
 // non-nil errors indicate infrastructure failures (store, transport).
 func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
+	// STT: transcribe audio before parsing. When audio arrives but STT is not
+	// configured, reply with a prompt and return.
+	if msg.Kind == types.MessageAudio {
+		if e.transcriber == nil {
+			return e.reply(ctx, msg, "Audio messages are not supported (STT is disabled). Send your meal as text, e.g. \"200g chicken, 2 eggs\".")
+		}
+		transcript, locale, err := e.transcriber.Transcribe(ctx, msg.Audio)
+		if err != nil {
+			return e.reply(ctx, msg, fmt.Sprintf("Couldn't transcribe audio: %v. Try sending your meal as text.", err))
+		}
+		msg.Text = transcript
+		msg.Kind = types.MessageText
+		if msg.Locale == "" && locale != "" {
+			msg.Locale = locale
+		}
+	}
+
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		return e.reply(ctx, msg, "Send a meal as text, e.g. \"200g chicken, 2 eggs\".")
