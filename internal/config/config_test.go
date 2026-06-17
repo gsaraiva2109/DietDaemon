@@ -13,7 +13,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 	t.Helper()
 	keys := []string{
 		"MESSAGING_ADAPTER", "TELEGRAM_BOT_TOKEN", "PARSER_TIER",
-		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "MODEL_ADAPTER", "OLLAMA_URL",
+		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "TACO_DATA_PATH", "MODEL_ADAPTER", "OLLAMA_URL",
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
 	}
@@ -31,6 +31,7 @@ func validBase() map[string]string {
 		"TELEGRAM_BOT_TOKEN":   "token123",
 		"PARSER_TIER":          "0",
 		"NUTRITION_SOURCE":     "openfoodfacts,taco",
+		"TACO_DATA_PATH":       "/data/taco.csv",
 		"NOTIFIER":             "ntfy",
 		"NTFY_URL":             "https://ntfy.sh",
 		"NTFY_TOPIC":           "diet",

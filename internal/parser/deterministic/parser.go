@@ -1,0 +1,161 @@
+// Package deterministic implements the Tier-0 parser: no model, just a tokenizer
+// and a bilingual (PT/EN) unit dictionary. It turns disciplined shorthand such
+// as "200g frango, 2 ovos" or "200g chicken, 2 eggs" into ParsedItems. This is
+// the default parser, so DietDaemon is fully usable with zero LLM and zero GPU.
+//
+// Volume and cooking measures are converted to grams assuming a density of
+// 1.0 g/ml; count-based items ("2 eggs") carry no grams and are left for the
+// resolver to map to a food-specific portion.
+package deterministic
+
+import (
+	"context"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
+)
+
+// Parser is the Tier-0 deterministic parser.
+type Parser struct{}
+
+// New returns a ready Tier-0 parser. It holds no state and is safe for
+// concurrent use.
+func New() *Parser { return &Parser{} }
+
+// Tier reports that this is the deterministic strategy.
+func (p *Parser) Tier() types.ParserTier { return types.TierDeterministic }
+
+var (
+	// decimalComma converts a decimal comma between digits ("1,5") to a dot so
+	// the comma can safely double as an item separator elsewhere.
+	decimalComma = regexp.MustCompile(`([0-9]),([0-9])`)
+	// itemSep splits a message into food items on punctuation or the PT/EN
+	// conjunctions "e"/"and".
+	itemSep = regexp.MustCompile(`(?i)(?:\s*[,;+&\n]\s*|\s+(?:e|and)\s+)`)
+	// qtyRe captures a leading quantity and the remainder of a segment.
+	qtyRe = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)\s*(.*)$`)
+)
+
+// Extract implements ports.Parser. confidence is the mean per-item confidence
+// (0..1): clean "quantity + mass-unit + food" scores highest; count-based and
+// quantity-less items score lower.
+func (p *Parser) Extract(_ context.Context, text, locale string) ([]types.ParsedItem, float64, error) {
+	text = decimalComma.ReplaceAllString(strings.TrimSpace(text), "$1.$2")
+	segments := itemSep.Split(text, -1)
+
+	var items []types.ParsedItem
+	var confSum float64
+	for _, seg := range segments {
+		if strings.TrimSpace(seg) == "" {
+			continue
+		}
+		item, conf, ok := parseSegment(seg, locale)
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+		confSum += conf
+	}
+	if len(items) == 0 {
+		return nil, 0, nil
+	}
+	return items, confSum / float64(len(items)), nil
+}
+
+// parseSegment parses one item segment, e.g. "200g frango" or "2 ovos".
+func parseSegment(seg, locale string) (types.ParsedItem, float64, bool) {
+	norm := normalize(seg)
+	item := types.ParsedItem{Locale: locale, Quantity: 1}
+	conf := 1.0
+
+	rest := norm
+	if m := qtyRe.FindStringSubmatch(norm); m != nil {
+		item.Quantity = parseNumber(m[1])
+		rest = strings.TrimSpace(m[2])
+	} else {
+		// No explicit quantity: assume one portion, but lower confidence.
+		conf *= 0.5
+	}
+
+	unit, grams, food, hadUnit := consumeUnit(item.Quantity, rest)
+	food = strings.TrimSpace(food)
+	if food == "" {
+		return types.ParsedItem{}, 0, false // nothing identifies the food
+	}
+
+	item.Unit = unit
+	item.NormalizedGrams = grams
+	item.RawPhrase = food
+	if !hadUnit {
+		// Count-based ("2 ovos"): grams unknown, resolver maps a portion.
+		conf *= 0.85
+	}
+	return item, conf, true
+}
+
+// consumeUnit pulls a leading unit token (single- or multi-word) off rest,
+// returning the canonical unit, grams for the quantity, the remaining food
+// phrase, and whether a unit was actually recognized.
+func consumeUnit(qty float64, rest string) (unit string, grams float64, food string, hadUnit bool) {
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return "unit", 0, "", false
+	}
+
+	def, ok := unitAliases[fields[0]]
+	if !ok {
+		// No unit: the whole remainder is the food, treated as a count.
+		return "unit", 0, rest, false
+	}
+
+	canonical := def.canonical
+	remaining := strings.Join(fields[1:], " ")
+	g := qty * def.gramsPerUnit
+
+	if fields[0] == "colher" || fields[0] == "colheres" {
+		canonical, g, remaining = refineColher(qty, remaining)
+	}
+	if def.kind == kindCount {
+		g = 0
+	}
+	return canonical, g, stripConnector(remaining), true
+}
+
+// refineColher resolves the Portuguese spoon variants ("colher de sopa/chá/...")
+// to their approximate volumes; a bare "colher" defaults to a tablespoon.
+func refineColher(qty float64, remaining string) (canonical string, grams float64, food string) {
+	variants := []struct {
+		phrase string
+		ml     float64
+		canon  string
+	}{
+		{"de sopa", 15, "tbsp"},
+		{"de sobremesa", 10, "dessert-spoon"},
+		{"de cha", 5, "tsp"},
+		{"de cafe", 2, "coffee-spoon"},
+	}
+	for _, v := range variants {
+		if strings.HasPrefix(remaining, v.phrase) {
+			return v.canon, qty * v.ml, strings.TrimSpace(remaining[len(v.phrase):])
+		}
+	}
+	return "tbsp", qty * 15, remaining
+}
+
+// stripConnector removes a leading PT/EN connector ("de arroz", "of rice") left
+// after a unit so only the food phrase remains.
+func stripConnector(food string) string {
+	for _, c := range []string{"de ", "do ", "da ", "of "} {
+		if strings.HasPrefix(food, c) {
+			return strings.TrimSpace(food[len(c):])
+		}
+	}
+	return food
+}
+
+func parseNumber(s string) float64 {
+	f, _ := strconv.ParseFloat(strings.ReplaceAll(s, ",", "."), 64)
+	return f
+}

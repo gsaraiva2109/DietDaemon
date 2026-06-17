@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/migrations"
 )
@@ -19,6 +20,9 @@ import (
 type Store struct {
 	db *sql.DB
 }
+
+// Compile-time guarantee that Store satisfies the persistence boundary.
+var _ ports.Store = (*Store)(nil)
 
 // New opens the SQLite database at dbPath, enables foreign keys and WAL mode,
 // runs migrations, and returns a ready Store.

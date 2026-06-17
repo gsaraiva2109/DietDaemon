@@ -25,6 +25,7 @@ type Config struct {
 
 	NutritionSources []string
 	USDAFDCAPIKey    string
+	TacoDataPath     string
 
 	ModelAdapter string
 	OllamaURL    string
@@ -32,6 +33,7 @@ type Config struct {
 	Notifier  string
 	NtfyURL   string
 	NtfyTopic string
+	NtfyToken string
 
 	DefaultTimezone string
 	Location        *time.Location
@@ -56,11 +58,13 @@ func Load() (*Config, error) {
 		TelegramBotToken:    getStr("TELEGRAM_BOT_TOKEN", ""),
 		NutritionSources:    splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
 		USDAFDCAPIKey:       getStr("USDA_FDC_API_KEY", ""),
+		TacoDataPath:        getStr("TACO_DATA_PATH", ""),
 		ModelAdapter:        getStr("MODEL_ADAPTER", "ollama"),
 		OllamaURL:           getStr("OLLAMA_URL", ""),
 		Notifier:            getStr("NOTIFIER", "ntfy"),
 		NtfyURL:             getStr("NTFY_URL", ""),
 		NtfyTopic:           getStr("NTFY_TOPIC", ""),
+		NtfyToken:           getStr("NTFY_TOKEN", ""),
 		DefaultTimezone:     getStr("DEFAULT_TIMEZONE", "UTC"),
 		DBPath:              getStr("DB_PATH", "/data/dietdaemon.db"),
 		EnableNotifications: getBool("ENABLE_NOTIFICATIONS", true),
@@ -102,6 +106,9 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if contains(c.NutritionSources, "usda") && c.USDAFDCAPIKey == "" {
 		add("USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE")
+	}
+	if contains(c.NutritionSources, "taco") && c.TacoDataPath == "" {
+		add("TACO_DATA_PATH is required when 'taco' is in NUTRITION_SOURCE")
 	}
 
 	if c.ParserTier > types.TierDeterministic {
