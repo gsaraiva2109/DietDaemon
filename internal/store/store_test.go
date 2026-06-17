@@ -581,3 +581,98 @@ func TestNudgeDedupe(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// PendingStore: save, get, delete
+// ---------------------------------------------------------------------------
+
+func TestPendingSaveGetDelete(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	pm := types.PendingMeal{
+		UserID:      "u1",
+		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		RawText:     "200g frango",
+		Confidence:  0.9,
+		ParserTier:  types.TierDeterministic,
+		ChannelMeta: map[string]string{"chat_id": "123"},
+		Resolved: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "frango", Quantity: 200, Unit: "g", NormalizedGrams: 200},
+				Match:  types.FoodMatch{FoodID: "frango", Name: "Frango", Source: "taco"},
+			},
+		},
+		Pending: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "arroz", Quantity: 0, Unit: "", NormalizedGrams: 0},
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := s.Save(ctx(), pm); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := s.Get(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.RawText != pm.RawText {
+		t.Errorf("RawText = %q, want %q", got.RawText, pm.RawText)
+	}
+	if got.Confidence != pm.Confidence {
+		t.Errorf("Confidence = %f, want %f", got.Confidence, pm.Confidence)
+	}
+	if len(got.Resolved) != 1 || got.Resolved[0].Match.FoodID != "frango" {
+		t.Errorf("Resolved = %+v, want 1 item with FoodID=franngo", got.Resolved)
+	}
+	if len(got.Pending) != 1 || got.Pending[0].Parsed.RawPhrase != "arroz" {
+		t.Errorf("Pending = %+v, want 1 item with RawPhrase=arroz", got.Pending)
+	}
+	if got.ChannelMeta["chat_id"] != "123" {
+		t.Errorf("ChannelMeta = %v, want chat_id=123", got.ChannelMeta)
+	}
+
+	// Delete and verify gone.
+	if err := s.Delete(ctx(), "u1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(ctx(), "u1"); err != types.ErrNotFound {
+		t.Errorf("Get after delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPendingGetMissing(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	if _, err := s.Get(ctx(), "nobody"); err != types.ErrNotFound {
+		t.Errorf("Get missing = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPendingReplace(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	pm1 := types.PendingMeal{
+		UserID:    "u1",
+		RawText:   "first",
+		CreatedAt: time.Now().UTC(),
+	}
+	s.Save(ctx(), pm1)
+
+	pm2 := types.PendingMeal{
+		UserID:    "u1",
+		RawText:   "second",
+		CreatedAt: time.Now().UTC(),
+	}
+	s.Save(ctx(), pm2)
+
+	got, _ := s.Get(ctx(), "u1")
+	if got.RawText != "second" {
+		t.Errorf("RawText = %q, want %q (replace semantics)", got.RawText, "second")
+	}
+}
+

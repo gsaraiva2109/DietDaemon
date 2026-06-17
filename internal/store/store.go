@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -29,6 +30,7 @@ var (
 	_ ports.Store      = (*Store)(nil)
 	_ scheduler.Store    = (*Store)(nil)
 	_ scheduler.NudgeStore = (*Store)(nil)
+	_ ports.PendingStore   = (*Store)(nil)
 )
 
 // New opens the SQLite database at dbPath, enables foreign keys and WAL mode,
@@ -509,6 +511,85 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 		VALUES (?, ?, ?, ?)
 	`
 	_, err := s.db.ExecContext(ctx, q, userID, localDate, ruleID, utcNow())
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Pending meals (durable — survives restart)
+// ---------------------------------------------------------------------------
+
+// Save inserts or replaces the pending meal for the given user.
+func (s *Store) Save(ctx context.Context, pm types.PendingMeal) error {
+	metaJSON, err := json.Marshal(pm.ChannelMeta)
+	if err != nil {
+		return fmt.Errorf("store: marshal channel_meta: %w", err)
+	}
+	resolvedJSON, err := json.Marshal(pm.Resolved)
+	if err != nil {
+		return fmt.Errorf("store: marshal resolved: %w", err)
+	}
+	pendingJSON, err := json.Marshal(pm.Pending)
+	if err != nil {
+		return fmt.Errorf("store: marshal pending: %w", err)
+	}
+
+	const q = `
+		INSERT OR REPLACE INTO pending_meals
+			(user_id, at_utc, raw_text, confidence, parser_tier, channel_meta, resolved, pending, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = s.db.ExecContext(ctx, q,
+		pm.UserID, utcStr(pm.At), pm.RawText, pm.Confidence, int(pm.ParserTier),
+		string(metaJSON), string(resolvedJSON), string(pendingJSON), utcStr(pm.CreatedAt),
+	)
+	return err
+}
+
+// Get returns the live pending meal for userID, or types.ErrNotFound.
+func (s *Store) Get(ctx context.Context, userID string) (types.PendingMeal, error) {
+	const q = `
+		SELECT user_id, at_utc, raw_text, confidence, parser_tier,
+		       channel_meta, resolved, pending, created_at
+		FROM pending_meals
+		WHERE user_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, userID)
+
+	var pm types.PendingMeal
+	var atUTC, ca string
+	var tier int
+	var metaJSON, resolvedJSON, pendingJSON string
+	err := row.Scan(&pm.UserID, &atUTC, &pm.RawText, &pm.Confidence, &tier,
+		&metaJSON, &resolvedJSON, &pendingJSON, &ca,
+	)
+	if err == sql.ErrNoRows {
+		return types.PendingMeal{}, types.ErrNotFound
+	}
+	if err != nil {
+		return types.PendingMeal{}, fmt.Errorf("store: get pending: %w", err)
+	}
+
+	pm.At = parseUTC(atUTC)
+	pm.ParserTier = types.ParserTier(tier)
+	pm.CreatedAt = parseUTC(ca)
+
+	if err := json.Unmarshal([]byte(metaJSON), &pm.ChannelMeta); err != nil {
+		return types.PendingMeal{}, fmt.Errorf("store: unmarshal channel_meta: %w", err)
+	}
+	if err := json.Unmarshal([]byte(resolvedJSON), &pm.Resolved); err != nil {
+		return types.PendingMeal{}, fmt.Errorf("store: unmarshal resolved: %w", err)
+	}
+	if err := json.Unmarshal([]byte(pendingJSON), &pm.Pending); err != nil {
+		return types.PendingMeal{}, fmt.Errorf("store: unmarshal pending: %w", err)
+	}
+
+	return pm, nil
+}
+
+// Delete removes any pending meal for userID. Idempotent.
+func (s *Store) Delete(ctx context.Context, userID string) error {
+	const q = `DELETE FROM pending_meals WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
 
