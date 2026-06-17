@@ -12,11 +12,12 @@ import (
 
 func TestNotify(t *testing.T) {
 	var (
-		gotPath    string
-		gotBody    string
-		gotTitle   string
-		gotPrio    string
-		gotMethod  string
+		gotPath   string
+		gotBody   string
+		gotTitle  string
+		gotPrio   string
+		gotAuth   string
+		gotMethod string
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,13 +25,14 @@ func TestNotify(t *testing.T) {
 		gotMethod = r.Method
 		gotTitle = r.Header.Get("Title")
 		gotPrio = r.Header.Get("Priority")
+		gotAuth = r.Header.Get("Authorization")
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	n := New(srv.URL, "mytopic")
+	n := New(srv.URL, "mytopic", "")
 
 	msg := types.Notification{
 		UserID:   "u1",
@@ -58,6 +60,41 @@ func TestNotify(t *testing.T) {
 	if gotBody != msg.Body {
 		t.Errorf("body = %q, want %q", gotBody, msg.Body)
 	}
+	if gotAuth != "" {
+		t.Errorf("Authorization header = %q, want empty (no token set)", gotAuth)
+	}
+}
+
+func TestNotifyWithAuthToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer secret-token" {
+			t.Errorf("Authorization = %q, want Bearer secret-token", auth)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := New(srv.URL, "mytopic", "secret-token")
+
+	err := n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
+	if err != nil {
+		t.Fatalf("Notify with token: %v", err)
+	}
+}
+
+func TestNotifyWithoutAuthToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "" {
+			t.Errorf("Authorization header present (%q) but no token was set", auth)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := New(srv.URL, "t", "")
+	n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
 }
 
 func TestPriorityMapping(t *testing.T) {
@@ -78,14 +115,14 @@ func TestPriorityMapping(t *testing.T) {
 }
 
 func TestName(t *testing.T) {
-	n := New("https://ntfy.sh", "test")
+	n := New("https://ntfy.sh", "test", "")
 	if n.Name() != "ntfy" {
 		t.Errorf("Name() = %q, want ntfy", n.Name())
 	}
 }
 
 func TestContextCancellation(t *testing.T) {
-	n := New("https://ntfy.sh", "test")
+	n := New("https://ntfy.sh", "test", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -101,7 +138,7 @@ func TestHTTPErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(srv.URL, "t")
+	n := New(srv.URL, "t", "")
 	err := n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
 	if err == nil {
 		t.Error("expected error on 500 status")
@@ -117,7 +154,7 @@ func TestTrailingSlashTrim(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(srv.URL+"/", "topic") // trailing slash on URL
+	n := New(srv.URL+"/", "topic", "")
 	n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
 }
 
@@ -128,9 +165,6 @@ func TestTrailingSlashTrim(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInterfaceGuard(t *testing.T) {
-	// If the var _ ports.Notifier = (*Notifier)(nil) in ntfy.go doesn't
-	// compile, this entire package won't build — so reaching this test is
-	// already confirmation.
-	n := New("http://localhost", "t")
+	n := New("http://localhost", "t", "")
 	_ = n.Name()
 }

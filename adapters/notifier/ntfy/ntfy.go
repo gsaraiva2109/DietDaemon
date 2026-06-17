@@ -19,15 +19,18 @@ var _ ports.Notifier = (*Notifier)(nil)
 type Notifier struct {
 	url    string // base URL of the ntfy server, e.g. "https://ntfy.sh"
 	topic  string
+	token  string // optional access token (empty = public path)
 	client *http.Client
 }
 
 // New returns a ready Notifier. url is the ntfy server base (no trailing slash),
-// topic is the target topic name.
-func New(url, topic string) *Notifier {
+// topic is the target topic name, and token is an optional access token (empty
+// for public ntfy.sh instances).
+func New(url, topic, token string) *Notifier {
 	return &Notifier{
 		url:    strings.TrimRight(url, "/"),
 		topic:  topic,
+		token:  token,
 		client: &http.Client{},
 	}
 }
@@ -48,6 +51,9 @@ func (n *Notifier) Notify(ctx context.Context, msg types.Notification) error {
 
 	req.Header.Set("Title", msg.Title)
 	req.Header.Set("Priority", priorityString(msg.Priority))
+	if n.token != "" {
+		req.Header.Set("Authorization", "Bearer "+n.token)
+	}
 
 	resp, err := n.client.Do(req)
 	if err != nil {
