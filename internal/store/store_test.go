@@ -581,20 +581,3 @@ func TestNudgeDedupe(t *testing.T) {
 	}
 }
 
-func TestNormalizePhrase(t *testing.T) {
-	tests := []struct{ in, want string }{
-		{"Frango", "frango"},
-		{"  Frângó  ", "frango"},
-		{"CAFÉ", "cafe"},
-		{"açaí", "acai"},
-		{"FEIJÃO", "feijao"},
-		{"", ""},
-		{"   ", ""},
-	}
-	for _, tc := range tests {
-		got := normalizePhrase(tc.in)
-		if got != tc.want {
-			t.Errorf("normalizePhrase(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}

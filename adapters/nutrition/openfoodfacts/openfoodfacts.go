@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 )
 
 // Compile-time interface check.
@@ -64,7 +64,7 @@ type nutriments struct {
 // first usable result. Returns types.ErrNoMatch when no products are found or
 // none have sufficient nutrition data.
 func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.FoodMatch, error) {
-	phrase := strings.TrimSpace(item.RawPhrase)
+	phrase := normalize.Normalize(item.RawPhrase)
 	if phrase == "" {
 		return types.FoodMatch{}, types.ErrNoMatch
 	}
