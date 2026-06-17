@@ -13,6 +13,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/migrations"
 )
 
@@ -21,8 +22,12 @@ type Store struct {
 	db *sql.DB
 }
 
-// Compile-time guarantee that Store satisfies the persistence boundary.
-var _ ports.Store = (*Store)(nil)
+// Compile-time guarantees that Store satisfies every interface boundary it must.
+var (
+	_ ports.Store      = (*Store)(nil)
+	_ scheduler.Store    = (*Store)(nil)
+	_ scheduler.NudgeStore = (*Store)(nil)
+)
 
 // New opens the SQLite database at dbPath, enables foreign keys and WAL mode,
 // runs migrations, and returns a ready Store.
@@ -103,6 +108,28 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 		return types.User{}, types.ErrNotFound
 	}
 	return u, err
+}
+
+// ListUsers returns every user. Empty slice, nil error when there are none.
+func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
+	const q = `SELECT id, timezone, created_at FROM users ORDER BY id`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("store: list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []types.User
+	for rows.Next() {
+		var u types.User
+		var ca string
+		if err := rows.Scan(&u.ID, &u.Timezone, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan user: %w", err)
+		}
+		u.CreatedAt = parseUTC(ca)
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }
 
 func scanUser(row *sql.Row) (types.User, error) {
@@ -449,6 +476,37 @@ func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 		r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
 		r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
 	)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Nudge dedupe
+// ---------------------------------------------------------------------------
+
+// WasNudged reports whether ruleID has already fired for this user on
+// localDate. Satisfies scheduler.NudgeStore.
+func (s *Store) WasNudged(ctx context.Context, userID, localDate, ruleID string) (bool, error) {
+	const q = `SELECT 1 FROM nudge_log WHERE user_id = ? AND local_date = ? AND rule_id = ?`
+	row := s.db.QueryRowContext(ctx, q, userID, localDate, ruleID)
+	var v int
+	err := row.Scan(&v)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: was-nudged: %w", err)
+	}
+	return true, nil
+}
+
+// MarkNudged records that ruleID fired for this user on localDate. Idempotent
+// (INSERT OR IGNORE). Satisfies scheduler.NudgeStore.
+func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string) error {
+	const q = `
+		INSERT OR IGNORE INTO nudge_log (user_id, local_date, rule_id, sent_at)
+		VALUES (?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q, userID, localDate, ruleID, utcNow())
 	return err
 }
 

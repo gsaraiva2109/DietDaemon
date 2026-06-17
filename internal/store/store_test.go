@@ -492,6 +492,95 @@ func TestContextCancellation(t *testing.T) {
 // Phrase normalization edge cases
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ListUsers
+// ---------------------------------------------------------------------------
+
+func TestListUsers(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	// Empty store → empty list.
+	users, err := s.ListUsers(ctx())
+	if err != nil {
+		t.Fatalf("ListUsers empty: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("expected 0 users, got %d", len(users))
+	}
+
+	// Upsert two users.
+	u1 := types.User{ID: "u1", Timezone: "America/Sao_Paulo", CreatedAt: time.Now().UTC()}
+	u2 := types.User{ID: "u2", Timezone: "Europe/Lisbon", CreatedAt: time.Now().UTC()}
+	mustUser(t, s, u1)
+	mustUser(t, s, u2)
+
+	users, err = s.ListUsers(ctx())
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(users))
+	}
+	if users[0].ID != "u1" || users[1].ID != "u2" {
+		t.Errorf("order wrong: %v", []string{users[0].ID, users[1].ID})
+	}
+	if users[1].Timezone != "Europe/Lisbon" {
+		t.Errorf("u2 timezone = %q", users[1].Timezone)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Nudge dedupe
+// ---------------------------------------------------------------------------
+
+func TestNudgeDedupe(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	// Nothing nudged yet.
+	done, err := s.WasNudged(ctx(), "u1", "2026-06-17", "rule-1")
+	if err != nil {
+		t.Fatalf("WasNudged (empty): %v", err)
+	}
+	if done {
+		t.Error("expected false before MarkNudged")
+	}
+
+	// Mark it.
+	if err := s.MarkNudged(ctx(), "u1", "2026-06-17", "rule-1"); err != nil {
+		t.Fatalf("MarkNudged: %v", err)
+	}
+
+	// Now it's done.
+	done, err = s.WasNudged(ctx(), "u1", "2026-06-17", "rule-1")
+	if err != nil {
+		t.Fatalf("WasNudged (after): %v", err)
+	}
+	if !done {
+		t.Error("expected true after MarkNudged")
+	}
+
+	// MarkNudged twice is idempotent — no error.
+	if err := s.MarkNudged(ctx(), "u1", "2026-06-17", "rule-1"); err != nil {
+		t.Fatalf("MarkNudged idempotent: %v", err)
+	}
+
+	// Different user / date / rule still false.
+	done, _ = s.WasNudged(ctx(), "u2", "2026-06-17", "rule-1")
+	if done {
+		t.Error("different user should not be nudged")
+	}
+	done, _ = s.WasNudged(ctx(), "u1", "2026-06-18", "rule-1")
+	if done {
+		t.Error("different date should not be nudged")
+	}
+	done, _ = s.WasNudged(ctx(), "u1", "2026-06-17", "rule-2")
+	if done {
+		t.Error("different rule should not be nudged")
+	}
+}
+
 func TestNormalizePhrase(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"Frango", "frango"},

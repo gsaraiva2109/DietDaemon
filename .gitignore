@@ -1,6 +1,45 @@
+# Secrets & config
+.env
+
+# Database files
 *.db
 *.sqlite
-.env
+
+# Build output
 /bin/
+
+# Runtime data
 /data/
+
+# Model files (Ollama, etc.)
 *.onnx
+*.gguf
+*.bin
+*.safetensors
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+
+# AI / agents
+.agents/
+.claude/
+.ai/
+.aidd/
+.impeccable/
+
+# Logs & cache
+.logs/
+.cache/
+tmp/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Lock files (tooling, not deps)
+skills-lock.json
