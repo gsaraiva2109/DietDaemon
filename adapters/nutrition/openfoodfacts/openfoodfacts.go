@@ -47,9 +47,9 @@ type searchResponse struct {
 }
 
 type product struct {
-	Code       string    `json:"code"`
-	ProductName string   `json:"product_name"`
-	Nutriments nutriments `json:"nutriments"`
+	Code        string     `json:"code"`
+	ProductName string     `json:"product_name"`
+	Nutriments  nutriments `json:"nutriments"`
 }
 
 type nutriments struct {

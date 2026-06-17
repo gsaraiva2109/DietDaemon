@@ -45,8 +45,8 @@ func (a *Adapter) Name() string { return "telegram" }
 
 // update is a minimal Telegram Update payload. Only fields used are decoded.
 type update struct {
-	UpdateID int     `json:"update_id"`
-	Message  *tgMsg  `json:"message"`
+	UpdateID int    `json:"update_id"`
+	Message  *tgMsg `json:"message"`
 }
 
 type tgMsg struct {

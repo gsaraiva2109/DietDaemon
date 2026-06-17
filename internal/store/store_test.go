@@ -675,4 +675,3 @@ func TestPendingReplace(t *testing.T) {
 		t.Errorf("RawText = %q, want %q (replace semantics)", got.RawText, "second")
 	}
 }
-

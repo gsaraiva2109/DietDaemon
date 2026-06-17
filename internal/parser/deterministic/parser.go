@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	unitnorm "github.com/gsaraiva2109/dietdaemon/internal/parser/normalize"
 )
 
 // Parser is the Tier-0 deterministic parser.
@@ -104,22 +105,21 @@ func consumeUnit(qty float64, rest string) (unit string, grams float64, food str
 		return "unit", 0, "", false
 	}
 
-	def, ok := unitAliases[fields[0]]
-	if !ok {
+	// Check if the first token is a recognized unit using the shared table.
+	if !unitnorm.IsUnit(fields[0]) {
 		// No unit: the whole remainder is the food, treated as a count.
 		return "unit", 0, rest, false
 	}
 
-	canonical := def.canonical
 	remaining := strings.Join(fields[1:], " ")
-	g := qty * def.gramsPerUnit
 
+	// colher variants need special handling — the spoon type is in the next word.
 	if fields[0] == "colher" || fields[0] == "colheres" {
-		canonical, g, remaining = refineColher(qty, remaining)
+		canonical, g, rem := refineColher(qty, remaining)
+		return canonical, g, stripConnector(rem), true
 	}
-	if def.kind == kindCount {
-		g = 0
-	}
+
+	canonical, g := unitnorm.NormalizeUnit(qty, fields[0], remaining, "")
 	return canonical, g, stripConnector(remaining), true
 }
 

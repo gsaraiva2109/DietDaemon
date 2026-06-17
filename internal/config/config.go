@@ -29,6 +29,11 @@ type Config struct {
 
 	ModelAdapter string
 	OllamaURL    string
+	EmbedModel   string
+	LLMModel     string
+	ModelTimeout time.Duration
+
+	EmbedMatchThreshold float64
 
 	Notifier  string
 	NtfyURL   string
@@ -64,6 +69,10 @@ func Load() (*Config, error) {
 		TacoDataPath:        getStr("TACO_DATA_PATH", ""),
 		ModelAdapter:        getStr("MODEL_ADAPTER", "ollama"),
 		OllamaURL:           getStr("OLLAMA_URL", ""),
+		EmbedModel:          getStr("EMBED_MODEL", "nomic-embed-text"),
+		LLMModel:            getStr("LLM_MODEL", "llama3.1"),
+		ModelTimeout:        getDuration("MODEL_TIMEOUT", 30*time.Second),
+		EmbedMatchThreshold: getFloat("EMBED_MATCH_THRESHOLD", 0.80),
 		Notifier:            getStr("NOTIFIER", "ntfy"),
 		NtfyURL:             getStr("NTFY_URL", ""),
 		NtfyTopic:           getStr("NTFY_TOPIC", ""),
@@ -181,6 +190,30 @@ func getStr(key, def string) string {
 	return def
 }
 
+func getDuration(key string, def time.Duration) time.Duration {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return d
+}
+
+func getFloat(key string, def float64) float64 {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil {
+		return def
+	}
+	return f
+}
+
 func getBool(key string, def bool) bool {
 	v, ok := os.LookupEnv(key)
 	if !ok {
@@ -219,7 +252,7 @@ func contains(ss []string, target string) bool {
 // overriding variables already set. Missing file is not an error. Lines may use
 // optional surrounding quotes and `#` comments.
 func loadDotEnv(path string) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is always ".env", not user input
 	if err != nil {
 		return
 	}

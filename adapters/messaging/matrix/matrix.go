@@ -185,8 +185,8 @@ func (a *Adapter) syncLoop(ctx context.Context, ch chan<- types.InboundMessage) 
 					Kind:   types.MessageText,
 					Text:   ev.Content.Body,
 					ChannelMeta: map[string]string{
-						"room_id":   roomID,
-						"event_id":  ev.EventID,
+						"room_id":  roomID,
+						"event_id": ev.EventID,
 					},
 				}:
 				case <-ctx.Done():

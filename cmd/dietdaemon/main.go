@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/telegram"
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/ollama"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/gotify"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/openfoodfacts"
@@ -23,11 +24,14 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
+	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
+	"github.com/gsaraiva2109/dietdaemon/internal/parser/llm"
 	"github.com/gsaraiva2109/dietdaemon/internal/pending"
 	"github.com/gsaraiva2109/dietdaemon/internal/pipeline"
 	"github.com/gsaraiva2109/dietdaemon/internal/queue"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
+	"github.com/gsaraiva2109/dietdaemon/internal/resolver/embedding"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
@@ -77,11 +81,40 @@ func run() error {
 		return err
 	}
 
-	if cfg.ParserTier > types.TierDeterministic {
-		slog.Warn("only the Tier-0 deterministic parser is implemented; falling back", "requested", cfg.ParserTier)
+	// --- Phase 5 wiring ---
+
+	var (
+		parser  ports.Parser
+		matcher resolver.Matcher  = nil
+		embed   resolver.Embedder = nil
+	)
+
+	switch {
+	case cfg.ParserTier >= types.TierLLM:
+		// Tier 2: LLM splitter + embedding matcher.
+		model, idx := buildModelAndIndex(cfg, st)
+		parser = llm.New(model, deterministic.New())
+		emb := embedding.New(model, idx, st, cfg.EmbedMatchThreshold)
+		matcher = emb
+		embed = emb
+		slog.Info("parser tier 2 (LLM + embedding)", "embed_model", cfg.EmbedModel, "llm_model", cfg.LLMModel)
+
+	case cfg.ParserTier >= types.TierEmbedding:
+		// Tier 1: deterministic splitter + embedding matcher.
+		model, idx := buildModelAndIndex(cfg, st)
+		parser = deterministic.New()
+		emb := embedding.New(model, idx, st, cfg.EmbedMatchThreshold)
+		matcher = emb
+		embed = emb
+		slog.Info("parser tier 1 (deterministic + embedding)", "embed_model", cfg.EmbedModel)
+
+	default:
+		// Tier 0: deterministic splitter, exact-alias match (Phase 4 behaviour).
+		parser = deterministic.New()
+		slog.Info("parser tier 0 (deterministic, no model)")
 	}
-	parser := deterministic.New()
-	res := resolver.New(st, sources...)
+
+	res := resolver.New(st, matcher, embed, sources...)
 	pend := pending.New(pendingTTL)
 	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold)
 
@@ -130,6 +163,14 @@ func run() error {
 	}
 	slog.Info("shutdown complete")
 	return nil
+}
+
+// buildModelAndIndex creates the Ollama adapter and the embedding index. It is
+// only called when PARSER_TIER >= 1.
+func buildModelAndIndex(cfg *config.Config, st *store.Store) (ports.ModelAdapter, *index.SQLIndex) {
+	model := ollama.New(cfg.OllamaURL, cfg.EmbedModel, cfg.LLMModel, cfg.ModelTimeout)
+	idx := index.New(st.DB())
+	return model, idx
 }
 
 func buildMessaging(cfg *config.Config) (ports.MessagingAdapter, error) {

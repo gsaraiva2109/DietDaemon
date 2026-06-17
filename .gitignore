@@ -31,6 +31,7 @@
 .ai/
 .aidd/
 .impeccable/
+.context.xml
 
 # Logs & cache
 .logs/
@@ -44,3 +45,6 @@ Thumbs.db
 
 # Lock files (tooling, not deps)
 skills-lock.json
+
+# Internal design specs (not user-facing)
+docs/PHASE5_AI_TIERS.md

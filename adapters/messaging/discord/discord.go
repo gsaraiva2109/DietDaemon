@@ -105,9 +105,9 @@ type helloData struct {
 }
 
 type identifyData struct {
-	Token      string            `json:"token"`
+	Token      string             `json:"token"`
 	Properties identifyProperties `json:"properties"`
-	Intents    int               `json:"intents"`
+	Intents    int                `json:"intents"`
 }
 
 type identifyProperties struct {
@@ -134,11 +134,11 @@ type messageCreateData struct {
 }
 
 const (
-	gatewayOpDispatch        = 0
-	gatewayOpHeartbeat       = 1
-	gatewayOpIdentify        = 2
-	gatewayOpHello           = 10
-	gatewayOpHeartbeatACK    = 11
+	gatewayOpDispatch           = 0
+	gatewayOpHeartbeat          = 1
+	gatewayOpIdentify           = 2
+	gatewayOpHello              = 10
+	gatewayOpHeartbeatACK       = 11
 	gatewayIntentMessageContent = 1 << 15 // 32768
 )
 
@@ -183,7 +183,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 	// Send IDENTIFY.
 	identify := gatewayPayload{
 		Op: gatewayOpIdentify,
-		D:  mustMarshal(identifyData{
+		D: mustMarshal(identifyData{
 			Token: a.token,
 			Properties: identifyProperties{
 				OS:      "linux",
@@ -412,13 +412,16 @@ func writeWSFrame(conn *tls.Conn, data []byte) error {
 
 	frame = append(frame, 0x81) // FIN + text opcode
 	if length < 126 {
+		// #nosec G115
 		frame = append(frame, byte(0x80|length)) // mask bit set
 	} else if length < 65536 {
 		frame = append(frame, 0xFE) // 126 with mask
+		// #nosec G115
 		frame = append(frame, byte(length>>8), byte(length))
 	} else {
 		frame = append(frame, 0xFF) // 127 with mask
 		for i := 7; i >= 0; i-- {
+			// #nosec G115
 			frame = append(frame, byte(length>>(8*i)))
 		}
 	}

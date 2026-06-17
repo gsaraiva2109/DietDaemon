@@ -1,0 +1,28 @@
+# See https://pre-commit.com for more information
+# See https://github.com/TekWizely/pre-commit-golang for hook docs
+repos:
+  - repo: https://github.com/TekWizely/pre-commit-golang
+    rev: v1.0.0-rc.4
+    hooks:
+      # --- Formatting ---
+      - id: go-fmt-repo
+        args: [-s, -w]
+
+      - id: go-imports-repo
+        args: [-w]
+
+      # --- Correctness ---
+      - id: go-vet-repo-mod
+
+      - id: go-test-repo-mod
+
+      - id: go-build-repo-mod
+
+      - id: go-mod-tidy-repo
+
+      # --- Security ---
+      - id: go-sec-repo-mod
+        args:
+          - -exclude=G104,G304
+          # G104: defer Close() errors are standard Go idiom
+          # G304: loadDotEnv + taco data path are hardcoded

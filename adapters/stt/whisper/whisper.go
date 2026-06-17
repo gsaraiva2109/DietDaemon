@@ -37,7 +37,7 @@ func New(url string) *Provider {
 
 // inferenceResponse is the JSON returned by whisper.cpp /inference.
 type inferenceResponse struct {
-	Text   string `json:"text"`
+	Text     string `json:"text"`
 	Language string `json:"language"` // BCP-47, may be empty
 }
 

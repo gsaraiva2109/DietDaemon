@@ -17,10 +17,10 @@ const (
 // (enforced by the NudgeStore via ID).
 type Rule struct {
 	ID          string  // stable identifier, used for dedupe
-	AfterHour   int      // local hour (0-23) the rule becomes eligible
-	Macro       Macro    // which macro to check
-	MinFraction float64  // fire when consumed/target < MinFraction
-	Message     string   // fmt template receiving (consumed, target)
+	AfterHour   int     // local hour (0-23) the rule becomes eligible
+	Macro       Macro   // which macro to check
+	MinFraction float64 // fire when consumed/target < MinFraction
+	Message     string  // fmt template receiving (consumed, target)
 }
 
 // DefaultRules nudges a bulking user in the evening when protein or calories

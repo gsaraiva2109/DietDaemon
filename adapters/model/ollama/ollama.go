@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
@@ -19,18 +20,21 @@ var _ ports.ModelAdapter = (*Adapter)(nil)
 
 // Adapter satisfies ports.ModelAdapter via Ollama's HTTP API.
 type Adapter struct {
-	url    string // base URL, e.g. "http://localhost:11434"
-	model  string // model name, e.g. "llama3.2", "nomic-embed-text"
-	client *http.Client
+	url        string // base URL, e.g. "http://localhost:11434"
+	embedModel string // model for embeddings, e.g. "nomic-embed-text"
+	llmModel   string // model for completions, e.g. "llama3.1"
+	client     *http.Client
 }
 
-// New returns a ready Adapter. url is the Ollama base (no trailing slash), model
-// is the model tag to use for all calls.
-func New(url, model string) *Adapter {
+// New returns a ready Adapter. url is the Ollama base (no trailing slash),
+// embedModel is the model for /api/embeddings, llmModel is the model for
+// /api/generate, timeout applies to both endpoints.
+func New(url, embedModel, llmModel string, timeout time.Duration) *Adapter {
 	return &Adapter{
-		url:    strings.TrimRight(url, "/"),
-		model:  model,
-		client: &http.Client{},
+		url:        strings.TrimRight(url, "/"),
+		embedModel: embedModel,
+		llmModel:   llmModel,
+		client:     &http.Client{Timeout: timeout},
 	}
 }
 
@@ -49,7 +53,7 @@ type embedResponse struct {
 
 // Embed returns a floating-point embedding vector for text.
 func (a *Adapter) Embed(ctx context.Context, text string) ([]float32, error) {
-	body := embedRequest{Model: a.model, Prompt: text}
+	body := embedRequest{Model: a.embedModel, Prompt: text}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: marshal embed request: %w", err)
@@ -93,6 +97,7 @@ type generateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
+	Format string `json:"format"`
 }
 
 type generateResponse struct {
@@ -100,8 +105,9 @@ type generateResponse struct {
 }
 
 // Complete sends a prompt to the model and returns its text completion.
+// The model is asked for JSON output via format:json.
 func (a *Adapter) Complete(ctx context.Context, prompt string) (string, error) {
-	body := generateRequest{Model: a.model, Prompt: prompt, Stream: false}
+	body := generateRequest{Model: a.llmModel, Prompt: prompt, Stream: false, Format: "json"}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("ollama: marshal generate request: %w", err)

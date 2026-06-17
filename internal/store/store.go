@@ -27,8 +27,8 @@ type Store struct {
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
 var (
-	_ ports.Store      = (*Store)(nil)
-	_ scheduler.Store    = (*Store)(nil)
+	_ ports.Store          = (*Store)(nil)
+	_ scheduler.Store      = (*Store)(nil)
 	_ scheduler.NudgeStore = (*Store)(nil)
 	_ ports.PendingStore   = (*Store)(nil)
 )
@@ -83,6 +83,10 @@ func (s *Store) runMigrations() error {
 
 	return nil
 }
+
+// DB returns the underlying *sql.DB so that callers (e.g. the embedding index)
+// can operate on the same database connection without opening a second one.
+func (s *Store) DB() *sql.DB { return s.db }
 
 // Close closes the database connection.
 func (s *Store) Close() error {
@@ -263,6 +267,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 		args[i] = id
 	}
 
+	// #nosec G201 -- placeholder expansion is ? only, values are args
 	q := fmt.Sprintf(`
 		SELECT meal_id, raw_phrase, quantity, unit, normalized_grams,
 		       food_id, food_name, source, match_score,
@@ -340,6 +345,29 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 	}
 	// Exact alias match always scores 1.0.
 	fm.MatchScore = 1.0
+	return fm, nil
+}
+
+// GetFood loads a food by its (userID, foodID) primary key. Returns
+// types.ErrNoMatch when the food does not exist in the library.
+func (s *Store) GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error) {
+	const q = `
+		SELECT food_id, name, source, kcal_100g, protein_100g,
+		       carbs_100g, fat_100g, fiber_100g
+		FROM food_library
+		WHERE user_id = ? AND food_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, userID, foodID)
+	var fm types.FoodMatch
+	err := row.Scan(&fm.FoodID, &fm.Name, &fm.Source,
+		&fm.Per100g.Calories, &fm.Per100g.Protein, &fm.Per100g.Carbs, &fm.Per100g.Fat, &fm.Per100g.Fiber,
+	)
+	if err == sql.ErrNoRows {
+		return types.FoodMatch{}, types.ErrNoMatch
+	}
+	if err != nil {
+		return types.FoodMatch{}, fmt.Errorf("store: get food: %w", err)
+	}
 	return fm, nil
 }
 
