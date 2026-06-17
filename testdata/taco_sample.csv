@@ -1,0 +1,16 @@
+food_id,name,kcal,protein,carb,fat,fiber
+TACO001,Arroz integral cozido,124,2.6,25.8,1.0,2.7
+TACO002,Arroz branco cozido,128,2.5,28.1,0.2,0.4
+TACO003,Feijão carioca cozido,76,4.8,13.6,0.5,8.5
+TACO004,Feijão preto cozido,77,4.5,14.0,0.5,8.4
+TACO005,Frango grelhado,165,31.0,0.0,3.6,0.0
+TACO006,Peito de frango cru,119,21.5,0.0,3.0,0.0
+TACO007,Ovo de galinha cozido,155,13.0,1.1,10.6,0.0
+TACO008,Ovo de galinha inteiro cru,143,13.0,1.6,8.9,0.0
+TACO009,Banana prata crua,98,1.3,26.0,0.1,2.0
+TACO010,Maçã argentina com casca crua,63,0.2,16.6,0.1,1.8
+TACO011,Batata doce cozida,77,0.6,18.4,0.1,2.2
+TACO012,Mandioca cozida,125,0.6,30.1,0.3,1.6
+TACO013,Leite integral,61,3.3,4.7,3.0,0.0
+TACO014,Queijo minas frescal,264,17.4,3.2,20.2,0.0
+TACO015,Pão francês,300,8.0,58.6,3.1,2.3
