@@ -236,7 +236,7 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 	return meals, nil
 }
 
-func scanMeal(rows interface{ Scan(...interface{}) error }) (types.Meal, error) {
+func scanMeal(rows *sql.Rows) (types.Meal, error) {
 	var m types.Meal
 	var atUTC, ca string
 	var tier int
