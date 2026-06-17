@@ -2,20 +2,17 @@
 
 ## Build status — resume point (updated 2026-06-17)
 
-Trunk-based on `main`. All code committed; `CGO_ENABLED=0 go build ./...` clean; full suite **72 tests / 16 packages** green. Workflow: split work by `[opus]` (design/judgment), `[deepseek]` (mechanical boilerplate behind frozen interfaces), `[you]` (accounts/data/shell). Contracts in `core/ports` + `core/types` are the frozen design boundary.
+Trunk-based on `main`. All code committed; `CGO_ENABLED=0 go build ./...` clean; full suite **73 tests / 16 packages** green. Workflow: split work by `[opus]` (design/judgment), `[deepseek]` (mechanical boilerplate behind frozen interfaces), `[you]` (accounts/data/shell). Contracts in `core/ports` + `core/types` are the frozen design boundary.
 
 **Done & committed**
 - Phase 0 bootstrap: docker, `.env.example`, `DEFERRED.md`, LICENSE.
 - Phase 1: `core/types`, `core/ports` (all interfaces), `internal/config` (env load + fail-fast validation), `internal/queue` (generic in-mem `Queue[T]`), `internal/store` (SQLite via pure-Go `modernc.org/sqlite`; incl. `ListUsers`, nudge dedupe log).
 - Phase 2 (no-AI vertical slice): `internal/parser/deterministic` (Tier-0 PT/EN), `internal/resolver` (local-first), `internal/pipeline` (per-message engine), `cmd/dietdaemon` (config-driven wiring + ingest loop). Adapters: `telegram`, `ntfy` (+auth token), `openfoodfacts`, `taco` (csv+xlsx), `gotify`.
-- Phase 3 so far: `internal/scheduler` (tz-correct rollup-vs-target rule eval + per-day dedupe via `NudgeStore`); store side (`ListUsers`/`WasNudged`/`MarkNudged`) implemented.
+- Phase 3 (complete): `internal/scheduler` (tz-correct rollup-vs-target rule eval + per-day dedupe via `NudgeStore`); store side (`ListUsers`/`WasNudged`/`MarkNudged`); scheduler wired into `cmd` (goroutine, 5-min tick, when notifications enabled); `/target kcal=.. protein=.. carbs=.. fat=..` command sets goals via `store.SetTargets`.
 
-**Next (resume here) — `[opus]`, unblocked:** finish Phase 3 wiring in `cmd/dietdaemon`:
-1. run `scheduler.New(...).Run(ctx)` in a goroutine alongside the ingest loop (notifier already constructed in `run()`);
-2. add a `set-target` command (e.g. `/target kcal=3000 protein=180 ...`) in the pipeline → `store.SetTargets`;
-3. build/test + scheduler smoke. Then Phase 4 (clarification loop), Phase 5 (AI tiers), per phase list below.
+**Next (resume here) — Phase 4, clarification loop `[opus]`:** when the resolver reports items needing clarification (no match, or count-based portion unknown), ask back through the messaging channel and hold short-lived pending-meal state until the user confirms a portion/correction; then complete the meal. Touches `internal/pipeline` (pending state) and likely a small store table (`[deepseek]` once the interface is frozen). After that: Phase 5 (AI tiers — Ollama `ModelAdapter`, Tier-1 embeddings, Tier-2 LLM), per phase list below.
 
-**`[you]` pending:** fill `.env` (Telegram token, ntfy, `TACO_DATA_PATH`); run live E2E (DM bot "200g chicken, 2 eggs").
+**`[you]` pending:** fill `.env` (Telegram token, ntfy, `TACO_DATA_PATH`); run live E2E — DM bot `/target kcal=3000 protein=180`, then `200g chicken, 2 eggs`; confirm reply + (with targets behind in evening) an ntfy/gotify nudge.
 
 ## Context
 
