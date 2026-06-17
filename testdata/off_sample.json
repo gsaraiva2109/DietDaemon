@@ -1,0 +1,18 @@
+{
+  "count": 1,
+  "page": 1,
+  "page_size": 24,
+  "products": [
+    {
+      "code": "7891234567890",
+      "product_name": "Arroz Integral Cozido",
+      "nutriments": {
+        "energy-kcal_100g": 124,
+        "proteins_100g": 2.6,
+        "carbohydrates_100g": 25.8,
+        "fat_100g": 1.0,
+        "fiber_100g": 2.7
+      }
+    }
+  ]
+}
