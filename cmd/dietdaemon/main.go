@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/telegram"
+	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/gotify"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/openfoodfacts"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
@@ -23,6 +24,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
+	"github.com/gsaraiva2109/dietdaemon/internal/pending"
 	"github.com/gsaraiva2109/dietdaemon/internal/pipeline"
 	"github.com/gsaraiva2109/dietdaemon/internal/queue"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
@@ -35,6 +37,9 @@ const (
 	confidenceThreshold = 0.6
 	// nudgeInterval is how often the scheduler re-evaluates daily progress.
 	nudgeInterval = 5 * time.Minute
+	// pendingTTL is how long a meal awaiting clarification is held before the
+	// state expires and the next message is treated as a fresh meal.
+	pendingTTL = 30 * time.Minute
 )
 
 func main() {
@@ -77,7 +82,8 @@ func run() error {
 	}
 	parser := deterministic.New()
 	res := resolver.New(st, sources...)
-	engine := pipeline.New(parser, res, st, msg, cfg.Location, confidenceThreshold)
+	pend := pending.New(pendingTTL)
+	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold)
 
 	var notifier ports.Notifier
 	if cfg.EnableNotifications {
@@ -139,6 +145,8 @@ func buildNotifier(cfg *config.Config) (ports.Notifier, error) {
 	switch cfg.Notifier {
 	case "ntfy":
 		return ntfy.New(cfg.NtfyURL, cfg.NtfyTopic, cfg.NtfyToken), nil
+	case "gotify":
+		return gotify.New(cfg.GotifyURL, cfg.GotifyToken), nil
 	default:
 		return nil, fmt.Errorf("unsupported NOTIFIER %q", cfg.Notifier)
 	}

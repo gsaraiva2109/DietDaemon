@@ -35,6 +35,9 @@ type Config struct {
 	NtfyTopic string
 	NtfyToken string
 
+	GotifyURL   string
+	GotifyToken string
+
 	DefaultTimezone string
 	Location        *time.Location
 
@@ -65,6 +68,8 @@ func Load() (*Config, error) {
 		NtfyURL:             getStr("NTFY_URL", ""),
 		NtfyTopic:           getStr("NTFY_TOPIC", ""),
 		NtfyToken:           getStr("NTFY_TOKEN", ""),
+		GotifyURL:           getStr("GOTIFY_URL", ""),
+		GotifyToken:         getStr("GOTIFY_TOKEN", ""),
 		DefaultTimezone:     getStr("DEFAULT_TIMEZONE", "UTC"),
 		DBPath:              getStr("DB_PATH", "/data/dietdaemon.db"),
 		EnableNotifications: getBool("ENABLE_NOTIFICATIONS", true),
@@ -130,6 +135,14 @@ func (c *Config) validate(tierErr error) error {
 			}
 			if c.NtfyTopic == "" {
 				add("NTFY_TOPIC is required when NOTIFIER=ntfy")
+			}
+		}
+		if c.Notifier == "gotify" {
+			if c.GotifyURL == "" {
+				add("GOTIFY_URL is required when NOTIFIER=gotify")
+			}
+			if c.GotifyToken == "" {
+				add("GOTIFY_TOKEN is required when NOTIFIER=gotify")
 			}
 		}
 	}
