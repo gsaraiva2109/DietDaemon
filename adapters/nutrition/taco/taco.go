@@ -1,6 +1,7 @@
 // Package taco implements ports.NutritionSource backed by the TACO (Tabela
-// Brasileira de Composição de Alimentos) dataset. A local CSV file is loaded
-// into memory and foods are resolved by exact normalized-name match.
+// Brasileira de Composição de Alimentos) dataset. Supports both CSV and XLSX
+// files (chosen by extension). Data is loaded into memory at construction time
+// and foods are resolved by exact normalized-name match.
 package taco
 
 import (
@@ -8,8 +9,11 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -23,50 +27,26 @@ type Source struct {
 	foods map[string]types.FoodMatch // normalized name → match
 }
 
-// New loads the CSV at dataPath and builds the in-memory index. Expected
-// columns: food_id, name, kcal, protein, carb, fat, fiber.
+// New loads the dataset at dataPath and builds the in-memory index. Format is
+// chosen by file extension: .csv → encoding/csv, .xlsx → excelize. Expected
+// columns (in order): food_id, name, kcal, protein, carb, fat, fiber.
 func New(dataPath string) (*Source, error) {
-	f, err := os.Open(dataPath)
+	var rows [][]string
+	var err error
+
+	switch strings.ToLower(filepath.Ext(dataPath)) {
+	case ".csv":
+		rows, err = loadCSV(dataPath)
+	case ".xlsx":
+		rows, err = loadXLSX(dataPath)
+	default:
+		return nil, fmt.Errorf("taco: unsupported format %q (want .csv or .xlsx)", filepath.Ext(dataPath))
+	}
 	if err != nil {
-		return nil, fmt.Errorf("taco: open %s: %w", dataPath, err)
-	}
-	defer f.Close()
-
-	r := csv.NewReader(f)
-	r.TrimLeadingSpace = true
-
-	records, err := r.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("taco: read csv: %w", err)
-	}
-	if len(records) < 2 {
-		return nil, fmt.Errorf("taco: csv has no data rows")
+		return nil, err
 	}
 
-	// Skip header row.
-	foods := make(map[string]types.FoodMatch, len(records)-1)
-	for _, row := range records[1:] {
-		if len(row) < 7 {
-			continue
-		}
-		fm := types.FoodMatch{
-			FoodID:     strings.TrimSpace(row[0]),
-			Name:       strings.TrimSpace(row[1]),
-			Source:     "taco",
-			MatchScore: 1.0,
-		}
-		fm.Per100g.Calories = parseFloat(row[2])
-		fm.Per100g.Protein = parseFloat(row[3])
-		fm.Per100g.Carbs = parseFloat(row[4])
-		fm.Per100g.Fat = parseFloat(row[5])
-		fm.Per100g.Fiber = parseFloat(row[6])
-
-		key := normalizePhrase(fm.Name)
-		if key != "" {
-			foods[key] = fm
-		}
-	}
-
+	foods := rowsToFoods(rows)
 	if len(foods) == 0 {
 		return nil, fmt.Errorf("taco: no foods loaded from %s", dataPath)
 	}
@@ -90,6 +70,85 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 		return types.FoodMatch{}, types.ErrNoMatch
 	}
 	return fm, nil
+}
+
+// ---------------------------------------------------------------------------
+// Loaders
+// ---------------------------------------------------------------------------
+
+func loadCSV(path string) ([][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("taco: open csv: %w", err)
+	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	r.TrimLeadingSpace = true
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("taco: read csv: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, fmt.Errorf("taco: csv has no data rows")
+	}
+	return records, nil
+}
+
+func loadXLSX(path string) ([][]string, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("taco: open xlsx: %w", err)
+	}
+	defer f.Close()
+
+	// Read the first sheet.
+	sheet := f.GetSheetName(0)
+	raw, err := f.GetRows(sheet)
+	if err != nil {
+		return nil, fmt.Errorf("taco: read xlsx rows: %w", err)
+	}
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("taco: xlsx has no data rows")
+	}
+
+	// Convert [][]string from excelize (already strings) — no-op cast through
+	// a copy so we return a uniform [][]string.
+	rows := make([][]string, len(raw))
+	copy(rows, raw)
+	return rows, nil
+}
+
+// ---------------------------------------------------------------------------
+// Row → FoodMatch
+// ---------------------------------------------------------------------------
+
+// rowsToFoods converts raw string rows (first row is header) into a normalized
+// name → FoodMatch map.
+func rowsToFoods(rows [][]string) map[string]types.FoodMatch {
+	foods := make(map[string]types.FoodMatch, len(rows)-1)
+	for _, row := range rows[1:] {
+		if len(row) < 7 {
+			continue
+		}
+		fm := types.FoodMatch{
+			FoodID:     strings.TrimSpace(row[0]),
+			Name:       strings.TrimSpace(row[1]),
+			Source:     "taco",
+			MatchScore: 1.0,
+		}
+		fm.Per100g.Calories = parseFloat(row[2])
+		fm.Per100g.Protein = parseFloat(row[3])
+		fm.Per100g.Carbs = parseFloat(row[4])
+		fm.Per100g.Fat = parseFloat(row[5])
+		fm.Per100g.Fiber = parseFloat(row[6])
+
+		key := normalizePhrase(fm.Name)
+		if key != "" {
+			foods[key] = fm
+		}
+	}
+	return foods
 }
 
 // ---------------------------------------------------------------------------
