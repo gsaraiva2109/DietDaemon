@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -535,6 +536,6 @@ func parseUTC(s string) time.Time {
 var idCounter int64
 
 func newID() string {
-	idCounter++
-	return fmt.Sprintf("%d%x", time.Now().UnixNano(), idCounter)
+	n := atomic.AddInt64(&idCounter, 1)
+	return fmt.Sprintf("%d%x", time.Now().UnixNano(), n)
 }
