@@ -57,8 +57,10 @@ Key knobs:
 |---|---|
 | `MESSAGING_ADAPTER` | `telegram`, `discord`, `matrix` |
 | `PARSER_TIER` | `0` (deterministic), `1` (embeddings), `2` (LLM) |
-| `NUTRITION_SOURCE` | Comma-separated: `openfoodfacts,taco` |
-| `NOTIFIER` | `ntfy`, `gotify`, `webhook` |
+| `NUTRITION_SOURCE` | Comma-separated: `openfoodfacts,taco,usda` |
+| `MODEL_ADAPTER` | `ollama` — backing model for Tier 1–2 |
+| `STT_PROVIDER` | `whisper` — speech-to-text for audio messages |
+| `NOTIFIER` | `ntfy`, `gotify` |
 | `DEFAULT_TIMEZONE` | IANA timezone for daily rollup boundaries |
 
 ## Architecture
@@ -67,9 +69,14 @@ Modular monolith with clean internal interfaces. Adapters translate to/from prov
 formats — core never imports a provider SDK.
 
 ```
-[Messaging Adapter] → [Ingest] → [Parse pipeline] → [Store]
-                                          ↓
+[Messaging Adapter] → [Ingest] → [Parse pipeline] → [Store (SQLite)]
+      telegram                   deterministic        meals
+      discord                    ollama (opt)         food library
+      matrix                                          targets / rollups
+                                          ↓           pending meals (durable)
                               [Scheduler] → [Notifier]
+                                                ntfy / gotify
+                              [STT (opt)] → Whisper
                               [Dashboard (opt)]
 ```
 
