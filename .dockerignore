@@ -1,0 +1,30 @@
+# Git
+.git/
+.gitignore
+
+# Data and secrets
+data/
+.env
+*.db
+*.sqlite
+
+# Logs
+.logs/
+
+# Built binaries
+/bin/
+
+# Agent and IDE artifacts
+.agents/
+.impeccable/
+.claude/
+
+# docs (not needed at build time)
+BLUEPRINT.md
+DEFERRED.md
+README.md
+LICENSE
+
+# Misc
+*.onnx
+*.md
