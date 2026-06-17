@@ -161,6 +161,25 @@ type Notification struct {
 	Priority NotificationPriority
 }
 
+// PendingMeal is the short-lived conversational state of a meal that could not
+// be fully resolved on first parse. The items that resolved cleanly are held in
+// Resolved; the ones the user must clarify (no food match, or a count-based
+// portion with unknown grams) are held in Pending, in the order they will be
+// asked. The meal is only persisted once Pending is empty, so DietDaemon never
+// silently logs a guessed macro. Pending is keyed by user; a newer pending meal
+// replaces an older one.
+type PendingMeal struct {
+	UserID      string
+	At          time.Time // event time, UTC
+	RawText     string    // the original message text, for the audit trail
+	Confidence  float64
+	ParserTier  ParserTier
+	ChannelMeta map[string]string // echoed so the follow-up routes to the same chat
+	Resolved    []ResolvedItem    // already-good items, committed at finalize
+	Pending     []ResolvedItem    // open questions; kind derived from Match.FoodID
+	CreatedAt   time.Time         // for short-lived expiry
+}
+
 // DailyTargets holds a user's daily macro goals.
 type DailyTargets struct {
 	UserID  string

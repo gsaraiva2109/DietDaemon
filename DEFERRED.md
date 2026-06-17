@@ -36,6 +36,14 @@ All schema tables are keyed by `user_id` from day one, but the system currently 
 single-user. The auth mechanism (API keys, OAuth, simple token) and multi-user gating
 will be added when the `MULTI_USER` feature flag is introduced.
 
+## Durable pending-meal store
+
+`ports.PendingStore` (clarification-loop state) currently has only the in-memory
+TTL impl in `internal/pending`, so an open clarification is lost on restart. A
+SQLite-backed impl behind the same port (mechanical, `[deepseek]`) would survive
+restarts. Deferred because the in-memory TTL already satisfies the "short-lived"
+requirement for the single-user baseline.
+
 ## Per-user timezone override
 
 Currently handled by the single `DEFAULT_TIMEZONE` env var for the sole user. Per-user

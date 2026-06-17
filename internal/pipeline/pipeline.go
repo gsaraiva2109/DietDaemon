@@ -44,15 +44,24 @@ type Replier interface {
 	Send(ctx context.Context, reply types.Reply) error
 }
 
+// PendingStore holds short-lived per-user clarification state. Satisfied by
+// internal/pending and any ports.PendingStore.
+type PendingStore interface {
+	Save(ctx context.Context, pm types.PendingMeal) error
+	Get(ctx context.Context, userID string) (types.PendingMeal, error)
+	Delete(ctx context.Context, userID string) error
+}
+
 // Engine processes one message at a time. It is safe for sequential use by a
 // single consumer goroutine draining the queue.
 type Engine struct {
 	parser    Parser
 	resolver  Resolver
 	store     MealStore
+	pending   PendingStore
 	replier   Replier
 	loc       *time.Location
-	threshold float64 // replies flag clarification when confidence < threshold
+	threshold float64 // replies flag low confidence when confidence < threshold
 
 	now   func() time.Time
 	idgen func() string
@@ -60,8 +69,8 @@ type Engine struct {
 
 // New builds an Engine. loc is the default timezone used for daily rollup
 // boundaries; threshold is the confidence below which a reply nudges the user
-// to clarify.
-func New(p Parser, r Resolver, s MealStore, replier Replier, loc *time.Location, threshold float64) *Engine {
+// to double-check amounts. pending holds the clarification loop's state.
+func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64) *Engine {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -69,6 +78,7 @@ func New(p Parser, r Resolver, s MealStore, replier Replier, loc *time.Location,
 		parser:    p,
 		resolver:  r,
 		store:     s,
+		pending:   pending,
 		replier:   replier,
 		loc:       loc,
 		threshold: threshold,
@@ -97,9 +107,19 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 		return fmt.Errorf("pipeline: upsert user: %w", err)
 	}
 
-	// Commands take precedence over meal logging.
+	// Commands take precedence over meal logging and the clarification loop.
 	if strings.HasPrefix(text, "/target") {
 		return e.handleTarget(ctx, msg, text)
+	}
+	if strings.HasPrefix(strings.ToLower(text), "/cancel") {
+		return e.cancelPending(ctx, msg)
+	}
+
+	// A live pending meal turns the next message into a clarification answer.
+	if pm, err := e.pending.Get(ctx, msg.UserID); err == nil {
+		return e.handleClarification(ctx, msg, pm, text)
+	} else if !isNotFound(err) {
+		return fmt.Errorf("pipeline: get pending: %w", err)
 	}
 
 	// Stage A.
@@ -114,13 +134,130 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	// Stage B.
 	resolved, needsClarification := e.resolver.Resolve(ctx, msg.UserID, items)
 
-	// Persist the meal.
+	// Fully resolved: log it now.
+	if needsClarification == 0 {
+		return e.commitMeal(ctx, msg.UserID, msg.ChannelMeta, at, text, confidence, resolved)
+	}
+
+	// Some items need a portion or a correction. Hold the meal as pending state
+	// and ask back through the channel rather than logging a guessed macro.
+	good, open := splitResolved(resolved)
+	pm := types.PendingMeal{
+		UserID:      msg.UserID,
+		At:          at,
+		RawText:     text,
+		Confidence:  confidence,
+		ParserTier:  e.parser.Tier(),
+		ChannelMeta: msg.ChannelMeta,
+		Resolved:    good,
+		Pending:     open,
+		CreatedAt:   e.now().UTC(),
+	}
+	if err := e.pending.Save(ctx, pm); err != nil {
+		return fmt.Errorf("pipeline: save pending: %w", err)
+	}
+	return e.reply(ctx, msg, askText(pm))
+}
+
+// handleClarification interprets the user's reply as an answer to the first open
+// question of a pending meal: a portion (grams) for a known food, a corrected
+// item phrase for an unrecognized food, "skip" to drop it, or "cancel" to
+// discard the whole pending meal. When the last question is answered the meal is
+// finalized and logged.
+func (e *Engine) handleClarification(ctx context.Context, msg types.InboundMessage, pm types.PendingMeal, text string) error {
+	lower := strings.ToLower(strings.TrimSpace(text))
+
+	switch lower {
+	case "cancel":
+		return e.cancelPending(ctx, msg)
+	case "skip":
+		pm.Pending = pm.Pending[1:] // drop the current question
+		return e.advance(ctx, msg, pm)
+	}
+
+	q := pm.Pending[0]
+	if q.Match.FoodID == "" {
+		// Unknown food: treat the reply as a corrected item and re-resolve it.
+		items, _, err := e.parser.Extract(ctx, text, msg.Locale)
+		if err != nil {
+			return fmt.Errorf("pipeline: parse correction: %w", err)
+		}
+		if len(items) == 0 {
+			return e.reply(ctx, msg, "Didn't catch a food there. "+questionText(q))
+		}
+		re, _ := e.resolver.Resolve(ctx, msg.UserID, items[:1])
+		ri := re[0]
+		switch {
+		case ri.Match.FoodID == "":
+			return e.reply(ctx, msg, "Still don't recognize that one. "+questionText(ri))
+		case ri.Parsed.NormalizedGrams <= 0:
+			// Now recognized, but still no weight: ask for the portion.
+			pm.Pending[0] = ri
+			if err := e.pending.Save(ctx, pm); err != nil {
+				return fmt.Errorf("pipeline: save pending: %w", err)
+			}
+			return e.reply(ctx, msg, questionText(ri))
+		default:
+			pm.Resolved = append(pm.Resolved, ri)
+			pm.Pending = pm.Pending[1:]
+			return e.advance(ctx, msg, pm)
+		}
+	}
+
+	// Known food, missing portion: expect grams.
+	grams, ok := parseGrams(text, q.Parsed.Quantity)
+	if !ok {
+		return e.reply(ctx, msg, "Reply with a weight in grams. "+questionText(q))
+	}
+	q.Parsed.NormalizedGrams = grams
+	q.Macros = q.Match.Per100g.Scale(grams / 100.0)
+	pm.Resolved = append(pm.Resolved, q)
+	pm.Pending = pm.Pending[1:]
+	return e.advance(ctx, msg, pm)
+}
+
+// advance finalizes the meal when no questions remain, otherwise persists the
+// updated pending state and asks the next question.
+func (e *Engine) advance(ctx context.Context, msg types.InboundMessage, pm types.PendingMeal) error {
+	if len(pm.Pending) == 0 {
+		if err := e.pending.Delete(ctx, msg.UserID); err != nil {
+			return fmt.Errorf("pipeline: delete pending: %w", err)
+		}
+		if len(pm.Resolved) == 0 {
+			return e.reply(ctx, msg, "Nothing left to log — all items were skipped.")
+		}
+		return e.commitMeal(ctx, pm.UserID, pm.ChannelMeta, pm.At, pm.RawText, pm.Confidence, pm.Resolved)
+	}
+	if err := e.pending.Save(ctx, pm); err != nil {
+		return fmt.Errorf("pipeline: save pending: %w", err)
+	}
+	return e.reply(ctx, msg, questionText(pm.Pending[0]))
+}
+
+// cancelPending discards any open pending meal for the user.
+func (e *Engine) cancelPending(ctx context.Context, msg types.InboundMessage) error {
+	_, err := e.pending.Get(ctx, msg.UserID)
+	if isNotFound(err) {
+		return e.reply(ctx, msg, "Nothing pending to cancel.")
+	}
+	if err != nil {
+		return fmt.Errorf("pipeline: get pending: %w", err)
+	}
+	if err := e.pending.Delete(ctx, msg.UserID); err != nil {
+		return fmt.Errorf("pipeline: delete pending: %w", err)
+	}
+	return e.reply(ctx, msg, "Discarded the pending meal.")
+}
+
+// commitMeal persists a fully resolved meal, folds it into the day's rollup, and
+// acknowledges it. Shared by the direct path and the clarification finalize.
+func (e *Engine) commitMeal(ctx context.Context, userID string, meta map[string]string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) error {
 	meal := types.Meal{
 		ID:         e.idgen(),
-		UserID:     msg.UserID,
+		UserID:     userID,
 		At:         at,
-		RawText:    text,
-		Items:      resolved,
+		RawText:    rawText,
+		Items:      items,
 		Confidence: confidence,
 		ParserTier: e.parser.Tier(),
 		CreatedAt:  e.now().UTC(),
@@ -128,13 +265,23 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	if err := e.store.SaveMeal(ctx, meal); err != nil {
 		return fmt.Errorf("pipeline: save meal: %w", err)
 	}
-
-	// Fold into the day's rollup, in the user's local calendar day.
-	if err := e.updateRollup(ctx, msg.UserID, at, meal.Total()); err != nil {
+	if err := e.updateRollup(ctx, userID, at, meal.Total()); err != nil {
 		return fmt.Errorf("pipeline: update rollup: %w", err)
 	}
+	return e.replyMeta(ctx, userID, meta, e.summary(meal))
+}
 
-	return e.reply(ctx, msg, e.summary(meal, needsClarification, confidence))
+// splitResolved partitions resolved items into the ones ready to log and the
+// ones still needing clarification (no food match, or unknown portion).
+func splitResolved(items []types.ResolvedItem) (good, open []types.ResolvedItem) {
+	for _, ri := range items {
+		if ri.Match.FoodID == "" || ri.Parsed.NormalizedGrams <= 0 {
+			open = append(open, ri)
+		} else {
+			good = append(good, ri)
+		}
+	}
+	return good, open
 }
 
 // updateRollup adds the meal's macros to the user's rollup for its local day,
@@ -158,19 +305,83 @@ func (e *Engine) updateRollup(ctx context.Context, userID string, at time.Time, 
 	return e.store.UpsertRollup(ctx, rollup)
 }
 
-// summary builds the acknowledgement reply: totals plus a clarification nudge
-// when items were unresolved or overall confidence is low.
-func (e *Engine) summary(meal types.Meal, needsClarification int, confidence float64) string {
+// summary builds the acknowledgement reply for a logged meal: totals plus a
+// low-confidence nudge. By the time a meal is committed every item is resolved,
+// so clarification is handled before this, not here.
+func (e *Engine) summary(meal types.Meal) string {
 	t := meal.Total()
 	var b strings.Builder
 	fmt.Fprintf(&b, "Logged %d item(s).\n", len(meal.Items))
 	fmt.Fprintf(&b, "~%.0f kcal | P %.0fg · C %.0fg · F %.0fg", t.Calories, t.Protein, t.Carbs, t.Fat)
-	if needsClarification > 0 {
-		fmt.Fprintf(&b, "\n⚠ %d item(s) need a portion or weren't recognized — reply with grams.", needsClarification)
-	} else if confidence < e.threshold {
+	if meal.Confidence < e.threshold {
 		b.WriteString("\n⚠ Low confidence — double-check the amounts.")
 	}
 	return b.String()
+}
+
+// askText is the first reply when a meal goes pending: a short status plus the
+// first open question.
+func askText(pm types.PendingMeal) string {
+	var b strings.Builder
+	if len(pm.Resolved) > 0 {
+		fmt.Fprintf(&b, "Got %d item(s). ", len(pm.Resolved))
+	}
+	n := len(pm.Pending)
+	fmt.Fprintf(&b, "%d need%s clarification before I log this.\n", n, plural(n))
+	b.WriteString(questionText(pm.Pending[0]))
+	if n > 1 {
+		fmt.Fprintf(&b, "\n(%d more after this.)", n-1)
+	}
+	return b.String()
+}
+
+// questionText asks for the one piece of information a pending item is missing:
+// a portion for a known food, or a correction for an unrecognized one.
+func questionText(ri types.ResolvedItem) string {
+	if ri.Match.FoodID == "" {
+		return fmt.Sprintf("I don't recognize %q. Reply with the food and a weight (e.g. \"120g chicken\"), \"skip\", or \"cancel\".", ri.Parsed.RawPhrase)
+	}
+	if ri.Parsed.Quantity > 0 && ri.Parsed.Unit != "" && ri.Parsed.Unit != "unit" {
+		return fmt.Sprintf("How many grams is %q (%g %s)? Reply e.g. \"100g\" or \"50g each\" — or \"skip\"/\"cancel\".",
+			ri.Match.Name, ri.Parsed.Quantity, ri.Parsed.Unit)
+	}
+	return fmt.Sprintf("How many grams is %q? Reply e.g. \"100g\" — or \"skip\"/\"cancel\".", ri.Match.Name)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return "s"
+	}
+	return ""
+}
+
+// parseGrams reads a gram weight from a clarification reply. It accepts a bare
+// number, a "g"/"grams"/"gramas" suffix, and a per-unit form ("50 each",
+// "50g cada") which it multiplies by the item's quantity. ok is false when no
+// positive weight can be read.
+func parseGrams(text string, qty float64) (float64, bool) {
+	t := strings.ToLower(strings.TrimSpace(text))
+	perEach := strings.Contains(t, "each") || strings.Contains(t, "cada")
+
+	var num strings.Builder
+	for _, r := range t {
+		if (r >= '0' && r <= '9') || r == '.' {
+			num.WriteRune(r)
+		} else if num.Len() > 0 {
+			break
+		}
+	}
+	if num.Len() == 0 {
+		return 0, false
+	}
+	g, err := strconv.ParseFloat(num.String(), 64)
+	if err != nil || g <= 0 {
+		return 0, false
+	}
+	if perEach && qty > 0 {
+		g *= qty
+	}
+	return g, true
 }
 
 // handleTarget sets the user's daily macro goals from a command such as
@@ -218,10 +429,14 @@ func parseTargetCommand(text string) (types.Macros, bool) {
 }
 
 func (e *Engine) reply(ctx context.Context, msg types.InboundMessage, text string) error {
+	return e.replyMeta(ctx, msg.UserID, msg.ChannelMeta, text)
+}
+
+func (e *Engine) replyMeta(ctx context.Context, userID string, meta map[string]string, text string) error {
 	return e.replier.Send(ctx, types.Reply{
-		UserID:      msg.UserID,
+		UserID:      userID,
 		Text:        text,
-		ChannelMeta: msg.ChannelMeta,
+		ChannelMeta: meta,
 	})
 }
 

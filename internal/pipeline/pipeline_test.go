@@ -24,9 +24,13 @@ func (fakeParser) Tier() types.ParserTier { return types.TierDeterministic }
 type fakeResolver struct {
 	out  []types.ResolvedItem
 	need int
+	fn   func([]types.ParsedItem) ([]types.ResolvedItem, int) // optional, per-call
 }
 
-func (f fakeResolver) Resolve(context.Context, string, []types.ParsedItem) ([]types.ResolvedItem, int) {
+func (f fakeResolver) Resolve(_ context.Context, _ string, items []types.ParsedItem) ([]types.ResolvedItem, int) {
+	if f.fn != nil {
+		return f.fn(items)
+	}
 	return f.out, f.need
 }
 
@@ -74,6 +78,33 @@ func (r *fakeReplier) Send(_ context.Context, reply types.Reply) error {
 	return nil
 }
 
+func (r *fakeReplier) last() string {
+	if len(r.sent) == 0 {
+		return ""
+	}
+	return r.sent[len(r.sent)-1].Text
+}
+
+// fakePending is a non-expiring in-memory PendingStore for tests.
+type fakePending struct{ m map[string]types.PendingMeal }
+
+func newFakePending() *fakePending { return &fakePending{m: map[string]types.PendingMeal{}} }
+
+func (p *fakePending) Save(_ context.Context, pm types.PendingMeal) error {
+	p.m[pm.UserID] = pm
+	return nil
+}
+func (p *fakePending) Get(_ context.Context, userID string) (types.PendingMeal, error) {
+	if pm, ok := p.m[userID]; ok {
+		return pm, nil
+	}
+	return types.PendingMeal{}, types.ErrNotFound
+}
+func (p *fakePending) Delete(_ context.Context, userID string) error {
+	delete(p.m, userID)
+	return nil
+}
+
 func resolved(name string, m types.Macros) types.ResolvedItem {
 	return types.ResolvedItem{
 		Parsed: types.ParsedItem{RawPhrase: name, NormalizedGrams: 100},
@@ -90,7 +121,7 @@ func TestHandleLogsMealAndReplies(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
 		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
-		st, rp, time.UTC, 0.6,
+		st, newFakePending(), rp, time.UTC, 0.6,
 	)
 
 	msg := types.InboundMessage{
@@ -122,27 +153,139 @@ func TestHandleLogsMealAndReplies(t *testing.T) {
 	}
 }
 
-func TestHandleFlagsClarification(t *testing.T) {
+// portionPending returns a resolved item whose food is known but whose portion
+// is unknown — exactly what the resolver flags for a count-based "2 eggs".
+func portionPending(name string, per100g types.Macros, qty float64, unit string) types.ResolvedItem {
+	return types.ResolvedItem{
+		Parsed: types.ParsedItem{RawPhrase: name, Quantity: qty, Unit: unit, NormalizedGrams: 0},
+		Match:  types.FoodMatch{FoodID: name, Name: name, Per100g: per100g},
+	}
+}
+
+func TestClarificationHoldsMealAndAsks(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
-		fakeResolver{out: []types.ResolvedItem{resolved("eggs", types.Macros{})}, need: 1},
-		st, rp, time.UTC, 0.6,
+		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
+		st, newFakePending(), rp, time.UTC, 0.6,
 	)
 	msg := types.InboundMessage{UserID: "u1", Text: "2 eggs"}
 	if err := e.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
-	if len(rp.sent) != 1 || !strings.Contains(rp.sent[0].Text, "need a portion") {
-		t.Errorf("expected clarification nudge, got %+v", rp.sent)
+	// Nothing logged yet — the meal is held pending a portion.
+	if len(st.meals) != 0 {
+		t.Fatalf("meal must not be logged before clarification, got %d", len(st.meals))
+	}
+	if !strings.Contains(rp.last(), "How many grams") {
+		t.Errorf("expected a portion question, got %q", rp.last())
+	}
+}
+
+func TestClarificationPortionCompletesMeal(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
+		st, newFakePending(), rp, time.UTC, 0.6,
+	)
+	ctx := context.Background()
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	// User answers with a weight; "100g" of 155kcal/100g → 155 kcal logged.
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 1 {
+		t.Fatalf("meal should be logged after the portion answer, got %d", len(st.meals))
+	}
+	if got := st.meals[0].Total().Calories; got != 155 {
+		t.Errorf("logged calories = %v, want 155", got)
+	}
+	if got := st.meals[0].Items[0].Parsed.NormalizedGrams; got != 100 {
+		t.Errorf("normalized grams = %v, want 100", got)
+	}
+}
+
+func TestClarificationEachMultipliesByQuantity(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
+		st, newFakePending(), rp, time.UTC, 0.6,
+	)
+	ctx := context.Background()
+	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
+	// "50g each" × 2 eggs = 100g → 155 kcal.
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "50g each"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if got := st.meals[0].Items[0].Parsed.NormalizedGrams; got != 100 {
+		t.Errorf("normalized grams = %v, want 100 (50g each × 2)", got)
+	}
+}
+
+func TestClarificationCancelDiscards(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
+		st, newFakePending(), rp, time.UTC, 0.6,
+	)
+	ctx := context.Background()
+	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "cancel"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 0 {
+		t.Errorf("cancel must not log a meal, got %d", len(st.meals))
+	}
+	if !strings.Contains(rp.last(), "Discarded") {
+		t.Errorf("expected a discard confirmation, got %q", rp.last())
+	}
+}
+
+func TestClarificationUnknownFoodCorrected(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	calls := 0
+	res := fakeResolver{fn: func(items []types.ParsedItem) ([]types.ResolvedItem, int) {
+		calls++
+		if calls == 1 {
+			// First parse: food unrecognized.
+			return []types.ResolvedItem{{Parsed: items[0]}}, 1
+		}
+		// Correction re-resolves to a known food with a weight.
+		return []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 165})}, 0
+	}}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "xyz"}}, conf: 0.5},
+		res, st, newFakePending(), rp, time.UTC, 0.6,
+	)
+	ctx := context.Background()
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "xyz"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if !strings.Contains(rp.last(), "don't recognize") {
+		t.Errorf("expected an unrecognized-food question, got %q", rp.last())
+	}
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g chicken"}); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 1 || st.meals[0].Total().Calories != 165 {
+		t.Errorf("expected a 165 kcal meal after correction, got %+v", st.meals)
 	}
 }
 
 func TestHandleEmptyText(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(fakeParser{}, fakeResolver{}, st, rp, time.UTC, 0.6)
+	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6)
 	if err := e.Handle(context.Background(), types.InboundMessage{UserID: "u1", Text: "  "}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -157,7 +300,7 @@ func TestHandleEmptyText(t *testing.T) {
 func TestTargetCommandSetsGoals(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(fakeParser{}, fakeResolver{}, st, rp, time.UTC, 0.6)
+	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6)
 
 	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90"}
 	if err := e.Handle(context.Background(), msg); err != nil {
@@ -181,7 +324,7 @@ func TestRollupAccumulates(t *testing.T) {
 	e := New(
 		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
 		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
-		st, rp, time.UTC, 0.6,
+		st, newFakePending(), rp, time.UTC, 0.6,
 	)
 	at := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {

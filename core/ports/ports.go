@@ -98,3 +98,16 @@ type Store interface {
 
 	Close() error
 }
+
+// PendingStore holds the short-lived conversational state of meals awaiting
+// clarification, keyed by user (one open pending meal per user). The pipeline
+// stores a PendingMeal when an item needs a portion or correction and reads it
+// back to interpret the user's next message. Get returns types.ErrNotFound when
+// no live pending meal exists (including one that has expired). Implementations
+// expire entries after a short TTL; the in-memory impl in internal/pending is
+// the baseline, a durable SQLite-backed impl can follow behind this contract.
+type PendingStore interface {
+	Save(ctx context.Context, pm types.PendingMeal) error
+	Get(ctx context.Context, userID string) (types.PendingMeal, error)
+	Delete(ctx context.Context, userID string) error
+}
