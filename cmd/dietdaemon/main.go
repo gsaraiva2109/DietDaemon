@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/telegram"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
@@ -25,11 +26,16 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/pipeline"
 	"github.com/gsaraiva2109/dietdaemon/internal/queue"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
+	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
-// confidenceThreshold below which the pipeline nudges the user to double-check.
-const confidenceThreshold = 0.6
+const (
+	// confidenceThreshold below which the pipeline nudges the user to double-check.
+	confidenceThreshold = 0.6
+	// nudgeInterval is how often the scheduler re-evaluates daily progress.
+	nudgeInterval = 5 * time.Minute
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -73,18 +79,25 @@ func run() error {
 	res := resolver.New(st, sources...)
 	engine := pipeline.New(parser, res, st, msg, cfg.Location, confidenceThreshold)
 
+	var notifier ports.Notifier
 	if cfg.EnableNotifications {
-		if n, nerr := buildNotifier(cfg); nerr != nil {
-			return nerr
-		} else {
-			// Held for the Phase-3 scheduler; logged so misconfig surfaces now.
-			slog.Info("notifier ready", "notifier", n.Name())
+		notifier, err = buildNotifier(cfg)
+		if err != nil {
+			return err
 		}
+		slog.Info("notifier ready", "notifier", notifier.Name())
 	}
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Nudge scheduler: only meaningful when a notifier is configured.
+	if notifier != nil {
+		sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval)
+		go sched.Run(ctx)
+		slog.Info("scheduler running", "interval", nudgeInterval.String())
+	}
 
 	q := queue.NewMemory[types.InboundMessage](64)
 

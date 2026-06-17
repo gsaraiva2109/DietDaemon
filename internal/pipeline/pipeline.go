@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type MealStore interface {
 	UpsertUser(ctx context.Context, u types.User) error
 	SaveMeal(ctx context.Context, m types.Meal) error
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
+	SetTargets(ctx context.Context, t types.DailyTargets) error
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	UpsertRollup(ctx context.Context, r types.DailyRollup) error
 }
@@ -93,6 +95,11 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	// Ensure the user row exists (single-user today; keyed by user from day one).
 	if err := e.store.UpsertUser(ctx, types.User{ID: msg.UserID, Timezone: e.loc.String(), CreatedAt: e.now().UTC()}); err != nil {
 		return fmt.Errorf("pipeline: upsert user: %w", err)
+	}
+
+	// Commands take precedence over meal logging.
+	if strings.HasPrefix(text, "/target") {
+		return e.handleTarget(ctx, msg, text)
 	}
 
 	// Stage A.
@@ -164,6 +171,50 @@ func (e *Engine) summary(meal types.Meal, needsClarification int, confidence flo
 		b.WriteString("\n⚠ Low confidence — double-check the amounts.")
 	}
 	return b.String()
+}
+
+// handleTarget sets the user's daily macro goals from a command such as
+// "/target kcal=3000 protein=180 carbs=350 fat=90".
+func (e *Engine) handleTarget(ctx context.Context, msg types.InboundMessage, text string) error {
+	macros, ok := parseTargetCommand(text)
+	if !ok {
+		return e.reply(ctx, msg, "Usage: /target kcal=3000 protein=180 carbs=350 fat=90")
+	}
+	if err := e.store.SetTargets(ctx, types.DailyTargets{UserID: msg.UserID, Targets: macros}); err != nil {
+		return fmt.Errorf("pipeline: set targets: %w", err)
+	}
+	return e.reply(ctx, msg, fmt.Sprintf("Targets set: %.0f kcal | P %.0fg · C %.0fg · F %.0fg",
+		macros.Calories, macros.Protein, macros.Carbs, macros.Fat))
+}
+
+// parseTargetCommand reads "key=value" pairs after "/target" into a Macros. ok
+// is false if no recognized key was provided.
+func parseTargetCommand(text string) (types.Macros, bool) {
+	var m types.Macros
+	found := false
+	for _, f := range strings.Fields(text)[1:] { // skip "/target"
+		k, v, hasEq := strings.Cut(f, "=")
+		if !hasEq {
+			continue
+		}
+		val, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			continue
+		}
+		switch strings.ToLower(k) {
+		case "kcal", "calories", "cal":
+			m.Calories, found = val, true
+		case "protein", "p":
+			m.Protein, found = val, true
+		case "carbs", "c":
+			m.Carbs, found = val, true
+		case "fat", "f":
+			m.Fat, found = val, true
+		case "fiber":
+			m.Fiber, found = val, true
+		}
+	}
+	return m, found
 }
 
 func (e *Engine) reply(ctx context.Context, msg types.InboundMessage, text string) error {

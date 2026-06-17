@@ -33,18 +33,28 @@ func (f fakeResolver) Resolve(context.Context, string, []types.ParsedItem) ([]ty
 type fakeStore struct {
 	meals   []types.Meal
 	rollups map[string]types.DailyRollup
+	targets map[string]types.Macros
 	users   int
 }
 
-func newFakeStore() *fakeStore { return &fakeStore{rollups: map[string]types.DailyRollup{}} }
+func newFakeStore() *fakeStore {
+	return &fakeStore{rollups: map[string]types.DailyRollup{}, targets: map[string]types.Macros{}}
+}
 
 func (s *fakeStore) UpsertUser(context.Context, types.User) error { s.users++; return nil }
 func (s *fakeStore) SaveMeal(_ context.Context, m types.Meal) error {
 	s.meals = append(s.meals, m)
 	return nil
 }
-func (s *fakeStore) GetTargets(context.Context, string) (types.DailyTargets, error) {
+func (s *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTargets, error) {
+	if m, ok := s.targets[userID]; ok {
+		return types.DailyTargets{UserID: userID, Targets: m}, nil
+	}
 	return types.DailyTargets{}, types.ErrNotFound
+}
+func (s *fakeStore) SetTargets(_ context.Context, t types.DailyTargets) error {
+	s.targets[t.UserID] = t.Targets
+	return nil
 }
 func (s *fakeStore) GetRollup(_ context.Context, _, date string) (types.DailyRollup, error) {
 	if r, ok := s.rollups[date]; ok {
@@ -141,6 +151,27 @@ func TestHandleEmptyText(t *testing.T) {
 	}
 	if len(rp.sent) != 1 {
 		t.Errorf("want a guidance reply, got %+v", rp.sent)
+	}
+}
+
+func TestTargetCommandSetsGoals(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(fakeParser{}, fakeResolver{}, st, rp, time.UTC, 0.6)
+
+	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90"}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 0 {
+		t.Errorf("a command must not log a meal, got %d", len(st.meals))
+	}
+	got := st.targets["u1"]
+	if got.Calories != 3000 || got.Protein != 180 || got.Carbs != 350 || got.Fat != 90 {
+		t.Errorf("targets = %+v, want 3000/180/350/90", got)
+	}
+	if len(rp.sent) != 1 || !strings.Contains(rp.sent[0].Text, "Targets set") {
+		t.Errorf("reply = %+v, want confirmation", rp.sent)
 	}
 }
 
