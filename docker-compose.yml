@@ -8,8 +8,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Named volume preserves DB across redeploys. Docker manages
+    # permissions for the nonroot user (UID 65532) automatically.
     volumes:
-      - ./data:/data
+      - dietdaemon_data:/data
 
     # Internal port only — Dokploy Traefik routes to this.
     # Add domain in Dokploy UI (Domains tab → container port 8080).
@@ -33,6 +35,9 @@ services:
 #
 #  # Uncomment when ollama service above is active.
 #  ollama_data:
+
+volumes:
+  dietdaemon_data:
 
 networks:
   dokploy-network:
