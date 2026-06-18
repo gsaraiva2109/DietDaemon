@@ -39,6 +39,7 @@ type MealStore interface {
 
 	// Users & auth.
 	GetUser(ctx context.Context, userID string) (types.User, error)
+	UpsertUser(ctx context.Context, u types.User) error
 	ValidateToken(ctx context.Context, token string) (string, error)
 
 	// Food discovery.
@@ -202,7 +203,9 @@ func (h *Handler) authenticate(r *http.Request) (string, error) {
 	if h.authToken != "" {
 		return h.authenticateStaticToken(r)
 	}
-	// No auth configured: use "default" user for localhost, or any Origin.
+	// No auth configured: use "default" user. Ensure the user row exists
+	// so FK constraints (user_profiles, weight_log, etc.) are satisfied.
+	_ = h.store.UpsertUser(r.Context(), types.User{ID: "default", Timezone: h.loc.String(), CreatedAt: time.Now().UTC()})
 	return "default", nil
 }
 

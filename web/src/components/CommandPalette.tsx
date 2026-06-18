@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '@/lib/theme'
-import { useDemo } from '@/lib/demo'
+import { useDemo, DEMO_TOGGLE_ENABLED } from '@/lib/demo'
 import {
   TodayIcon,
   LogIcon,
@@ -66,15 +66,19 @@ export function CommandPalette() {
           setOpen(false)
         },
       },
-      {
-        id: 'demo',
-        label: demo ? 'Turn demo data off' : 'Turn demo data on',
-        Icon: SparkleIcon,
-        run: () => {
-          setDemo(!demo)
-          setOpen(false)
-        },
-      },
+      ...(DEMO_TOGGLE_ENABLED
+        ? [
+            {
+              id: 'demo',
+              label: demo ? 'Turn demo data off' : 'Turn demo data on',
+              Icon: SparkleIcon,
+              run: () => {
+                setDemo(!demo)
+                setOpen(false)
+              },
+            },
+          ]
+        : []),
     ]
   }, [navigate, theme, toggle, demo, setDemo])
 

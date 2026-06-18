@@ -92,9 +92,10 @@ func (s *Store) runMigrations() error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	// Bootstrap: if no migration has ever been tracked but the database already
-	// has tables (an existing install being upgraded to versioned migrations),
-	// mark every current migration file as already applied so they don't re-run.
+	// If no migration has ever been tracked but the database already has tables,
+	// this is an existing install being upgraded to versioned migrations. Log it
+	// but don't short-circuit — let the loop below apply any migration whose
+	// effects aren't visible yet (e.g. ALTER TABLE ADD COLUMN, new tables).
 	var tracked int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM schema_versions`).Scan(&tracked)
 
@@ -102,16 +103,7 @@ func (s *Store) runMigrations() error {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'`).Scan(&hasTables)
 
 	if tracked == 0 && hasTables > 0 {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-				continue
-			}
-			_, _ = s.db.Exec(`INSERT OR IGNORE INTO schema_versions (filename, applied_at) VALUES (?, ?)`,
-				entry.Name(), utcNow())
-		}
-		slog.Info("store: bootstrapped migration tracking for existing database",
-			"files", len(entries))
-		return nil
+		slog.Info("store: existing database detected, applying unrecorded migrations")
 	}
 
 	// Apply only migrations that haven't run yet.
@@ -131,10 +123,17 @@ func (s *Store) runMigrations() error {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		if _, err := s.db.Exec(string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			// ALTER TABLE ADD COLUMN fails when the column already exists on
+			// databases that predate migration tracking. Tolerate these so
+			// partial-upgrade DBs can catch up safely.
+			if strings.Contains(err.Error(), "duplicate column name") {
+				slog.Info("store: skipping already-present column", "file", entry.Name(), "err", err)
+			} else {
+				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			}
 		}
 
-		if _, err := s.db.Exec(`INSERT INTO schema_versions (filename, applied_at) VALUES (?, ?)`,
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_versions (filename, applied_at) VALUES (?, ?)`,
 			entry.Name(), utcNow()); err != nil {
 			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 		}

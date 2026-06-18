@@ -19,6 +19,13 @@ import type {
 
 const KEY = 'dd.demo'
 
+// Demo mode is a dev/preview affordance, not a product feature. The toggle (nav
+// button + command-palette entry + banner) only appears in a dev build, or in a
+// production build explicitly built with VITE_ENABLE_DEMO=1. When disabled, demo
+// is forced off regardless of any stale localStorage flag.
+export const DEMO_TOGGLE_ENABLED =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO === '1'
+
 interface DemoValue {
   demo: boolean
   setDemo: (v: boolean) => void
@@ -26,8 +33,11 @@ interface DemoValue {
 const DemoContext = createContext<DemoValue | null>(null)
 
 export function DemoProvider({ children }: { children: ReactNode }) {
-  const [demo, set] = useState<boolean>(() => localStorage.getItem(KEY) === '1')
+  const [demo, set] = useState<boolean>(
+    () => DEMO_TOGGLE_ENABLED && localStorage.getItem(KEY) === '1',
+  )
   function setDemo(v: boolean) {
+    if (!DEMO_TOGGLE_ENABLED) return
     set(v)
     localStorage.setItem(KEY, v ? '1' : '0')
   }

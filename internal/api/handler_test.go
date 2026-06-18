@@ -172,6 +172,7 @@ func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error)
 	}
 	return s.user, nil
 }
+func (s *fakeMealStore) UpsertUser(_ context.Context, u types.User) error { s.user = u; return nil }
 func (s *fakeMealStore) ValidateToken(_ context.Context, token string) (string, error) {
 	if s.validateErr != nil {
 		return "", s.validateErr

@@ -1,7 +1,7 @@
 // Top-right utility controls present on every screen: demo-mode toggle and
 // light/dark theme toggle. Reachable on mobile and desktop.
 
-import { useDemo } from '@/lib/demo'
+import { useDemo, DEMO_TOGGLE_ENABLED } from '@/lib/demo'
 import { SparkleIcon } from './icons'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -10,18 +10,20 @@ export function UtilityBar() {
 
   return (
     <div className="mb-2 flex items-center justify-end gap-2">
-      <button
-        onClick={() => setDemo(!demo)}
-        aria-pressed={demo}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-          demo
-            ? 'border-transparent bg-primary text-primary-ink'
-            : 'border-line bg-surface text-muted hover:text-ink'
-        }`}
-      >
-        <SparkleIcon width={15} height={15} />
-        Demo {demo ? 'on' : 'off'}
-      </button>
+      {DEMO_TOGGLE_ENABLED && (
+        <button
+          onClick={() => setDemo(!demo)}
+          aria-pressed={demo}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+            demo
+              ? 'border-transparent bg-primary text-primary-ink'
+              : 'border-line bg-surface text-muted hover:text-ink'
+          }`}
+        >
+          <SparkleIcon width={15} height={15} />
+          Demo {demo ? 'on' : 'off'}
+        </button>
+      )}
       <ThemeToggle />
     </div>
   )

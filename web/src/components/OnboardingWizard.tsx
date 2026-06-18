@@ -52,6 +52,10 @@ function emptyDraft(): Draft {
   }
 }
 
+// Decimal-friendly numeric input. A plain type="number" controlled by a number
+// strips a trailing "." on each keystroke, so "82.5" is impossible to type.
+// We hold the raw text locally, accept partial decimals while typing, and only
+// resync from the prop when it changes externally (e.g. edit-mode prefill).
 function NumberField({
   label,
   value,
@@ -63,15 +67,36 @@ function NumberField({
   unit: string
   onChange: (v: number) => void
 }) {
+  const [text, setText] = useState(() => (value ? String(value) : ''))
+
+  // Resync from the prop only when it changes externally (e.g. edit-mode
+  // prefill), not on our own keystrokes. Adjusting state during render with a
+  // previous-value guard is the documented alternative to a sync effect.
+  const [prevValue, setPrevValue] = useState(value)
+  if (value !== prevValue) {
+    setPrevValue(value)
+    const parsed = parseFloat(text)
+    const current = Number.isNaN(parsed) ? 0 : parsed
+    if (current !== value) setText(value ? String(value) : '')
+  }
+
+  function handle(raw: string) {
+    // Allow only digits and a single decimal point (incl. partial "0." / ".5").
+    if (!/^\d*\.?\d*$/.test(raw)) return
+    setText(raw)
+    const parsed = parseFloat(raw)
+    onChange(Number.isNaN(parsed) ? 0 : parsed)
+  }
+
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-medium text-muted">{label}</span>
       <div className="flex items-baseline gap-1">
         <input
-          type="number"
-          min={0}
-          value={value || ''}
-          onChange={(e) => onChange(Number(e.target.value))}
+          type="text"
+          inputMode="decimal"
+          value={text}
+          onChange={(e) => handle(e.target.value)}
           className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none transition focus:border-primary tnum"
         />
         <span className="text-sm text-muted">{unit}</span>
@@ -139,8 +164,6 @@ export function OnboardingWizard() {
     return { Calories: cal, Protein: tdee.protein_g, Carbs: tdee.carbs_g, Fat: tdee.fat_g, Fiber: 30 }
   }, [tdee, draft.goal])
 
-  if (!visible) return null
-
   const stepValid = (() => {
     switch (step) {
       case 0:
@@ -192,12 +215,15 @@ export function OnboardingWizard() {
 
   return (
     <AnimatePresence>
+      {visible && (
       <motion.div
+        key="onboarding"
         className="fixed inset-0 grid place-items-center p-4"
         style={{ zIndex: 1500 }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        transition={{ duration: 0.3, ease: easeOut }}
       >
         <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" style={{ zIndex: 1400 }} />
         <motion.div
@@ -206,7 +232,8 @@ export function OnboardingWizard() {
           aria-label="Set up your plan"
           initial={{ opacity: 0, scale: 0.97, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.97 }}
+          exit={{ opacity: 0, scale: 0.96, y: 8 }}
+          transition={{ duration: 0.3, ease: easeOut }}
           className="relative w-full max-w-lg rounded-xl border border-line bg-surface p-6 shadow-lift"
           style={{ zIndex: 1500 }}
         >
@@ -405,6 +432,7 @@ export function OnboardingWizard() {
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   )
 }
