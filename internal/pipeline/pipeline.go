@@ -536,6 +536,10 @@ func (e *Engine) reply(ctx context.Context, msg types.InboundMessage, text strin
 }
 
 func (e *Engine) replyMeta(ctx context.Context, userID string, meta map[string]string, text string) error {
+	// Web-originated messages have no channel metadata; skip the reply.
+	if len(meta) == 0 {
+		return nil
+	}
 	return e.replier.Send(ctx, types.Reply{
 		UserID:      userID,
 		Text:        text,

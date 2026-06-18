@@ -193,7 +193,7 @@ func TestClarificationHoldsMealAndAsks(t *testing.T) {
 		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
 		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
-	msg := types.InboundMessage{UserID: "u1", Text: "2 eggs"}
+	msg := types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}}
 	if err := e.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -215,11 +215,11 @@ func TestClarificationPortionCompletesMeal(t *testing.T) {
 		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"}); err != nil {
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	// User answers with a weight; "100g" of 155kcal/100g → 155 kcal logged.
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g"}); err != nil {
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if len(st.meals) != 1 {
@@ -242,9 +242,9 @@ func TestClarificationEachMultipliesByQuantity(t *testing.T) {
 		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
-	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
+	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}})
 	// "50g each" × 2 eggs = 100g → 155 kcal.
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "50g each"}); err != nil {
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "50g each", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if got := st.meals[0].Items[0].Parsed.NormalizedGrams; got != 100 {
@@ -261,8 +261,8 @@ func TestClarificationCancelDiscards(t *testing.T) {
 		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
-	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs"})
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "cancel"}); err != nil {
+	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}})
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "cancel", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if len(st.meals) != 0 {
@@ -291,13 +291,13 @@ func TestClarificationUnknownFoodCorrected(t *testing.T) {
 		res, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil,
 	)
 	ctx := context.Background()
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "xyz"}); err != nil {
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "xyz", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if !strings.Contains(rp.last(), "don't recognize") {
 		t.Errorf("expected an unrecognized-food question, got %q", rp.last())
 	}
-	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g chicken"}); err != nil {
+	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "100g chicken", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if len(st.meals) != 1 || st.meals[0].Total().Calories != 165 {
@@ -309,7 +309,7 @@ func TestHandleEmptyText(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil)
-	if err := e.Handle(context.Background(), types.InboundMessage{UserID: "u1", Text: "  "}); err != nil {
+	if err := e.Handle(context.Background(), types.InboundMessage{UserID: "u1", Text: "  ", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if len(st.meals) != 0 {
@@ -325,7 +325,7 @@ func TestTargetCommandSetsGoals(t *testing.T) {
 	rp := &fakeReplier{}
 	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil)
 
-	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90"}
+	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90", ChannelMeta: map[string]string{"chat_id": "42"}}
 	if err := e.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRollupAccumulates(t *testing.T) {
 	)
 	at := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		msg := types.InboundMessage{UserID: "u1", At: at, Text: "100g rice"}
+		msg := types.InboundMessage{UserID: "u1", At: at, Text: "100g rice", ChannelMeta: map[string]string{"chat_id": "42"}}
 		if err := e.Handle(context.Background(), msg); err != nil {
 			t.Fatalf("Handle error = %v", err)
 		}

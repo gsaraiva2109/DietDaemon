@@ -17,6 +17,7 @@ import {
   GoalIcon,
 } from './icons'
 import { UtilityBar, DemoBanner } from './UtilityBar'
+import { demoAvailable } from '@/lib/demo'
 
 interface NavItem {
   to: string
@@ -122,7 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="px-5 pb-28 pt-6 md:ml-60 md:px-10 md:pb-10 md:pt-8">
         <div className="mx-auto w-full max-w-5xl">
           <UtilityBar />
-          <DemoBanner />
+          {demoAvailable() && <DemoBanner />}
           {children}
         </div>
       </main>
