@@ -1,5 +1,8 @@
 services:
   dietdaemon:
+    # Image pulled from GHCR (built by CI). Remove the image line and
+    # uncomment build: . for local development with `docker compose up --build`.
+    # build: .
     image: ghcr.io/gsaraiva2109/dietdaemon:latest
     container_name: dietdaemon
     restart: unless-stopped
@@ -8,20 +11,13 @@ services:
     volumes:
       - ./data:/data
 
-    # Dokploy Traefik routing — no host port needed.
-    # dietdaemon listens on :8080 internally; Traefik routes
-    # diet.gsaraiva.com.br → container:8080.
+    # Internal port only — Dokploy Traefik routes to this.
+    # Add domain in Dokploy UI (Domains tab → container port 8080).
     expose:
       - 8080
 
     networks:
       - dokploy-network
-
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.dietdaemon.rule=Host(`diet.gsaraiva.com.br`)
-      - traefik.http.routers.dietdaemon.entrypoints=web
-      - traefik.http.services.dietdaemon.loadbalancer.server.port=8080
 
 #  # Opt-in AI: docker compose --profile ai up
 #  ollama:
