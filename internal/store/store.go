@@ -39,6 +39,15 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("store: open db: %w", err)
 	}
 
+	// EXCLUSIVE locking before WAL avoids shared-memory (-shm) entirely.
+	// SQLite keeps the wal-index in heap memory instead of mmap'ing a file.
+	// Required for Docker Swarm / some overlay filesystems where the VFS
+	// shared-memory primitives (xShmMap, xShmLock, etc.) don't work.
+	if _, err := db.Exec("PRAGMA locking_mode = EXCLUSIVE"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: exclusive lock: %w", err)
+	}
+
 	// Enable WAL mode for concurrent reads and writes.
 	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
 		db.Close()
