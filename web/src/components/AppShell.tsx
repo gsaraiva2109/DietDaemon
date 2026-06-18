@@ -8,6 +8,7 @@ import {
   LogIcon,
   HistoryIcon,
   TrendsIcon,
+  SummaryIcon,
   SettingsIcon,
   LeafIcon,
 } from './icons'
@@ -18,6 +19,7 @@ const NAV = [
   { to: '/log', label: 'Log', Icon: LogIcon, end: false },
   { to: '/history', label: 'History', Icon: HistoryIcon, end: false },
   { to: '/trends', label: 'Trends', Icon: TrendsIcon, end: false },
+  { to: '/summary', label: 'Summary', Icon: SummaryIcon, end: false },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon, end: false },
 ]
 

@@ -14,7 +14,7 @@ import {
 } from '@tanstack/react-query'
 import { api, ApiError } from './api'
 import { useDemo, demoToday, demoRange, DEMO_MEALS } from './demo'
-import type { DailyRollup, Meal, ResolvedItem } from './types'
+import type { DailyRollup, Macros, Meal, ResolvedItem } from './types'
 
 const POLL_MS = 30_000
 
@@ -84,15 +84,60 @@ export function useLogMeal() {
   })
 }
 
+function refreshMeal(qc: ReturnType<typeof useQueryClient>, mealID: string, updated: Meal) {
+  qc.setQueryData(keys.meal(mealID, false), updated)
+  qc.invalidateQueries({ queryKey: ['rollup'] })
+  qc.invalidateQueries({ queryKey: ['meals'] })
+}
+
 export function useCorrectItem(mealID: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ index, corrected }: { index: number; corrected: ResolvedItem }) =>
       api.correctItem(mealID, index, corrected),
-    onSuccess: (updated: Meal) => {
-      qc.setQueryData(keys.meal(mealID, false), updated)
+    onSuccess: (updated: Meal) => refreshMeal(qc, mealID, updated),
+  })
+}
+
+export function useAddItem(mealID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item: ResolvedItem) => api.addItem(mealID, item),
+    onSuccess: (updated: Meal) => refreshMeal(qc, mealID, updated),
+  })
+}
+
+export function useDeleteItem(mealID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (index: number) => api.deleteItem(mealID, index),
+    onSuccess: (updated: Meal) => refreshMeal(qc, mealID, updated),
+  })
+}
+
+export function useTargets() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['targets', demo],
+    queryFn: async () => {
+      try {
+        return (await api.getTargets()).Targets
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null
+        throw err
+      }
+    },
+    enabled: !demo,
+  })
+}
+
+export function useSetTargets() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (targets: Macros) => api.setTargets(targets),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['targets'] })
       qc.invalidateQueries({ queryKey: ['rollup'] })
-      qc.invalidateQueries({ queryKey: ['meals'] })
     },
   })
 }

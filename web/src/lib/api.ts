@@ -2,7 +2,7 @@
 // is same-origin in production (Go serves the SPA) and proxied in dev (see
 // vite.config.ts). The Bearer token, when set, lives in localStorage.
 
-import type { DailyRollup, Meal, ResolvedItem } from './types'
+import type { DailyRollup, Macros, Meal, ResolvedItem } from './types'
 
 const BASE = '/api/v1'
 const TOKEN_KEY = 'dd.token'
@@ -79,6 +79,28 @@ export const api = {
       `/meals/${encodeURIComponent(mealID)}/items/${itemIndex}/correct`,
       { method: 'POST', body: JSON.stringify(corrected) },
     ),
+
+  // Append an item to a meal; returns the updated meal.
+  addItem: (mealID: string, item: ResolvedItem) =>
+    request<Meal>(`/meals/${encodeURIComponent(mealID)}/items`, {
+      method: 'POST',
+      body: JSON.stringify(item),
+    }),
+
+  // Remove the item at the zero-based index; returns the updated meal.
+  deleteItem: (mealID: string, itemIndex: number) =>
+    request<Meal>(`/meals/${encodeURIComponent(mealID)}/items/${itemIndex}`, {
+      method: 'DELETE',
+    }),
+
+  getTargets: () => request<{ UserID: string; Targets: Macros }>('/targets'),
+
+  // Body is a bare Macros object; returns the saved targets.
+  setTargets: (targets: Macros) =>
+    request<{ UserID: string; Targets: Macros }>('/targets', {
+      method: 'PUT',
+      body: JSON.stringify(targets),
+    }),
 
   // 202 Accepted; processing is asynchronous (poll rollup/meals afterward).
   logMeal: (text: string) =>

@@ -685,6 +685,144 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	return tx.Commit()
 }
 
+// AddMealItem appends a resolved item to an existing meal and adds its macros
+// to that day's rollup. Mirrors CorrectMealItem's delta approach.
+func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item types.ResolvedItem) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var atUTC, mealUser string
+	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC, &mealUser); err != nil {
+		if err == sql.ErrNoRows {
+			return types.ErrNotFound
+		}
+		return fmt.Errorf("store: get meal: %w", err)
+	}
+	if mealUser != userID {
+		return types.ErrNotFound
+	}
+
+	const itemQ = `
+		INSERT INTO resolved_items
+			(id, meal_id, raw_phrase, quantity, unit, normalized_grams,
+			 food_id, food_name, source, match_score,
+			 kcal, protein, carbs, fat, fiber)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	if _, err := tx.ExecContext(ctx, itemQ,
+		newID(), mealID,
+		item.Parsed.RawPhrase, item.Parsed.Quantity, item.Parsed.Unit, item.Parsed.NormalizedGrams,
+		item.Match.FoodID, item.Match.Name, item.Match.Source, item.Match.MatchScore,
+		item.Macros.Calories, item.Macros.Protein, item.Macros.Carbs, item.Macros.Fat, item.Macros.Fiber,
+	); err != nil {
+		return fmt.Errorf("store: insert resolved_item: %w", err)
+	}
+
+	localDate := parseUTC(atUTC).Format("2006-01-02")
+	const rollupQ = `
+		INSERT INTO daily_rollups
+			(user_id, date,
+			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
+			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			consumed_kcal    = consumed_kcal    + ?,
+			consumed_protein = consumed_protein + ?,
+			consumed_carbs   = consumed_carbs   + ?,
+			consumed_fat     = consumed_fat     + ?,
+			consumed_fiber   = consumed_fiber   + ?
+	`
+	m := item.Macros
+	if _, err := tx.ExecContext(ctx, rollupQ,
+		userID, localDate,
+		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
+		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
+	); err != nil {
+		return fmt.Errorf("store: update rollup: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// DeleteMealItem removes the item at itemIndex (zero-based, rowid order) from a
+// meal and subtracts its macros from that day's rollup.
+func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemIndex int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var atUTC, mealUser string
+	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC, &mealUser); err != nil {
+		if err == sql.ErrNoRows {
+			return types.ErrNotFound
+		}
+		return fmt.Errorf("store: get meal: %w", err)
+	}
+	if mealUser != userID {
+		return types.ErrNotFound
+	}
+
+	const itemsQ = `
+		SELECT rowid, kcal, protein, carbs, fat, fiber
+		FROM resolved_items WHERE meal_id = ? ORDER BY rowid
+	`
+	rows, err := tx.QueryContext(ctx, itemsQ, mealID)
+	if err != nil {
+		return fmt.Errorf("store: query items: %w", err)
+	}
+	type row struct {
+		rowid int64
+		m     types.Macros
+	}
+	var items []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.rowid, &r.m.Calories, &r.m.Protein, &r.m.Carbs, &r.m.Fat, &r.m.Fiber); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: scan item: %w", err)
+		}
+		items = append(items, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: items rows: %w", err)
+	}
+	if itemIndex < 0 || itemIndex >= len(items) {
+		return fmt.Errorf("store: item index %d out of range [0, %d): %w", itemIndex, len(items), types.ErrNotFound)
+	}
+
+	target := items[itemIndex]
+	if _, err := tx.ExecContext(ctx, `DELETE FROM resolved_items WHERE rowid = ?`, target.rowid); err != nil {
+		return fmt.Errorf("store: delete item: %w", err)
+	}
+
+	localDate := parseUTC(atUTC).Format("2006-01-02")
+	const rollupQ = `
+		UPDATE daily_rollups SET
+			consumed_kcal    = consumed_kcal    - ?,
+			consumed_protein = consumed_protein - ?,
+			consumed_carbs   = consumed_carbs   - ?,
+			consumed_fat     = consumed_fat     - ?,
+			consumed_fiber   = consumed_fiber   - ?
+		WHERE user_id = ? AND date = ?
+	`
+	m := target.m
+	if _, err := tx.ExecContext(ctx, rollupQ,
+		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber, userID, localDate,
+	); err != nil {
+		return fmt.Errorf("store: update rollup: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // ---------------------------------------------------------------------------
 // Targets
 // ---------------------------------------------------------------------------
@@ -716,6 +854,30 @@ func (s *Store) SetTargets(ctx context.Context, t types.DailyTargets) error {
 	`
 	_, err := s.db.ExecContext(ctx, q, t.UserID,
 		t.Targets.Calories, t.Targets.Protein, t.Targets.Carbs, t.Targets.Fat, t.Targets.Fiber,
+	)
+	return err
+}
+
+// UpdateRollupTargets writes the target columns of a day's rollup (creating the
+// row with zero consumption if absent) so a targets change shows immediately on
+// the dashboard, which reads targets from the rollup.
+func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error {
+	const q = `
+		INSERT INTO daily_rollups
+			(user_id, date,
+			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
+			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
+		VALUES (?, ?, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			target_kcal    = ?,
+			target_protein = ?,
+			target_carbs   = ?,
+			target_fat     = ?,
+			target_fiber   = ?
+	`
+	_, err := s.db.ExecContext(ctx, q, userID, localDate,
+		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
+		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
 	)
 	return err
 }

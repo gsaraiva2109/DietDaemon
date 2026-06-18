@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useMeal } from '@/lib/queries'
+import { useMeal, useDeleteItem } from '@/lib/queries'
+import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, Pill, Spinner, Button } from '@/components/ui'
 import { CorrectItemModal } from '@/components/CorrectItemModal'
-import { ChevronLeft } from '@/components/icons'
+import { ChevronLeft, LogIcon, CloseIcon } from '@/components/icons'
 import {
   clockTime,
   confidenceLabel,
@@ -17,7 +18,10 @@ import { MACRO_KEYS, MACRO_META } from '@/lib/types'
 export function MealDetail() {
   const { mealID } = useParams()
   const meal = useMeal(mealID)
-  const [correcting, setCorrecting] = useState<number | null>(null)
+  const del = useDeleteItem(mealID ?? '')
+  const { demo } = useDemo()
+  // null = closed; -1 = add mode; >=0 = correcting that index.
+  const [editing, setEditing] = useState<number | null>(null)
 
   if (meal.isLoading) return <Spinner label="Loading meal" />
   if (meal.isError || !meal.data) {
@@ -42,8 +46,15 @@ export function MealDetail() {
         </div>
       </PageHeader>
 
-      <div className="mb-5 text-sm text-muted">
-        <span className="text-2xl font-bold text-ink tnum">{formatNumber(total)}</span> kcal total
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          <span className="text-2xl font-bold text-ink tnum">{formatNumber(total)}</span> kcal total
+        </p>
+        {!demo && (
+          <Button variant="ghost" onClick={() => setEditing(-1)} className="px-3 py-1.5 text-xs">
+            <LogIcon width={15} height={15} /> Add item
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-3">
@@ -56,9 +67,21 @@ export function MealDetail() {
                   {formatGrams(it.Parsed.NormalizedGrams)} · {it.Match.Source}
                 </p>
               </div>
-              <Button variant="ghost" onClick={() => setCorrecting(i)} className="shrink-0 px-3 py-1.5 text-xs">
-                Correct
-              </Button>
+              {!demo && (
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button variant="ghost" onClick={() => setEditing(i)} className="px-3 py-1.5 text-xs">
+                    Correct
+                  </Button>
+                  <button
+                    onClick={() => del.mutate(i)}
+                    disabled={del.isPending}
+                    aria-label={`Remove ${it.Match.Name || it.Parsed.RawPhrase}`}
+                    className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent disabled:opacity-50"
+                  >
+                    <CloseIcon width={16} height={16} />
+                  </button>
+                </div>
+              )}
             </div>
             <dl className="mt-3 grid grid-cols-5 gap-2 border-t border-line pt-3">
               {MACRO_KEYS.map((k) => (
@@ -70,10 +93,15 @@ export function MealDetail() {
             </dl>
           </Card>
         ))}
+        {!m.Items.length && <p className="text-muted">No items in this meal.</p>}
       </div>
 
-      {correcting !== null && (
-        <CorrectItemModal meal={m} index={correcting} onClose={() => setCorrecting(null)} />
+      {editing !== null && (
+        <CorrectItemModal
+          meal={m}
+          index={editing === -1 ? undefined : editing}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   )

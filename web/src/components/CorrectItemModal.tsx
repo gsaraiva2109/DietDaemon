@@ -1,40 +1,53 @@
-// Correct one resolved item. The backend expects the COMPLETE ResolvedItem
-// back at a zero-based index; we edit a copy and POST the whole object. Keeps
-// the product's "honest about uncertainty" principle: fixing a guess is easy.
+// Add or correct a resolved item. The backend expects the COMPLETE
+// ResolvedItem; correct targets a zero-based index, add appends. Keeps the
+// product's "honest about uncertainty" principle: fixing/adding is easy.
 
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { Meal, MacroKey, ResolvedItem } from '@/lib/types'
 import { MACRO_KEYS, MACRO_META } from '@/lib/types'
-import { useCorrectItem } from '@/lib/queries'
+import { useCorrectItem, useAddItem } from '@/lib/queries'
 import { Button } from './ui'
 import { CloseIcon } from './icons'
 
 interface Props {
   meal: Meal
-  index: number
+  /** index to correct; omit (undefined) to add a new item */
+  index?: number
   onClose: () => void
 }
 
+const BLANK: ResolvedItem = {
+  Parsed: { RawPhrase: '', Quantity: 0, Unit: 'g', NormalizedGrams: 0, Locale: '' },
+  Match: { FoodID: '', Name: '', Source: 'manual', Per100g: { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }, MatchScore: 1 },
+  Macros: { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 },
+}
+
 export function CorrectItemModal({ meal, index, onClose }: Props) {
-  const item = meal.Items[index]
+  const isAdd = index === undefined
+  const base = isAdd ? BLANK : meal.Items[index]
   const correct = useCorrectItem(meal.ID)
-  const [name, setName] = useState(item.Match.Name)
-  const [grams, setGrams] = useState(item.Parsed.NormalizedGrams)
-  const [macros, setMacros] = useState({ ...item.Macros })
+  const add = useAddItem(meal.ID)
+  const pending = correct.isPending || add.isPending
+  const error = correct.error ?? add.error
+
+  const [name, setName] = useState(base.Match.Name)
+  const [grams, setGrams] = useState(base.Parsed.NormalizedGrams)
+  const [macros, setMacros] = useState({ ...base.Macros })
 
   function setMacro(key: MacroKey, v: number) {
     setMacros((m) => ({ ...m, [key]: v }))
   }
 
   function submit() {
-    const corrected: ResolvedItem = {
-      ...item,
-      Parsed: { ...item.Parsed, NormalizedGrams: grams },
-      Match: { ...item.Match, Name: name },
+    const result: ResolvedItem = {
+      ...base,
+      Parsed: { ...base.Parsed, RawPhrase: base.Parsed.RawPhrase || name, NormalizedGrams: grams, Quantity: grams || base.Parsed.Quantity },
+      Match: { ...base.Match, Name: name },
       Macros: macros,
     }
-    correct.mutate({ index, corrected }, { onSuccess: onClose })
+    if (isAdd) add.mutate(result, { onSuccess: onClose })
+    else correct.mutate({ index, corrected: result }, { onSuccess: onClose })
   }
 
   return (
@@ -46,15 +59,11 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
-          className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
-          style={{ zIndex: 1200 }}
-          onClick={onClose}
-        />
+        <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" style={{ zIndex: 1200 }} onClick={onClose} />
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label={`Correct ${item.Match.Name}`}
+          aria-label={isAdd ? 'Add item' : `Correct ${base.Match.Name}`}
           initial={{ opacity: 0, scale: 0.97, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97 }}
@@ -63,8 +72,10 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
         >
           <div className="mb-5 flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">Correct item</p>
-              <h2 className="mt-1 text-xl font-bold text-ink">{item.Parsed.RawPhrase}</h2>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+                {isAdd ? 'Add item' : 'Correct item'}
+              </p>
+              <h2 className="mt-1 text-xl font-bold text-ink">{isAdd ? 'New food' : base.Parsed.RawPhrase}</h2>
             </div>
             <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
               <CloseIcon />
@@ -75,7 +86,9 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
             <span className="mb-1 block text-xs font-medium text-muted">Food name</span>
             <input
               value={name}
+              autoFocus={isAdd}
               onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Greek yogurt"
               className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none focus:border-primary"
             />
           </label>
@@ -106,9 +119,9 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
             ))}
           </div>
 
-          {correct.isError && (
+          {error && (
             <p className="mt-3 text-sm font-medium text-accent" role="alert">
-              {correct.error instanceof Error ? correct.error.message : 'Failed to save'}
+              {error instanceof Error ? error.message : 'Failed to save'}
             </p>
           )}
 
@@ -116,8 +129,8 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={correct.isPending}>
-              {correct.isPending ? 'Saving…' : 'Save correction'}
+            <Button onClick={submit} disabled={pending || (isAdd && !name.trim())}>
+              {pending ? 'Saving…' : isAdd ? 'Add item' : 'Save correction'}
             </Button>
           </div>
         </motion.div>

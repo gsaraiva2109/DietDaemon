@@ -20,6 +20,11 @@ type MealStore interface {
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
 	CorrectMealItem(ctx context.Context, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) error
+	AddMealItem(ctx context.Context, userID, mealID string, item types.ResolvedItem) error
+	DeleteMealItem(ctx context.Context, userID, mealID string, itemIndex int) error
+	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
+	SetTargets(ctx context.Context, t types.DailyTargets) error
+	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	ValidateToken(ctx context.Context, token string) (string, error)
 }
@@ -62,7 +67,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/meals", h.wrap(h.handleMealsList))
 	mux.HandleFunc("GET /api/v1/meals/{mealID}", h.wrap(h.handleMealDetail))
 	mux.HandleFunc("POST /api/v1/meals/{mealID}/items/{itemID}/correct", h.wrap(h.handleCorrectItem))
+	mux.HandleFunc("POST /api/v1/meals/{mealID}/items", h.wrap(h.handleAddItem))
+	mux.HandleFunc("DELETE /api/v1/meals/{mealID}/items/{itemID}", h.wrap(h.handleDeleteItem))
 	mux.HandleFunc("POST /api/v1/meals/log", h.wrap(h.handleLogMeal))
+	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
+	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
@@ -224,6 +233,83 @@ func (h *Handler) handleCorrectItem(w http.ResponseWriter, r *http.Request, user
 	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(meal)
+}
+
+func (h *Handler) handleAddItem(w http.ResponseWriter, r *http.Request, userID string) {
+	mealID := r.PathValue("mealID")
+
+	var item types.ResolvedItem
+	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if err := h.store.AddMealItem(r.Context(), userID, mealID, item); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	h.returnMeal(w, r, mealID, userID)
+}
+
+func (h *Handler) handleDeleteItem(w http.ResponseWriter, r *http.Request, userID string) {
+	mealID := r.PathValue("mealID")
+	itemIndex, err := strconv.Atoi(r.PathValue("itemID"))
+	if err != nil || itemIndex < 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "itemID must be a non-negative integer index"})
+		return
+	}
+	if err := h.store.DeleteMealItem(r.Context(), userID, mealID, itemIndex); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	h.returnMeal(w, r, mealID, userID)
+}
+
+// returnMeal writes the meal as JSON, enforcing user ownership.
+func (h *Handler) returnMeal(w http.ResponseWriter, r *http.Request, mealID, userID string) {
+	meal, err := h.store.GetMeal(r.Context(), mealID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if meal.UserID != userID {
+		h.writeErr(w, types.ErrNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(meal)
+}
+
+func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userID string) {
+	dt, err := h.store.GetTargets(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	json.NewEncoder(w).Encode(dt)
+}
+
+func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userID string) {
+	var body types.Macros
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	dt := types.DailyTargets{UserID: userID, Targets: body}
+	if err := h.store.SetTargets(r.Context(), dt); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	// Reflect immediately on the dashboard, which reads targets from the rollup.
+	today := time.Now().In(h.loc).Format("2006-01-02")
+	if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(dt)
 }
 
 func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID string) {
