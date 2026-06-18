@@ -14,13 +14,10 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   GO_VERSION: '1.26'
   NODE_VERSION: '22'
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/gsaraiva2109/dietdaemon
 
 jobs:
   changes:
@@ -29,7 +26,6 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -49,12 +45,6 @@ jobs:
             frontend:
               - 'web/**'
               - '!web/dist/**'
-            docker:
-              - 'Dockerfile'
-              - 'docker-compose.yml'
-              - '.github/workflows/**'
-              - 'Makefile'
-              - '.dockerignore'
 
   go:
     name: Go (lint, test, build)
@@ -123,65 +113,4 @@ jobs:
       - name: Build
         run: npm run build
 
-  docker:
-    name: Build & Push Docker Image
-    runs-on: [self-hosted, homelab, Linux, X64]
-    needs: [changes, go, frontend]
-    if: |
-      always() &&
-      (needs.changes.outputs.go == 'true' ||
-       needs.changes.outputs.frontend == 'true' ||
-       needs.changes.outputs.docker == 'true')
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          echo "sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "tags=${{ env.IMAGE_NAME }}:latest,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: false
-
-  deploy:
-    name: Notify Homelab Deploy
-    runs-on: ubuntu-latest
-    needs: [docker]
-    if: always() && !cancelled() && needs.docker.result != 'skipped'
-    steps:
-      - name: Image pushed
-        if: needs.docker.result == 'success'
-        run: |
-          echo "Image pushed: ${{ env.IMAGE_NAME }}:latest"
-          echo "SHA: ${{ github.sha }}"
-
-      - name: Notify failure
-        if: needs.docker.result == 'failure'
-        run: |
-          curl -sf \
-            -H "Title: DietDaemon Deploy Failed" \
-            -H "Priority: high" \
-            -H "Tags: warning" \
-            -d "Main push deploy failed. SHA: ${{ github.sha }}" \
-            "${{ secrets.NTFY_DEPLOY_URL }}" \
-          || true
