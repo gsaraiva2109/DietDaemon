@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: '1.26'
+  NODE_VERSION: '22'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/gsaraiva2109/dietdaemon
+
+jobs:
+  go:
+    name: Go (lint, test, build)
+    runs-on: [self-hosted, homelab, linux, amd64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1 -timeout 120s
+
+      - name: Stub web/dist for go:embed
+        run: |
+          mkdir -p internal/web/dist
+          if [ ! -f internal/web/dist/index.html ]; then
+            echo '<html></html>' > internal/web/dist/index.html
+          fi
+
+      - name: Build (dietdaemon)
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o /dev/null ./cmd/dietdaemon
+
+      - name: Build (tune)
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o /dev/null ./cmd/tune
+
+  frontend:
+    name: Frontend (lint, tsc, build)
+    runs-on: [self-hosted, homelab, linux, amd64]
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript check
+        run: npx tsc -b --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload frontend dist (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 1
+
+  docker:
+    name: Build & Push Docker Image (Release)
+    runs-on: [self-hosted, homelab, linux, amd64]
+    needs: [go, frontend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"          # e.g. v1.2.3
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "version=${TAG#v}"           >> "$GITHUB_OUTPUT"  # 1.2.3
+          echo "tags=${{ env.IMAGE_NAME }}:${TAG},${{ env.IMAGE_NAME }}:latest,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  release:
+    name: Create GitHub Release
+    runs-on: [self-hosted, homelab, linux, amd64]
+    needs: [docker, frontend]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for changelog generation
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+
+      - name: Stage frontend for embed
+        run: |
+          rm -rf internal/web/dist
+          mkdir -p internal/web/dist
+          cp -r web/dist/. internal/web/dist/
+
+      - name: Generate release notes
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            {
+              echo "notes<<EOF"
+              git log --oneline --no-decorate "$PREV_TAG..HEAD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "notes=Initial release" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build static binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/dietdaemon-linux-amd64 ./cmd/dietdaemon
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/tune-linux-amd64 ./cmd/tune
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/dietdaemon-linux-arm64 ./cmd/dietdaemon
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/tune-linux-arm64 ./cmd/tune
+          gzip -k dist/*-amd64 dist/*-arm64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.notes }}
+          files: dist/*.gz
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
