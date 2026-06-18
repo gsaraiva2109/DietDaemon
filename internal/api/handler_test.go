@@ -30,6 +30,10 @@ type fakeMealStore struct {
 	recentErr   error
 	validateErr error
 	getUserErr  error
+	targets     types.DailyTargets
+	targetsErr  error
+	addErr      error
+	deleteErr   error
 }
 
 func newFakeMealStore() *fakeMealStore {
@@ -68,6 +72,50 @@ func (s *fakeMealStore) GetRollups(_ context.Context, _, _, _ string) ([]types.D
 }
 func (s *fakeMealStore) CorrectMealItem(_ context.Context, _ string, _ string, _ int, _ types.ResolvedItem) error {
 	return s.correctErr
+}
+func (s *fakeMealStore) AddMealItem(_ context.Context, _, mealID string, item types.ResolvedItem) error {
+	if s.addErr != nil {
+		return s.addErr
+	}
+	m, ok := s.meals[mealID]
+	if !ok {
+		return types.ErrNotFound
+	}
+	m.Items = append(m.Items, item)
+	s.meals[mealID] = m
+	return nil
+}
+func (s *fakeMealStore) DeleteMealItem(_ context.Context, _, mealID string, idx int) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	m, ok := s.meals[mealID]
+	if !ok {
+		return types.ErrNotFound
+	}
+	if idx < 0 || idx >= len(m.Items) {
+		return types.ErrNotFound
+	}
+	m.Items = append(m.Items[:idx], m.Items[idx+1:]...)
+	s.meals[mealID] = m
+	return nil
+}
+func (s *fakeMealStore) GetTargets(_ context.Context, _ string) (types.DailyTargets, error) {
+	if s.targetsErr != nil {
+		return types.DailyTargets{}, s.targetsErr
+	}
+	return s.targets, nil
+}
+func (s *fakeMealStore) SetTargets(_ context.Context, t types.DailyTargets) error {
+	if s.targetsErr != nil {
+		return s.targetsErr
+	}
+	s.targets = t
+	return nil
+}
+func (s *fakeMealStore) UpdateRollupTargets(_ context.Context, _, _ string, t types.Macros) error {
+	s.rollup.Targets = t
+	return nil
 }
 func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error) {
 	if s.getUserErr != nil {
@@ -533,5 +581,74 @@ func TestAuthHeaderEdgeCases(t *testing.T) {
 	})
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("Basic auth expected 401, got %d", rec.Code)
+	}
+}
+
+// --- targets + item add/delete tests ---
+
+func TestSetTargets(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{}, "", false)
+
+	body := types.Macros{Calories: 3000, Protein: 180, Carbs: 360, Fat: 90, Fiber: 38}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT targets expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.targets.Targets.Protein != 180 {
+		t.Errorf("targets not persisted, got %+v", store.targets)
+	}
+	if store.rollup.Targets.Calories != 3000 {
+		t.Errorf("rollup targets not refreshed, got %+v", store.rollup.Targets)
+	}
+}
+
+func TestAddMealItem(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "default", Items: []types.ResolvedItem{}}
+	h := newHandler(store, &fakeMealLogger{}, "", false)
+
+	item := types.ResolvedItem{
+		Parsed: types.ParsedItem{RawPhrase: "banana", NormalizedGrams: 120},
+		Match:  types.FoodMatch{Name: "Banana", Source: "taco"},
+		Macros: types.Macros{Calories: 107, Protein: 1, Carbs: 27},
+	}
+	rec := doRequest(h, "POST", "/api/v1/meals/m1/items", item, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST item expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.Meal](t, rec)
+	if len(got.Items) != 1 || got.Items[0].Match.Name != "Banana" {
+		t.Errorf("item not added, got %+v", got.Items)
+	}
+}
+
+func TestDeleteMealItem(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "default", Items: []types.ResolvedItem{
+		{Match: types.FoodMatch{Name: "A"}},
+		{Match: types.FoodMatch{Name: "B"}},
+	}}
+	h := newHandler(store, &fakeMealLogger{}, "", false)
+
+	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE item expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.Meal](t, rec)
+	if len(got.Items) != 1 || got.Items[0].Match.Name != "B" {
+		t.Errorf("wrong item deleted, got %+v", got.Items)
+	}
+}
+
+func TestDeleteMealItemForbiddenOtherUser(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "someone-else", Items: []types.ResolvedItem{{}}}
+	store.tokens["tok"] = "me"
+	h := newHandler(store, &fakeMealLogger{}, "", true)
+
+	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, map[string]string{"Authorization": "Bearer tok"})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("deleting another user's item expected 404, got %d", rec.Code)
 	}
 }

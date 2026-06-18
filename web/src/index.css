@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   DietDaemon design tokens — Calm Health / Soft Structuralism.
+   See DESIGN.md (project root) for the rationale. OKLCH throughout.
+   Tailwind v4: tokens declared in @theme become utilities (bg-bg, text-ink,
+   rounded-lg, shadow-soft, font-display, etc).
+--------------------------------------------------------------------------- */
+@theme {
+  /* Surfaces & text (light) */
+  --color-bg: oklch(0.994 0.002 150);
+  --color-surface: oklch(0.975 0.006 155);
+  --color-surface-2: oklch(0.955 0.008 155);
+  --color-ink: oklch(0.27 0.02 160);
+  --color-muted: oklch(0.52 0.015 160);
+  --color-line: oklch(0.9 0.006 155);
+
+  /* Brand */
+  --color-primary: oklch(0.62 0.09 155);
+  --color-primary-soft: oklch(0.93 0.03 155);
+  --color-primary-ink: oklch(0.99 0.01 155);
+  --color-accent: oklch(0.7 0.15 65);
+
+  /* Macro hues — color-blind-safe set, always paired with a label */
+  --color-cal: oklch(0.62 0.09 155);
+  --color-protein: oklch(0.58 0.11 250);
+  --color-carbs: oklch(0.72 0.13 75);
+  --color-fat: oklch(0.64 0.11 25);
+  --color-fiber: oklch(0.6 0.07 180);
+
+  /* Type */
+  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+
+  /* Soft diffused ambient shadows — never harsh */
+  --shadow-soft: 0 1px 2px oklch(0.27 0.02 160 / 0.04),
+    0 8px 24px oklch(0.27 0.02 160 / 0.06);
+  --shadow-lift: 0 2px 4px oklch(0.27 0.02 160 / 0.05),
+    0 16px 40px oklch(0.27 0.02 160 / 0.09);
+
+  /* Semantic z-index scale */
+  --z-dropdown: 1000;
+  --z-sticky: 1100;
+  --z-modal-backdrop: 1200;
+  --z-modal: 1300;
+  --z-toast: 1400;
+  --z-tooltip: 1500;
+}
+
+/* Calm dark theme (opt-in via .dark on <html>) — deep slate-sage, no neon. */
+.dark {
+  --color-bg: oklch(0.2 0.012 160);
+  --color-surface: oklch(0.245 0.014 160);
+  --color-surface-2: oklch(0.29 0.014 160);
+  --color-ink: oklch(0.93 0.01 150);
+  --color-muted: oklch(0.72 0.012 155);
+  --color-line: oklch(0.32 0.012 160);
+  --color-primary: oklch(0.68 0.09 155);
+  --color-primary-soft: oklch(0.33 0.03 155);
+  --color-primary-ink: oklch(0.16 0.01 155);
+  --color-accent: oklch(0.76 0.15 65);
+  --color-cal: oklch(0.68 0.09 155);
+  --color-protein: oklch(0.66 0.11 250);
+  --color-carbs: oklch(0.78 0.13 75);
+  --color-fat: oklch(0.7 0.11 25);
+  --color-fiber: oklch(0.68 0.07 180);
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Macro numbers must not jump width while animating. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+    letter-spacing: -0.025em;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
