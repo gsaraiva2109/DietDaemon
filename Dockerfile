@@ -24,11 +24,20 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /bin/tune ./cmd/tune
 
+# Pre-create /data owned by nonroot so named volumes inherit the
+# correct permissions. Without this, Docker mounts an empty root-owned
+# directory and the nonroot user (65532) gets SQLITE_CANTOPEN.
+RUN mkdir -p /data && chmod 777 /data
+
 # Stage 3 — minimal runtime
 FROM gcr.io/distroless/static:nonroot
 
 COPY --from=builder /bin/dietdaemon /bin/dietdaemon
 COPY --from=builder /bin/tune        /bin/tune
+
+# Seed /data with nonroot ownership. When a named volume is mounted
+# here, Docker copies the owner (65532) from the image to the volume.
+COPY --from=builder --chown=65532:65532 /data /data
 
 EXPOSE 8080
 
