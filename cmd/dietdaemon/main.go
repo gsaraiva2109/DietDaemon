@@ -153,6 +153,9 @@ func run() error {
 
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
+		if cfg.APIAuthToken == "" && !cfg.MultiUser {
+			slog.Warn("dashboard running without authentication — set API_AUTH_TOKEN to protect the API")
+		}
 		apiHandler := api.New(st, engine, cfg.Location, cfg.APIAuthToken, cfg.MultiUser)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)

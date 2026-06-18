@@ -116,3 +116,86 @@ export const FlameIcon = (p: IconProps) => (
     <path d="M12 3c1 3-1.5 4-1.5 6.5a3.5 3.5 0 0 0 7 0c0-1-.3-1.8-.5-2.3 2 1.4 3 3.6 3 6A8 8 0 1 1 6.7 7.5C8 9 9 9.5 9.5 8 10 6.5 11 5 12 3z" />
   </svg>
 )
+
+export const FoodsIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 8c-1-3-5-3.5-6.5-1.5C3.5 9 5 16 7.5 19c1 1.2 2.3 1 3-.2.4-.7 1.6-.7 2 0 .7 1.2 2 1.4 3 .2 1.4-1.7 2.6-5 2.3-7.5" />
+    <path d="M12 8c0-2 1.5-4 4-4M12 8v1" />
+  </svg>
+)
+
+export const TemplateIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M5 4h11l3 3v13H5z" />
+    <path d="M8 9h8M8 13h8M8 17h5" />
+  </svg>
+)
+
+export const BodyIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="5" r="2.2" />
+    <path d="M12 8v7M12 11l-4 2M12 11l4 2M12 15l-2.5 5M12 15l2.5 5" />
+  </svg>
+)
+
+export const GoalIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="4" />
+    <circle cx="12" cy="12" r="0.6" fill="currentColor" />
+  </svg>
+)
+
+export const ShareIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="6" cy="12" r="2.5" />
+    <circle cx="18" cy="6" r="2.5" />
+    <circle cx="18" cy="18" r="2.5" />
+    <path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6" />
+  </svg>
+)
+
+export const DownloadIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3v12M7 11l5 4 5-4M5 21h14" />
+  </svg>
+)
+
+export const ClockIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+)
+
+export const TrashIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+  </svg>
+)
+
+export const CameraIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+    <circle cx="12" cy="13" r="3.2" />
+  </svg>
+)
+
+export const CheckIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m5 12 5 5 9-11" />
+  </svg>
+)
+
+export const ChevronDown = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+)
+
+export const CopyIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+  </svg>
+)

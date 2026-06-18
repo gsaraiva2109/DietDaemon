@@ -21,6 +21,14 @@ const MealDetail = lazy(() => import('@/routes/MealDetail').then(m => ({ default
 const Trends = lazy(() => import('@/routes/Trends').then(m => ({ default: m.Trends })))
 const Summary = lazy(() => import('@/routes/Summary').then(m => ({ default: m.Summary })))
 const Settings = lazy(() => import('@/routes/Settings').then(m => ({ default: m.Settings })))
+const Foods = lazy(() => import('@/routes/Foods').then(m => ({ default: m.Foods })))
+const Aliases = lazy(() => import('@/routes/Aliases').then(m => ({ default: m.Aliases })))
+const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
+const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
+const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals })))
+const OnboardingWizard = lazy(() =>
+  import('@/components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })),
+)
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +62,9 @@ function Gate() {
         </Suspense>
       </AppShell>
       <CommandPalette />
+      <Suspense fallback={null}>
+        <OnboardingWizard />
+      </Suspense>
     </>
   )
 }
@@ -79,6 +90,12 @@ function AnimatedRoutes() {
           <Route path="/trends" element={<Trends />} />
           <Route path="/summary" element={<Summary />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/aliases" element={<Aliases />} />
+          <Route path="/foods" element={<Foods />} />
+          <Route path="/templates" element={<Templates />} />
+          <Route path="/body" element={<Body />} />
+          <Route path="/body/:tab" element={<Body />} />
+          <Route path="/goals" element={<Goals />} />
         </Routes>
       </motion.div>
     </AnimatePresence>

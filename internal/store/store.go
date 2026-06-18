@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -76,22 +77,67 @@ func New(dbPath string) (*Store, error) {
 }
 
 func (s *Store) runMigrations() error {
+	// Create the migration tracking table first so we can skip already-applied
+	// files. This is the *only* schema change not recorded in schema_versions
+	// itself — it must exist before any tracking logic runs.
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_versions (
+		filename   TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create schema_versions: %w", err)
+	}
+
 	entries, err := migrations.FS.ReadDir(".")
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
+	// If no migration has ever been tracked but the database already has tables,
+	// this is an existing install being upgraded to versioned migrations. Log it
+	// but don't short-circuit — let the loop below apply any migration whose
+	// effects aren't visible yet (e.g. ALTER TABLE ADD COLUMN, new tables).
+	var tracked int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM schema_versions`).Scan(&tracked)
+
+	var hasTables int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'`).Scan(&hasTables)
+
+	if tracked == 0 && hasTables > 0 {
+		slog.Info("store: existing database detected, applying unrecorded migrations")
+	}
+
+	// Apply only migrations that haven't run yet.
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
+
+		var exists int
+		if err := s.db.QueryRow(`SELECT 1 FROM schema_versions WHERE filename = ?`,
+			entry.Name()).Scan(&exists); err == nil {
+			continue // already applied
+		}
+
 		content, err := migrations.FS.ReadFile(entry.Name())
 		if err != nil {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		if _, err := s.db.Exec(string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			// ALTER TABLE ADD COLUMN fails when the column already exists on
+			// databases that predate migration tracking. Tolerate these so
+			// partial-upgrade DBs can catch up safely.
+			if strings.Contains(err.Error(), "duplicate column name") {
+				slog.Info("store: skipping already-present column", "file", entry.Name(), "err", err)
+			} else {
+				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			}
 		}
+
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_versions (filename, applied_at) VALUES (?, ?)`,
+			entry.Name(), utcNow()); err != nil {
+			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
+		}
+		slog.Info("store: applied migration", "file", entry.Name())
 	}
 
 	return nil
@@ -989,6 +1035,7 @@ func parseUTC(s string) time.Time {
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
+		slog.Warn("store: unparseable timestamp, using zero time", "value", s, "err", err)
 		return time.Time{}
 	}
 	return t.UTC()
@@ -1357,25 +1404,23 @@ func (s *Store) WeightTrend(ctx context.Context, userID string, days int) ([]typ
 		return []types.WeightTrend{}, nil
 	}
 
-	var trend []types.WeightTrend
-	for i, e := range entries {
-		wt := types.WeightTrend{Date: e.Date, WeightKg: e.WeightKg}
+	const window = 7
+	trend := make([]types.WeightTrend, len(entries))
 
-		// 7-day rolling average.
-		start := i - 6
-		if start < 0 {
-			start = 0
+	// Sliding window: maintain a running sum of the last `window` entries.
+	// O(n) single pass instead of O(n·window) nested loop.
+	var sum float64
+	for i, e := range entries {
+		sum += e.WeightKg
+		if i >= window {
+			sum -= entries[i-window].WeightKg
 		}
-		sum := 0.0
-		count := 0
-		for j := start; j <= i; j++ {
-			sum += entries[j].WeightKg
-			count++
+		count := min(i+1, window)
+		trend[i] = types.WeightTrend{
+			Date:       e.Date,
+			WeightKg:   e.WeightKg,
+			RollingAvg: sum / float64(count),
 		}
-		if count > 0 {
-			wt.RollingAvg = sum / float64(count)
-		}
-		trend = append(trend, wt)
 	}
 	return trend, nil
 }

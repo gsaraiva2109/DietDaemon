@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type MealStore interface {
 
 	// Users & auth.
 	GetUser(ctx context.Context, userID string) (types.User, error)
+	UpsertUser(ctx context.Context, u types.User) error
 	ValidateToken(ctx context.Context, token string) (string, error)
 
 	// Food discovery.
@@ -182,7 +184,7 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 		userID, err := h.authenticate(r)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 		next(w, r, userID)
@@ -201,7 +203,9 @@ func (h *Handler) authenticate(r *http.Request) (string, error) {
 	if h.authToken != "" {
 		return h.authenticateStaticToken(r)
 	}
-	// No auth configured: use "default" user for localhost, or any Origin.
+	// No auth configured: use "default" user. Ensure the user row exists
+	// so FK constraints (user_profiles, weight_log, etc.) are satisfied.
+	_ = h.store.UpsertUser(r.Context(), types.User{ID: "default", Timezone: h.loc.String(), CreatedAt: time.Now().UTC()})
 	return "default", nil
 }
 
@@ -1072,19 +1076,37 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	// Compute recommended kcal using TDEE.
 	now := time.Now()
 	birthDate := profile.BirthDate
-	age := 30
-	if birthDate != "" {
-		if parsed, err := time.Parse("2006-01-02", birthDate); err == nil {
-			age = int(now.Sub(parsed).Hours() / 8766)
-		}
+	if birthDate == "" {
+		json.NewEncoder(w).Encode(types.GoalSuggestion{
+			Message: "Add your birth date in Profile settings to get personalized goal suggestions.",
+		})
+		return
+	}
+	parsed, err := time.Parse("2006-01-02", birthDate)
+	if err != nil {
+		json.NewEncoder(w).Encode(types.GoalSuggestion{
+			Message: "Birth date is invalid — update it in Profile settings.",
+		})
+		return
+	}
+	age := int(now.Sub(parsed).Hours() / 8766)
+
+	if profile.HeightCm <= 0 {
+		json.NewEncoder(w).Encode(types.GoalSuggestion{
+			Message: "Add your height in Profile settings to get personalized goal suggestions.",
+		})
+		return
 	}
 
 	// Get current weight for TDEE calc.
-	var currentWeight float64 = 70
 	weights, _ := h.store.ListWeight(r.Context(), userID, 30)
-	if len(weights) > 0 {
-		currentWeight = weights[len(weights)-1].WeightKg
+	if len(weights) == 0 {
+		json.NewEncoder(w).Encode(types.GoalSuggestion{
+			Message: "Log your weight first to get personalized goal suggestions.",
+		})
+		return
 	}
+	currentWeight := weights[len(weights)-1].WeightKg
 
 	params := types.TDEEParams{
 		WeightKg:      currentWeight,
@@ -1268,6 +1290,9 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		// Log the real error server-side; return a generic message to avoid
+		// leaking internal details (DB paths, SQL errors, etc.) to clients.
+		slog.Error("api error", "err", err)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
 	}
 }

@@ -2,7 +2,7 @@
 // day. "Pace" compares consumed vs the fraction of the day elapsed, so a nudge
 // only fires when you're genuinely behind — matching the product's nudge model.
 
-import type { DailyRollup, MacroKey } from './types'
+import type { DailyRollup, Macros, MacroKey, TrendDirection, WeeklyStats } from './types'
 
 export interface Insight {
   tone: 'good' | 'warn' | 'info'
@@ -60,4 +60,79 @@ export function streak(range: DailyRollup[]): number {
     else break
   }
   return n
+}
+
+const ZERO_MACROS: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
+
+// Compare the average of the first half of the range to the second half.
+function trend(values: number[]): TrendDirection {
+  if (values.length < 2) return 'flat'
+  const mid = Math.floor(values.length / 2)
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0)
+  const a = avg(values.slice(0, mid))
+  const b = avg(values.slice(mid))
+  if (a === 0) return 'flat'
+  const delta = (b - a) / a
+  if (delta > 0.05) return 'up'
+  if (delta < -0.05) return 'down'
+  return 'flat'
+}
+
+/**
+ * weeklyStats reduces a range of daily rollups to dashboard-ready aggregates:
+ * macro averages over logged days, calorie adherence (within ±10% of target),
+ * calorie/protein trend direction, and the best/worst day by calorie accuracy.
+ */
+export function weeklyStats(range: DailyRollup[]): WeeklyStats {
+  const logged = range.filter((d) => d.Consumed.Calories > 0)
+  if (logged.length === 0) {
+    return {
+      days: range, avg: ZERO_MACROS, adherence: 0, calorieTrend: 'flat',
+      proteinTrend: 'flat', bestDay: null, worstDay: null, loggedDays: 0,
+    }
+  }
+
+  const sum = logged.reduce<Macros>(
+    (acc, d) => ({
+      Calories: acc.Calories + d.Consumed.Calories,
+      Protein: acc.Protein + d.Consumed.Protein,
+      Carbs: acc.Carbs + d.Consumed.Carbs,
+      Fat: acc.Fat + d.Consumed.Fat,
+      Fiber: acc.Fiber + d.Consumed.Fiber,
+    }),
+    { ...ZERO_MACROS },
+  )
+  const n = logged.length
+  const avg: Macros = {
+    Calories: sum.Calories / n, Protein: sum.Protein / n, Carbs: sum.Carbs / n,
+    Fat: sum.Fat / n, Fiber: sum.Fiber / n,
+  }
+
+  // Adherence: fraction of logged days whose calories land within ±10% of target.
+  const onTarget = logged.filter((d) => {
+    const t = d.Targets.Calories
+    if (t <= 0) return false
+    return Math.abs(d.Consumed.Calories - t) / t <= 0.1
+  }).length
+  const adherence = onTarget / n
+
+  // Best/worst by absolute distance from the calorie target (target-relative).
+  const dist = (d: DailyRollup) => {
+    const t = d.Targets.Calories
+    return t > 0 ? Math.abs(d.Consumed.Calories - t) / t : Infinity
+  }
+  const sorted = [...logged].sort((a, b) => dist(a) - dist(b))
+  const bestDay = sorted[0] ?? null
+  const worstDay = sorted[sorted.length - 1] ?? null
+
+  return {
+    days: range,
+    avg,
+    adherence,
+    calorieTrend: trend(logged.map((d) => d.Consumed.Calories)),
+    proteinTrend: trend(logged.map((d) => d.Consumed.Protein)),
+    bestDay,
+    worstDay,
+    loggedDays: n,
+  }
 }

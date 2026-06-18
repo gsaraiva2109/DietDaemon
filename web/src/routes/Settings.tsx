@@ -2,11 +2,14 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { Link } from 'react-router-dom'
 import { useToday, useSetTargets } from '@/lib/queries'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill, Spinner } from '@/components/ui'
+import { ExportModal } from '@/components/ExportModal'
+import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
@@ -16,6 +19,7 @@ export function Settings() {
   const setTargets = useSetTargets()
   const { signOut } = useAuth()
   const { demo } = useDemo()
+  const [exporting, setExporting] = useState(false)
 
   // null = not yet edited; derive values from server data.
   const [draft, setDraft] = useState<Macros | null>(null)
@@ -86,6 +90,34 @@ export function Settings() {
         )}
       </Card>
 
+      {/* Manage — links to the new feature surfaces. */}
+      <Card className="mb-5 p-2">
+        <RowLink to="/goals" Icon={GoalIcon} label="Body profile & goals" hint="TDEE, targets, onboarding" />
+        <RowLink to="/settings/aliases" Icon={FoodsIcon} label="Food aliases" hint="Manage learned names" />
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"
+        >
+          <span className="text-muted"><BodyIcon width={20} height={20} /></span>
+          <span className="flex-1">
+            <span className="block text-sm font-medium text-ink">Edit body profile</span>
+            <span className="block text-xs text-muted">Re-run the setup wizard</span>
+          </span>
+          <ChevronRight width={18} height={18} className="text-muted" />
+        </button>
+        <button
+          onClick={() => setExporting(true)}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"
+        >
+          <span className="text-muted"><DownloadIcon width={20} height={20} /></span>
+          <span className="flex-1">
+            <span className="block text-sm font-medium text-ink">Export data</span>
+            <span className="block text-xs text-muted">Download meals or rollups as CSV / JSON</span>
+          </span>
+          <ChevronRight width={18} height={18} className="text-muted" />
+        </button>
+      </Card>
+
       <Card className="p-5">
         <h2 className="mb-1 font-semibold text-ink">Session</h2>
         <p className="mb-4 text-sm text-muted">Your API token is stored in this browser only.</p>
@@ -93,6 +125,34 @@ export function Settings() {
           Sign out
         </Button>
       </Card>
+
+      {exporting && <ExportModal onClose={() => setExporting(false)} />}
     </div>
+  )
+}
+
+function RowLink({
+  to,
+  Icon,
+  label,
+  hint,
+}: {
+  to: string
+  Icon: typeof FoodsIcon
+  label: string
+  hint: string
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex items-center gap-3 rounded-lg px-3 py-3 transition hover:bg-surface-2"
+    >
+      <span className="text-muted"><Icon width={20} height={20} /></span>
+      <span className="flex-1">
+        <span className="block text-sm font-medium text-ink">{label}</span>
+        <span className="block text-xs text-muted">{hint}</span>
+      </span>
+      <ChevronRight width={18} height={18} className="text-muted" />
+    </Link>
   )
 }

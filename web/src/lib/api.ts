@@ -2,7 +2,22 @@
 // is same-origin in production (Go serves the SPA) and proxied in dev (see
 // vite.config.ts). The Bearer token, when set, lives in localStorage.
 
-import type { DailyRollup, Macros, Meal, ResolvedItem } from './types'
+import type {
+  BodyCompositionSummary,
+  DailyRollup,
+  FoodDetail,
+  GoalSuggestion,
+  Macros,
+  Meal,
+  MealTemplate,
+  MeasurementEntry,
+  ProgressPhoto,
+  ResolvedItem,
+  TDEEResult,
+  UserProfile,
+  WeightEntry,
+  WeightTrend,
+} from './types'
 
 const BASE = '/api/v1'
 const TOKEN_KEY = 'dd.token'
@@ -111,4 +126,151 @@ export const api = {
 
   // Lightweight auth probe used by the token gate.
   ping: () => request<DailyRollup>('/rollups/today'),
+
+  // --- Phase 2: Food Discovery -------------------------------------------
+  foods: {
+    list: (source = '', limit = 30, offset = 0) =>
+      request<FoodDetail[]>(
+        `/foods?limit=${limit}&offset=${offset}${source ? `&source=${encodeURIComponent(source)}` : ''}`,
+      ),
+    search: (q: string) => request<FoodDetail[]>(`/foods/search?q=${encodeURIComponent(q)}`),
+    frequent: (limit = 12) => request<FoodDetail[]>(`/foods/frequent?limit=${limit}`),
+    get: (foodID: string) => request<FoodDetail>(`/foods/${encodeURIComponent(foodID)}`),
+    addAlias: (foodID: string, alias: string) =>
+      request<{ status: string }>(`/foods/${encodeURIComponent(foodID)}/aliases`, {
+        method: 'POST',
+        body: JSON.stringify({ alias }),
+      }),
+    deleteAlias: (foodID: string, alias: string) =>
+      request<void>(
+        `/foods/${encodeURIComponent(foodID)}/aliases/${encodeURIComponent(alias)}`,
+        { method: 'DELETE' },
+      ),
+  },
+
+  // --- Phase 3: Meal Templates -------------------------------------------
+  templates: {
+    list: () => request<MealTemplate[]>('/templates'),
+    get: (id: string) => request<MealTemplate>(`/templates/${encodeURIComponent(id)}`),
+    create: (name: string, items: ResolvedItem[]) =>
+      request<MealTemplate>('/templates', {
+        method: 'POST',
+        body: JSON.stringify({ name, items }),
+      }),
+    delete: (id: string) =>
+      request<void>(`/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    log: (id: string) =>
+      request<{ status: string; meal_id: string }>(
+        `/templates/${encodeURIComponent(id)}/log`,
+        { method: 'POST' },
+      ),
+  },
+
+  // POST /meals/{id}/duplicate — clones a past meal as a fresh "today" meal.
+  duplicateMeal: (mealID: string) =>
+    request<{ status: string; meal_id: string }>(
+      `/meals/${encodeURIComponent(mealID)}/duplicate`,
+      { method: 'POST' },
+    ),
+
+  // --- Phase 4: Body Tracking --------------------------------------------
+  body: {
+    weight: {
+      list: (days = 90) => request<WeightEntry[]>(`/body/weight?days=${days}`),
+      trend: (days = 90) => request<WeightTrend[]>(`/body/weight/trend?days=${days}`),
+      log: (date: string, weightKg: number, note = '') =>
+        request<WeightEntry>('/body/weight', {
+          method: 'POST',
+          body: JSON.stringify({ date, weight_kg: weightKg, note }),
+        }),
+      delete: (id: string) =>
+        request<void>(`/body/weight/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+    measurements: {
+      list: (days = 180) => request<MeasurementEntry[]>(`/body/measurements?days=${days}`),
+      log: (entry: Partial<MeasurementEntry>) =>
+        request<MeasurementEntry>('/body/measurements', {
+          method: 'POST',
+          body: JSON.stringify(entry),
+        }),
+      delete: (id: string) =>
+        request<void>(`/body/measurements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+    photos: {
+      list: () => request<ProgressPhoto[]>('/body/photos'),
+      // Multipart upload — the request() helper is JSON-only, so go direct.
+      upload: (file: File, view: string, date: string) => {
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('view', view)
+        fd.append('date', date)
+        return multipart<ProgressPhoto>('/body/photos', fd)
+      },
+      // The raw binary endpoint, for <img src>. Token goes in the URL-less
+      // header path is impossible for <img>, so callers fetch a blob instead.
+      dataURL: (id: string) => `${BASE}/body/photos/${encodeURIComponent(id)}/data`,
+      blob: (id: string) => blobRequest(`/body/photos/${encodeURIComponent(id)}/data`),
+      delete: (id: string) =>
+        request<void>(`/body/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+    summary: () => request<BodyCompositionSummary>('/body/summary'),
+  },
+
+  // --- Phase 5: Goals & Planning -----------------------------------------
+  profile: {
+    get: () => request<UserProfile>('/profile'),
+    put: (profile: UserProfile) =>
+      request<UserProfile>('/profile', { method: 'PUT', body: JSON.stringify(profile) }),
+  },
+  tdee: (p: { weight_kg: number; height_cm: number; age: number; gender: string; activity: string }) =>
+    request<TDEEResult>(
+      `/tdee?weight_kg=${p.weight_kg}&height_cm=${p.height_cm}&age=${p.age}` +
+        `&gender=${encodeURIComponent(p.gender)}&activity=${encodeURIComponent(p.activity)}`,
+    ),
+  goalSuggestions: () => request<GoalSuggestion>('/goals/suggestions'),
+
+  // --- Phase 6: Export ---------------------------------------------------
+  // Returns a Blob; callers trigger a download. format is "csv" | "json".
+  export: {
+    meals: (format: string, start: string, end: string) =>
+      blobRequest(`/export/meals?format=${format}&start=${start}&end=${end}`),
+    rollups: (format: string, start: string, end: string) =>
+      blobRequest(`/export/rollups?format=${format}&start=${start}&end=${end}`),
+  },
+}
+
+// multipart sends FormData without forcing a JSON Content-Type (the browser
+// sets the multipart boundary itself).
+async function multipart<T>(path: string, body: FormData): Promise<T> {
+  const token = getToken()
+  const headers = new Headers()
+  headers.set('Accept', 'application/json')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', body, headers })
+  if (res.status === 401) throw new UnauthorizedError()
+  if (!res.ok) throw new ApiError(res.status, `Upload failed (${res.status})`)
+  return (await res.json()) as T
+}
+
+// blobRequest fetches binary/file responses (photos, CSV/JSON exports).
+async function blobRequest(path: string): Promise<Blob> {
+  const token = getToken()
+  const headers = new Headers()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const res = await fetch(`${BASE}${path}`, { headers })
+  if (res.status === 401) throw new UnauthorizedError()
+  if (!res.ok) throw new ApiError(res.status, `Request failed (${res.status})`)
+  return await res.blob()
+}
+
+// triggerDownload saves a Blob to disk with the given filename.
+export function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

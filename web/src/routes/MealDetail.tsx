@@ -5,7 +5,9 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, Pill, Spinner, Button } from '@/components/ui'
 import { CorrectItemModal } from '@/components/CorrectItemModal'
-import { ChevronLeft, LogIcon, CloseIcon } from '@/components/icons'
+import { SaveTemplateModal } from '@/components/SaveTemplateModal'
+import { ShareCard } from '@/components/ShareCard'
+import { ChevronLeft, LogIcon, CloseIcon, TemplateIcon, ShareIcon } from '@/components/icons'
 import {
   clockTime,
   confidenceLabel,
@@ -13,7 +15,9 @@ import {
   formatNumber,
   tierLabel,
 } from '@/lib/format'
-import { MACRO_KEYS, MACRO_META } from '@/lib/types'
+import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
+
+const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
 export function MealDetail() {
   const { mealID } = useParams()
@@ -22,6 +26,8 @@ export function MealDetail() {
   const { demo } = useDemo()
   // null = closed; -1 = add mode; >=0 = correcting that index.
   const [editing, setEditing] = useState<number | null>(null)
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [sharing, setSharing] = useState(false)
 
   if (meal.isLoading) return <Spinner label="Loading meal" />
   if (meal.isError || !meal.data) {
@@ -35,6 +41,16 @@ export function MealDetail() {
 
   const m = meal.data
   const total = m.Items.reduce((s, it) => s + it.Macros.Calories, 0)
+  const mealMacros = m.Items.reduce<Macros>(
+    (s, it) => ({
+      Calories: s.Calories + it.Macros.Calories,
+      Protein: s.Protein + it.Macros.Protein,
+      Carbs: s.Carbs + it.Macros.Carbs,
+      Fat: s.Fat + it.Macros.Fat,
+      Fiber: s.Fiber + it.Macros.Fiber,
+    }),
+    { ...ZERO },
+  )
 
   return (
     <div>
@@ -50,11 +66,26 @@ export function MealDetail() {
         <p className="text-sm text-muted">
           <span className="text-2xl font-bold text-ink tnum">{formatNumber(total)}</span> kcal total
         </p>
-        {!demo && (
-          <Button variant="ghost" onClick={() => setEditing(-1)} className="px-3 py-1.5 text-xs">
-            <LogIcon width={15} height={15} /> Add item
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" onClick={() => setSharing(true)} className="px-3 py-1.5 text-xs">
+            <ShareIcon width={15} height={15} /> Share
           </Button>
-        )}
+          {!demo && (
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => setSavingTemplate(true)}
+                disabled={!m.Items.length}
+                className="px-3 py-1.5 text-xs"
+              >
+                <TemplateIcon width={15} height={15} /> Save as template
+              </Button>
+              <Button variant="ghost" onClick={() => setEditing(-1)} className="px-3 py-1.5 text-xs">
+                <LogIcon width={15} height={15} /> Add item
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -101,6 +132,17 @@ export function MealDetail() {
           meal={m}
           index={editing === -1 ? undefined : editing}
           onClose={() => setEditing(null)}
+        />
+      )}
+      {savingTemplate && (
+        <SaveTemplateModal items={m.Items} onClose={() => setSavingTemplate(false)} />
+      )}
+      {sharing && (
+        <ShareCard
+          heading={m.RawText || 'Logged meal'}
+          subtitle={clockTime(m.At)}
+          consumed={mealMacros}
+          onClose={() => setSharing(false)}
         />
       )}
     </div>
