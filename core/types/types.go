@@ -194,3 +194,160 @@ type DailyRollup struct {
 	Consumed Macros
 	Targets  Macros
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Food Discovery
+// ---------------------------------------------------------------------------
+
+// FoodDetail is a full food library entry with metadata and aliases.
+type FoodDetail struct {
+	FoodID      string      `json:"food_id"`
+	UserID      string      `json:"-"`
+	Name        string      `json:"name"`
+	Source      string      `json:"source"`
+	Per100g     Macros      `json:"per_100g"`
+	Category    string      `json:"category"`
+	Brand       string      `json:"brand"`
+	Barcode     string      `json:"barcode"`
+	ImageURL    string      `json:"image_url"`
+	ServingSize float64     `json:"serving_size"`
+	ServingUnit string      `json:"serving_unit"`
+	QueryCount  int         `json:"query_count"`
+	LastUsed    string      `json:"last_used"`
+	Aliases     []FoodAlias `json:"aliases,omitempty"`
+}
+
+// FoodAlias is one alias for a food library entry.
+type FoodAlias struct {
+	FoodID     string `json:"food_id"`
+	Alias      string `json:"alias"`
+	Normalized string `json:"normalized"`
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Meal Templates
+// ---------------------------------------------------------------------------
+
+// MealTemplate is a reusable meal with pre-resolved items.
+type MealTemplate struct {
+	ID        string         `json:"id"`
+	UserID    string         `json:"user_id"`
+	Name      string         `json:"name"`
+	Items     []ResolvedItem `json:"items"`
+	CreatedAt time.Time      `json:"created_at"`
+	LastUsed  time.Time      `json:"last_used"`
+}
+
+// TemplateLog records a template usage event.
+type TemplateLog struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	TemplateID string    `json:"template_id"`
+	LoggedAt   time.Time `json:"logged_at"`
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Body Tracking
+// ---------------------------------------------------------------------------
+
+// WeightEntry is a single weight measurement.
+type WeightEntry struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Date      string    `json:"date"`
+	WeightKg  float64   `json:"weight_kg"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MeasurementEntry is a single body measurement record.
+type MeasurementEntry struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	Date         string    `json:"date"`
+	WaistCm      float64   `json:"waist_cm"`
+	HipsCm       float64   `json:"hips_cm"`
+	ChestCm      float64   `json:"chest_cm"`
+	LeftArmCm    float64   `json:"left_arm_cm"`
+	RightArmCm   float64   `json:"right_arm_cm"`
+	LeftThighCm  float64   `json:"left_thigh_cm"`
+	RightThighCm float64   `json:"right_thigh_cm"`
+	Note         string    `json:"note"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ProgressPhoto is a progress photo record (metadata + binary data).
+type ProgressPhoto struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Date      string    `json:"date"`
+	View      string    `json:"view"` // front, side, back
+	MimeType  string    `json:"mime_type"`
+	Data      []byte    `json:"data,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// WeightTrend is a single data point on the weight trend line.
+type WeightTrend struct {
+	Date       string  `json:"date"`
+	WeightKg   float64 `json:"weight_kg"`
+	RollingAvg float64 `json:"rolling_avg"`
+}
+
+// BodyCompositionSummary is a snapshot of the user's body composition progress.
+type BodyCompositionSummary struct {
+	CurrentWeightKg  float64      `json:"current_weight_kg"`
+	StartWeightKg    float64      `json:"start_weight_kg"`
+	ChangeKg         float64      `json:"change_kg"`
+	TrendDirection   string       `json:"trend_direction"` // up, down, stable
+	LatestTrendPoint *WeightTrend `json:"latest_trend_point,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Goals & Planning
+// ---------------------------------------------------------------------------
+
+// UserProfile holds body metrics and goals for a user.
+type UserProfile struct {
+	UserID         string    `json:"user_id"`
+	HeightCm       float64   `json:"height_cm"`
+	BirthDate      string    `json:"birth_date"`
+	Gender         string    `json:"gender"`
+	ActivityLevel  string    `json:"activity_level"`
+	Goal           string    `json:"goal"`
+	TargetWeightKg float64   `json:"target_weight_kg"`
+	WeeklyRate     float64   `json:"weekly_rate"`
+	Onboarded      bool      `json:"onboarded"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// TDEEParams is the input for the TDEE calculator.
+type TDEEParams struct {
+	WeightKg      float64 `json:"weight_kg"`
+	HeightCm      float64 `json:"height_cm"`
+	Age           int     `json:"age"`
+	Gender        string  `json:"gender"`
+	ActivityLevel string  `json:"activity_level"`
+}
+
+// TDEEResult is the output of the TDEE calculator.
+type TDEEResult struct {
+	BMR         float64 `json:"bmr"`
+	TDEE        float64 `json:"tdee"`
+	CutCal      float64 `json:"cut_cal"`
+	MaintainCal float64 `json:"maintain_cal"`
+	BulkCal     float64 `json:"bulk_cal"`
+	Protein     float64 `json:"protein_g"`
+	Fat         float64 `json:"fat_g"`
+	Carbs       float64 `json:"carbs_g"`
+}
+
+// GoalSuggestion is a human-readable recommendation based on current data vs goals.
+type GoalSuggestion struct {
+	CurrentIntakeKcal float64 `json:"current_intake_kcal"`
+	RecommendedKcal   float64 `json:"recommended_kcal"`
+	CurrentLossKg     float64 `json:"current_loss_kg"`
+	TargetLossKg      float64 `json:"target_loss_kg"`
+	Message           string  `json:"message"`
+}
