@@ -31,6 +31,7 @@ RUN mkdir -p /data && chmod 777 /data
 
 # Stage 3 — minimal runtime
 FROM gcr.io/distroless/static:nonroot
+WORKDIR /
 
 COPY --from=builder /bin/dietdaemon /bin/dietdaemon
 COPY --from=builder /bin/tune        /bin/tune
