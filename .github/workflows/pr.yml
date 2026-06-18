@@ -15,7 +15,7 @@ env:
 jobs:
   go:
     name: Go (lint, test, build)
-    runs-on: [self-hosted, homelab, linux, amd64]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,16 +24,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: Download dependencies
         run: go mod download
@@ -45,9 +35,6 @@ jobs:
         run: go test ./... -count=1 -timeout 120s
 
       - name: Stub web/dist for go:embed
-        # go build embeds internal/web/dist/ — the committed placeholder
-        # suffices for compilation verification. The real frontend is
-        # validated in the frontend job and in the Dockerfile build on main.
         run: |
           mkdir -p internal/web/dist
           if [ ! -f internal/web/dist/index.html ]; then
@@ -62,7 +49,7 @@ jobs:
 
   frontend:
     name: Frontend (lint, tsc, build)
-    runs-on: [self-hosted, homelab, linux, amd64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web

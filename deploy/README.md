@@ -2,6 +2,23 @@
 
 ## Self-Hosted GitHub Actions Runner
 
+### Security: Runner Scope
+
+**Self-hosted runner is ONLY used for trusted events** — pushes to `main` and
+tagged releases (`v*`). These require write access to the repo.
+
+**PR checks run on GitHub-hosted runners** (`ubuntu-latest`). Fork PRs never
+touch the homelab. This prevents arbitrary code execution from untrusted
+contributors.
+
+Runner is still needed for:
+- `main.yml` → `docker` job (BuildKit + GHCR push)
+- `main.yml` → `deploy` job (Watchtower notification)
+- `release.yml` → `docker` job (versioned image push)
+
+If you skip Docker builds entirely (e.g., use GitHub-hosted + Docker),
+you don't need a self-hosted runner at all.
+
 ### Target Machine
 
 **Ryzen 7 7840HS** (8c/16t, 32 GB RAM, NVMe SSD).
