@@ -10,8 +10,10 @@ services:
       - .env
     volumes:
       - ./data:/data
+    # 3000 = Dokploy UI, 80/443 = Traefik. Don't collide.
+    # When you have a domain, remove ports: and add Traefik labels instead.
     ports:
-      - "3000:8080"
+      - "4321:8080"
 
 #  # Opt-in AI: docker compose --profile ai up
 #  ollama:
