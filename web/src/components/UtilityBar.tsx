@@ -1,13 +1,11 @@
 // Top-right utility controls present on every screen: demo-mode toggle and
 // light/dark theme toggle. Reachable on mobile and desktop.
 
-import { motion } from 'framer-motion'
-import { useTheme } from '@/lib/theme'
 import { useDemo } from '@/lib/demo'
-import { SunIcon, MoonIcon, SparkleIcon } from './icons'
+import { SparkleIcon } from './icons'
+import { ThemeToggle } from './ThemeToggle'
 
 export function UtilityBar() {
-  const { theme, toggle } = useTheme()
   const { demo, setDemo } = useDemo()
 
   return (
@@ -24,15 +22,7 @@ export function UtilityBar() {
         <SparkleIcon width={15} height={15} />
         Demo {demo ? 'on' : 'off'}
       </button>
-      <button
-        onClick={toggle}
-        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-        className="grid size-9 place-items-center rounded-full border border-line bg-surface text-muted transition hover:text-ink"
-      >
-        <motion.span key={theme} initial={{ rotate: -30, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }}>
-          {theme === 'dark' ? <MoonIcon width={18} height={18} /> : <SunIcon width={18} height={18} />}
-        </motion.span>
-      </button>
+      <ThemeToggle />
     </div>
   )
 }

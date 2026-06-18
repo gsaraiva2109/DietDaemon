@@ -6,7 +6,9 @@ import { motion } from 'framer-motion'
 import { useRange } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'
 import { MacroBar } from '@/components/MacroBar'
-import { Card, Eyebrow, EmptyState, Spinner } from '@/components/ui'
+import { ExportModal } from '@/components/ExportModal'
+import { DownloadIcon } from '@/components/icons'
+import { Button, Card, Eyebrow, EmptyState, Spinner } from '@/components/ui'
 import { MACRO_KEYS, MACRO_META, type Macros, type DailyRollup } from '@/lib/types'
 import { cssVar, formatNumber } from '@/lib/format'
 import { stagger, fadeUp } from '@/lib/motion'
@@ -21,6 +23,7 @@ const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
 export function Summary() {
   const [days, setDays] = useState(7)
+  const [exporting, setExporting] = useState(false)
   const range = useRange(isoDaysAgo(days - 1), isoDaysAgo(0))
 
   const stats = useMemo(() => compute(range.data ?? []), [range.data])
@@ -28,20 +31,27 @@ export function Summary() {
   return (
     <div>
       <PageHeader eyebrow="Summary" title="Your period">
-        <div className="flex gap-1 rounded-full border border-line bg-surface p-1">
-          {[7, 14, 30].map((d) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition ${
-                days === d ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
-              }`}
-            >
-              {d}d
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 rounded-full border border-line bg-surface p-1">
+            {[7, 14, 30].map((d) => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                  days === d ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+          <Button variant="ghost" onClick={() => setExporting(true)} className="px-3 py-1.5 text-xs">
+            <DownloadIcon width={15} height={15} /> Export
+          </Button>
         </div>
       </PageHeader>
+
+      {exporting && <ExportModal onClose={() => setExporting(false)} />}
 
       {range.isLoading ? (
         <Spinner />

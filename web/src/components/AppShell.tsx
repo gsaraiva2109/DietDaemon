@@ -11,16 +11,57 @@ import {
   SummaryIcon,
   SettingsIcon,
   LeafIcon,
+  FoodsIcon,
+  TemplateIcon,
+  BodyIcon,
+  GoalIcon,
 } from './icons'
 import { UtilityBar, DemoBanner } from './UtilityBar'
 
-const NAV = [
+interface NavItem {
+  to: string
+  label: string
+  Icon: typeof TodayIcon
+  end?: boolean
+}
+
+// Desktop sidebar, grouped into sections. Mobile keeps a curated 5-item bar;
+// the rest stay reachable via the ⌘K palette.
+const NAV_GROUPS: { heading?: string; items: NavItem[] }[] = [
+  {
+    items: [
+      { to: '/', label: 'Today', Icon: TodayIcon, end: true },
+      { to: '/log', label: 'Log', Icon: LogIcon },
+      { to: '/history', label: 'History', Icon: HistoryIcon },
+    ],
+  },
+  {
+    heading: 'Discover',
+    items: [
+      { to: '/foods', label: 'Foods', Icon: FoodsIcon },
+      { to: '/templates', label: 'Templates', Icon: TemplateIcon },
+    ],
+  },
+  {
+    heading: 'Track',
+    items: [
+      { to: '/body', label: 'Body', Icon: BodyIcon },
+      { to: '/goals', label: 'Goals', Icon: GoalIcon },
+      { to: '/trends', label: 'Trends', Icon: TrendsIcon },
+      { to: '/summary', label: 'Summary', Icon: SummaryIcon },
+    ],
+  },
+  {
+    items: [{ to: '/settings', label: 'Settings', Icon: SettingsIcon }],
+  },
+]
+
+const MOBILE_NAV: NavItem[] = [
   { to: '/', label: 'Today', Icon: TodayIcon, end: true },
-  { to: '/log', label: 'Log', Icon: LogIcon, end: false },
-  { to: '/history', label: 'History', Icon: HistoryIcon, end: false },
-  { to: '/trends', label: 'Trends', Icon: TrendsIcon, end: false },
-  { to: '/summary', label: 'Summary', Icon: SummaryIcon, end: false },
-  { to: '/settings', label: 'Settings', Icon: SettingsIcon, end: false },
+  { to: '/log', label: 'Log', Icon: LogIcon },
+  { to: '/foods', label: 'Foods', Icon: FoodsIcon },
+  { to: '/body', label: 'Body', Icon: BodyIcon },
+  { to: '/settings', label: 'More', Icon: SettingsIcon },
 ]
 
 function Brand() {
@@ -44,26 +85,35 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="absolute bottom-[-12rem] left-1/4 size-[32rem] rounded-full bg-carbs/10 blur-[140px]" />
       </div>
       {/* Sidebar — desktop */}
-      <aside className="fixed inset-y-0 left-0 z-[1100] hidden w-60 flex-col gap-1 border-r border-line bg-surface/60 px-3 py-5 backdrop-blur md:flex">
+      <aside className="fixed inset-y-0 left-0 z-[1100] hidden w-60 flex-col gap-1 overflow-y-auto border-r border-line bg-surface/60 px-3 py-5 backdrop-blur md:flex">
         <Brand />
-        <nav className="mt-6 flex flex-col gap-1">
-          {NAV.map(({ to, label, Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              prefetch="intent"
-              className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-                  isActive
-                    ? 'bg-primary-soft text-primary'
-                    : 'text-muted hover:bg-surface-2 hover:text-ink'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
+        <nav className="mt-6 flex flex-col gap-4">
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={gi} className="flex flex-col gap-1">
+              {group.heading && (
+                <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted/70">
+                  {group.heading}
+                </p>
+              )}
+              {group.items.map(({ to, label, Icon, end }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={end}
+                  prefetch="intent"
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                      isActive
+                        ? 'bg-primary-soft text-primary'
+                        : 'text-muted hover:bg-surface-2 hover:text-ink'
+                    }`
+                  }
+                >
+                  <Icon />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
       </aside>
@@ -79,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Bottom bar — mobile */}
       <nav className="fixed inset-x-0 bottom-0 z-[1100] flex items-stretch justify-around border-t border-line bg-surface/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        {NAV.map(({ to, label, Icon, end }) => (
+        {MOBILE_NAV.map(({ to, label, Icon, end }) => (
           <NavLink
             key={to}
             to={to}

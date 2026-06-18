@@ -17,6 +17,10 @@ import {
   MoonIcon,
   SparkleIcon,
   SearchIcon,
+  FoodsIcon,
+  TemplateIcon,
+  BodyIcon,
+  GoalIcon,
 } from './icons'
 import type { SVGProps } from 'react'
 
@@ -43,11 +47,15 @@ export function CommandPalette() {
       setOpen(false)
     }
     return [
-      { id: 'today', label: 'Go to Today', Icon: TodayIcon, run: go('/') },
-      { id: 'log', label: 'Log a meal', Icon: LogIcon, run: go('/log') },
-      { id: 'history', label: 'Go to History', Icon: HistoryIcon, run: go('/history') },
-      { id: 'trends', label: 'Go to Trends', Icon: TrendsIcon, run: go('/trends') },
-      { id: 'summary', label: 'Go to Summary', Icon: SummaryIcon, run: go('/summary') },
+      { id: 'today', label: 'Go to Today', hint: '⌘D', Icon: TodayIcon, run: go('/') },
+      { id: 'log', label: 'Log a meal', hint: '⌘L', Icon: LogIcon, run: go('/log') },
+      { id: 'history', label: 'Go to History', hint: '⌘H', Icon: HistoryIcon, run: go('/history') },
+      { id: 'foods', label: 'Go to Foods', Icon: FoodsIcon, run: go('/foods') },
+      { id: 'templates', label: 'Go to Templates', Icon: TemplateIcon, run: go('/templates') },
+      { id: 'body', label: 'Go to Body', Icon: BodyIcon, run: go('/body') },
+      { id: 'goals', label: 'Go to Goals', Icon: GoalIcon, run: go('/goals') },
+      { id: 'trends', label: 'Go to Trends', hint: '⌘T', Icon: TrendsIcon, run: go('/trends') },
+      { id: 'summary', label: 'Go to Summary', hint: '⌘S', Icon: SummaryIcon, run: go('/summary') },
       { id: 'settings', label: 'Go to Settings', Icon: SettingsIcon, run: go('/settings') },
       {
         id: 'theme',
@@ -96,6 +104,23 @@ export function CommandPalette() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Direct navigation shortcuts: ⌘/Ctrl + L/H/T/S/D. Ignored while typing in a
+  // field so they don't hijack text entry.
+  useEffect(() => {
+    const ROUTES: Record<string, string> = { l: '/log', h: '/history', t: '/trends', s: '/summary', d: '/' }
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return
+      const to = ROUTES[e.key.toLowerCase()]
+      if (!to) return
+      e.preventDefault()
+      navigate(to)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navigate])
 
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -156,7 +181,10 @@ export function CommandPalette() {
                     }`}
                   >
                     <c.Icon width={18} height={18} />
-                    {c.label}
+                    <span className="flex-1">{c.label}</span>
+                    {c.hint && (
+                      <kbd className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">{c.hint}</kbd>
+                    )}
                   </button>
                 </li>
               ))}
