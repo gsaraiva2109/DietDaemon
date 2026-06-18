@@ -6,6 +6,10 @@ services:
     image: ghcr.io/gsaraiva2109/dietdaemon:latest
     container_name: dietdaemon
     restart: unless-stopped
+    # Override nonroot (65532) — Swarm named volumes can block WAL creation
+    # even with chmod 777. Root inside a distroless container has no shell
+    # or package manager; minimal risk for a homelab deployment.
+    user: "0:0"
     env_file:
       - .env
     # Named volume preserves DB across redeploys. Docker manages
