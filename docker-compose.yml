@@ -1,6 +1,8 @@
 services:
   dietdaemon:
-    build: .
+    # Image pulled from GHCR (built by CI). Remove the image line and
+    # uncomment build: . for local development with `docker compose up --build`.
+    # build: .
     image: ghcr.io/gsaraiva2109/dietdaemon:latest
     container_name: dietdaemon
     restart: unless-stopped
