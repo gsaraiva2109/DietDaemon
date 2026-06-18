@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -9,13 +10,17 @@ import { TokenGate } from '@/components/TokenGate'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Spinner } from '@/components/ui'
 import { easeOut } from '@/lib/motion'
-import { Dashboard } from '@/routes/Dashboard'
-import { LogMeal } from '@/routes/LogMeal'
-import { History } from '@/routes/History'
-import { MealDetail } from '@/routes/MealDetail'
-import { Trends } from '@/routes/Trends'
-import { Summary } from '@/routes/Summary'
-import { Settings } from '@/routes/Settings'
+
+// Lazy-load all routes so recharts (~300KB) only ships when Trends or
+// Summary is visited. Route components use named exports — wrap with
+// .then() to feed React.lazy the { default } shape it expects.
+const Dashboard = lazy(() => import('@/routes/Dashboard').then(m => ({ default: m.Dashboard })))
+const LogMeal = lazy(() => import('@/routes/LogMeal').then(m => ({ default: m.LogMeal })))
+const History = lazy(() => import('@/routes/History').then(m => ({ default: m.History })))
+const MealDetail = lazy(() => import('@/routes/MealDetail').then(m => ({ default: m.MealDetail })))
+const Trends = lazy(() => import('@/routes/Trends').then(m => ({ default: m.Trends })))
+const Summary = lazy(() => import('@/routes/Summary').then(m => ({ default: m.Summary })))
+const Settings = lazy(() => import('@/routes/Settings').then(m => ({ default: m.Settings })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,7 +43,15 @@ function Gate() {
   return (
     <>
       <AppShell>
-        <AnimatedRoutes />
+        <Suspense
+          fallback={
+            <div className="grid min-h-[60dvh] place-items-center">
+              <Spinner />
+            </div>
+          }
+        >
+          <AnimatedRoutes />
+        </Suspense>
       </AppShell>
       <CommandPalette />
     </>
