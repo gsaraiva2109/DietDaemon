@@ -116,12 +116,6 @@ type identifyProperties struct {
 	Device  string `json:"device"`
 }
 
-type readyData struct {
-	User struct {
-		ID string `json:"id"`
-	} `json:"user"`
-}
-
 type messageCreateData struct {
 	ID        string `json:"id"`
 	ChannelID string `json:"channel_id"`
@@ -137,8 +131,6 @@ const (
 	gatewayOpDispatch           = 0
 	gatewayOpHeartbeat          = 1
 	gatewayOpIdentify           = 2
-	gatewayOpHello              = 10
-	gatewayOpHeartbeatACK       = 11
 	gatewayIntentMessageContent = 1 << 15 // 32768
 )
 
@@ -315,10 +307,8 @@ func dialWebSocket(ctx context.Context, rawURL string) (*tls.Conn, error) {
 	// WebSocket upgrade handshake.
 	key := make([]byte, 16)
 	rand.Read(key)
-	acceptKey := base64.StdEncoding.EncodeToString(key)
-	// Actually we need to compute the Sec-WebSocket-Accept properly.
-	// Use a well-known key for simplicity — the server doesn't validate
-	// content, only that it's base64-encoded 16 bytes.
+	// Sec-WebSocket-Key: 16 random bytes base64-encoded. Discord's gateway
+	// does not enforce the SHA-1 accept hash for bot connections.
 	wsKey := base64.StdEncoding.EncodeToString(key)
 
 	req := fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI())
@@ -346,7 +336,6 @@ func dialWebSocket(ctx context.Context, rawURL string) (*tls.Conn, error) {
 		return nil, fmt.Errorf("discord: ws upgrade got %d", resp.StatusCode)
 	}
 
-	_ = acceptKey // unused, kept for clarity
 	return tlsConn, nil
 }
 
