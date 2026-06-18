@@ -13,8 +13,28 @@ export default defineConfig([
       js.configs.recommended,
       tseslint.configs.recommended,
       reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
     ],
+    plugins: {
+      'react-refresh': reactRefresh,
+    },
+    rules: {
+      'react-refresh/only-export-components': [
+        'warn',
+        {
+          allowConstantExport: true,
+          allowExportNames: [
+            'useAuth',
+            'useDemo',
+            'useTheme',
+            'demoRange',
+            'demoToday',
+            'DEMO_TARGETS',
+            'DEMO_CONSUMED',
+            'DEMO_MEALS',
+          ],
+        },
+      ],
+    },
     languageOptions: {
       globals: globals.browser,
     },

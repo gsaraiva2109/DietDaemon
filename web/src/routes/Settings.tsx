@@ -1,6 +1,6 @@
 // Settings — editable daily targets (PUT /targets), theme, demo, token.
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useToday, useSetTargets } from '@/lib/queries'
 import { useAuth } from '@/lib/auth'
@@ -17,15 +17,13 @@ export function Settings() {
   const { signOut } = useAuth()
   const { demo } = useDemo()
 
-  const [draft, setDraft] = useState<Macros>(ZERO)
-
-  // Seed the form from the current targets once they load.
-  useEffect(() => {
-    if (today.data?.Targets) setDraft(today.data.Targets)
-  }, [today.data?.Targets])
+  // null = not yet edited; derive values from server data.
+  const [draft, setDraft] = useState<Macros | null>(null)
+  const serverTargets = today.data?.Targets ?? ZERO
+  const values = draft ?? serverTargets
 
   function set(k: keyof Macros, v: number) {
-    setDraft((d) => ({ ...d, [k]: v }))
+    setDraft((d) => ({ ...(d ?? values), [k]: v }))
   }
 
   return (
@@ -52,7 +50,7 @@ export function Settings() {
                     <input
                       type="number"
                       min={0}
-                      value={draft[k]}
+                      value={values[k]}
                       disabled={demo}
                       onChange={(e) => set(k, Number(e.target.value))}
                       className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-lg font-semibold text-ink outline-none transition focus:border-primary disabled:opacity-60 tnum"
@@ -65,7 +63,7 @@ export function Settings() {
 
             <div className="mt-5 flex items-center gap-3">
               <Button
-                onClick={() => setTargets.mutate(draft)}
+                onClick={() => setTargets.mutate(values)}
                 disabled={demo || setTargets.isPending}
               >
                 {setTargets.isPending ? 'Saving…' : 'Save targets'}

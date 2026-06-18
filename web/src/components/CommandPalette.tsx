@@ -80,23 +80,22 @@ export function CommandPalette() {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        setOpen((o) => !o)
+        setOpen((o) => {
+          if (!o) {
+            // Reset search state when opening — fire-and-forget
+            // updates in the same render batch, no cascading effects.
+            setQ('')
+            setActive(0)
+            setTimeout(() => inputRef.current?.focus(), 20)
+          }
+          return !o
+        })
       }
       if (e.key === 'Escape') setOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-
-  useEffect(() => {
-    if (open) {
-      setQ('')
-      setActive(0)
-      setTimeout(() => inputRef.current?.focus(), 20)
-    }
-  }, [open])
-
-  useEffect(() => setActive(0), [q])
 
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -139,7 +138,7 @@ export function CommandPalette() {
               <input
                 ref={inputRef}
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => { setQ(e.target.value); setActive(0) }}
                 placeholder="Type a command…"
                 className="flex-1 bg-transparent text-ink outline-none placeholder:text-muted"
               />
