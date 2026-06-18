@@ -39,6 +39,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver/embedding"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
+	"github.com/gsaraiva2109/dietdaemon/internal/web"
 )
 
 const (
@@ -155,6 +156,15 @@ func run() error {
 		apiHandler := api.New(st, engine, cfg.Location, cfg.APIAuthToken, cfg.MultiUser)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
+
+		// Serve the embedded dashboard SPA on all non-API routes. ServeMux
+		// matches the more specific /api/v1/* patterns first, so this only
+		// catches asset and client-route requests.
+		if spa, spaErr := web.Handler(); spaErr != nil {
+			slog.Error("dashboard assets", "err", spaErr)
+		} else {
+			mux.Handle("/", spa)
+		}
 
 		port := os.Getenv("PORT")
 		if port == "" {

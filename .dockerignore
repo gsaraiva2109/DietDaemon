@@ -25,6 +25,12 @@ DEFERRED.md
 README.md
 LICENSE
 
+# Frontend — the SPA is built in its own Docker stage; never ship local
+# artifacts (node_modules is huge; dist is regenerated).
+web/node_modules/
+web/dist/
+web/shots/
+
 # Misc
 *.onnx
 *.md

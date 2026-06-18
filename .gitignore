@@ -39,6 +39,16 @@
 tmp/
 testdata/*.csv
 
+# Frontend
+web/node_modules/
+web/dist/
+web/shots/
+web/dev-mock-api.mjs
+web/shoot*.mjs
+# Embedded dashboard build output. internal/web/dist/index.html is a committed
+# placeholder; the real build overwrites it and adds assets/ — don't commit those.
+internal/web/dist/assets/
+
 # OS junk
 .DS_Store
 Thumbs.db
