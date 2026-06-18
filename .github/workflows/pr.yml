@@ -13,9 +13,37 @@ env:
   NODE_VERSION: '22'
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'migrations/**'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'core/**'
+              - 'adapters/**'
+              - 'fixtures/**'
+            frontend:
+              - 'web/**'
+              - '!web/dist/**'
+
   go:
     name: Go (lint, test, build)
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.go == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,6 +78,8 @@ jobs:
   frontend:
     name: Frontend (lint, tsc, build)
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
     defaults:
       run:
         working-directory: web
