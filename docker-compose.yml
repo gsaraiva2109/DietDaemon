@@ -11,7 +11,7 @@ services:
     volumes:
       - ./data:/data
     ports:
-      - "8080:8080"
+      - "3000:8080"
 
 #  # Opt-in AI: docker compose --profile ai up
 #  ollama:
