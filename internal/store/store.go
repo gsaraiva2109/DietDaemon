@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -383,7 +384,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 	}
 
 	placeholders := make([]string, len(mealIDs))
-	args := make([]interface{}, len(mealIDs))
+	args := make([]any, len(mealIDs))
 	for i, id := range mealIDs {
 		placeholders[i] = "?"
 		args[i] = id
@@ -1000,4 +1001,640 @@ var idCounter int64
 func newID() string {
 	n := atomic.AddInt64(&idCounter, 1)
 	return fmt.Sprintf("%d%x", time.Now().UnixNano(), n)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 — Latest Meal
+// ---------------------------------------------------------------------------
+
+// LatestMealTime returns the most recent meal timestamp for a user, or
+// types.ErrNotFound when no meals exist.
+func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, error) {
+	const q = `SELECT at_utc FROM meals WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var at string
+	if err := row.Scan(&at); err == sql.ErrNoRows {
+		return "", types.ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("store: latest meal time: %w", err)
+	}
+	return at, nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Food Discovery
+// ---------------------------------------------------------------------------
+
+// ListFoods returns paginated food library entries, optionally filtered by source.
+func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, offset int) ([]types.FoodDetail, error) {
+	args := []any{userID}
+	q := `SELECT food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+	       category, brand, barcode, image_url, serving_size, serving_unit, query_count, last_used
+		FROM food_library WHERE user_id = ?`
+	if source != "" {
+		q += ` AND source = ?`
+		args = append(args, source)
+	}
+	q += ` ORDER BY last_used DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list foods: %w", err)
+	}
+	defer rows.Close()
+	return scanFoodDetails(rows)
+}
+
+// SearchFoods searches food_library by name and alias using FTS5 full-text search.
+func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error) {
+	// Build FTS5 prefix query: each token gets a * suffix.
+	tokens := strings.Fields(query)
+	ftsQuery := strings.Join(tokens, "* ") + "*"
+
+	const q = `
+		SELECT fl.food_id, fl.user_id, fl.name, fl.source,
+		       fl.kcal_100g, fl.protein_100g, fl.carbs_100g, fl.fat_100g, fl.fiber_100g,
+		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
+		       fl.query_count, fl.last_used
+		FROM food_library fl
+		INNER JOIN food_search fs ON fs.food_id = fl.food_id AND fs.user_id = fl.user_id
+		WHERE food_search MATCH ? AND fl.user_id = ?
+		ORDER BY fl.query_count DESC
+		LIMIT 20
+	`
+	rows, err := s.db.QueryContext(ctx, q, ftsQuery, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: search foods: %w", err)
+	}
+	defer rows.Close()
+	return scanFoodDetails(rows)
+}
+
+// FrequentFoods returns the most frequently logged foods.
+func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error) {
+	const q = `
+		SELECT food_id, user_id, name, source,
+		       kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+		       category, brand, barcode, image_url, serving_size, serving_unit,
+		       query_count, last_used
+		FROM food_library
+		WHERE user_id = ? AND query_count > 0
+		ORDER BY query_count DESC, last_used DESC
+		LIMIT ?
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: frequent foods: %w", err)
+	}
+	defer rows.Close()
+	return scanFoodDetails(rows)
+}
+
+// GetFoodDetail returns a single food with its aliases.
+func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error) {
+	const foodQ = `
+		SELECT food_id, user_id, name, source,
+		       kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+		       category, brand, barcode, image_url, serving_size, serving_unit,
+		       query_count, last_used
+		FROM food_library
+		WHERE user_id = ? AND food_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, foodQ, userID, foodID)
+	fd, err := scanFoodDetail(row)
+	if err == sql.ErrNoRows {
+		return types.FoodDetail{}, types.ErrNotFound
+	}
+	if err != nil {
+		return types.FoodDetail{}, fmt.Errorf("store: get food detail: %w", err)
+	}
+
+	// Load aliases separately.
+	const aliasQ = `
+		SELECT food_id, alias_normalized FROM food_aliases
+		WHERE user_id = ? AND food_id = ?
+	`
+	arows, err := s.db.QueryContext(ctx, aliasQ, userID, foodID)
+	if err != nil {
+		return types.FoodDetail{}, fmt.Errorf("store: get food aliases: %w", err)
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var a types.FoodAlias
+		if err := arows.Scan(&a.FoodID, &a.Normalized); err != nil {
+			return types.FoodDetail{}, fmt.Errorf("store: scan alias: %w", err)
+		}
+		fd.Aliases = append(fd.Aliases, a)
+	}
+	return fd, arows.Err()
+}
+
+// AddFoodAlias inserts a normalized alias for a food.
+func (s *Store) AddFoodAlias(ctx context.Context, userID, foodID, alias string) error {
+	normalized := normalize.Normalize(alias)
+	const q = `INSERT OR IGNORE INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, userID, normalized, foodID)
+	return err
+}
+
+// DeleteFoodAlias removes a normalized alias for a food. Returns ErrNotFound if
+// no row was deleted.
+func (s *Store) DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error {
+	normalized := normalize.Normalize(alias)
+	const q = `DELETE FROM food_aliases WHERE user_id = ? AND food_id = ? AND alias_normalized = ?`
+	res, err := s.db.ExecContext(ctx, q, userID, foodID, normalized)
+	if err != nil {
+		return fmt.Errorf("store: delete food alias: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+func scanFoodDetail(row *sql.Row) (types.FoodDetail, error) {
+	var fd types.FoodDetail
+	var lastUsed string
+	err := row.Scan(&fd.FoodID, &fd.UserID, &fd.Name, &fd.Source,
+		&fd.Per100g.Calories, &fd.Per100g.Protein, &fd.Per100g.Carbs, &fd.Per100g.Fat, &fd.Per100g.Fiber,
+		&fd.Category, &fd.Brand, &fd.Barcode, &fd.ImageURL, &fd.ServingSize, &fd.ServingUnit,
+		&fd.QueryCount, &lastUsed,
+	)
+	if err != nil {
+		return types.FoodDetail{}, err
+	}
+	fd.LastUsed = lastUsed
+	fd.Aliases = []types.FoodAlias{}
+	return fd, nil
+}
+
+func scanFoodDetails(rows *sql.Rows) ([]types.FoodDetail, error) {
+	var out []types.FoodDetail
+	for rows.Next() {
+		var fd types.FoodDetail
+		var lastUsed string
+		if err := rows.Scan(&fd.FoodID, &fd.UserID, &fd.Name, &fd.Source,
+			&fd.Per100g.Calories, &fd.Per100g.Protein, &fd.Per100g.Carbs, &fd.Per100g.Fat, &fd.Per100g.Fiber,
+			&fd.Category, &fd.Brand, &fd.Barcode, &fd.ImageURL, &fd.ServingSize, &fd.ServingUnit,
+			&fd.QueryCount, &lastUsed,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan food detail: %w", err)
+		}
+		fd.LastUsed = lastUsed
+		fd.Aliases = []types.FoodAlias{}
+		out = append(out, fd)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Meal Templates
+// ---------------------------------------------------------------------------
+
+// SaveTemplate inserts or upserts a meal template.
+func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
+	itemsJSON, err := json.Marshal(t.Items)
+	if err != nil {
+		return fmt.Errorf("store: marshal template items: %w", err)
+	}
+	const q = `
+		INSERT INTO meal_templates (id, user_id, name, items_json, created_at, last_used)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name       = excluded.name,
+			items_json = excluded.items_json,
+			last_used  = excluded.last_used
+	`
+	_, err = s.db.ExecContext(ctx, q, t.ID, t.UserID, t.Name, string(itemsJSON), utcStr(t.CreatedAt), utcStr(t.LastUsed))
+	return err
+}
+
+// GetTemplates returns all templates for a user, newest first.
+func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error) {
+	const q = `
+		SELECT id, user_id, name, items_json, created_at, last_used
+		FROM meal_templates WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: get templates: %w", err)
+	}
+	defer rows.Close()
+	return scanTemplates(rows)
+}
+
+// GetTemplate returns a single template by ID.
+func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealTemplate, error) {
+	const q = `
+		SELECT id, user_id, name, items_json, created_at, last_used
+		FROM meal_templates WHERE id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, templateID)
+	t, err := scanTemplate(row)
+	if err == sql.ErrNoRows {
+		return types.MealTemplate{}, types.ErrNotFound
+	}
+	return t, err
+}
+
+// DeleteTemplate deletes a template by user + ID. Returns ErrNotFound if 0 rows.
+func (s *Store) DeleteTemplate(ctx context.Context, userID, templateID string) error {
+	const q = `DELETE FROM meal_templates WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, templateID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete template: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// LogTemplateUse records a template usage event.
+func (s *Store) LogTemplateUse(ctx context.Context, tl types.TemplateLog) error {
+	const q = `INSERT INTO template_logs (id, user_id, template_id, logged_at) VALUES (?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, tl.ID, tl.UserID, tl.TemplateID, utcStr(tl.LoggedAt))
+	return err
+}
+
+func scanTemplate(row *sql.Row) (types.MealTemplate, error) {
+	var t types.MealTemplate
+	var itemsJSON, ca, lu string
+	if err := row.Scan(&t.ID, &t.UserID, &t.Name, &itemsJSON, &ca, &lu); err != nil {
+		return types.MealTemplate{}, err
+	}
+	if err := json.Unmarshal([]byte(itemsJSON), &t.Items); err != nil {
+		return types.MealTemplate{}, fmt.Errorf("store: unmarshal template items: %w", err)
+	}
+	t.CreatedAt = parseUTC(ca)
+	t.LastUsed = parseUTC(lu)
+	if t.Items == nil {
+		t.Items = []types.ResolvedItem{}
+	}
+	return t, nil
+}
+
+func scanTemplates(rows *sql.Rows) ([]types.MealTemplate, error) {
+	var out []types.MealTemplate
+	for rows.Next() {
+		var t types.MealTemplate
+		var itemsJSON, ca, lu string
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &itemsJSON, &ca, &lu); err != nil {
+			return nil, fmt.Errorf("store: scan template: %w", err)
+		}
+		if err := json.Unmarshal([]byte(itemsJSON), &t.Items); err != nil {
+			return nil, fmt.Errorf("store: unmarshal template items: %w", err)
+		}
+		t.CreatedAt = parseUTC(ca)
+		t.LastUsed = parseUTC(lu)
+		if t.Items == nil {
+			t.Items = []types.ResolvedItem{}
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Body Tracking
+// ---------------------------------------------------------------------------
+
+// ListWeight returns weight entries for the last N days.
+func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error) {
+	const q = `
+		SELECT id, user_id, date, weight_kg, note, created_at
+		FROM weight_log
+		WHERE user_id = ? AND date >= date('now', ? || ' days', 'localtime')
+		ORDER BY date ASC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, fmt.Sprintf("-%d", days))
+	if err != nil {
+		return nil, fmt.Errorf("store: list weight: %w", err)
+	}
+	defer rows.Close()
+	return scanWeightEntries(rows)
+}
+
+// LogWeight inserts or updates a weight entry.
+func (s *Store) LogWeight(ctx context.Context, w types.WeightEntry) error {
+	const q = `
+		INSERT INTO weight_log (id, user_id, date, weight_kg, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			date      = excluded.date,
+			weight_kg = excluded.weight_kg,
+			note      = excluded.note
+	`
+	_, err := s.db.ExecContext(ctx, q, w.ID, w.UserID, w.Date, w.WeightKg, w.Note, utcStr(w.CreatedAt))
+	return err
+}
+
+// DeleteWeight deletes a weight entry by user + ID. Returns ErrNotFound if absent.
+func (s *Store) DeleteWeight(ctx context.Context, userID, entryID string) error {
+	const q = `DELETE FROM weight_log WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, entryID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete weight: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// WeightTrend returns weight entries with 7-day rolling average for the last N days.
+func (s *Store) WeightTrend(ctx context.Context, userID string, days int) ([]types.WeightTrend, error) {
+	entries, err := s.ListWeight(ctx, userID, days)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return []types.WeightTrend{}, nil
+	}
+
+	var trend []types.WeightTrend
+	for i, e := range entries {
+		wt := types.WeightTrend{Date: e.Date, WeightKg: e.WeightKg}
+
+		// 7-day rolling average.
+		start := i - 6
+		if start < 0 {
+			start = 0
+		}
+		sum := 0.0
+		count := 0
+		for j := start; j <= i; j++ {
+			sum += entries[j].WeightKg
+			count++
+		}
+		if count > 0 {
+			wt.RollingAvg = sum / float64(count)
+		}
+		trend = append(trend, wt)
+	}
+	return trend, nil
+}
+
+func scanWeightEntries(rows *sql.Rows) ([]types.WeightEntry, error) {
+	var out []types.WeightEntry
+	for rows.Next() {
+		var w types.WeightEntry
+		var ca string
+		if err := rows.Scan(&w.ID, &w.UserID, &w.Date, &w.WeightKg, &w.Note, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan weight: %w", err)
+		}
+		w.CreatedAt = parseUTC(ca)
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ListMeasurements returns measurement entries for the last N days.
+func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) ([]types.MeasurementEntry, error) {
+	const q = `
+		SELECT id, user_id, date, waist_cm, hips_cm, chest_cm, left_arm_cm, right_arm_cm,
+		       left_thigh_cm, right_thigh_cm, note, created_at
+		FROM measurement_log
+		WHERE user_id = ? AND date >= date('now', ? || ' days', 'localtime')
+		ORDER BY date ASC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, fmt.Sprintf("-%d", days))
+	if err != nil {
+		return nil, fmt.Errorf("store: list measurements: %w", err)
+	}
+	defer rows.Close()
+	return scanMeasurementEntries(rows)
+}
+
+// LogMeasurement inserts or updates a measurement entry.
+func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) error {
+	const q = `
+		INSERT INTO measurement_log
+			(id, user_id, date, waist_cm, hips_cm, chest_cm, left_arm_cm, right_arm_cm,
+			 left_thigh_cm, right_thigh_cm, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			date           = excluded.date,
+			waist_cm       = excluded.waist_cm,
+			hips_cm        = excluded.hips_cm,
+			chest_cm       = excluded.chest_cm,
+			left_arm_cm    = excluded.left_arm_cm,
+			right_arm_cm   = excluded.right_arm_cm,
+			left_thigh_cm  = excluded.left_thigh_cm,
+			right_thigh_cm = excluded.right_thigh_cm,
+			note           = excluded.note
+	`
+	_, err := s.db.ExecContext(ctx, q,
+		m.ID, m.UserID, m.Date,
+		m.WaistCm, m.HipsCm, m.ChestCm,
+		m.LeftArmCm, m.RightArmCm, m.LeftThighCm, m.RightThighCm,
+		m.Note, utcStr(m.CreatedAt),
+	)
+	return err
+}
+
+// DeleteMeasurement deletes a measurement entry by user + ID. Returns ErrNotFound.
+func (s *Store) DeleteMeasurement(ctx context.Context, userID, entryID string) error {
+	const q = `DELETE FROM measurement_log WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, entryID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete measurement: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+func scanMeasurementEntries(rows *sql.Rows) ([]types.MeasurementEntry, error) {
+	var out []types.MeasurementEntry
+	for rows.Next() {
+		var m types.MeasurementEntry
+		var ca string
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Date,
+			&m.WaistCm, &m.HipsCm, &m.ChestCm,
+			&m.LeftArmCm, &m.RightArmCm, &m.LeftThighCm, &m.RightThighCm,
+			&m.Note, &ca,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan measurement: %w", err)
+		}
+		m.CreatedAt = parseUTC(ca)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListPhotoMetadata returns progress photo records without the BLOB data.
+func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error) {
+	const q = `
+		SELECT id, user_id, date, view, mime_type, created_at
+		FROM progress_photos WHERE user_id = ?
+		ORDER BY date DESC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list photo metadata: %w", err)
+	}
+	defer rows.Close()
+
+	var out []types.ProgressPhoto
+	for rows.Next() {
+		var p types.ProgressPhoto
+		var ca string
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Date, &p.View, &p.MimeType, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan photo meta: %w", err)
+		}
+		p.CreatedAt = parseUTC(ca)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetPhotoData returns a single progress photo including BLOB data.
+func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error) {
+	const q = `
+		SELECT id, user_id, date, view, mime_type, data, created_at
+		FROM progress_photos WHERE id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, photoID)
+	var p types.ProgressPhoto
+	var ca string
+	if err := row.Scan(&p.ID, &p.UserID, &p.Date, &p.View, &p.MimeType, &p.Data, &ca); err == sql.ErrNoRows {
+		return types.ProgressPhoto{}, types.ErrNotFound
+	} else if err != nil {
+		return types.ProgressPhoto{}, fmt.Errorf("store: get photo data: %w", err)
+	}
+	p.CreatedAt = parseUTC(ca)
+	return p, nil
+}
+
+// UploadPhoto inserts a progress photo with BLOB data.
+func (s *Store) UploadPhoto(ctx context.Context, p types.ProgressPhoto) error {
+	const q = `
+		INSERT INTO progress_photos (id, user_id, date, view, mime_type, data, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q, p.ID, p.UserID, p.Date, p.View, p.MimeType, p.Data, utcStr(p.CreatedAt))
+	return err
+}
+
+// DeletePhoto deletes a progress photo by user + ID. Returns ErrNotFound if absent.
+func (s *Store) DeletePhoto(ctx context.Context, userID, photoID string) error {
+	const q = `DELETE FROM progress_photos WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, photoID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete photo: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// GetMealsInRange returns meals for a user within a date range (inclusive).
+func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error) {
+	const mealQ = `
+		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
+		FROM meals
+		WHERE user_id = ? AND date(at_utc) >= ? AND date(at_utc) <= ?
+		ORDER BY at_utc ASC
+	`
+	rows, err := s.db.QueryContext(ctx, mealQ, userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("store: query meals in range: %w", err)
+	}
+	defer rows.Close()
+
+	var meals []types.Meal
+	var mealIDs []string
+	for rows.Next() {
+		m, err := scanMeal(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan meal: %w", err)
+		}
+		meals = append(meals, m)
+		mealIDs = append(mealIDs, m.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: meals range rows: %w", err)
+	}
+
+	if len(meals) == 0 {
+		return []types.Meal{}, nil
+	}
+
+	itemsByMeal, err := s.loadItems(ctx, mealIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range meals {
+		meals[i].Items = itemsByMeal[meals[i].ID]
+	}
+	return meals, nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Goals & Profile
+// ---------------------------------------------------------------------------
+
+// GetProfile returns the user profile, or ErrNotFound.
+func (s *Store) GetProfile(ctx context.Context, userID string) (types.UserProfile, error) {
+	const q = `
+		SELECT user_id, height_cm, birth_date, gender, activity_level, goal,
+		       target_weight_kg, weekly_rate, onboarded, created_at, updated_at
+		FROM user_profiles WHERE user_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var p types.UserProfile
+	var bd, ca, ua string
+	var onboarded int
+	if err := row.Scan(&p.UserID, &p.HeightCm, &bd, &p.Gender, &p.ActivityLevel, &p.Goal,
+		&p.TargetWeightKg, &p.WeeklyRate, &onboarded, &ca, &ua,
+	); err == sql.ErrNoRows {
+		return types.UserProfile{}, types.ErrNotFound
+	} else if err != nil {
+		return types.UserProfile{}, fmt.Errorf("store: get profile: %w", err)
+	}
+	p.BirthDate = bd
+	p.Onboarded = onboarded != 0
+	p.CreatedAt = parseUTC(ca)
+	p.UpdatedAt = parseUTC(ua)
+	return p, nil
+}
+
+// UpsertProfile inserts or updates the user profile.
+func (s *Store) UpsertProfile(ctx context.Context, p types.UserProfile) error {
+	onboarded := 0
+	if p.Onboarded {
+		onboarded = 1
+	}
+	const q = `
+		INSERT INTO user_profiles
+			(user_id, height_cm, birth_date, gender, activity_level, goal,
+			 target_weight_kg, weekly_rate, onboarded, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			height_cm        = excluded.height_cm,
+			birth_date       = excluded.birth_date,
+			gender           = excluded.gender,
+			activity_level   = excluded.activity_level,
+			goal             = excluded.goal,
+			target_weight_kg = excluded.target_weight_kg,
+			weekly_rate      = excluded.weekly_rate,
+			onboarded        = excluded.onboarded,
+			updated_at       = excluded.updated_at
+	`
+	_, err := s.db.ExecContext(ctx, q,
+		p.UserID, p.HeightCm, p.BirthDate, p.Gender, p.ActivityLevel, p.Goal,
+		p.TargetWeightKg, p.WeeklyRate, onboarded,
+		utcStr(p.CreatedAt), utcStr(p.UpdatedAt),
+	)
+	return err
 }

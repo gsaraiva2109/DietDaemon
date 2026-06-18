@@ -103,6 +103,15 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 	}
 }
 
+// LogMeal directly persists a fully-resolved meal and updates the daily rollup,
+// bypassing parsing and resolution. Used by template logging and meal duplication.
+func (e *Engine) LogMeal(ctx context.Context, meal types.Meal) error {
+	if err := e.store.SaveMeal(ctx, meal); err != nil {
+		return fmt.Errorf("pipeline: log meal: %w", err)
+	}
+	return e.updateRollup(ctx, meal.UserID, meal.At, meal.Total(), e.userLoc(ctx, meal.UserID))
+}
+
 // Handle runs the full pipeline for one inbound message. Parsing/resolution
 // problems are reported back to the user rather than returned as errors;
 // non-nil errors indicate infrastructure failures (store, transport).
