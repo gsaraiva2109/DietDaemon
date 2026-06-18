@@ -4,6 +4,7 @@
 
 import { Link } from 'react-router-dom'
 import { useFrequentFoods } from '@/lib/queries'
+import type { FoodDetail } from '@/lib/types'
 import { Eyebrow } from './ui'
 import { formatNumber } from '@/lib/format'
 
@@ -16,7 +17,7 @@ export function FrequentFoods() {
     <section>
       <Eyebrow>Frequent foods</Eyebrow>
       <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-        {foods.map((f) => (
+        {foods.map((f: FoodDetail) => (
           <Link
             key={f.food_id}
             to={`/log?text=${encodeURIComponent(f.name)}`}

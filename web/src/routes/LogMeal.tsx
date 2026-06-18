@@ -9,6 +9,7 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card } from '@/components/ui'
 import { DuplicateMealModal } from '@/components/DuplicateMealModal'
+import type { MealTemplate } from '@/lib/types'
 import { TemplateIcon, CopyIcon } from '@/components/icons'
 import { fadeUp } from '@/lib/motion'
 
@@ -80,7 +81,7 @@ export function LogMeal() {
         </div>
         {recentTemplates.length ? (
           <div className="flex flex-wrap gap-2">
-            {recentTemplates.map((t) => (
+            {recentTemplates.map((t: MealTemplate) => (
               <button
                 key={t.id}
                 type="button"

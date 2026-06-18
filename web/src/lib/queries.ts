@@ -29,6 +29,7 @@ import {
 } from './demo'
 import type {
   DailyRollup,
+  FoodDetail,
   Macros,
   Meal,
   MeasurementEntry,
@@ -172,7 +173,7 @@ export function useFoods(source = '') {
     queryKey: ['foods', 'list', source, demo],
     queryFn: () =>
       demo
-        ? DEMO_FOODS.filter((f) => !source || f.source === source)
+        ? DEMO_FOODS.filter((f: FoodDetail) => !source || f.source === source)
         : api.foods.list(source, 60),
   })
 }
@@ -200,7 +201,7 @@ export function useFood(id: string | undefined) {
     queryKey: ['foods', 'detail', id ?? '', demo],
     queryFn: () =>
       demo
-        ? (DEMO_FOODS.find((f) => f.food_id === id) ?? DEMO_FOODS[0])
+        ? (DEMO_FOODS.find((f: FoodDetail) => f.food_id === id) ?? DEMO_FOODS[0])
         : api.foods.get(id as string),
     enabled: Boolean(id),
   })

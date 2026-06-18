@@ -9,6 +9,7 @@ import { EmptyState, Spinner } from '@/components/ui'
 import { FoodCard } from '@/components/FoodCard'
 import { FoodDetailModal } from '@/components/FoodDetailModal'
 import { FrequentFoods } from '@/components/FrequentFoods'
+import type { FoodDetail } from '@/lib/types'
 import { FoodsIcon, SearchIcon } from '@/components/icons'
 import { stagger } from '@/lib/motion'
 
@@ -100,7 +101,7 @@ export function Foods() {
           animate="show"
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
         >
-          {foods.map((f) => (
+          {foods.map((f: FoodDetail) => (
             <FoodCard key={f.food_id} food={f} onClick={() => setSelected(f.food_id)} />
           ))}
         </motion.div>

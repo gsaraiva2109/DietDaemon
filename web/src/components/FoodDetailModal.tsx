@@ -8,7 +8,7 @@ import { useFood } from '@/lib/queries'
 import { Button, Pill, Spinner } from './ui'
 import { CloseIcon, LogIcon } from './icons'
 import { sourceLabel } from './FoodCard'
-import { MACRO_KEYS, MACRO_META } from '@/lib/types'
+import { MACRO_KEYS, MACRO_META, type FoodAlias } from '@/lib/types'
 import { formatNumber, round } from '@/lib/format'
 import { easeOut } from '@/lib/motion'
 
@@ -126,7 +126,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                     Aliases
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {f.aliases.map((a) => (
+                    {f.aliases.map((a: FoodAlias) => (
                       <Pill key={a.alias} tone="neutral">
                         {a.alias}
                       </Pill>

@@ -10,8 +10,8 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, EmptyState, Spinner } from '@/components/ui'
 import { ChevronLeft, CloseIcon, SearchIcon } from '@/components/icons'
-import { stagger, fadeUp } from '@/lib/motion'
 import type { FoodDetail } from '@/lib/types'
+import { stagger, fadeUp } from '@/lib/motion'
 
 export function Aliases() {
   const { demo } = useDemo()
@@ -72,7 +72,7 @@ export function Aliases() {
           animate="show"
           className="flex flex-col gap-3"
         >
-          {foods.map((f) => (
+          {foods.map((f: FoodDetail) => (
             <motion.div key={f.food_id} variants={fadeUp}>
               <AliasRow food={f} demo={demo} />
             </motion.div>

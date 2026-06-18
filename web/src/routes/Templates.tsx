@@ -38,7 +38,7 @@ export function Templates() {
           animate="show"
           className="flex flex-col gap-2.5"
         >
-          {templates.data.map((t) => (
+          {templates.data.map((t: MealTemplate) => (
             <motion.div key={t.id} variants={fadeUp}>
               <TemplateRow template={t} demo={demo} />
             </motion.div>
