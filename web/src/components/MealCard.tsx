@@ -42,7 +42,7 @@ export function MealCard({ meal, linkTo }: { meal: Meal; linkTo?: string }) {
   )
 
   return linkTo ? (
-    <Link to={linkTo} className="block">
+    <Link to={linkTo} prefetch="intent" className="block">
       {body}
     </Link>
   ) : (

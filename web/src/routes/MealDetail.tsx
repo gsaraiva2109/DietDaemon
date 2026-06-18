@@ -109,7 +109,7 @@ export function MealDetail() {
 
 function BackLink() {
   return (
-    <Link to="/history" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
+    <Link to="/history" prefetch="intent" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
       <ChevronLeft width={18} height={18} /> History
     </Link>
   )
