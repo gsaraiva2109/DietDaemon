@@ -39,6 +39,11 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("store: open db: %w", err)
 	}
 
+	// SQLite is single-writer; a pool of 1 guarantees every PRAGMA and all
+	// subsequent queries share the same connection, avoiding SQLITE_CANTOPEN
+	// when a second connection races the EXCLUSIVE lock below.
+	db.SetMaxOpenConns(1)
+
 	// EXCLUSIVE locking before WAL avoids shared-memory (-shm) entirely.
 	// SQLite keeps the wal-index in heap memory instead of mmap'ing a file.
 	// Required for Docker Swarm / some overlay filesystems where the VFS
