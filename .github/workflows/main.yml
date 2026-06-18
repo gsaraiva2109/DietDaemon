@@ -80,7 +80,7 @@ jobs:
 
   docker:
     name: Build & Push Docker Image
-    runs-on: [self-hosted, homelab, linux, amd64]
+    runs-on: [self-hosted, homelab, Linux, X64]
     needs: [go, frontend]
     steps:
       - name: Checkout
