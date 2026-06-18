@@ -119,11 +119,10 @@ jobs:
     needs: [docker]
     if: always() && !cancelled()
     steps:
-      - name: Trigger Watchtower update
+      - name: Image pushed
         if: needs.docker.result == 'success'
         run: |
           echo "Image pushed: ${{ env.IMAGE_NAME }}:latest"
-          echo "Watchtower will pick up the new image within 60s."
           echo "SHA: ${{ github.sha }}"
 
       - name: Notify failure

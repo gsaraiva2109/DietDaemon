@@ -1,21 +1,4 @@
 services:
-  # Auto-update: polls GHCR every 60s for a new :latest image, pulls and
-  # restarts dietdaemon in-place. Zero-downtime for a single-container homelab
-  # is not possible, but restart is fast (< 2s cold start).
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: dietdaemon-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_POLL_INTERVAL=60
-      - WATCHTOWER_INCLUDE_RESTARTING=true
-      - WATCHTOWER_LABEL_ENABLE=true
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-
   dietdaemon:
     build: .
     image: ghcr.io/gsaraiva2109/dietdaemon:latest
