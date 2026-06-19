@@ -409,6 +409,56 @@ export function useTDEE(params: {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Auth (Phase 1) — providers gating, API keys, change password.
+// Session/login/register/logout state lives in the AuthProvider (auth.tsx),
+// the single source of truth; these hooks cover the data-ish surfaces.
+// Demo short-circuits reads so the screens render with no backend.
+// ---------------------------------------------------------------------------
+
+export function useProviders() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['auth', 'providers', demo],
+    queryFn: () =>
+      demo
+        ? { registration_mode: 'open' as const, providers: [] }
+        : api.auth.providers(),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useApiKeys() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['auth', 'api-keys', demo],
+    queryFn: () => (demo ? [] : api.auth.apiKeys.list()),
+  })
+}
+
+export function useCreateApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (label: string) => api.auth.apiKeys.create(label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'api-keys'] }),
+  })
+}
+
+export function useRevokeApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.auth.apiKeys.revoke(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'api-keys'] }),
+  })
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: ({ current, next }: { current: string; next: string }) =>
+      api.auth.changePassword(current, next),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

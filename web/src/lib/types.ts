@@ -243,3 +243,46 @@ export const GOALS = [
   { value: 'maintain', label: 'Maintain', hint: 'Hold your current weight' },
   { value: 'bulk', label: 'Bulk', hint: 'Build muscle in a calorie surplus' },
 ] as const
+
+// ---------------------------------------------------------------------------
+// Auth (Phase 1) — httpOnly server sessions + machine API keys.
+// Mirrors the frozen API contract: snake_case json from the Go backend.
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string
+  email: string
+  display_name: string
+  email_verified: boolean
+  created_at: string
+}
+
+// GET /auth/session — the authenticated user, or 401 when anonymous.
+export interface SessionResponse {
+  user: User
+}
+
+// How new accounts may be created. Drives login/register screen gating.
+//   open      — anyone may register
+//   invite    — only the bootstrap (first) user; closed thereafter
+//   oidc-only — no password form; sign in with a provider (Phase 3)
+export type RegistrationMode = 'open' | 'invite' | 'oidc-only'
+
+// GET /auth/providers — drives the login screen (providers populate in P3).
+export interface ProvidersResponse {
+  registration_mode: RegistrationMode
+  providers: { id: string; name: string }[]
+}
+
+// Machine API key. The raw `key` is returned ONCE on create and never listed.
+export interface ApiKey {
+  id: string
+  label: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+export interface NewApiKey extends ApiKey {
+  key: string // "ddk_…" — shown once, never stored client-side
+}
