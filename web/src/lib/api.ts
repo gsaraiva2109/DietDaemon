@@ -198,6 +198,33 @@ export const api = {
       unlink: (id: string) =>
         request<void>(`/auth/identities/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
+    // --- Email verification & change (Phase 4) --------------------------
+    email: {
+      verify: (verifyToken: string) =>
+        request<void>('/auth/email/verify', {
+          method: 'POST',
+          body: JSON.stringify({ token: verifyToken }),
+        }),
+      resendVerify: () => request<void>('/auth/email/verify/resend', { method: 'POST' }),
+      change: (email: string) =>
+        request<void>('/auth/email/change', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        }),
+    },
+    // --- Password reset (Phase 4). forgot() always responds generically. ---
+    password: {
+      forgot: (email: string) =>
+        request<void>('/auth/password/forgot', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        }),
+      reset: (resetToken: string, newPassword: string) =>
+        request<void>('/auth/password/reset', {
+          method: 'POST',
+          body: JSON.stringify({ token: resetToken, password: newPassword }),
+        }),
+    },
     changePassword: (currentPassword: string, newPassword: string) =>
       request<void>('/auth/change-password', {
         method: 'POST',
