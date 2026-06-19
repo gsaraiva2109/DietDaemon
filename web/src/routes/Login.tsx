@@ -6,10 +6,11 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
-import { useProviders } from '@/lib/queries'
+import { useProviders, useMagicRequest } from '@/lib/queries'
 import { AUTH_ERROR, RateLimitError } from '@/lib/api'
 import { AuthLayout } from '@/components/AuthLayout'
 import { ProviderButtons } from '@/components/ProviderButtons'
+import { MagicCodeEntry } from '@/components/MagicCodeEntry'
 import { Button, Field, FormError } from '@/components/ui'
 
 export function Login() {
@@ -29,6 +30,9 @@ export function Login() {
   const [busy, setBusy] = useState(false)
   // Set when login defers to a second factor (TOTP).
   const [challengeToken, setChallengeToken] = useState<string | null>(null)
+  // Set when the user requested a passwordless sign-in code.
+  const [magicEmail, setMagicEmail] = useState<string | null>(null)
+  const magicRequest = useMagicRequest()
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -61,6 +65,36 @@ export function Login() {
   function viewDemo() {
     setDemo(true)
     navigate('/', { replace: true })
+  }
+
+  async function emailMeCode() {
+    const addr = email.trim().toLowerCase()
+    if (!addr) {
+      setError('Enter your email first.')
+      return
+    }
+    setError(null)
+    try {
+      await magicRequest.mutateAsync(addr)
+    } catch {
+      // Generic — never leak whether the address exists.
+    }
+    setMagicEmail(addr)
+  }
+
+  if (magicEmail) {
+    return (
+      <AuthLayout
+        title="Check your email"
+        subtitle="We sent a sign-in code. Enter it below, or use the link in the email."
+      >
+        <MagicCodeEntry
+          email={magicEmail}
+          onVerified={() => navigate(next, { replace: true })}
+          onBack={() => setMagicEmail(null)}
+        />
+      </AuthLayout>
+    )
   }
 
   if (challengeToken) {
@@ -135,6 +169,14 @@ export function Login() {
             <FormError>{error}</FormError>
             <Button type="submit" disabled={busy || !email.trim() || !password}>
               {busy ? 'Signing in…' : 'Sign in'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={emailMeCode}
+              disabled={busy || magicRequest.isPending}
+            >
+              {magicRequest.isPending ? 'Sending…' : 'Email me a sign-in code'}
             </Button>
           </form>
         )}

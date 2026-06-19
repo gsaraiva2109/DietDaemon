@@ -520,6 +520,19 @@ export function useResetPassword() {
   })
 }
 
+// --- Passwordless magic code / link (Phase 5) -----------------------------
+
+export function useMagicRequest() {
+  return useMutation({ mutationFn: (email: string) => api.auth.magic.request(email) })
+}
+
+export function useMagicVerifyCode() {
+  return useMutation({
+    mutationFn: ({ email, code }: { email: string; code: string }) =>
+      api.auth.magic.verifyCode(email, code),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

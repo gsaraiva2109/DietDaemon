@@ -23,6 +23,7 @@ import { AuthCallback } from '@/routes/AuthCallback'
 import { VerifyEmail } from '@/routes/VerifyEmail'
 import { ForgotPassword } from '@/routes/ForgotPassword'
 import { ResetPassword } from '@/routes/ResetPassword'
+import { MagicLink } from '@/routes/MagicLink'
 
 // Lazy-load all routes so recharts (~300KB) only ships when Trends or
 // Summary is visited. Route components use named exports — wrap with
@@ -95,6 +96,7 @@ function AppRoutes() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/magic" element={<MagicLink />} />
 
       {/* Everything else is gated, then wrapped in the app frame. */}
       <Route element={<ProtectedRoute />}>

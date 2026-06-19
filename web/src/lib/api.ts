@@ -212,6 +212,27 @@ export const api = {
           body: JSON.stringify({ email }),
         }),
     },
+    // --- Passwordless magic code / link (Phase 5) -----------------------
+    magic: {
+      // Request a sign-in code + link by email. Always responds generically.
+      request: (email: string) =>
+        request<void>('/auth/magic/request', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        }),
+      // Complete sign-in with the emailed code (scoped by email) …
+      verifyCode: (email: string, code: string) =>
+        request<SessionResponse>('/auth/magic/verify', {
+          method: 'POST',
+          body: JSON.stringify({ email, code }),
+        }),
+      // … or the one-click link token.
+      verifyToken: (magicToken: string) =>
+        request<SessionResponse>('/auth/magic/verify', {
+          method: 'POST',
+          body: JSON.stringify({ token: magicToken }),
+        }),
+    },
     // --- Password reset (Phase 4). forgot() always responds generically. ---
     password: {
       forgot: (email: string) =>
