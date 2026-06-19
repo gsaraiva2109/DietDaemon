@@ -19,6 +19,7 @@ import { Spinner } from '@/components/ui'
 import { easeOut } from '@/lib/motion'
 import { Login } from '@/routes/Login'
 import { Register } from '@/routes/Register'
+import { AuthCallback } from '@/routes/AuthCallback'
 
 // Lazy-load all routes so recharts (~300KB) only ships when Trends or
 // Summary is visited. Route components use named exports — wrap with
@@ -87,6 +88,7 @@ function AppRoutes() {
       {/* Public auth screens. */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Everything else is gated, then wrapped in the app frame. */}
       <Route element={<ProtectedRoute />}>

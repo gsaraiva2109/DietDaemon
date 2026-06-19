@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Field, FormError, Input, Pill, Spinner } from '@/components/ui'
 import { TotpEnroll } from '@/components/TotpEnroll'
 import { RecoveryCodes } from '@/components/RecoveryCodes'
+import { LinkedAccounts } from '@/components/LinkedAccounts'
 import { CopyIcon, TrashIcon } from '@/components/icons'
 import { scaleIn } from '@/lib/motion'
 import type { NewApiKey } from '@/lib/types'
@@ -30,9 +31,29 @@ export function Security() {
     <div>
       <PageHeader eyebrow="Settings" title="Security" />
       <TwoFactorCard demo={demo} />
+      <LinkedAccountsCard demo={demo} />
       <ApiKeysCard demo={demo} />
       <ChangePasswordCard demo={demo} />
     </div>
+  )
+}
+
+function LinkedAccountsCard({ demo }: { demo: boolean }) {
+  return (
+    <Card className="mb-5 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-ink">Linked accounts</h2>
+        {demo && <Pill tone="muted">disabled in demo</Pill>}
+      </div>
+      <p className="mb-4 text-sm text-muted">
+        Connect a provider to sign in without a password.
+      </p>
+      {demo ? (
+        <p className="text-sm text-muted">Connect a real backend to manage linked accounts.</p>
+      ) : (
+        <LinkedAccounts />
+      )}
+    </Card>
   )
 }
 
