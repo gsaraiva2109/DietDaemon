@@ -255,6 +255,8 @@ export interface User {
   display_name: string
   email_verified: boolean
   created_at: string
+  // Phase 2 — whether a confirmed TOTP factor is active on the account.
+  totp_enabled?: boolean
 }
 
 // GET /auth/session — the authenticated user, or 401 when anonymous.
@@ -285,4 +287,32 @@ export interface ApiKey {
 
 export interface NewApiKey extends ApiKey {
   key: string // "ddk_…" — shown once, never stored client-side
+}
+
+// ---------------------------------------------------------------------------
+// TOTP / MFA (Phase 2)
+// ---------------------------------------------------------------------------
+
+// POST /auth/totp/enroll — provisioning data for the authenticator app.
+export interface TotpEnrollResponse {
+  otpauth_url: string // otpauth://totp/… (rendered as a QR)
+  secret: string // base32, for manual entry
+}
+
+// Returned once after enroll-verify and on regenerate. Show, then forget.
+export interface RecoveryCodesResponse {
+  recovery_codes: string[]
+}
+
+// Login can defer to a second factor instead of issuing a session.
+export interface MfaChallenge {
+  mfa_required: true
+  challenge_token: string
+}
+
+// POST /auth/login → either a session (1FA done) or an MFA challenge.
+export type LoginResponse = SessionResponse | MfaChallenge
+
+export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
+  return 'mfa_required' in r && r.mfa_required === true
 }

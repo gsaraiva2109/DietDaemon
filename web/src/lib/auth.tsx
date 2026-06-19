@@ -19,16 +19,25 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { api, setUnauthorizedHandler } from './api'
 import { useDemo } from './demo'
-import type { User } from './types'
+import { isMfaChallenge, type User } from './types'
 
 type AuthStatus = 'checking' | 'authed' | 'anon'
+
+// login() either signs in (1FA done) or hands back an MFA challenge token the
+// caller must satisfy via verifyTotp() before a session is issued.
+export type LoginResult =
+  | { status: 'ok' }
+  | { status: 'mfa_required'; challengeToken: string }
 
 interface AuthValue {
   status: AuthStatus
   user: User | null
-  login: (email: string, password: string, remember: boolean) => Promise<void>
+  login: (email: string, password: string, remember: boolean) => Promise<LoginResult>
+  verifyTotp: (challengeToken: string, code: string, recovery?: boolean) => Promise<void>
   register: (email: string, password: string, displayName: string) => Promise<void>
   logout: () => Promise<void>
+  /** Re-probe the session (e.g. after enabling/disabling a factor). */
+  refresh: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
@@ -84,14 +93,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [demo, navigate])
 
   const login = useCallback(
-    async (email: string, password: string, remember: boolean) => {
+    async (email: string, password: string, remember: boolean): Promise<LoginResult> => {
       const res = await api.auth.login(email.trim().toLowerCase(), password, remember)
+      if (isMfaChallenge(res)) {
+        return { status: 'mfa_required', challengeToken: res.challenge_token }
+      }
+      expiringRef.current = false
+      setUser(res.user)
+      setStatus('authed')
+      return { status: 'ok' }
+    },
+    [],
+  )
+
+  const verifyTotp = useCallback(
+    async (challengeToken: string, code: string, recovery = false) => {
+      const res = await api.auth.totp.challenge(challengeToken, code, recovery)
       expiringRef.current = false
       setUser(res.user)
       setStatus('authed')
     },
     [],
   )
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await api.auth.session()
+      setUser(res.user)
+      setStatus('authed')
+    } catch {
+      setUser(null)
+      setStatus('anon')
+    }
+  }, [])
 
   const register = useCallback(
     async (email: string, password: string, displayName: string) => {
@@ -119,8 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [demo])
 
   const value = useMemo<AuthValue>(
-    () => ({ status, user, login, register, logout }),
-    [status, user, login, register, logout],
+    () => ({ status, user, login, verifyTotp, register, logout, refresh }),
+    [status, user, login, verifyTotp, register, logout, refresh],
   )
   return <AuthContext value={value}>{children}</AuthContext>
 }
