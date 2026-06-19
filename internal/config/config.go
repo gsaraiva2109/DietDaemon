@@ -61,6 +61,16 @@ type Config struct {
 	MultiUser    bool
 	APIAuthToken string
 
+	// --- Auth (Phase 1) ---
+	DBDriver           string
+	DatabaseURL        string
+	RegistrationMode   string
+	SessionIdleTTL     time.Duration
+	SessionAbsoluteTTL time.Duration
+	SessionRememberTTL time.Duration
+	CookieSecure       bool
+	CookieDomain       string
+
 	LogLevel string
 }
 
@@ -101,6 +111,14 @@ func Load() (*Config, error) {
 		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
 		MultiUser:               getBool("MULTI_USER", false),
 		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
+		DBDriver:                getStr("DB_DRIVER", "sqlite"),
+		DatabaseURL:             getStr("DATABASE_URL", ""),
+		RegistrationMode:        getStr("AUTH_REGISTRATION_MODE", "invite"),
+		SessionIdleTTL:          getDuration("SESSION_IDLE_TTL", 168*time.Hour),
+		SessionAbsoluteTTL:      getDuration("SESSION_ABSOLUTE_TTL", 720*time.Hour),
+		SessionRememberTTL:      getDuration("SESSION_REMEMBER_TTL", 2160*time.Hour),
+		CookieSecure:            getBool("COOKIE_SECURE", true),
+		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
 	}
 
@@ -208,6 +226,24 @@ func (c *Config) validate(tierErr error) error {
 		add("DEFAULT_TIMEZONE %q is not a valid IANA timezone: %v", c.DefaultTimezone, err)
 	} else {
 		c.Location = loc
+	}
+
+	// Auth Phase 1.
+	if c.DBDriver != "sqlite" {
+		add("DB_DRIVER=%q not supported yet; only \"sqlite\"", c.DBDriver)
+	}
+	validModes := map[string]bool{"invite": true, "open": true, "oidc-only": true}
+	if !validModes[c.RegistrationMode] {
+		add("AUTH_REGISTRATION_MODE must be one of: invite, open, oidc-only, got %q", c.RegistrationMode)
+	}
+	if c.SessionIdleTTL <= 0 {
+		add("SESSION_IDLE_TTL must be positive")
+	}
+	if c.SessionAbsoluteTTL <= 0 {
+		add("SESSION_ABSOLUTE_TTL must be positive")
+	}
+	if c.SessionRememberTTL <= 0 {
+		add("SESSION_REMEMBER_TTL must be positive")
 	}
 
 	if len(problems) > 0 {

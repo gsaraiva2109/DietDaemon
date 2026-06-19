@@ -28,6 +28,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
+	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
@@ -153,10 +154,17 @@ func run() error {
 
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
-		if cfg.APIAuthToken == "" && !cfg.MultiUser {
-			slog.Warn("dashboard running without authentication — set API_AUTH_TOKEN to protect the API")
+		authCfg := api.AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     cfg.SessionIdleTTL,
+				AbsoluteTTL: cfg.SessionAbsoluteTTL,
+				RememberTTL: cfg.SessionRememberTTL,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
+			CookieSecure:     cfg.CookieSecure,
 		}
-		apiHandler := api.New(st, engine, cfg.Location, cfg.APIAuthToken, cfg.MultiUser)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, authCfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
