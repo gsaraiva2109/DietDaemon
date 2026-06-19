@@ -150,19 +150,28 @@ func (s *Store) Close() error {
 // Users
 // ---------------------------------------------------------------------------
 
-// UpsertUser inserts or replaces a user row.
+// UpsertUser inserts or updates a user row. New auth columns are set via
+// separate auth-dedicated methods (CreateUserWithPassword); this method
+// preserves the existing id/timezone/created_at contract for the pipeline.
 func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 	const q = `
-		INSERT OR REPLACE INTO users (id, timezone, created_at)
-		VALUES (?, ?, ?)
+		INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET timezone = excluded.timezone
 	`
-	_, err := s.db.ExecContext(ctx, q, u.ID, u.Timezone, utcStr(u.CreatedAt))
+	var emailVerifiedAt any
+	if u.EmailVerifiedAt != nil {
+		emailVerifiedAt = utcStr(*u.EmailVerifiedAt)
+	}
+	_, err := s.db.ExecContext(ctx, q,
+		u.ID, nullStr(u.AccountID), nullStr(u.Email), emailVerifiedAt, u.Status, nullStr(u.DisplayName),
+		u.Timezone, utcStr(u.CreatedAt))
 	return err
 }
 
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
-	const q = `SELECT id, timezone, created_at FROM users WHERE id = ?`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, q, userID)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
@@ -173,7 +182,7 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	const q = `SELECT id, timezone, created_at FROM users ORDER BY id`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
@@ -184,10 +193,23 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 	for rows.Next() {
 		var u types.User
 		var ca string
-		if err := rows.Scan(&u.ID, &u.Timezone, &ca); err != nil {
+		var eva sql.NullString
+		var accountID, email, displayName, status sql.NullString
+		if err := rows.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
 			return nil, fmt.Errorf("store: scan user: %w", err)
 		}
+		u.AccountID = accountID.String
+		u.Email = email.String
+		u.DisplayName = displayName.String
+		u.Status = status.String
 		u.CreatedAt = parseUTC(ca)
+		if eva.Valid {
+			t := parseUTC(eva.String)
+			u.EmailVerifiedAt = &t
+		}
+		if !status.Valid {
+			u.Status = "active"
+		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
@@ -196,10 +218,23 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 func scanUser(row *sql.Row) (types.User, error) {
 	var u types.User
 	var ca string
-	if err := row.Scan(&u.ID, &u.Timezone, &ca); err != nil {
+	var eva sql.NullString
+	var accountID, email, displayName, status sql.NullString
+	if err := row.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
 		return types.User{}, err
 	}
+	u.AccountID = accountID.String
+	u.Email = email.String
+	u.DisplayName = displayName.String
+	u.Status = status.String
 	u.CreatedAt = parseUTC(ca)
+	if eva.Valid {
+		t := parseUTC(eva.String)
+		u.EmailVerifiedAt = &t
+	}
+	if !status.Valid {
+		u.Status = "active"
+	}
 	return u, nil
 }
 
@@ -207,17 +242,6 @@ func scanUser(row *sql.Row) (types.User, error) {
 // owning userID. Returns types.ErrNotFound when the token is invalid or expired.
 // In single-user mode this method is not called; the static API_AUTH_TOKEN is
 // checked directly.
-func (s *Store) ValidateToken(ctx context.Context, token string) (string, error) {
-	const q = `SELECT user_id FROM api_tokens WHERE token = ?`
-	row := s.db.QueryRowContext(ctx, q, token)
-	var userID string
-	if err := row.Scan(&userID); err == sql.ErrNoRows {
-		return "", types.ErrNotFound
-	} else if err != nil {
-		return "", fmt.Errorf("store: validate token: %w", err)
-	}
-	return userID, nil
-}
 
 // UpsertUserTimezone updates the users.timezone column for a user.
 func (s *Store) UpsertUserTimezone(ctx context.Context, userID, timezone string) error {
@@ -1022,6 +1046,15 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 func utcStr(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func utcNow() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// nullStr returns nil for an empty string, otherwise returns the string.
+// Used to store nullable TEXT columns as SQL NULL instead of "".
+func nullStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
 
 func parseUTC(s string) time.Time {
 	if s == "" {

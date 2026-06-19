@@ -1,8 +1,12 @@
 // Typed fetch wrapper for the DietDaemon REST API. Base path is /api/v1, which
 // is same-origin in production (Go serves the SPA) and proxied in dev (see
-// vite.config.ts). The Bearer token, when set, lives in localStorage.
+// vite.config.ts). Auth is cookie-based: an HttpOnly `dd_session` cookie the
+// browser sends automatically (we just set `credentials: 'include'`), paired
+// with a readable `dd_csrf` cookie echoed in `X-CSRF-Token` on mutations
+// (double-submit CSRF). No token lives in JS/localStorage anymore.
 
 import type {
+  ApiKey,
   BodyCompositionSummary,
   DailyRollup,
   FoodDetail,
@@ -11,8 +15,11 @@ import type {
   Meal,
   MealTemplate,
   MeasurementEntry,
+  NewApiKey,
   ProgressPhoto,
+  ProvidersResponse,
   ResolvedItem,
+  SessionResponse,
   TDEEResult,
   UserProfile,
   WeightEntry,
@@ -20,15 +27,28 @@ import type {
 } from './types'
 
 const BASE = '/api/v1'
-const TOKEN_KEY = 'dd.token'
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+// Generic, field-agnostic auth copy — never reveal which field was wrong.
+export const AUTH_ERROR = 'Invalid email or password.'
+
+// Read a non-HttpOnly cookie value (used for the CSRF double-submit token).
+export function readCookie(name: string): string | null {
+  const match = document.cookie.match(
+    new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'),
+  )
+  return match ? decodeURIComponent(match[1]) : null
 }
-export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  else localStorage.removeItem(TOKEN_KEY)
+
+// A single 401 interceptor. AuthProvider registers a callback here so any
+// request that 401s (session expired, revoked) flips the app back to anon and
+// routes to /login — without each call site handling it.
+type UnauthorizedHandler = () => void
+let onUnauthorized: UnauthorizedHandler | null = null
+export function setUnauthorizedHandler(fn: UnauthorizedHandler | null) {
+  onUnauthorized = fn
 }
+
+const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export class ApiError extends Error {
   status: number
@@ -39,7 +59,7 @@ export class ApiError extends Error {
   }
 }
 
-// Thrown on 401 so the app can bounce to the token gate.
+// Thrown on 401 so the app can bounce to the login screen.
 export class UnauthorizedError extends ApiError {
   constructor(message = 'unauthorized') {
     super(401, message)
@@ -47,21 +67,44 @@ export class UnauthorizedError extends ApiError {
   }
 }
 
+// Thrown on 429 (auth lockout). Carries the Retry-After seconds when present.
+export class RateLimitError extends ApiError {
+  retryAfter: number | null
+  constructor(retryAfter: number | null, message = 'too many attempts') {
+    super(429, message)
+    this.name = 'RateLimitError'
+    this.retryAfter = retryAfter
+  }
+}
+
+function handleUnauthorized(): UnauthorizedError {
+  // Fire the interceptor out-of-band so the throw still propagates to callers.
+  if (onUnauthorized) queueMicrotask(onUnauthorized)
+  return new UnauthorizedError()
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken()
+  const method = (init?.method ?? 'GET').toUpperCase()
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
   if (init?.body) headers.set('Content-Type', 'application/json')
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (MUTATING.has(method)) {
+    const csrf = readCookie('dd_csrf')
+    if (csrf) headers.set('X-CSRF-Token', csrf)
+  }
 
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, { ...init, headers })
+    res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })
   } catch {
     throw new ApiError(0, 'Network error — is the DietDaemon server running?')
   }
 
-  if (res.status === 401) throw new UnauthorizedError()
+  if (res.status === 401) throw handleUnauthorized()
+  if (res.status === 429) {
+    const ra = res.headers.get('Retry-After')
+    throw new RateLimitError(ra ? Number(ra) : null)
+  }
 
   if (!res.ok) {
     let msg = `Request failed (${res.status})`
@@ -124,8 +167,40 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  // Lightweight auth probe used by the token gate.
-  ping: () => request<DailyRollup>('/rollups/today'),
+  // --- Auth (Phase 1): sessions, registration, API keys ------------------
+  auth: {
+    // Boot probe + route guard. 401 → anonymous (UnauthorizedError).
+    session: () => request<SessionResponse>('/auth/session'),
+    login: (email: string, password: string, remember: boolean) =>
+      request<SessionResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password, remember }),
+      }),
+    register: (email: string, password: string, displayName: string) =>
+      request<SessionResponse>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password, display_name: displayName }),
+      }),
+    logout: () => request<void>('/auth/logout', { method: 'POST' }),
+    // Drives login/register gating; providers populate in Phase 3.
+    providers: () => request<ProvidersResponse>('/auth/providers'),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request<void>('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    apiKeys: {
+      list: () => request<ApiKey[]>('/auth/api-keys'),
+      // Raw key returned ONCE; surface it immediately, never persist it.
+      create: (label: string) =>
+        request<NewApiKey>('/auth/api-keys', {
+          method: 'POST',
+          body: JSON.stringify({ label }),
+        }),
+      revoke: (id: string) =>
+        request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+  },
 
   // --- Phase 2: Food Discovery -------------------------------------------
   foods: {
@@ -240,25 +315,27 @@ export const api = {
 }
 
 // multipart sends FormData without forcing a JSON Content-Type (the browser
-// sets the multipart boundary itself).
+// sets the multipart boundary itself). POST → carry the CSRF header too.
 async function multipart<T>(path: string, body: FormData): Promise<T> {
-  const token = getToken()
   const headers = new Headers()
   headers.set('Accept', 'application/json')
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(`${BASE}${path}`, { method: 'POST', body, headers })
-  if (res.status === 401) throw new UnauthorizedError()
+  const csrf = readCookie('dd_csrf')
+  if (csrf) headers.set('X-CSRF-Token', csrf)
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    body,
+    headers,
+    credentials: 'include',
+  })
+  if (res.status === 401) throw handleUnauthorized()
   if (!res.ok) throw new ApiError(res.status, `Upload failed (${res.status})`)
   return (await res.json()) as T
 }
 
 // blobRequest fetches binary/file responses (photos, CSV/JSON exports).
 async function blobRequest(path: string): Promise<Blob> {
-  const token = getToken()
-  const headers = new Headers()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(`${BASE}${path}`, { headers })
-  if (res.status === 401) throw new UnauthorizedError()
+  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
+  if (res.status === 401) throw handleUnauthorized()
   if (!res.ok) throw new ApiError(res.status, `Request failed (${res.status})`)
   return await res.blob()
 }

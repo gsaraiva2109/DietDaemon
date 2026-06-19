@@ -2,14 +2,14 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useToday, useSetTargets } from '@/lib/queries'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill, Spinner } from '@/components/ui'
 import { ExportModal } from '@/components/ExportModal'
-import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon } from '@/components/icons'
+import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon, SettingsIcon } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
@@ -17,9 +17,18 @@ const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 export function Settings() {
   const today = useToday()
   const setTargets = useSetTargets()
-  const { signOut } = useAuth()
-  const { demo } = useDemo()
+  const { logout } = useAuth()
+  const { demo, setDemo } = useDemo()
+  const navigate = useNavigate()
   const [exporting, setExporting] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+
+  async function signOut() {
+    setSigningOut(true)
+    if (demo) setDemo(false)
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   // null = not yet edited; derive values from server data.
   const [draft, setDraft] = useState<Macros | null>(null)
@@ -92,6 +101,7 @@ export function Settings() {
 
       {/* Manage — links to the new feature surfaces. */}
       <Card className="mb-5 p-2">
+        <RowLink to="/settings/security" Icon={SettingsIcon} label="Security" hint="API keys & password" />
         <RowLink to="/goals" Icon={GoalIcon} label="Body profile & goals" hint="TDEE, targets, onboarding" />
         <RowLink to="/settings/aliases" Icon={FoodsIcon} label="Food aliases" hint="Manage learned names" />
         <button
@@ -120,9 +130,11 @@ export function Settings() {
 
       <Card className="p-5">
         <h2 className="mb-1 font-semibold text-ink">Session</h2>
-        <p className="mb-4 text-sm text-muted">Your API token is stored in this browser only.</p>
-        <Button variant="ghost" onClick={signOut}>
-          Sign out
+        <p className="mb-4 text-sm text-muted">
+          You're signed in with a secure server session. Sign out to end it on this device.
+        </p>
+        <Button variant="ghost" onClick={signOut} disabled={signingOut}>
+          {signingOut ? 'Signing out…' : 'Sign out'}
         </Button>
       </Card>
 

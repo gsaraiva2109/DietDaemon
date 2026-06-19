@@ -1,6 +1,11 @@
 // Shared primitives. Single-level cards only (DESIGN.md: never nested cards).
 
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+} from 'react'
+import { useId } from 'react'
 
 export function Card({
   children,
@@ -90,5 +95,61 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
       <span className="size-4 animate-spin rounded-full border-2 border-line border-t-primary" />
       {label}…
     </div>
+  )
+}
+
+// Input — the calm bordered field, extracted from the old TokenGate so every
+// auth form shares one focus/disabled treatment. No parallel styling.
+export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      className={`w-full rounded-xl border border-line bg-surface px-4 py-3 text-ink outline-none transition placeholder:text-muted/70 focus:border-primary disabled:opacity-60 ${className}`}
+      {...rest}
+    />
+  )
+}
+
+// Field — label + input + inline error, wired for a11y (label htmlFor,
+// aria-invalid, aria-describedby). The visible error pairs colour with text.
+export function Field({
+  label,
+  error,
+  hint,
+  className = '',
+  id,
+  ...rest
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; hint?: string }) {
+  const autoId = useId()
+  const fieldId = id ?? autoId
+  const errId = `${fieldId}-err`
+  return (
+    <div className={`flex flex-col gap-1.5 ${className}`}>
+      <label htmlFor={fieldId} className="text-sm font-medium text-ink">
+        {label}
+      </label>
+      <Input
+        id={fieldId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errId : undefined}
+        {...rest}
+      />
+      {hint && !error && <p className="text-xs text-muted">{hint}</p>}
+      {error && (
+        <p id={errId} className="text-sm font-medium text-accent" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// FormError — a single form-level error line (generic auth copy). role=alert so
+// it's announced; colour is never the only signal (it always carries text).
+export function FormError({ children }: { children: ReactNode }) {
+  if (!children) return null
+  return (
+    <p className="text-sm font-medium text-accent" role="alert">
+      {children}
+    </p>
   )
 }

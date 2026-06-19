@@ -16,7 +16,31 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 )
+
+// AuthStore is the subset of store methods the auth endpoints need.
+type AuthStore interface {
+	GetUserByEmail(ctx context.Context, email string) (types.User, error)
+	CreateUserWithPassword(ctx context.Context, accountID, userID, email, displayName, phcHash string) (types.User, error)
+	GetPasswordHash(ctx context.Context, userID string) (string, error)
+	SetPasswordHash(ctx context.Context, userID, phcHash string) error
+	CountUsers(ctx context.Context) (int, error)
+	GetUserByAPIKey(ctx context.Context, hashedKey string) (types.User, error)
+	CreateAPIKey(ctx context.Context, id, userID, hashedKey, label string) error
+	ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey, error)
+	RevokeAPIKey(ctx context.Context, userID, keyID string) error
+	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
+	RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error
+}
+
+// AuthConfig bundles auth-related configuration for the Handler.
+type AuthConfig struct {
+	SessionCfg       auth.SessionConfig
+	LockoutCfg       auth.LockoutConfig
+	RegistrationMode types.RegistrationMode
+	CookieSecure     bool
+}
 
 // MealStore is the subset of the store the API needs.
 type MealStore interface {
@@ -37,10 +61,9 @@ type MealStore interface {
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
 
-	// Users & auth.
+	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	UpsertUser(ctx context.Context, u types.User) error
-	ValidateToken(ctx context.Context, token string) (string, error)
 
 	// Food discovery.
 	ListFoods(ctx context.Context, userID, source string, limit, offset int) ([]types.FoodDetail, error)
@@ -90,25 +113,44 @@ type MealLogger interface {
 // Handler serves the DietDaemon REST API.
 type Handler struct {
 	store     MealStore
+	authStore AuthStore
 	logger    MealLogger
 	loc       *time.Location
-	authToken string // empty = no auth check in single-user mode
-	multiUser bool
+
+	// Auth sub-components.
+	sessions      auth.SessionRepo
+	loginAttempts auth.LoginAttemptRepo
+
+	// Auth config.
+	sessionCfg       auth.SessionConfig
+	lockoutCfg       auth.LockoutConfig
+	registrationMode types.RegistrationMode
+	cookieSecure     bool
+
+	// Rate limiter for login/register endpoints.
+	ipLimiter *auth.IPRateLimiter
 }
 
-// New returns a ready API Handler. authToken is the static bearer token for
-// single-user mode; when empty, requests from localhost skip auth. In multi-user
-// mode, tokens are validated against the api_tokens table via the store.
-func New(store MealStore, logger MealLogger, loc *time.Location, authToken string, multiUser bool) *Handler {
+// New returns a ready API Handler. The store and authStore are typically the
+// same concrete *store.Store, passed through two interfaces. sessions and
+// loginAttempts are the same concrete store, cast to the auth package
+// interfaces (they are satisfied by *store.Store).
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, cfg AuthConfig) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
 	return &Handler{
-		store:     store,
-		logger:    logger,
-		loc:       loc,
-		authToken: authToken,
-		multiUser: multiUser,
+		store:            store,
+		authStore:        authStore,
+		logger:           logger,
+		loc:              loc,
+		sessions:         sessions,
+		loginAttempts:    loginAttempts,
+		sessionCfg:       cfg.SessionCfg,
+		lockoutCfg:       cfg.LockoutCfg,
+		registrationMode: cfg.RegistrationMode,
+		cookieSecure:     cfg.CookieSecure,
+		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
 	}
 }
 
@@ -174,9 +216,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Phase 6 — Export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
+
+	// Phase 1 — Auth endpoints.
+	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublic(h.handleRegister))
+	mux.HandleFunc("POST /api/v1/auth/login", h.wrapPublic(h.handleLogin))
+	mux.HandleFunc("POST /api/v1/auth/logout", h.wrap(h.handleLogout))
+	mux.HandleFunc("GET /api/v1/auth/session", h.wrap(h.handleSession))
+	mux.HandleFunc("GET /api/v1/auth/providers", h.wrapPublic(h.handleProviders))
+	mux.HandleFunc("POST /api/v1/auth/change-password", h.wrap(h.handleChangePassword))
+	mux.HandleFunc("GET /api/v1/auth/api-keys", h.wrap(h.handleListAPIKeys))
+	mux.HandleFunc("POST /api/v1/auth/api-keys", h.wrap(h.handleCreateAPIKey))
+	mux.HandleFunc("DELETE /api/v1/auth/api-keys/{id}", h.wrap(h.handleRevokeAPIKey))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
+// The handler receives the authenticated userID.
 func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -191,53 +245,62 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 	}
 }
 
-// authenticate extracts and validates the user identity from the request.
-// In multi-user mode, validates Bearer tokens against api_tokens.
-// In single-user mode, checks API_AUTH_TOKEN if configured, otherwise
-// allows localhost requests without auth.
+// wrapPublic sets JSON headers but performs no authentication.
+func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		next(w, r)
+	}
+}
+
+// authenticate tries cookie-session first, then Bearer API key. Returns the
+// authenticated userID or an error. For cookie sessions on mutating methods,
+// CSRF is verified via the double-submit cookie pattern.
 func (h *Handler) authenticate(r *http.Request) (string, error) {
-	if h.multiUser {
-		return h.authenticateToken(r)
+	// 1. Cookie session.
+	if cookie := readSessionCookie(r); cookie != "" {
+		sess, result, err := auth.ValidateSession(r.Context(), h.sessions, cookie, h.sessionCfg)
+		if err == nil && result == auth.ValidateOK {
+			// CSRF on mutating methods.
+			if isMutating(r.Method) {
+				csrfHeader := r.Header.Get("X-CSRF-Token")
+				if !auth.VerifyCSRF(csrfHeader, sess.CSRFToken) {
+					return "", fmt.Errorf("csrf mismatch")
+				}
+			}
+			// Slide the idle expiry forward.
+			now := time.Now().UTC()
+			idleExpires := now.Add(h.sessionCfg.IdleTTL)
+			if idleExpires.After(sess.AbsoluteExpiresAt) {
+				idleExpires = sess.AbsoluteExpiresAt
+			}
+			_ = h.sessions.TouchSession(r.Context(), sess.ID, now, idleExpires)
+			return sess.UserID, nil
+		}
 	}
-	// Single-user: check static token if configured.
-	if h.authToken != "" {
-		return h.authenticateStaticToken(r)
+
+	// 2. Bearer API key.
+	if token := bearerToken(r); token != "" {
+		hashed := auth.HashToken(token)
+		u, err := h.authStore.GetUserByAPIKey(r.Context(), hashed)
+		if err == nil {
+			return u.ID, nil
+		}
 	}
-	// No auth configured: use "default" user. Ensure the user row exists
-	// so FK constraints (user_profiles, weight_log, etc.) are satisfied.
-	_ = h.store.UpsertUser(r.Context(), types.User{ID: "default", Timezone: h.loc.String(), CreatedAt: time.Now().UTC()})
-	return "default", nil
+
+	return "", fmt.Errorf("unauthorized")
 }
 
-func (h *Handler) authenticateStaticToken(r *http.Request) (string, error) {
-	token := bearerToken(r)
-	if token == "" {
-		return "", types.ErrNotFound // "token required"
-	}
-	if token != h.authToken {
-		return "", types.ErrNotFound
-	}
-	return "default", nil
-}
-
-func (h *Handler) authenticateToken(r *http.Request) (string, error) {
-	token := bearerToken(r)
-	if token == "" {
-		return "", types.ErrNotFound
-	}
-	userID, err := h.store.ValidateToken(r.Context(), token)
-	if err != nil {
-		return "", err
-	}
-	return userID, nil
+func isMutating(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch
 }
 
 func bearerToken(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if len(auth) < 7 || auth[:7] != "Bearer " {
+	hdr := r.Header.Get("Authorization")
+	if len(hdr) < 7 || hdr[:7] != "Bearer " {
 		return ""
 	}
-	return auth[7:]
+	return hdr[7:]
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@
 
 # Build output
 /bin/
+dietdaemon
 
 # Runtime data
 /data/
@@ -59,3 +60,7 @@ skills-lock.json
 
 # Internal design specs (not user-facing)
 docs/PHASE5_AI_TIERS.mdBLUEPRINT.md
+
+# Planning docs (local-only, not committed)
+AUTH_PLAN.md
+*_PLAN.md

@@ -1,15 +1,24 @@
 import { lazy, Suspense } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { AuthProvider, useAuth } from '@/lib/auth'
+import {
+  BrowserRouter,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+} from 'react-router-dom'
+import { Toaster } from 'sonner'
+import { AuthProvider } from '@/lib/auth'
 import { ThemeProvider } from '@/lib/theme'
 import { DemoProvider } from '@/lib/demo'
 import { AppShell } from '@/components/AppShell'
-import { TokenGate } from '@/components/TokenGate'
+import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Spinner } from '@/components/ui'
 import { easeOut } from '@/lib/motion'
+import { Login } from '@/routes/Login'
+import { Register } from '@/routes/Register'
 
 // Lazy-load all routes so recharts (~300KB) only ships when Trends or
 // Summary is visited. Route components use named exports — wrap with
@@ -21,6 +30,7 @@ const MealDetail = lazy(() => import('@/routes/MealDetail').then(m => ({ default
 const Trends = lazy(() => import('@/routes/Trends').then(m => ({ default: m.Trends })))
 const Summary = lazy(() => import('@/routes/Summary').then(m => ({ default: m.Summary })))
 const Settings = lazy(() => import('@/routes/Settings').then(m => ({ default: m.Settings })))
+const Security = lazy(() => import('@/routes/Security').then(m => ({ default: m.Security })))
 const Foods = lazy(() => import('@/routes/Foods').then(m => ({ default: m.Foods })))
 const Aliases = lazy(() => import('@/routes/Aliases').then(m => ({ default: m.Aliases })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
@@ -36,18 +46,10 @@ const queryClient = new QueryClient({
   },
 })
 
-function Gate() {
-  const { status } = useAuth()
-
-  if (status === 'checking') {
-    return (
-      <div className="grid min-h-[100dvh] place-items-center">
-        <Spinner label="Connecting" />
-      </div>
-    )
-  }
-  if (status === 'needs-token') return <TokenGate />
-
+// The authenticated app frame: calm shell, command palette, onboarding, and a
+// quick fade-and-rise between routes (keyed by path so the exit runs first).
+function AppLayout() {
+  const location = useLocation()
   return (
     <>
       <AppShell>
@@ -58,7 +60,17 @@ function Gate() {
             </div>
           }
         >
-          <AnimatedRoutes />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.26, ease: easeOut }}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </Suspense>
       </AppShell>
       <CommandPalette />
@@ -69,20 +81,16 @@ function Gate() {
   )
 }
 
-// Animated route transitions: a quick fade-and-rise on navigation, keyed by
-// path so AnimatePresence can run the exit before the next screen enters.
-function AnimatedRoutes() {
-  const location = useLocation()
+function AppRoutes() {
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={location.pathname}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
-        transition={{ duration: 0.26, ease: easeOut }}
-      >
-        <Routes location={location}>
+    <Routes>
+      {/* Public auth screens. */}
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+
+      {/* Everything else is gated, then wrapped in the app frame. */}
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/log" element={<LogMeal />} />
           <Route path="/history" element={<History />} />
@@ -90,15 +98,16 @@ function AnimatedRoutes() {
           <Route path="/trends" element={<Trends />} />
           <Route path="/summary" element={<Summary />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/security" element={<Security />} />
           <Route path="/settings/aliases" element={<Aliases />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/body" element={<Body />} />
           <Route path="/body/:tab" element={<Body />} />
           <Route path="/goals" element={<Goals />} />
-        </Routes>
-      </motion.div>
-    </AnimatePresence>
+        </Route>
+      </Route>
+    </Routes>
   )
 }
 
@@ -110,7 +119,8 @@ export default function App() {
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
               <AuthProvider>
-                <Gate />
+                <Toaster position="top-center" richColors closeButton />
+                <AppRoutes />
               </AuthProvider>
             </BrowserRouter>
           </QueryClientProvider>

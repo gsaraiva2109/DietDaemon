@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 )
 
 // --- fakes ---
@@ -22,13 +23,11 @@ type fakeMealStore struct {
 	rollup      types.DailyRollup
 	rollups     []types.DailyRollup
 	user        types.User
-	tokens      map[string]string // token → userID
 	correctErr  error
 	getMealErr  error
 	rollupErr   error
 	rollupsErr  error
 	recentErr   error
-	validateErr error
 	getUserErr  error
 	targets     types.DailyTargets
 	targetsErr  error
@@ -87,8 +86,7 @@ type fakeMealStore struct {
 
 func newFakeMealStore() *fakeMealStore {
 	return &fakeMealStore{
-		meals:  map[string]types.Meal{},
-		tokens: map[string]string{},
+		meals: map[string]types.Meal{},
 	}
 }
 
@@ -173,15 +171,6 @@ func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error)
 	return s.user, nil
 }
 func (s *fakeMealStore) UpsertUser(_ context.Context, u types.User) error { s.user = u; return nil }
-func (s *fakeMealStore) ValidateToken(_ context.Context, token string) (string, error) {
-	if s.validateErr != nil {
-		return "", s.validateErr
-	}
-	if uid, ok := s.tokens[token]; ok {
-		return uid, nil
-	}
-	return "", types.ErrNotFound
-}
 
 // Phase 1.
 func (s *fakeMealStore) LatestMealTime(_ context.Context, _ string) (string, error) {
@@ -280,6 +269,125 @@ func (s *fakeMealStore) UpsertProfile(_ context.Context, _ types.UserProfile) er
 	return s.upsertProfileErr
 }
 
+// fakeAuthStore implements AuthStore for tests.
+type fakeAuthStore struct {
+	users         map[string]types.User
+	userByEmail   map[string]types.User
+	phcHash       map[string]string
+	userCount     int
+	apiKeys       map[string][]types.APIKey
+	keyUserID     map[string]string // hashed key -> userID
+	loginAttempts []loginAttemptEntry
+}
+
+type loginAttemptEntry struct {
+	identifier string
+	succeeded  bool
+	at         time.Time
+}
+
+func newFakeAuthStore() *fakeAuthStore {
+	s := &fakeAuthStore{
+		users:       make(map[string]types.User),
+		userByEmail: make(map[string]types.User),
+		phcHash:     make(map[string]string),
+		apiKeys:     make(map[string][]types.APIKey),
+		keyUserID:   make(map[string]string),
+	}
+	// Pre-register a test user for existing test compatibility.
+	s.users["test-user"] = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
+	s.keyUserID["4c806362b613f7496abf284146efd31da90e4b16169fe001841ca17290f427c4"] = "test-user"
+	return s
+}
+
+func (s *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (types.User, error) {
+	if u, ok := s.userByEmail[email]; ok {
+		return u, nil
+	}
+	return types.User{}, types.ErrNotFound
+}
+
+func (s *fakeAuthStore) CreateUserWithPassword(_ context.Context, accountID, userID, email, displayName, phcHash string) (types.User, error) {
+	u := types.User{ID: userID, AccountID: accountID, Email: email, DisplayName: displayName, Status: "active", CreatedAt: time.Now().UTC()}
+	s.users[userID] = u
+	s.userByEmail[email] = u
+	s.phcHash[userID] = phcHash
+	s.userCount++
+	return u, nil
+}
+
+func (s *fakeAuthStore) GetPasswordHash(_ context.Context, userID string) (string, error) {
+	if h, ok := s.phcHash[userID]; ok {
+		return h, nil
+	}
+	return "", types.ErrNotFound
+}
+
+func (s *fakeAuthStore) SetPasswordHash(_ context.Context, userID, phcHash string) error {
+	s.phcHash[userID] = phcHash
+	return nil
+}
+
+func (s *fakeAuthStore) CountUsers(_ context.Context) (int, error) {
+	return s.userCount, nil
+}
+
+func (s *fakeAuthStore) GetUserByAPIKey(_ context.Context, hashedKey string) (types.User, error) {
+	if userID, ok := s.keyUserID[hashedKey]; ok {
+		if u, ok := s.users[userID]; ok {
+			return u, nil
+		}
+	}
+	return types.User{}, types.ErrNotFound
+}
+
+func (s *fakeAuthStore) CreateAPIKey(_ context.Context, id, userID, hashedKey, label string) error {
+	s.keyUserID[hashedKey] = userID
+	s.apiKeys[userID] = append(s.apiKeys[userID], types.APIKey{ID: id, UserID: userID, Label: label, CreatedAt: time.Now().UTC()})
+	return nil
+}
+
+func (s *fakeAuthStore) ListAPIKeys(_ context.Context, userID string) ([]types.APIKey, error) {
+	return s.apiKeys[userID], nil
+}
+
+func (s *fakeAuthStore) RevokeAPIKey(_ context.Context, userID, keyID string) error {
+	return nil
+}
+
+func (s *fakeAuthStore) WriteAuditEvent(_ context.Context, ev types.AuditEvent) error {
+	return nil
+}
+
+func (s *fakeAuthStore) RecordLoginAttempt(_ context.Context, identifier string, succeeded bool) error {
+	s.loginAttempts = append(s.loginAttempts, loginAttemptEntry{identifier, succeeded, time.Now().UTC()})
+	return nil
+}
+
+// --- auth.SessionRepo ---
+
+func (s *fakeAuthStore) CreateSession(_ context.Context, sess auth.Session) error { return nil }
+func (s *fakeAuthStore) GetSession(_ context.Context, id string) (auth.Session, error) {
+	return auth.Session{}, errors.New("not found")
+}
+func (s *fakeAuthStore) TouchSession(_ context.Context, id string, lastSeen, idleExpires time.Time) error {
+	return nil
+}
+func (s *fakeAuthStore) DeleteSession(_ context.Context, id string) error          { return nil }
+func (s *fakeAuthStore) DeleteUserSessions(_ context.Context, userID string) error { return nil }
+
+// --- auth.LoginAttemptRepo ---
+
+func (s *fakeAuthStore) RecentFailedAttempts(_ context.Context, identifier string, since time.Time) (int, error) {
+	count := 0
+	for _, a := range s.loginAttempts {
+		if a.identifier == identifier && !a.succeeded && a.at.After(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal
@@ -298,8 +406,17 @@ func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 
 // --- helpers ---
 
-func newHandler(store MealStore, logger MealLogger, authToken string, multiUser bool) *Handler {
-	return New(store, logger, time.UTC, authToken, multiUser)
+func newHandler(store MealStore, logger MealLogger) *Handler {
+	return New(store, newFakeAuthStore(), logger, time.UTC, newFakeAuthStore(), newFakeAuthStore(), AuthConfig{
+		SessionCfg: auth.SessionConfig{
+			IdleTTL:     1 * time.Hour,
+			AbsoluteTTL: 24 * time.Hour,
+			RememberTTL: 72 * time.Hour,
+		},
+		LockoutCfg:       auth.DefaultLockoutConfig(),
+		RegistrationMode: types.RegistrationOpen,
+		CookieSecure:     false,
+	})
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -311,6 +428,10 @@ func doRequest(h *Handler, method, path string, body any, headers map[string]str
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	// If no Authorization header provided, use test API key.
+	if _, ok := headers["Authorization"]; !ok {
+		req.Header.Set("Authorization", "Bearer test-api-key")
 	}
 	rec := httptest.NewRecorder()
 	mux := http.NewServeMux()
@@ -330,85 +451,6 @@ func decodeJSON[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 
 // --- auth tests ---
 
-func TestAuthNoTokenLocalhost(t *testing.T) {
-	h := newHandler(newFakeMealStore(), &fakeMealLogger{}, "", false)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("no-auth single-user expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestAuthStaticTokenValid(t *testing.T) {
-	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "secret-token", false)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
-		"Authorization": "Bearer secret-token",
-	})
-	if rec.Code != http.StatusOK {
-		t.Errorf("valid static token expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestAuthStaticTokenInvalid(t *testing.T) {
-	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "secret-token", false)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
-		"Authorization": "Bearer wrong",
-	})
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("invalid static token expected 401, got %d", rec.Code)
-	}
-}
-
-func TestAuthStaticTokenMissing(t *testing.T) {
-	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "secret-token", false)
-
-	// No Authorization header at all → token required when API_AUTH_TOKEN is set.
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("missing token with API_AUTH_TOKEN set expected 401, got %d", rec.Code)
-	}
-}
-
-func TestAuthMultiUserTokenValid(t *testing.T) {
-	store := newFakeMealStore()
-	store.tokens["multi-token"] = "user-42"
-	h := newHandler(store, &fakeMealLogger{}, "", true) // multiUser=true
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
-		"Authorization": "Bearer multi-token",
-	})
-	if rec.Code != http.StatusOK {
-		t.Errorf("valid multi-user token expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestAuthMultiUserTokenInvalid(t *testing.T) {
-	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", true)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
-		"Authorization": "Bearer bad-token",
-	})
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("invalid multi-user token expected 401, got %d", rec.Code)
-	}
-}
-
-func TestAuthMultiUserNoToken(t *testing.T) {
-	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", true)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("missing token in multi-user mode expected 401, got %d", rec.Code)
-	}
-}
-
 func TestBearerTokenEdgeCases(t *testing.T) {
 	// Shorter than "Bearer "
 	if got := bearerToken(&http.Request{Header: http.Header{"Authorization": {"Bear x"}}}); got != "" {
@@ -425,12 +467,12 @@ func TestBearerTokenEdgeCases(t *testing.T) {
 func TestHandleRollupsToday(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollup = types.DailyRollup{
-		UserID:   "default",
+		UserID:   "test-user",
 		Date:     "2026-06-17",
 		Consumed: types.Macros{Calories: 2100, Protein: 140},
 		Targets:  types.Macros{Calories: 3000, Protein: 180},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -446,10 +488,10 @@ func TestHandleRollupsToday(t *testing.T) {
 func TestHandleRollupsRange(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollups = []types.DailyRollup{
-		{UserID: "default", Date: "2026-06-15", Consumed: types.Macros{Calories: 2000}},
-		{UserID: "default", Date: "2026-06-16", Consumed: types.Macros{Calories: 2200}},
+		{UserID: "test-user", Date: "2026-06-15", Consumed: types.Macros{Calories: 2000}},
+		{UserID: "test-user", Date: "2026-06-16", Consumed: types.Macros{Calories: 2200}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/range?start=2026-06-15&end=2026-06-17", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -464,7 +506,7 @@ func TestHandleRollupsRange(t *testing.T) {
 
 func TestHandleRollupsRangeMissingParams(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/range", nil, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -475,7 +517,7 @@ func TestHandleRollupsRangeMissingParams(t *testing.T) {
 func TestHandleRollupsRangeNullReturn(t *testing.T) {
 	store := newFakeMealStore()
 	// rollups is nil (not initialized) — handler should return [] not null.
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/range?start=2026-06-15&end=2026-06-17", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -489,10 +531,10 @@ func TestHandleRollupsRangeNullReturn(t *testing.T) {
 func TestHandleMealsList(t *testing.T) {
 	store := newFakeMealStore()
 	store.recentMeals = []types.Meal{
-		{ID: "m1", UserID: "default", RawText: "200g chicken"},
-		{ID: "m2", UserID: "default", RawText: "2 eggs"},
+		{ID: "m1", UserID: "test-user", RawText: "200g chicken"},
+		{ID: "m2", UserID: "test-user", RawText: "2 eggs"},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals?limit=5", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -508,7 +550,7 @@ func TestHandleMealsList(t *testing.T) {
 func TestHandleMealsListDefaultLimit(t *testing.T) {
 	store := newFakeMealStore()
 	store.recentMeals = []types.Meal{}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -524,11 +566,11 @@ func TestHandleMealDetail(t *testing.T) {
 	store := newFakeMealStore()
 	store.meals["m1"] = types.Meal{
 		ID:      "m1",
-		UserID:  "default",
+		UserID:  "test-user",
 		RawText: "200g chicken",
 		Items:   []types.ResolvedItem{},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals/m1", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -547,7 +589,7 @@ func TestHandleMealDetailWrongUser(t *testing.T) {
 		ID:     "m1",
 		UserID: "other-user",
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals/m1", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -557,7 +599,7 @@ func TestHandleMealDetailWrongUser(t *testing.T) {
 
 func TestHandleMealDetailNotFound(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals/nonexistent", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -569,13 +611,13 @@ func TestHandleCorrectItem(t *testing.T) {
 	store := newFakeMealStore()
 	store.meals["m1"] = types.Meal{
 		ID:      "m1",
-		UserID:  "default",
+		UserID:  "test-user",
 		RawText: "200g chicken",
 		Items: []types.ResolvedItem{
 			{Parsed: types.ParsedItem{RawPhrase: "chicken"}},
 		},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	body := types.ResolvedItem{
 		Parsed: types.ParsedItem{RawPhrase: "chicken", NormalizedGrams: 200},
@@ -590,7 +632,7 @@ func TestHandleCorrectItem(t *testing.T) {
 
 func TestHandleCorrectItemBadIndex(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/meals/m1/items/abc/correct", types.ResolvedItem{}, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -600,7 +642,7 @@ func TestHandleCorrectItemBadIndex(t *testing.T) {
 
 func TestHandleCorrectItemNegativeIndex(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/meals/m1/items/-1/correct", types.ResolvedItem{}, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -611,7 +653,7 @@ func TestHandleCorrectItemNegativeIndex(t *testing.T) {
 func TestHandleLogMeal(t *testing.T) {
 	logger := &fakeMealLogger{}
 	store := newFakeMealStore()
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	body := map[string]string{"text": "200g chicken, 2 eggs"}
 	rec := doRequest(h, "POST", "/api/v1/meals/log", body, nil)
@@ -621,15 +663,15 @@ func TestHandleLogMeal(t *testing.T) {
 	if logger.lastMsg.Text != "200g chicken, 2 eggs" {
 		t.Errorf("logged text = %q, want %q", logger.lastMsg.Text, "200g chicken, 2 eggs")
 	}
-	if logger.lastMsg.UserID != "default" {
-		t.Errorf("logged userID = %q, want default", logger.lastMsg.UserID)
+	if logger.lastMsg.UserID != "test-user" {
+		t.Errorf("logged userID = %q, want test-user", logger.lastMsg.UserID)
 	}
 }
 
 func TestHandleLogMealEmptyText(t *testing.T) {
 	logger := &fakeMealLogger{}
 	store := newFakeMealStore()
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	body := map[string]string{"text": ""}
 	rec := doRequest(h, "POST", "/api/v1/meals/log", body, nil)
@@ -641,10 +683,11 @@ func TestHandleLogMealEmptyText(t *testing.T) {
 func TestHandleLogMealInvalidJSON(t *testing.T) {
 	logger := &fakeMealLogger{}
 	store := newFakeMealStore()
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	req := httptest.NewRequest("POST", "/api/v1/meals/log", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
 	rec := httptest.NewRecorder()
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -657,7 +700,7 @@ func TestHandleLogMealInvalidJSON(t *testing.T) {
 func TestHandleLogMealLoggerError(t *testing.T) {
 	logger := &fakeMealLogger{err: errors.New("pipeline busy")}
 	store := newFakeMealStore()
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	body := map[string]string{"text": "200g chicken"}
 	rec := doRequest(h, "POST", "/api/v1/meals/log", body, nil)
@@ -669,7 +712,7 @@ func TestHandleLogMealLoggerError(t *testing.T) {
 func TestHandleRollupsTodayNotFound(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollupErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -680,7 +723,7 @@ func TestHandleRollupsTodayNotFound(t *testing.T) {
 func TestHandlerWriteErrGeneric(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollupErr = errors.New("db connection lost")
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
 	if rec.Code != http.StatusInternalServerError {
@@ -691,7 +734,7 @@ func TestHandlerWriteErrGeneric(t *testing.T) {
 func TestMealsListNullReturn(t *testing.T) {
 	store := newFakeMealStore()
 	// recentMeals is nil (not initialized slice).
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -702,23 +745,9 @@ func TestMealsListNullReturn(t *testing.T) {
 	}
 }
 
-func TestAuthMultiUserValidateTokenError(t *testing.T) {
-	store := newFakeMealStore()
-	store.validateErr = errors.New("db error")
-	h := newHandler(store, &fakeMealLogger{}, "", true)
-
-	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
-		"Authorization": "Bearer any-token",
-	})
-	// Auth errors always return 401 to avoid leaking internal state.
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("token validation error expected 401, got %d", rec.Code)
-	}
-}
-
 func TestAuthHeaderEdgeCases(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "tok", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	// Authorization header with exactly "Bearer " and nothing else.
 	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, map[string]string{
@@ -741,7 +770,7 @@ func TestAuthHeaderEdgeCases(t *testing.T) {
 
 func TestSetTargets(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	body := types.Macros{Calories: 3000, Protein: 180, Carbs: 360, Fat: 90, Fiber: 38}
 	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
@@ -758,8 +787,8 @@ func TestSetTargets(t *testing.T) {
 
 func TestAddMealItem(t *testing.T) {
 	store := newFakeMealStore()
-	store.meals["m1"] = types.Meal{ID: "m1", UserID: "default", Items: []types.ResolvedItem{}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user", Items: []types.ResolvedItem{}}
+	h := newHandler(store, &fakeMealLogger{})
 
 	item := types.ResolvedItem{
 		Parsed: types.ParsedItem{RawPhrase: "banana", NormalizedGrams: 120},
@@ -778,11 +807,11 @@ func TestAddMealItem(t *testing.T) {
 
 func TestDeleteMealItem(t *testing.T) {
 	store := newFakeMealStore()
-	store.meals["m1"] = types.Meal{ID: "m1", UserID: "default", Items: []types.ResolvedItem{
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user", Items: []types.ResolvedItem{
 		{Match: types.FoodMatch{Name: "A"}},
 		{Match: types.FoodMatch{Name: "B"}},
 	}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -797,10 +826,9 @@ func TestDeleteMealItem(t *testing.T) {
 func TestDeleteMealItemForbiddenOtherUser(t *testing.T) {
 	store := newFakeMealStore()
 	store.meals["m1"] = types.Meal{ID: "m1", UserID: "someone-else", Items: []types.ResolvedItem{{}}}
-	store.tokens["tok"] = "me"
-	h := newHandler(store, &fakeMealLogger{}, "", true)
+	h := newHandler(store, &fakeMealLogger{})
 
-	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, map[string]string{"Authorization": "Bearer tok"})
+	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("deleting another user's item expected 404, got %d", rec.Code)
 	}
@@ -813,7 +841,7 @@ func TestDeleteMealItemForbiddenOtherUser(t *testing.T) {
 func TestMealsLatest(t *testing.T) {
 	store := newFakeMealStore()
 	store.latestMealTime = "2026-06-17T12:00:00Z"
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals/latest", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -828,7 +856,7 @@ func TestMealsLatest(t *testing.T) {
 func TestMealsLatestEmpty(t *testing.T) {
 	store := newFakeMealStore()
 	store.latestMealTimeErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/meals/latest", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -849,7 +877,7 @@ func TestListFoods(t *testing.T) {
 	store.foodList = []types.FoodDetail{
 		{FoodID: "f1", Name: "Chicken", Source: "food_library"},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -864,7 +892,7 @@ func TestListFoods(t *testing.T) {
 func TestListFoodsNullReturn(t *testing.T) {
 	store := newFakeMealStore()
 	// foodList is nil.
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -877,7 +905,7 @@ func TestListFoodsNullReturn(t *testing.T) {
 
 func TestSearchFoodsMissingQ(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods/search", nil, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -888,7 +916,7 @@ func TestSearchFoodsMissingQ(t *testing.T) {
 func TestSearchFoods(t *testing.T) {
 	store := newFakeMealStore()
 	store.foodList = []types.FoodDetail{{FoodID: "f1", Name: "Banana"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods/search?q=banana", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -903,7 +931,7 @@ func TestSearchFoods(t *testing.T) {
 func TestFrequentFoods(t *testing.T) {
 	store := newFakeMealStore()
 	store.foodList = []types.FoodDetail{{FoodID: "f1", Name: "Rice"}, {FoodID: "f2", Name: "Beans"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods/frequent?limit=5", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -918,7 +946,7 @@ func TestFrequentFoods(t *testing.T) {
 func TestGetFoodNotFound(t *testing.T) {
 	store := newFakeMealStore()
 	store.foodDetailErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods/missing", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -933,7 +961,7 @@ func TestGetFood(t *testing.T) {
 		Name:    "Egg",
 		Aliases: []types.FoodAlias{{FoodID: "f1", Normalized: "egg"}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/foods/f1", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -947,7 +975,7 @@ func TestGetFood(t *testing.T) {
 
 func TestAddAlias(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/foods/f1/aliases", map[string]string{"alias": "ovo"}, nil)
 	if rec.Code != http.StatusCreated {
@@ -957,7 +985,7 @@ func TestAddAlias(t *testing.T) {
 
 func TestAddAliasMissing(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/foods/f1/aliases", map[string]string{"alias": ""}, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -967,7 +995,7 @@ func TestAddAliasMissing(t *testing.T) {
 
 func TestDeleteAlias(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/foods/f1/aliases/egg", nil, nil)
 	if rec.Code != http.StatusNoContent {
@@ -982,7 +1010,7 @@ func TestDeleteAlias(t *testing.T) {
 func TestListTemplates(t *testing.T) {
 	store := newFakeMealStore()
 	store.templates = []types.MealTemplate{{ID: "t1", Name: "Morning"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/templates", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -997,7 +1025,7 @@ func TestListTemplates(t *testing.T) {
 func TestCreateTemplate(t *testing.T) {
 	store := newFakeMealStore()
 	logger := &fakeMealLogger{}
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	body := map[string]any{
 		"name":  "My Template",
@@ -1011,7 +1039,7 @@ func TestCreateTemplate(t *testing.T) {
 
 func TestCreateTemplateValidation(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/templates", map[string]string{"name": ""}, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -1022,7 +1050,7 @@ func TestCreateTemplateValidation(t *testing.T) {
 func TestGetTemplateNotFound(t *testing.T) {
 	store := newFakeMealStore()
 	store.templateErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/templates/missing", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -1032,7 +1060,7 @@ func TestGetTemplateNotFound(t *testing.T) {
 
 func TestDeleteTemplate(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/templates/t1", nil, nil)
 	if rec.Code != http.StatusNoContent {
@@ -1044,18 +1072,18 @@ func TestLogTemplate(t *testing.T) {
 	store := newFakeMealStore()
 	store.template = types.MealTemplate{
 		ID:     "t1",
-		UserID: "default",
+		UserID: "test-user",
 		Name:   "Morning",
 		Items:  []types.ResolvedItem{{Match: types.FoodMatch{Name: "Egg"}}},
 	}
 	logger := &fakeMealLogger{}
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	rec := doRequest(h, "POST", "/api/v1/templates/t1/log", nil, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if logger.lastMeal.UserID != "default" {
+	if logger.lastMeal.UserID != "test-user" {
 		t.Errorf("LogMeal not called")
 	}
 }
@@ -1063,11 +1091,11 @@ func TestLogTemplate(t *testing.T) {
 func TestDuplicateMeal(t *testing.T) {
 	store := newFakeMealStore()
 	store.meals["m1"] = types.Meal{
-		ID: "m1", UserID: "default", RawText: "200g chicken",
+		ID: "m1", UserID: "test-user", RawText: "200g chicken",
 		Items: []types.ResolvedItem{{Match: types.FoodMatch{Name: "Chicken"}}},
 	}
 	logger := &fakeMealLogger{}
-	h := newHandler(store, logger, "", false)
+	h := newHandler(store, logger)
 
 	rec := doRequest(h, "POST", "/api/v1/meals/m1/duplicate", nil, nil)
 	if rec.Code != http.StatusCreated {
@@ -1085,7 +1113,7 @@ func TestDuplicateMeal(t *testing.T) {
 func TestListWeight(t *testing.T) {
 	store := newFakeMealStore()
 	store.weights = []types.WeightEntry{{ID: "w1", WeightKg: 80.5, Date: "2026-06-17"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/weight?days=30", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1099,7 +1127,7 @@ func TestListWeight(t *testing.T) {
 
 func TestLogWeightValidation(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/body/weight", map[string]any{"weight_kg": 0}, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -1109,7 +1137,7 @@ func TestLogWeightValidation(t *testing.T) {
 
 func TestLogWeight(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "POST", "/api/v1/body/weight", map[string]any{
 		"weight_kg": 80.5, "date": "2026-06-17", "note": "morning",
@@ -1125,7 +1153,7 @@ func TestWeightTrend(t *testing.T) {
 		{Date: "2026-06-15", WeightKg: 80, RollingAvg: 80},
 		{Date: "2026-06-16", WeightKg: 79.5, RollingAvg: 79.75},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/weight/trend?days=14", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1139,7 +1167,7 @@ func TestWeightTrend(t *testing.T) {
 
 func TestDeleteWeight(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/body/weight/w1", nil, nil)
 	if rec.Code != http.StatusNoContent {
@@ -1150,7 +1178,7 @@ func TestDeleteWeight(t *testing.T) {
 func TestListMeasurements(t *testing.T) {
 	store := newFakeMealStore()
 	store.measurements = []types.MeasurementEntry{{ID: "m1", WaistCm: 90, Date: "2026-06-17"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/measurements?days=30", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1164,7 +1192,7 @@ func TestListMeasurements(t *testing.T) {
 
 func TestLogMeasurements(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	body := types.MeasurementEntry{Date: "2026-06-17", WaistCm: 90, HipsCm: 100}
 	rec := doRequest(h, "POST", "/api/v1/body/measurements", body, nil)
@@ -1175,7 +1203,7 @@ func TestLogMeasurements(t *testing.T) {
 
 func TestDeleteMeasurement(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/body/measurements/m1", nil, nil)
 	if rec.Code != http.StatusNoContent {
@@ -1186,7 +1214,7 @@ func TestDeleteMeasurement(t *testing.T) {
 func TestListPhotos(t *testing.T) {
 	store := newFakeMealStore()
 	store.photoMetadata = []types.ProgressPhoto{{ID: "p1", View: "front"}}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/photos", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1201,7 +1229,7 @@ func TestListPhotos(t *testing.T) {
 func TestPhotoDataNotFound(t *testing.T) {
 	store := newFakeMealStore()
 	store.photoDataErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/photos/missing/data", nil, nil)
 	if rec.Code != http.StatusNotFound {
@@ -1211,7 +1239,7 @@ func TestPhotoDataNotFound(t *testing.T) {
 
 func TestDeletePhoto(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "DELETE", "/api/v1/body/photos/p1", nil, nil)
 	if rec.Code != http.StatusNoContent {
@@ -1221,7 +1249,7 @@ func TestDeletePhoto(t *testing.T) {
 
 func TestBodySummaryEmpty(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/summary", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1236,7 +1264,7 @@ func TestBodySummaryEmpty(t *testing.T) {
 func TestGetProfileNotOnboarded(t *testing.T) {
 	store := newFakeMealStore()
 	store.profileErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/profile", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1250,8 +1278,8 @@ func TestGetProfileNotOnboarded(t *testing.T) {
 
 func TestGetProfile(t *testing.T) {
 	store := newFakeMealStore()
-	store.profile = types.UserProfile{UserID: "default", HeightCm: 175, Onboarded: true}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	store.profile = types.UserProfile{UserID: "test-user", HeightCm: 175, Onboarded: true}
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/profile", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1265,7 +1293,7 @@ func TestGetProfile(t *testing.T) {
 
 func TestUpsertProfile(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	body := types.UserProfile{HeightCm: 180, Gender: "male", ActivityLevel: "moderate"}
 	rec := doRequest(h, "PUT", "/api/v1/profile", body, nil)
@@ -1276,7 +1304,7 @@ func TestUpsertProfile(t *testing.T) {
 
 func TestCalculateTDEEMissingParams(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/tdee", nil, nil)
 	if rec.Code != http.StatusBadRequest {
@@ -1286,7 +1314,7 @@ func TestCalculateTDEEMissingParams(t *testing.T) {
 
 func TestCalculateTDEE(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/tdee?weight_kg=80&height_cm=175&age=30&gender=male&activity=moderate", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1301,7 +1329,7 @@ func TestCalculateTDEE(t *testing.T) {
 func TestGoalSuggestionsNoProfile(t *testing.T) {
 	store := newFakeMealStore()
 	store.profileErr = types.ErrNotFound
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/goals/suggestions", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1316,10 +1344,10 @@ func TestGoalSuggestionsNoProfile(t *testing.T) {
 func TestExportMealsJSON(t *testing.T) {
 	store := newFakeMealStore()
 	store.mealsInRange = []types.Meal{
-		{ID: "m1", UserID: "default", RawText: "200g chicken",
+		{ID: "m1", UserID: "test-user", RawText: "200g chicken",
 			Items: []types.ResolvedItem{{Macros: types.Macros{Calories: 330, Protein: 62}}}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/meals?start=2026-06-01&end=2026-06-17", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1330,10 +1358,10 @@ func TestExportMealsJSON(t *testing.T) {
 func TestExportMealsCSV(t *testing.T) {
 	store := newFakeMealStore()
 	store.mealsInRange = []types.Meal{
-		{ID: "m1", UserID: "default", RawText: "200g chicken",
+		{ID: "m1", UserID: "test-user", RawText: "200g chicken",
 			Items: []types.ResolvedItem{{Macros: types.Macros{Calories: 330, Protein: 62}}}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/meals?start=2026-06-01&end=2026-06-17&format=csv", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1347,9 +1375,9 @@ func TestExportMealsCSV(t *testing.T) {
 func TestExportRollupsJSON(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollups = []types.DailyRollup{
-		{UserID: "default", Date: "2026-06-17", Consumed: types.Macros{Calories: 2100}},
+		{UserID: "test-user", Date: "2026-06-17", Consumed: types.Macros{Calories: 2100}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/rollups?start=2026-06-01&end=2026-06-17", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1360,9 +1388,9 @@ func TestExportRollupsJSON(t *testing.T) {
 func TestExportRollupsCSV(t *testing.T) {
 	store := newFakeMealStore()
 	store.rollups = []types.DailyRollup{
-		{UserID: "default", Date: "2026-06-17", Consumed: types.Macros{Calories: 2100}},
+		{UserID: "test-user", Date: "2026-06-17", Consumed: types.Macros{Calories: 2100}},
 	}
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/rollups?start=2026-06-01&end=2026-06-17&format=csv", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1375,7 +1403,7 @@ func TestExportRollupsCSV(t *testing.T) {
 
 func TestExportMissingParams(t *testing.T) {
 	store := newFakeMealStore()
-	h := newHandler(store, &fakeMealLogger{}, "", false)
+	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/meals", nil, nil)
 	if rec.Code != http.StatusBadRequest {
