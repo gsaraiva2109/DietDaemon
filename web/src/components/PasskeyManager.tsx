@@ -2,7 +2,7 @@
 // one (runs the WebAuthn registration ceremony), rename, and delete. The native
 // prompt is real; against the dev mock the verify step is stubbed.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { usePasskeys, useRenamePasskey, useDeletePasskey } from '@/lib/queries'
@@ -18,7 +18,7 @@ export function PasskeyManager() {
   const [registering, setRegistering] = useState(false)
   const supported = browserSupportsWebAuthn()
 
-  async function onAdd(e: FormEvent) {
+  async function onAdd(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!label.trim()) return
     setRegistering(true)

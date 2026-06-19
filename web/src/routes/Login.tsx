@@ -2,7 +2,7 @@
 // always generic (never reveal which field). A "View demo" button drops into
 // demo mode (no backend). Honors ?next= to return where the guard sent us.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
@@ -35,7 +35,7 @@ export function Login() {
   const [magicEmail, setMagicEmail] = useState<string | null>(null)
   const magicRequest = useMagicRequest()
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!email.trim() || !password) return
     setBusy(true)
@@ -224,7 +224,7 @@ function MfaChallenge({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!code.trim()) return
     setBusy(true)

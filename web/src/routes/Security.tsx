@@ -2,7 +2,7 @@
 // Settings. A freshly created key's raw secret is revealed exactly once in a
 // scaleIn panel with a copy button; after that only metadata is ever shown.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import {
@@ -48,7 +48,7 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     const next = email.trim().toLowerCase()
@@ -210,7 +210,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
   const [label, setLabel] = useState('')
   const [fresh, setFresh] = useState<NewApiKey | null>(null)
 
-  async function onCreate(e: FormEvent) {
+  async function onCreate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!label.trim()) return
     const key = await create.mutateAsync(label.trim())
@@ -319,7 +319,7 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     if (next !== confirm) {

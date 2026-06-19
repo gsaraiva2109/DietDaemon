@@ -2,7 +2,7 @@
 // server's registration_mode: hidden entirely when 'oidc-only'. Errors stay
 // generic (no per-field server detail).
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useProviders } from '@/lib/queries'
@@ -28,7 +28,7 @@ export function Register() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!email.trim() || !password) return
     setBusy(true)

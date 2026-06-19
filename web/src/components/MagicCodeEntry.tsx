@@ -2,7 +2,7 @@
 // (the mock logs it to its console); here they enter it to complete sign-in.
 // Includes a resend button with a short cooldown.
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type SubmitEvent } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMagicRequest, useMagicVerifyCode } from '@/lib/queries'
 import { Button, Field, FormError } from './ui'
@@ -31,7 +31,7 @@ export function MagicCodeEntry({
     return () => clearTimeout(t)
   }, [cooldown])
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!code.trim()) return
     setError(null)
