@@ -459,6 +459,24 @@ export function useChangePassword() {
   })
 }
 
+// --- TOTP / MFA (Phase 2). Session-state changes flow through auth.refresh().
+
+export function useTotpEnroll() {
+  return useMutation({ mutationFn: () => api.auth.totp.enroll() })
+}
+
+export function useTotpVerify() {
+  return useMutation({ mutationFn: (code: string) => api.auth.totp.verify(code) })
+}
+
+export function useTotpDisable() {
+  return useMutation({ mutationFn: () => api.auth.totp.disable() })
+}
+
+export function useRegenerateRecovery() {
+  return useMutation({ mutationFn: () => api.auth.totp.regenerateRecovery() })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

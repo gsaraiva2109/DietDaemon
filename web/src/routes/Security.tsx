@@ -5,10 +5,20 @@
 import { useState, type FormEvent } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
-import { useApiKeys, useCreateApiKey, useRevokeApiKey, useChangePassword } from '@/lib/queries'
+import {
+  useApiKeys,
+  useCreateApiKey,
+  useRevokeApiKey,
+  useChangePassword,
+  useTotpDisable,
+  useRegenerateRecovery,
+} from '@/lib/queries'
+import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Field, FormError, Input, Pill, Spinner } from '@/components/ui'
+import { TotpEnroll } from '@/components/TotpEnroll'
+import { RecoveryCodes } from '@/components/RecoveryCodes'
 import { CopyIcon, TrashIcon } from '@/components/icons'
 import { scaleIn } from '@/lib/motion'
 import type { NewApiKey } from '@/lib/types'
@@ -19,9 +29,80 @@ export function Security() {
   return (
     <div>
       <PageHeader eyebrow="Settings" title="Security" />
+      <TwoFactorCard demo={demo} />
       <ApiKeysCard demo={demo} />
       <ChangePasswordCard demo={demo} />
     </div>
+  )
+}
+
+function TwoFactorCard({ demo }: { demo: boolean }) {
+  const { user, refresh } = useAuth()
+  const disable = useTotpDisable()
+  const regen = useRegenerateRecovery()
+  const [enrolling, setEnrolling] = useState(false)
+  const [recovery, setRecovery] = useState<string[] | null>(null)
+  const enabled = Boolean(user?.totp_enabled)
+
+  async function onEnrolled() {
+    setEnrolling(false)
+    setRecovery(null)
+    await refresh()
+    toast.success('Two-factor authentication enabled.')
+  }
+
+  async function onDisable() {
+    try {
+      await disable.mutateAsync()
+      await refresh()
+      toast.success('Two-factor authentication disabled.')
+    } catch {
+      toast.error('Could not disable two-factor. Try again.')
+    }
+  }
+
+  async function onRegenerate() {
+    try {
+      const res = await regen.mutateAsync()
+      setRecovery(res.recovery_codes)
+    } catch {
+      toast.error('Could not regenerate recovery codes.')
+    }
+  }
+
+  return (
+    <Card className="mb-5 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-ink">Two-factor authentication</h2>
+        {demo ? (
+          <Pill tone="muted">disabled in demo</Pill>
+        ) : (
+          <Pill tone={enabled ? 'primary' : 'muted'}>{enabled ? 'On' : 'Off'}</Pill>
+        )}
+      </div>
+      <p className="mb-4 text-sm text-muted">
+        Require a time-based code from your authenticator app at sign-in.
+      </p>
+
+      {demo ? (
+        <p className="text-sm text-muted">Connect a real backend to manage two-factor.</p>
+      ) : enrolling ? (
+        <TotpEnroll onComplete={onEnrolled} onCancel={() => setEnrolling(false)} />
+      ) : recovery ? (
+        <RecoveryCodes codes={recovery} onDone={() => setRecovery(null)} />
+      ) : enabled ? (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={onRegenerate} disabled={regen.isPending}>
+            {regen.isPending ? 'Generating…' : 'Regenerate recovery codes'}
+          </Button>
+          <Button variant="ghost" onClick={onDisable} disabled={disable.isPending}>
+            {disable.isPending ? 'Disabling…' : 'Disable two-factor'}
+          </Button>
+        </div>
+      ) : (
+        <Button onClick={() => setEnrolling(true)}>Enable two-factor</Button>
+      )}
+    </Card>
   )
 }
 

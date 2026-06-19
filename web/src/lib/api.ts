@@ -11,6 +11,7 @@ import type {
   DailyRollup,
   FoodDetail,
   GoalSuggestion,
+  LoginResponse,
   Macros,
   Meal,
   MealTemplate,
@@ -18,9 +19,11 @@ import type {
   NewApiKey,
   ProgressPhoto,
   ProvidersResponse,
+  RecoveryCodesResponse,
   ResolvedItem,
   SessionResponse,
   TDEEResult,
+  TotpEnrollResponse,
   UserProfile,
   WeightEntry,
   WeightTrend,
@@ -171,8 +174,9 @@ export const api = {
   auth: {
     // Boot probe + route guard. 401 → anonymous (UnauthorizedError).
     session: () => request<SessionResponse>('/auth/session'),
+    // May resolve to a session OR an MFA challenge (Phase 2).
     login: (email: string, password: string, remember: boolean) =>
-      request<SessionResponse>('/auth/login', {
+      request<LoginResponse>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password, remember }),
       }),
@@ -199,6 +203,32 @@ export const api = {
         }),
       revoke: (id: string) =>
         request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+    // --- TOTP / MFA (Phase 2) -------------------------------------------
+    totp: {
+      // Begin enrollment: returns otpauth_url (QR) + base32 secret.
+      enroll: () => request<TotpEnrollResponse>('/auth/totp/enroll', { method: 'POST' }),
+      // Confirm enrollment with a 6-digit code; returns recovery codes once.
+      verify: (code: string) =>
+        request<RecoveryCodesResponse>('/auth/totp/verify', {
+          method: 'POST',
+          body: JSON.stringify({ code }),
+        }),
+      // Second step of a 2FA login. `recovery` switches code → recovery_code.
+      challenge: (challengeToken: string, code: string, recovery = false) =>
+        request<SessionResponse>('/auth/totp/challenge', {
+          method: 'POST',
+          body: JSON.stringify(
+            recovery
+              ? { challenge_token: challengeToken, recovery_code: code }
+              : { challenge_token: challengeToken, code },
+          ),
+        }),
+      disable: () => request<void>('/auth/totp', { method: 'DELETE' }),
+      regenerateRecovery: () =>
+        request<RecoveryCodesResponse>('/auth/totp/recovery-codes/regenerate', {
+          method: 'POST',
+        }),
     },
   },
 
