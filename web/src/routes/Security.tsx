@@ -12,6 +12,7 @@ import {
   useChangePassword,
   useTotpDisable,
   useRegenerateRecovery,
+  useChangeEmail,
 } from '@/lib/queries'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
@@ -33,8 +34,62 @@ export function Security() {
       <TwoFactorCard demo={demo} />
       <LinkedAccountsCard demo={demo} />
       <ApiKeysCard demo={demo} />
+      <ChangeEmailCard demo={demo} />
       <ChangePasswordCard demo={demo} />
     </div>
+  )
+}
+
+function ChangeEmailCard({ demo }: { demo: boolean }) {
+  const { user, refresh } = useAuth()
+  const change = useChangeEmail()
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const next = email.trim().toLowerCase()
+    if (!next || next === user?.email) {
+      setError('Enter a new email address.')
+      return
+    }
+    try {
+      await change.mutateAsync(next)
+      await refresh()
+      toast.success('Verification sent to your new address.')
+      setEmail('')
+    } catch {
+      setError('Could not change your email. Try again.')
+    }
+  }
+
+  return (
+    <Card className="mb-5 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-ink">Email address</h2>
+        {demo && <Pill tone="muted">disabled in demo</Pill>}
+      </div>
+      <p className="mb-4 text-sm text-muted">
+        Current: <span className="font-medium text-ink">{user?.email ?? '—'}</span>. Changing it
+        requires verifying the new address.
+      </p>
+      <form onSubmit={onSubmit} className="flex max-w-sm flex-col gap-3">
+        <Field
+          label="New email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          disabled={demo || change.isPending}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          error={error ?? undefined}
+        />
+        <Button type="submit" disabled={demo || change.isPending || !email.trim()} className="self-start">
+          {change.isPending ? 'Saving…' : 'Change email'}
+        </Button>
+      </form>
+    </Card>
   )
 }
 

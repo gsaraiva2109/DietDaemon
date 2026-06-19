@@ -113,16 +113,24 @@ export function Login() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
             />
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <input
-                type="checkbox"
-                checked={remember}
-                disabled={busy}
-                onChange={(e) => setRemember(e.target.checked)}
-                className="size-4 rounded border-line accent-primary"
-              />
-              Keep me signed in
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  disabled={busy}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="size-4 rounded border-line accent-primary"
+                />
+                Keep me signed in
+              </label>
+              <Link
+                to="/forgot-password"
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <FormError>{error}</FormError>
             <Button type="submit" disabled={busy || !email.trim() || !password}>
               {busy ? 'Signing in…' : 'Sign in'}
