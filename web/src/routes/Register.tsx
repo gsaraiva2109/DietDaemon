@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth'
 import { useProviders } from '@/lib/queries'
 import { RateLimitError } from '@/lib/api'
 import { AuthLayout } from '@/components/AuthLayout'
+import { ProviderButtons } from '@/components/ProviderButtons'
 import { Button, Field, FormError } from '@/components/ui'
 
 const REGISTER_ERROR = 'Could not create your account. Check your details and try again.'
@@ -18,7 +19,8 @@ export function Register() {
   const [params] = useSearchParams()
   const next = params.get('next') || '/'
   const providers = useProviders()
-  const closed = providers.data?.registration_mode === 'oidc-only'
+  // oidc-only → no password form; create an account through a provider.
+  const oidcOnly = providers.data?.registration_mode === 'oidc-only'
 
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -41,26 +43,10 @@ export function Register() {
     }
   }
 
-  if (closed) {
-    return (
-      <AuthLayout
-        title="Registration is closed"
-        subtitle="This dashboard only allows sign-in with a connected provider."
-        footer={
-          <Link to="/login" className="font-medium text-primary hover:underline">
-            Back to sign in
-          </Link>
-        }
-      >
-        <span />
-      </AuthLayout>
-    )
-  }
-
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Start tracking with DietDaemon."
+      subtitle={oidcOnly ? 'Sign up with a connected provider.' : 'Start tracking with DietDaemon.'}
       footer={
         <>
           Already have an account?{' '}
@@ -70,42 +56,47 @@ export function Register() {
         </>
       }
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <Field
-          label="Display name"
-          type="text"
-          autoComplete="name"
-          autoFocus
-          value={displayName}
-          disabled={busy}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Your name"
-          hint="Optional — what we'll call you."
-        />
-        <Field
-          label="Email"
-          type="email"
-          autoComplete="email"
-          value={email}
-          disabled={busy}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-        />
-        <Field
-          label="Password"
-          type="password"
-          autoComplete="new-password"
-          value={password}
-          disabled={busy}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="At least 8 characters"
-          hint="Use 8 or more characters."
-        />
-        <FormError>{error}</FormError>
-        <Button type="submit" disabled={busy || !email.trim() || !password}>
-          {busy ? 'Creating account…' : 'Create account'}
-        </Button>
-      </form>
+      <div className="flex flex-col gap-4">
+        <ProviderButtons verb="Sign up" />
+        {!oidcOnly && (
+          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+            <Field
+              label="Display name"
+              type="text"
+              autoComplete="name"
+              autoFocus
+              value={displayName}
+              disabled={busy}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+              hint="Optional — what we'll call you."
+            />
+            <Field
+              label="Email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              disabled={busy}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+            <Field
+              label="Password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              disabled={busy}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              hint="Use 8 or more characters."
+            />
+            <FormError>{error}</FormError>
+            <Button type="submit" disabled={busy || !email.trim() || !password}>
+              {busy ? 'Creating account…' : 'Create account'}
+            </Button>
+          </form>
+        )}
+      </div>
     </AuthLayout>
   )
 }

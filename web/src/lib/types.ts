@@ -270,10 +270,26 @@ export interface SessionResponse {
 //   oidc-only — no password form; sign in with a provider (Phase 3)
 export type RegistrationMode = 'open' | 'invite' | 'oidc-only'
 
-// GET /auth/providers — drives the login screen (providers populate in P3).
+// A configured OIDC provider (Phase 3). `id` is the route slug used in
+// /auth/oidc/{id}/start; `name` is the human label on the button.
+export interface OidcProvider {
+  id: string
+  name: string
+}
+
+// GET /auth/providers — drives the login screen. `providers` is empty until
+// Phase 3 wires real OIDC providers.
 export interface ProvidersResponse {
   registration_mode: RegistrationMode
-  providers: { id: string; name: string }[]
+  providers: OidcProvider[]
+}
+
+// A provider account linked to the current user (Phase 3).
+export interface LinkedIdentity {
+  id: string
+  provider: string // matches OidcProvider.id
+  email: string
+  linked_at: string
 }
 
 // Machine API key. The raw `key` is returned ONCE on create and never listed.

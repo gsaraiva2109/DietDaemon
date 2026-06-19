@@ -11,6 +11,7 @@ import type {
   DailyRollup,
   FoodDetail,
   GoalSuggestion,
+  LinkedIdentity,
   LoginResponse,
   Macros,
   Meal,
@@ -188,6 +189,15 @@ export const api = {
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
     // Drives login/register gating; providers populate in Phase 3.
     providers: () => request<ProvidersResponse>('/auth/providers'),
+    // --- OIDC (Phase 3) -------------------------------------------------
+    // Full-page redirect target that begins a provider sign-in (or link).
+    oidcStartUrl: (id: string, link = false) =>
+      `${BASE}/auth/oidc/${encodeURIComponent(id)}/start${link ? '?link=1' : ''}`,
+    identities: {
+      list: () => request<LinkedIdentity[]>('/auth/identities'),
+      unlink: (id: string) =>
+        request<void>(`/auth/identities/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
     changePassword: (currentPassword: string, newPassword: string) =>
       request<void>('/auth/change-password', {
         method: 'POST',
