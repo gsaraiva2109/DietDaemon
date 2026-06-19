@@ -8,13 +8,14 @@ import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
 import { useProviders, useMagicRequest } from '@/lib/queries'
 import { AUTH_ERROR, RateLimitError } from '@/lib/api'
+import { loginWithPasskey, browserSupportsWebAuthn, isWebAuthnCancel } from '@/lib/webauthn'
 import { AuthLayout } from '@/components/AuthLayout'
 import { ProviderButtons } from '@/components/ProviderButtons'
 import { MagicCodeEntry } from '@/components/MagicCodeEntry'
 import { Button, Field, FormError } from '@/components/ui'
 
 export function Login() {
-  const { login } = useAuth()
+  const { login, refresh } = useAuth()
   const { setDemo } = useDemo()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -65,6 +66,20 @@ export function Login() {
   function viewDemo() {
     setDemo(true)
     navigate('/', { replace: true })
+  }
+
+  async function signInWithPasskey() {
+    setError(null)
+    setBusy(true)
+    try {
+      await loginWithPasskey()
+      await refresh()
+      navigate(next, { replace: true })
+    } catch (err) {
+      if (!isWebAuthnCancel(err)) setError('Passkey sign-in failed. Try another method.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function emailMeCode() {
@@ -127,6 +142,11 @@ export function Login() {
     >
       <div className="flex flex-col gap-4">
         <ProviderButtons verb="Sign in" />
+        {browserSupportsWebAuthn() && (
+          <Button type="button" variant="ghost" onClick={signInWithPasskey} disabled={busy}>
+            Sign in with a passkey
+          </Button>
+        )}
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field

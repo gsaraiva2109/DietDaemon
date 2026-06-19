@@ -6,6 +6,12 @@
 // (double-submit CSRF). No token lives in JS/localStorage anymore.
 
 import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/browser'
+import type {
   ApiKey,
   BodyCompositionSummary,
   DailyRollup,
@@ -18,6 +24,7 @@ import type {
   MealTemplate,
   MeasurementEntry,
   NewApiKey,
+  Passkey,
   ProgressPhoto,
   ProvidersResponse,
   RecoveryCodesResponse,
@@ -232,6 +239,36 @@ export const api = {
           method: 'POST',
           body: JSON.stringify({ token: magicToken }),
         }),
+    },
+    // --- Passkeys / WebAuthn (Phase 6) ----------------------------------
+    passkeys: {
+      list: () => request<Passkey[]>('/auth/passkeys'),
+      registerBegin: () =>
+        request<PublicKeyCredentialCreationOptionsJSON>('/auth/passkeys/register/begin', {
+          method: 'POST',
+        }),
+      registerFinish: (label: string, credential: RegistrationResponseJSON) =>
+        request<Passkey>('/auth/passkeys/register/finish', {
+          method: 'POST',
+          body: JSON.stringify({ label, credential }),
+        }),
+      loginBegin: (email?: string) =>
+        request<PublicKeyCredentialRequestOptionsJSON>('/auth/passkeys/login/begin', {
+          method: 'POST',
+          body: JSON.stringify(email ? { email } : {}),
+        }),
+      loginFinish: (credential: AuthenticationResponseJSON) =>
+        request<SessionResponse>('/auth/passkeys/login/finish', {
+          method: 'POST',
+          body: JSON.stringify({ credential }),
+        }),
+      rename: (id: string, label: string) =>
+        request<Passkey>(`/auth/passkeys/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ label }),
+        }),
+      remove: (id: string) =>
+        request<void>(`/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
     // --- Password reset (Phase 4). forgot() always responds generically. ---
     password: {
