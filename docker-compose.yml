@@ -4,6 +4,7 @@ services:
     # uncomment build: . for local development with `docker compose up --build`.
     # build: .
     image: ghcr.io/gsaraiva2109/dietdaemon:latest
+    pull_policy: always
     container_name: dietdaemon
     restart: unless-stopped
 
