@@ -42,8 +42,15 @@ func TestVerifyTamperedPHC(t *testing.T) {
 		t.Fatalf("Hash: %v", err)
 	}
 
-	// Tamper with the hash part by flipping the last byte.
-	tampered := phc[:len(phc)-1] + "X"
+	// Tamper with the hash part by flipping the last character. Avoid the
+	// 1/64 chance that the last character already is 'X', which would make
+	// the tampered string identical to the original.
+	last := phc[len(phc)-1]
+	swap := byte('X')
+	if last == swap {
+		swap = 'Y'
+	}
+	tampered := phc[:len(phc)-1] + string(swap)
 	ok, err := Verify("a good password", tampered)
 	if err != nil {
 		t.Fatalf("Verify tampered: %v", err)
