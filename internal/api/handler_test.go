@@ -448,6 +448,16 @@ func (s *fakeAuthStore) DeleteOIDCState(_ context.Context, id string) error {
 	return nil
 }
 
+// Phase 4 — Email tokens.
+func (s *fakeAuthStore) MarkEmailVerified(_ context.Context, userID string) error      { return nil }
+func (s *fakeAuthStore) UpdateUserEmail(_ context.Context, userID, email string) error { return nil }
+func (s *fakeAuthStore) CreateEmailToken(_ context.Context, id, userID, purpose, expiresAt string) error {
+	return nil
+}
+func (s *fakeAuthStore) ConsumeEmailToken(_ context.Context, id, purpose string) (string, error) {
+	return "", types.ErrNotFound
+}
+
 type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal
@@ -468,7 +478,7 @@ func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 
 func newHandler(store MealStore, logger MealLogger) *Handler {
 	store2 := newFakeAuthStore()
-	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", nil, AuthConfig{
+	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", nil, nil, "none", "", AuthConfig{
 		SessionCfg: auth.SessionConfig{
 			IdleTTL:     1 * time.Hour,
 			AbsoluteTTL: 24 * time.Hour,

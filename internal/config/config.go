@@ -96,6 +96,17 @@ type Config struct {
 	OIDCProviders []OIDCProviderConfig
 	PublicBaseURL string
 
+	// --- Auth (Phase 4 — Mailer / Email) ---
+	EmailProvider string // resend | ses | smtp | none
+	EmailFrom     string // verified sender address
+	ResendAPIKey  string
+	SESRegion     string
+	SMTPHost      string
+	SMTPPort      int
+	SMTPUsername  string
+	SMTPPassword  string
+	SMTPTLS       bool
+
 	LogLevel string
 }
 
@@ -180,6 +191,17 @@ func Load() (*Config, error) {
 			c.OIDCProviders = append(c.OIDCProviders, cfg)
 		}
 	}
+
+	// Auth Phase 4 — Mailer / Email.
+	c.EmailProvider = strings.ToLower(getStr("EMAIL_PROVIDER", "none"))
+	c.EmailFrom = getStr("EMAIL_FROM", "")
+	c.ResendAPIKey = getStr("RESEND_API_KEY", "")
+	c.SESRegion = getStr("SES_REGION", "")
+	c.SMTPHost = getStr("SMTP_HOST", "")
+	c.SMTPPort = getInt("SMTP_PORT", 587)
+	c.SMTPUsername = getStr("SMTP_USERNAME", "")
+	c.SMTPPassword = getStr("SMTP_PASSWORD", "")
+	c.SMTPTLS = getBool("SMTP_TLS", true)
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
 	c.ParserTier = tier
@@ -325,6 +347,31 @@ func (c *Config) validate(tierErr error) error {
 		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
 	}
 
+	// Auth Phase 4 — Mailer / Email.
+	validProviders := map[string]bool{"resend": true, "ses": true, "smtp": true, "none": true, "": true}
+	if !validProviders[c.EmailProvider] {
+		add("EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got %q", c.EmailProvider)
+	}
+	if c.EmailProvider != "none" && c.EmailProvider != "" {
+		if c.EmailFrom == "" {
+			add("EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"")
+		}
+		if c.PublicBaseURL == "" {
+			add("PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\" (to build verification/reset links)")
+		}
+	}
+	if c.EmailProvider == "resend" && c.ResendAPIKey == "" {
+		add("RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
+	}
+	if c.EmailProvider == "smtp" {
+		if c.SMTPHost == "" {
+			add("SMTP_HOST is required when EMAIL_PROVIDER=smtp")
+		}
+		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
+			add("SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
+		}
+	}
+
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
@@ -371,6 +418,18 @@ func getFloat(key string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+func getInt(key string, def int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func getBool(key string, def bool) bool {
