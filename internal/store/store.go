@@ -85,30 +85,6 @@ func (s *Store) runMigrations() error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	// If the tracking table is empty but the DB already has tables (existing
-	// install upgrading from before migration tracking existed), mark all
-	// current migration files as already applied so they are not re-run.
-	var tracked int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&tracked); err != nil {
-		return fmt.Errorf("count tracked migrations: %w", err)
-	}
-	if tracked == 0 {
-		var hasTables int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meals'`).Scan(&hasTables); err != nil {
-			return fmt.Errorf("check existing schema: %w", err)
-		}
-		if hasTables > 0 {
-			for _, entry := range entries {
-				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-					continue
-				}
-				if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
-					return fmt.Errorf("record legacy migration %s: %w", entry.Name(), err)
-				}
-			}
-		}
-	}
-
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
@@ -127,6 +103,16 @@ func (s *Store) runMigrations() error {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		if _, err := s.db.Exec(string(content)); err != nil {
+			// Idempotency: databases that predate migration tracking may
+			// already have tables/columns/indexes from manual or older
+			// migration paths. Treat "already exists" errors as success
+			// so the migration is tracked and skipped on next start.
+			if isBenignMigrationErr(err) {
+				if _, recErr := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); recErr != nil {
+					return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
+				}
+				continue
+			}
 			return fmt.Errorf("exec %s: %w", entry.Name(), err)
 		}
 		if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
@@ -135,6 +121,23 @@ func (s *Store) runMigrations() error {
 	}
 
 	return nil
+}
+
+// isBenignMigrationErr returns true when err indicates the DDL/DML operation
+// was already applied — a duplicate column, table, index, or constraint.
+// This lets the migration runner treat pre-existing schema as success instead
+// of aborting startup.
+func isBenignMigrationErr(err error) bool {
+	msg := err.Error()
+	// SQLite error patterns for "already exists":
+	//   - "duplicate column name: X"
+	//   - "table X already exists"
+	//   - "index X already exists"
+	//   - "trigger X already exists"
+	//   - "UNIQUE constraint failed: schema_migrations.name" (harmless)
+	return strings.Contains(msg, "duplicate column name") ||
+		strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "UNIQUE constraint failed")
 }
 
 // DB returns the underlying *sql.DB so that callers (e.g. the embedding index)
