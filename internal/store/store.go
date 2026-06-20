@@ -152,6 +152,12 @@ func (s *Store) healMissingColumns() int {
 		table     string
 		column    string
 	}{
+		// 006_food_metadata adds category, brand, barcode + more to food_library.
+		{"006_food_metadata.sql", "food_library", "category"},
+		// 008_body_tracking adds weight_log, measurement_log, progress_photos.
+		{"008_body_tracking.sql", "weight_log", "id"},
+		// 009_user_profile adds the user_profiles table.
+		{"009_user_profile.sql", "user_profiles", "user_id"},
 		// 011_auth_foundation adds account_id, email, status + more to users.
 		{"011_auth_foundation.sql", "users", "account_id"},
 		// 012_totp adds totp_secrets, recovery_codes.
