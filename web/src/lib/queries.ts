@@ -495,6 +495,31 @@ export function useUnlinkIdentity() {
   })
 }
 
+// --- Email verification / change + password reset (Phase 4) ---------------
+
+export function useVerifyEmail() {
+  return useMutation({ mutationFn: (token: string) => api.auth.email.verify(token) })
+}
+
+export function useResendVerify() {
+  return useMutation({ mutationFn: () => api.auth.email.resendVerify() })
+}
+
+export function useChangeEmail() {
+  return useMutation({ mutationFn: (email: string) => api.auth.email.change(email) })
+}
+
+export function useForgotPassword() {
+  return useMutation({ mutationFn: (email: string) => api.auth.password.forgot(email) })
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: ({ token, password }: { token: string; password: string }) =>
+      api.auth.password.reset(token, password),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

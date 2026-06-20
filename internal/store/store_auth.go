@@ -644,6 +644,80 @@ func (s *Store) DeleteOIDCState(ctx context.Context, id string) error {
 	return err
 }
 
+// --- Email tokens (Phase 4) ---
+
+// MarkEmailVerified sets email_verified_at to now for the user.
+func (s *Store) MarkEmailVerified(ctx context.Context, userID string) error {
+	const q = `UPDATE users SET email_verified_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, utcNow(), userID)
+	return err
+}
+
+// UpdateUserEmail sets a new email and clears email_verified_at so the user
+// must verify the new address.
+func (s *Store) UpdateUserEmail(ctx context.Context, userID, email string) error {
+	const q = `UPDATE users SET email = ?, email_verified_at = NULL WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, email, userID)
+	return err
+}
+
+// CreateEmailToken persists a single-use email token (hashed id).
+func (s *Store) CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error {
+	const q = `INSERT INTO auth_email_tokens (id, user_id, purpose, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, purpose, expiresAt, utcNow())
+	return err
+}
+
+// ConsumeEmailToken returns the user_id for a single-use email token and deletes
+// it in one transaction. Returns types.ErrNotFound when the token does not exist,
+// has expired, or has the wrong purpose.
+func (s *Store) ConsumeEmailToken(ctx context.Context, id, purpose string) (userID string, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("store: consume email token tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var expiresAt string
+	const q = `SELECT user_id, expires_at FROM auth_email_tokens WHERE id = ?`
+	row := tx.QueryRowContext(ctx, q, id)
+	if scanErr := row.Scan(&userID, &expiresAt); scanErr == sql.ErrNoRows {
+		return "", types.ErrNotFound
+	} else if scanErr != nil {
+		return "", fmt.Errorf("store: scan email token: %w", scanErr)
+	}
+
+	// Check expiry.
+	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
+	if parseErr != nil || time.Now().UTC().After(exp) {
+		// Delete expired token.
+		_, _ = tx.ExecContext(ctx, `DELETE FROM auth_email_tokens WHERE id = ?`, id)
+		_ = tx.Commit()
+		return "", types.ErrNotFound
+	}
+
+	// Verify purpose matches.
+	var rowPurpose string
+	if scanErr := tx.QueryRowContext(ctx, `SELECT purpose FROM auth_email_tokens WHERE id = ?`, id).Scan(&rowPurpose); scanErr != nil {
+		_ = tx.Commit()
+		return "", types.ErrNotFound
+	}
+	if rowPurpose != purpose {
+		return "", types.ErrNotFound
+	}
+
+	if _, delErr := tx.ExecContext(ctx, `DELETE FROM auth_email_tokens WHERE id = ?`, id); delErr != nil {
+		return "", fmt.Errorf("store: delete email token: %w", delErr)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("store: commit consume email token: %w", err)
+	}
+
+	return userID, nil
+}
+
 // Compile-time checks that *Store satisfies the auth interfaces.
 var (
 	_ auth.SessionRepo      = (*Store)(nil)

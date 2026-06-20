@@ -17,6 +17,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
 
@@ -43,6 +44,12 @@ type AuthStore interface {
 	CreateOIDCState(ctx context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error
 	ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error)
 	DeleteOIDCState(ctx context.Context, id string) error
+
+	// Email tokens (Phase 4).
+	MarkEmailVerified(ctx context.Context, userID string) error
+	UpdateUserEmail(ctx context.Context, userID, email string) error
+	CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error
+	ConsumeEmailToken(ctx context.Context, id, purpose string) (userID string, err error)
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
@@ -140,6 +147,11 @@ type Handler struct {
 	// OIDC (Phase 3).
 	providers map[string]*oidc.Provider
 
+	// Mailer (Phase 4).
+	mailer        mailer.Mailer
+	emailProvider string
+	publicBaseURL string
+
 	// Auth config.
 	sessionCfg       auth.SessionConfig
 	lockoutCfg       auth.LockoutConfig
@@ -154,7 +166,7 @@ type Handler struct {
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
 // interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, cfg AuthConfig) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -174,6 +186,9 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		totpEncKey:       totpEncKey,
 		totpIssuer:       totpIssuer,
 		providers:        providers,
+		mailer:           m,
+		emailProvider:    emailProvider,
+		publicBaseURL:    publicBaseURL,
 		sessionCfg:       cfg.SessionCfg,
 		lockoutCfg:       cfg.LockoutCfg,
 		registrationMode: cfg.RegistrationMode,
@@ -268,6 +283,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", h.wrapPublic(h.handleOIDCCallback))
 	mux.HandleFunc("GET /api/v1/auth/identities", h.wrap(h.handleListIdentities))
 	mux.HandleFunc("DELETE /api/v1/auth/identities/{id}", h.wrap(h.handleUnlinkIdentity))
+
+	// Phase 4 — Email verification + password reset.
+	mux.HandleFunc("POST /api/v1/auth/email/verify", h.wrapPublic(h.handleEmailVerify))
+	mux.HandleFunc("POST /api/v1/auth/email/verify/resend", h.wrap(h.handleResendVerify))
+	mux.HandleFunc("POST /api/v1/auth/email/change", h.wrap(h.handleEmailChange))
+	mux.HandleFunc("POST /api/v1/auth/password/forgot", h.wrapPublic(h.handleForgotPassword))
+	mux.HandleFunc("POST /api/v1/auth/password/reset", h.wrapPublic(h.handleResetPassword))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.

@@ -31,6 +31,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
+	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/llm"
@@ -176,7 +177,26 @@ func run() error {
 			}
 		}
 		oidcRegistry := oidc.BuildRegistry(oidcConfigs)
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, authCfg)
+
+		// Phase 4 — Mailer.
+		mailCfg := mailer.Config{
+			Provider:      cfg.EmailProvider,
+			From:          cfg.EmailFrom,
+			ResendAPIKey:  cfg.ResendAPIKey,
+			SESRegion:     cfg.SESRegion,
+			SMTPHost:      cfg.SMTPHost,
+			SMTPPort:      cfg.SMTPPort,
+			SMTPUsername:  cfg.SMTPUsername,
+			SMTPPassword:  cfg.SMTPPassword,
+			SMTPTLS:       cfg.SMTPTLS,
+			PublicBaseURL: cfg.PublicBaseURL,
+		}
+		m, err := mailer.New(mailCfg)
+		if err != nil {
+			return fmt.Errorf("mailer: %w", err)
+		}
+
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

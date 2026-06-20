@@ -12,6 +12,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 )
 
 // ---------------------------------------------------------------------------
@@ -154,6 +155,27 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, email)
+
+	// Phase 4 — Email verification: auto-verify when EMAIL_PROVIDER=none,
+	// otherwise send verification email.
+	if h.emailProvider == "" || h.emailProvider == "none" {
+		// No mailer configured or explicitly "none" — auto-verify.
+		_ = h.authStore.MarkEmailVerified(ctx, u.ID)
+		now := time.Now().UTC()
+		u.EmailVerifiedAt = &now
+	} else {
+		token := auth.NewToken()
+		hashedID := auth.HashToken(token)
+		expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+		if err := h.authStore.CreateEmailToken(ctx, hashedID, u.ID, "verify", expiresAt); err != nil {
+			h.writeErr(w, err)
+			return
+		}
+		link := h.publicBaseURL + "/verify-email?token=" + token
+		msg := mailer.VerificationEmail(link)
+		_ = h.mailer.Send(ctx, u.Email, msg)
+		h.writeAudit(ctx, accountID, u.ID, "email.verification_sent", ip, ua, u.Email)
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
