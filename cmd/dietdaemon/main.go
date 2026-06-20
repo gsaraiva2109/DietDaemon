@@ -31,6 +31,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
+	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/llm"
 	"github.com/gsaraiva2109/dietdaemon/internal/pendingstore"
@@ -164,7 +165,17 @@ func run() error {
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
 		}
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg)
+		// Phase 3 — OIDC provider registry (lazy; no network at boot).
+		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
+		for i, c := range cfg.OIDCProviders {
+			oidcConfigs[i] = oidc.ProviderConfig{
+				ID: c.ID, Name: c.Name, Issuer: c.Issuer,
+				ClientID: c.ClientID, ClientSecret: c.ClientSecret,
+				RedirectURL: c.RedirectURL, Scopes: c.Scopes,
+			}
+		}
+		oidcRegistry := oidc.BuildRegistry(oidcConfigs)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, authCfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

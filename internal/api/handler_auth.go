@@ -297,9 +297,16 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request, userID s
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleProviders(w http.ResponseWriter, r *http.Request) {
+	var provs []providerJSON
+	for _, p := range h.providers {
+		provs = append(provs, providerJSON{ID: p.ID, Name: p.Name})
+	}
+	if provs == nil {
+		provs = []providerJSON{}
+	}
 	_ = json.NewEncoder(w).Encode(providersResponse{
 		RegistrationMode: string(h.registrationMode),
-		Providers:        []providerJSON{},
+		Providers:        provs,
 	})
 }
 

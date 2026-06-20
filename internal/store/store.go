@@ -1067,6 +1067,19 @@ func parseUTC(s string) time.Time {
 	return t.UTC()
 }
 
+// ptrTime returns a pointer to t.
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// isUniqueViolation reports whether err is a SQL UNIQUE constraint violation.
+// Works with modernc.org/sqlite; kept simple and portable.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	// modernc.org/sqlite surfaces this in the error string.
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
 // newID returns a short pseudo-unique ID using a monotonic counter + timestamp
 // fallback. Simple identifiers keep the embedded DB readable.
 var idCounter int64

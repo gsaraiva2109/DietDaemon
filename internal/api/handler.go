@@ -17,6 +17,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
 
 // AuthStore is the subset of store methods the auth endpoints need.
@@ -32,6 +33,16 @@ type AuthStore interface {
 	RevokeAPIKey(ctx context.Context, userID, keyID string) error
 	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
 	RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error
+
+	// OIDC (Phase 3).
+	GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error)
+	LinkOIDCIdentity(ctx context.Context, id, userID, provider, subject, email string) error
+	ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error)
+	DeleteOIDCIdentity(ctx context.Context, userID, id string) error
+	CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error)
+	CreateOIDCState(ctx context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error
+	ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error)
+	DeleteOIDCState(ctx context.Context, id string) error
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
@@ -126,6 +137,9 @@ type Handler struct {
 	totpEncKey    []byte
 	totpIssuer    string
 
+	// OIDC (Phase 3).
+	providers map[string]*oidc.Provider
+
 	// Auth config.
 	sessionCfg       auth.SessionConfig
 	lockoutCfg       auth.LockoutConfig
@@ -140,9 +154,12 @@ type Handler struct {
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
 // interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, cfg AuthConfig) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, cfg AuthConfig) *Handler {
 	if loc == nil {
 		loc = time.UTC
+	}
+	if providers == nil {
+		providers = map[string]*oidc.Provider{}
 	}
 	return &Handler{
 		store:            store,
@@ -156,6 +173,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		recoveryCodes:    recoveryCodes,
 		totpEncKey:       totpEncKey,
 		totpIssuer:       totpIssuer,
+		providers:        providers,
 		sessionCfg:       cfg.SessionCfg,
 		lockoutCfg:       cfg.LockoutCfg,
 		registrationMode: cfg.RegistrationMode,
@@ -244,6 +262,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/totp/challenge", h.wrapPublic(h.handleTOTPChallenge))
 	mux.HandleFunc("DELETE /api/v1/auth/totp", h.wrap(h.handleTOTPDisable))
 	mux.HandleFunc("POST /api/v1/auth/totp/recovery-codes/regenerate", h.wrap(h.handleRegenerateRecovery))
+
+	// Phase 3 — OIDC client login + account linking.
+	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/start", h.wrapPublic(h.handleOIDCStart))
+	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", h.wrapPublic(h.handleOIDCCallback))
+	mux.HandleFunc("GET /api/v1/auth/identities", h.wrap(h.handleListIdentities))
+	mux.HandleFunc("DELETE /api/v1/auth/identities/{id}", h.wrap(h.handleUnlinkIdentity))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.

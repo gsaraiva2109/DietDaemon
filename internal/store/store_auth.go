@@ -455,6 +455,195 @@ func (s *Store) DeleteMFAChallenge(ctx context.Context, id string) error {
 	return err
 }
 
+// --- OIDC identities ---
+
+// GetUserByOIDCIdentity returns the user linked to a provider+subject pair.
+// Returns types.ErrNotFound when no matching identity exists.
+func (s *Store) GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error) {
+	const q = `SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.created_at
+		FROM oidc_identities oi JOIN users u ON u.id = oi.user_id
+		WHERE oi.provider = ? AND oi.subject = ?`
+	row := s.db.QueryRowContext(ctx, q, provider, subject)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return types.User{}, types.ErrNotFound
+	}
+	return u, err
+}
+
+// LinkOIDCIdentity inserts a new OIDC identity row. The UNIQUE(provider,subject)
+// constraint guarantees one identity per provider+subject. On conflict, returns
+// types.ErrIdentityLinked.
+func (s *Store) LinkOIDCIdentity(ctx context.Context, id, userID, provider, subject, email string) error {
+	const q = `INSERT INTO oidc_identities (id, user_id, provider, subject, email, linked_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, provider, subject, nullStr(email), utcNow(), utcNow())
+	if err != nil {
+		// UNIQUE(provider, subject) violation.
+		if isUniqueViolation(err) {
+			return types.ErrIdentityLinked
+		}
+		return fmt.Errorf("store: link oidc identity: %w", err)
+	}
+	return nil
+}
+
+// ListOIDCIdentities returns all OIDC identities for a user.
+func (s *Store) ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error) {
+	const q = `SELECT id, user_id, provider, subject, email, linked_at, created_at
+		FROM oidc_identities WHERE user_id = ? ORDER BY linked_at DESC`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list oidc identities: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.OIDCIdentity
+	for rows.Next() {
+		var oi types.OIDCIdentity
+		var la, ca string
+		var email sql.NullString
+		if err := rows.Scan(&oi.ID, &oi.UserID, &oi.Provider, &oi.Subject, &email, &la, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan oidc identity: %w", err)
+		}
+		if email.Valid {
+			oi.Email = email.String
+		}
+		oi.LinkedAt = parseUTC(la)
+		oi.CreatedAt = parseUTC(ca)
+		out = append(out, oi)
+	}
+	return out, rows.Err()
+}
+
+// DeleteOIDCIdentity removes one OIDC identity, scoped by user. Returns
+// types.ErrNotFound when the identity does not exist or belongs to another user.
+func (s *Store) DeleteOIDCIdentity(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM oidc_identities WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete oidc identity: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// CreateUserWithOIDC creates an account (if needed), inserts the user with
+// email_verified_at set to now (OIDC asserted it), and links the identity row —
+// all in one transaction. No password_credentials row is created.
+func (s *Store) CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return types.User{}, fmt.Errorf("store: create user with oidc tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO accounts (id, created_at) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+		accountID, utcNow(),
+	); err != nil {
+		return types.User{}, fmt.Errorf("store: insert account: %w", err)
+	}
+
+	now := utcNow()
+	u := types.User{
+		ID:              userID,
+		AccountID:       accountID,
+		Email:           email,
+		Status:          "active",
+		DisplayName:     displayName,
+		Timezone:        "UTC",
+		CreatedAt:       parseUTC(now),
+		EmailVerifiedAt: ptrTime(parseUTC(now)),
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.AccountID, u.Email, now, u.Status, nullStr(u.DisplayName), u.Timezone, now,
+	); err != nil {
+		return types.User{}, fmt.Errorf("store: insert user: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO oidc_identities (id, user_id, provider, subject, email, linked_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		identityID, u.ID, provider, subject, nullStr(email), now, now,
+	); err != nil {
+		return types.User{}, fmt.Errorf("store: insert oidc identity: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return types.User{}, fmt.Errorf("store: commit user with oidc: %w", err)
+	}
+
+	return u, nil
+}
+
+// --- OIDC state tokens ---
+
+// CreateOIDCState persists an OIDC authorization state entry.
+func (s *Store) CreateOIDCState(ctx context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error {
+	const q = `INSERT INTO oidc_states (id, nonce, pkce_verifier, link_user_id, next, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, nonce, pkceVerifier, nullStr(linkUserID), nullStr(next), expiresAt, utcNow())
+	return err
+}
+
+// ConsumeOIDCState returns the state entry and deletes it in a single
+// transaction (single-use). Returns types.ErrNotFound when the state does not
+// exist or has expired.
+func (s *Store) ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("store: consume oidc state tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var luID, n sql.NullString
+	const q = `SELECT nonce, pkce_verifier, link_user_id, next, expires_at FROM oidc_states WHERE id = ?`
+	row := tx.QueryRowContext(ctx, q, id)
+	var expiresAt string
+	if scanErr := row.Scan(&nonce, &pkceVerifier, &luID, &n, &expiresAt); scanErr == sql.ErrNoRows {
+		return "", "", "", "", types.ErrNotFound
+	} else if scanErr != nil {
+		return "", "", "", "", fmt.Errorf("store: scan oidc state: %w", scanErr)
+	}
+
+	// Check expiry.
+	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
+	if parseErr != nil || time.Now().UTC().After(exp) {
+		_ = tx.Commit() // rowsAffected will be 0, caller handles
+		return "", "", "", "", types.ErrNotFound
+	}
+
+	if _, delErr := tx.ExecContext(ctx, `DELETE FROM oidc_states WHERE id = ?`, id); delErr != nil {
+		return "", "", "", "", fmt.Errorf("store: delete oidc state: %w", delErr)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", "", "", fmt.Errorf("store: commit consume oidc state: %w", err)
+	}
+
+	if luID.Valid {
+		linkUserID = luID.String
+	}
+	if n.Valid {
+		next = n.String
+	}
+	return nonce, pkceVerifier, linkUserID, next, nil
+}
+
+// DeleteOIDCState removes an OIDC state row by id (best-effort cleanup).
+func (s *Store) DeleteOIDCState(ctx context.Context, id string) error {
+	const q = `DELETE FROM oidc_states WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, id)
+	return err
+}
+
 // Compile-time checks that *Store satisfies the auth interfaces.
 var (
 	_ auth.SessionRepo      = (*Store)(nil)
