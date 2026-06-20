@@ -28,10 +28,10 @@ func setupDB(t *testing.T) *sql.DB {
 		)
 	`
 	if _, err := db.Exec(q); err != nil {
-		db.Close()
+		_ = db.Close()
 		t.Fatalf("create table: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 

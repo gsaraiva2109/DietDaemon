@@ -34,7 +34,7 @@ func (s *Store) CreateUserWithPassword(ctx context.Context, accountID, userID, e
 	if err != nil {
 		return types.User{}, fmt.Errorf("store: create user tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Ensure the account exists.
 	if _, err := tx.ExecContext(ctx,
@@ -131,7 +131,7 @@ func (s *Store) GetUserByAPIKey(ctx context.Context, hashedKey string) (types.Us
 	if err != nil {
 		return types.User{}, fmt.Errorf("store: api key lookup tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Find the key (must not be revoked).
 	const keyQ = `SELECT user_id FROM api_keys WHERE hashed_key = ? AND revoked_at IS NULL`
@@ -245,7 +245,7 @@ func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey,
 	if err != nil {
 		return nil, fmt.Errorf("store: list api keys: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.APIKey
 	for rows.Next() {
@@ -318,8 +318,148 @@ func (s *Store) WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error 
 	return err
 }
 
+// --- TOTP secrets ---
+
+// UpsertTOTPSecret inserts or updates the encrypted TOTP secret for a user.
+// The secret is already AES-256-GCM encrypted by the caller.
+func (s *Store) UpsertTOTPSecret(ctx context.Context, userID, encSecret string) error {
+	const q = `INSERT INTO totp_secrets (user_id, secret) VALUES (?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET secret = excluded.secret`
+	_, err := s.db.ExecContext(ctx, q, userID, encSecret)
+	return err
+}
+
+// ConfirmTOTP marks the TOTP secret as confirmed (enrollment verified).
+func (s *Store) ConfirmTOTP(ctx context.Context, userID string) error {
+	const q = `UPDATE totp_secrets SET confirmed_at = ? WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, q, utcNow(), userID)
+	return err
+}
+
+// GetTOTPSecret returns the encrypted secret and whether enrollment was
+// confirmed. Returns types.ErrNotFound when no secret exists.
+func (s *Store) GetTOTPSecret(ctx context.Context, userID string) (secret string, confirmed bool, err error) {
+	const q = `SELECT secret, confirmed_at FROM totp_secrets WHERE user_id = ?`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var ca sql.NullString
+	if err := row.Scan(&secret, &ca); err == sql.ErrNoRows {
+		return "", false, types.ErrNotFound
+	} else if err != nil {
+		return "", false, fmt.Errorf("store: get totp secret: %w", err)
+	}
+	return secret, ca.Valid, nil
+}
+
+// DeleteTOTP removes the TOTP secret for a user.
+func (s *Store) DeleteTOTP(ctx context.Context, userID string) error {
+	const q = `DELETE FROM totp_secrets WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, q, userID)
+	return err
+}
+
+// HasConfirmedTOTP reports whether the user has a confirmed TOTP factor.
+func (s *Store) HasConfirmedTOTP(ctx context.Context, userID string) (bool, error) {
+	const q = `SELECT COUNT(*) FROM totp_secrets WHERE user_id = ? AND confirmed_at IS NOT NULL`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return false, fmt.Errorf("store: has confirmed totp: %w", err)
+	}
+	return n > 0, nil
+}
+
+// --- Recovery codes ---
+
+// ReplaceRecoveryCodes deletes all existing recovery codes for the user and
+// inserts new ones in a single transaction.
+func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, hashes []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: replace recovery codes tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("store: delete old recovery codes: %w", err)
+	}
+
+	now := utcNow()
+	for _, h := range hashes {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO recovery_codes (id, user_id, code_hash, created_at) VALUES (?, ?, ?, ?)`,
+			newID(), userID, h, now,
+		); err != nil {
+			return fmt.Errorf("store: insert recovery code: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ConsumeRecoveryCode marks a recovery code as used (sets used_at). Returns
+// true if the code existed and was unused, false otherwise.
+func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, hash string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: consume recovery code tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const q = `UPDATE recovery_codes SET used_at = ?
+		WHERE user_id = ? AND code_hash = ? AND used_at IS NULL`
+	res, err := tx.ExecContext(ctx, q, utcNow(), userID, hash)
+	if err != nil {
+		return false, fmt.Errorf("store: consume recovery code: %w", err)
+	}
+
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, tx.Rollback()
+	}
+
+	return true, tx.Commit()
+}
+
+// --- MFA challenges ---
+
+// CreateMFAChallenge inserts a hashed MFA challenge token.
+func (s *Store) CreateMFAChallenge(ctx context.Context, id, userID string, remember bool, expiresAt string) error {
+	rem := 0
+	if remember {
+		rem = 1
+	}
+	const q = `INSERT INTO mfa_challenges (id, user_id, remember, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, rem, expiresAt, utcNow())
+	return err
+}
+
+// GetMFAChallenge retrieves a challenge by its hashed token ID.
+// Returns types.ErrNotFound when the challenge does not exist.
+func (s *Store) GetMFAChallenge(ctx context.Context, id string) (userID string, remember bool, expiresAt string, err error) {
+	const q = `SELECT user_id, remember, expires_at FROM mfa_challenges WHERE id = ?`
+	row := s.db.QueryRowContext(ctx, q, id)
+	var rem int
+	if err := row.Scan(&userID, &rem, &expiresAt); err == sql.ErrNoRows {
+		return "", false, "", types.ErrNotFound
+	} else if err != nil {
+		return "", false, "", fmt.Errorf("store: get mfa challenge: %w", err)
+	}
+	return userID, rem != 0, expiresAt, nil
+}
+
+// DeleteMFAChallenge removes a challenge by its hashed token ID.
+func (s *Store) DeleteMFAChallenge(ctx context.Context, id string) error {
+	const q = `DELETE FROM mfa_challenges WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, id)
+	return err
+}
+
 // Compile-time checks that *Store satisfies the auth interfaces.
 var (
 	_ auth.SessionRepo      = (*Store)(nil)
 	_ auth.LoginAttemptRepo = (*Store)(nil)
+	_ auth.TOTPRepo         = (*Store)(nil)
+	_ auth.MFAChallengeRepo = (*Store)(nil)
+	_ auth.RecoveryCodeRepo = (*Store)(nil)
 )

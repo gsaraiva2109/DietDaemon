@@ -62,7 +62,7 @@ func TestCheckLockoutLocked(t *testing.T) {
 
 	// Record 5 failures.
 	for i := 0; i < 5; i++ {
-		repo.RecordLoginAttempt(ctx, "test@example.com", false)
+		_ = repo.RecordLoginAttempt(ctx, "test@example.com", false)
 	}
 
 	locked, retry, err := CheckLockout(ctx, repo, "test@example.com", cfg)
@@ -85,9 +85,9 @@ func TestCheckLockoutSuccessResets(t *testing.T) {
 	// Record 4 failures + 1 success. The success doesn't erase past failures
 	// in this simple model, but the count should still be < 5.
 	for i := 0; i < 4; i++ {
-		repo.RecordLoginAttempt(ctx, "test@example.com", false)
+		_ = repo.RecordLoginAttempt(ctx, "test@example.com", false)
 	}
-	repo.RecordLoginAttempt(ctx, "test@example.com", true) // success
+	_ = repo.RecordLoginAttempt(ctx, "test@example.com", true) // success
 
 	locked, _, err := CheckLockout(ctx, repo, "test@example.com", cfg)
 	if err != nil {

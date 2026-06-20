@@ -16,16 +16,16 @@ func tempDB(t *testing.T) (*Store, func()) {
 		t.Fatalf("create temp file: %v", err)
 	}
 	path := f.Name()
-	f.Close()
-	os.Remove(path) // New will create it
+	_ = f.Close()
+	_ = os.Remove(path) // New will create it
 
 	s, err := New(path)
 	if err != nil {
 		t.Fatalf("New(%q): %v", path, err)
 	}
 	return s, func() {
-		s.Close()
-		os.Remove(path)
+		_ = s.Close()
+		_ = os.Remove(path)
 	}
 }
 

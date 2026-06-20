@@ -77,7 +77,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	msg, err := buildMessaging(cfg)
 	if err != nil {
@@ -164,7 +164,7 @@ func run() error {
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
 		}
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, authCfg)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
@@ -211,7 +211,7 @@ func run() error {
 		return fmt.Errorf("messaging receive: %w", err)
 	}
 	go func() {
-		defer q.Close()
+		defer func() { _ = q.Close() }()
 		for m := range in {
 			if perr := q.Publish(ctx, m); perr != nil {
 				return // queue closed or context cancelled

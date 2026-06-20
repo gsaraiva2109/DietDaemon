@@ -133,21 +133,12 @@ func TestValidateSessionExpiredAbsolute(t *testing.T) {
 	ctx := context.Background()
 	c := cfg()
 
-	_, _, s := CreateSession("user-1", false, "", "", c)
-	// Push absolute expiry into the past.
-	s.AbsoluteExpiresAt = time.Now().UTC().Add(-1 * time.Hour)
-	repo.sessions[s.ID] = s
-
-	_, result, err := ValidateSession(ctx, repo, HashToken(NewToken()), c)
-	// Need to use a token that maps to our session ID.
-	// Actually, let's create the session normally and use the real token.
-
 	// Re-do: store normally, then expire.
 	tok2, _, s2 := CreateSession("user-2", false, "", "", c)
 	s2.AbsoluteExpiresAt = time.Now().UTC().Add(-1 * time.Hour)
 	repo.sessions[s2.ID] = s2
 
-	_, result, err = ValidateSession(ctx, repo, tok2, c)
+	_, result, err := ValidateSession(ctx, repo, tok2, c)
 	if err != nil {
 		t.Fatalf("ValidateSession: %v", err)
 	}
