@@ -14,16 +14,15 @@ export function MagicLink() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const ran = useRef(false)
-  const [state, setState] = useState<'verifying' | 'error'>('verifying')
+  const token = params.get('token')
+  // Missing token is a render-time fact, not an effect side-effect — avoid
+  // synchronous setState in the effect (react-hooks/set-state-in-effect).
+  const [state, setState] = useState<'verifying' | 'error'>(token ? 'verifying' : 'error')
 
   useEffect(() => {
     if (ran.current) return
     ran.current = true
-    const token = params.get('token')
-    if (!token) {
-      setState('error')
-      return
-    }
+    if (!token) return
     api.auth.magic
       .verifyToken(token)
       .then(async () => {
