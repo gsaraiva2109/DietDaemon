@@ -477,6 +477,24 @@ export function useRegenerateRecovery() {
   return useMutation({ mutationFn: () => api.auth.totp.regenerateRecovery() })
 }
 
+// --- OIDC linked accounts (Phase 3) ---------------------------------------
+
+export function useIdentities() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['auth', 'identities', demo],
+    queryFn: () => (demo ? [] : api.auth.identities.list()),
+  })
+}
+
+export function useUnlinkIdentity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.auth.identities.unlink(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'identities'] }),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

@@ -421,6 +421,33 @@ func (s *fakeAuthStore) ConsumeRecoveryCode(_ context.Context, userID, hash stri
 	return false, nil
 }
 
+// OIDC stubs (Phase 3).
+func (s *fakeAuthStore) GetUserByOIDCIdentity(_ context.Context, provider, subject string) (types.User, error) {
+	return types.User{}, types.ErrNotFound
+}
+func (s *fakeAuthStore) LinkOIDCIdentity(_ context.Context, id, userID, provider, subject, email string) error {
+	return nil
+}
+func (s *fakeAuthStore) ListOIDCIdentities(_ context.Context, userID string) ([]types.OIDCIdentity, error) {
+	return nil, nil
+}
+func (s *fakeAuthStore) DeleteOIDCIdentity(_ context.Context, userID, id string) error {
+	return nil
+}
+func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error) {
+	u := types.User{ID: userID, AccountID: accountID, Email: email, DisplayName: displayName, Status: "active", CreatedAt: time.Now().UTC()}
+	return u, nil
+}
+func (s *fakeAuthStore) CreateOIDCState(_ context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error {
+	return nil
+}
+func (s *fakeAuthStore) ConsumeOIDCState(_ context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error) {
+	return "", "", "", "", types.ErrNotFound
+}
+func (s *fakeAuthStore) DeleteOIDCState(_ context.Context, id string) error {
+	return nil
+}
+
 type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal
@@ -441,7 +468,7 @@ func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 
 func newHandler(store MealStore, logger MealLogger) *Handler {
 	store2 := newFakeAuthStore()
-	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", AuthConfig{
+	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", nil, AuthConfig{
 		SessionCfg: auth.SessionConfig{
 			IdleTTL:     1 * time.Hour,
 			AbsoluteTTL: 24 * time.Hour,

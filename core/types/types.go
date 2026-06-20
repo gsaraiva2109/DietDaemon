@@ -390,6 +390,17 @@ type AuditEvent struct {
 	CreatedAt time.Time
 }
 
+// OIDCIdentity is a linked OIDC provider identity.
+type OIDCIdentity struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"-"`
+	Provider  string    `json:"provider"`
+	Subject   string    `json:"-"`
+	Email     string    `json:"email"`
+	LinkedAt  time.Time `json:"linked_at"`
+	CreatedAt time.Time `json:"-"`
+}
+
 // RegistrationMode enumerates how new accounts may be created.
 type RegistrationMode string
 

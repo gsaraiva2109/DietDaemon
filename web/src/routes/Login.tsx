@@ -5,10 +5,11 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
-import { useDemo } from '@/lib/demo'
+import { useDemo, demoAvailable } from '@/lib/demo'
 import { useProviders } from '@/lib/queries'
 import { AUTH_ERROR, RateLimitError } from '@/lib/api'
 import { AuthLayout } from '@/components/AuthLayout'
+import { ProviderButtons } from '@/components/ProviderButtons'
 import { Button, Field, FormError } from '@/components/ui'
 
 export function Login() {
@@ -18,7 +19,8 @@ export function Login() {
   const [params] = useSearchParams()
   const next = params.get('next') || '/'
   const providers = useProviders()
-  const canRegister = providers.data?.registration_mode !== 'oidc-only'
+  const oidcOnly = providers.data?.registration_mode === 'oidc-only'
+  const canRegister = !oidcOnly
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -89,44 +91,51 @@ export function Login() {
         )
       }
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <Field
-          label="Email"
-          type="email"
-          autoComplete="email"
-          autoFocus
-          value={email}
-          disabled={busy}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-        />
-        <Field
-          label="Password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          disabled={busy}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="••••••••"
-        />
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input
-            type="checkbox"
-            checked={remember}
-            disabled={busy}
-            onChange={(e) => setRemember(e.target.checked)}
-            className="size-4 rounded border-line accent-primary"
-          />
-          Keep me signed in
-        </label>
-        <FormError>{error}</FormError>
-        <Button type="submit" disabled={busy || !email.trim() || !password}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </Button>
-        <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
-          View demo
-        </Button>
-      </form>
+      <div className="flex flex-col gap-4">
+        {!oidcOnly && (
+          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+            <Field
+              label="Email"
+              type="email"
+              autoComplete="email"
+              autoFocus
+              value={email}
+              disabled={busy}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+            <Field
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              disabled={busy}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                checked={remember}
+                disabled={busy}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="size-4 rounded border-line accent-primary"
+              />
+              Keep me signed in
+            </label>
+            <FormError>{error}</FormError>
+            <Button type="submit" disabled={busy || !email.trim() || !password}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
+        )}
+        <ProviderButtons verb="Sign in" />
+        {demoAvailable() && (
+          <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
+            View demo
+          </Button>
+        )}
+      </div>
     </AuthLayout>
   )
 }

@@ -17,6 +17,21 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+// OIDCProviderConfig is the parsed static configuration for one OIDC provider.
+type OIDCProviderConfig struct {
+	ID           string
+	Name         string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	Scopes       []string
+	// TrustEmail treats a non-empty email from this provider as verified even
+	// when the provider omits/!email_verified. For self-hosted IdPs the operator
+	// controls (e.g. Authentik), the email is authoritative. Default false.
+	TrustEmail bool
+}
+
 // Config is the fully parsed, validated configuration. Location is derived from
 // DefaultTimezone so the rest of the app never re-parses the tz string.
 type Config struct {
@@ -77,6 +92,10 @@ type Config struct {
 	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
 	TOTPIssuer string // otpauth issuer label
 
+	// --- Auth (Phase 3 — OIDC) ---
+	OIDCProviders []OIDCProviderConfig
+	PublicBaseURL string
+
 	LogLevel string
 }
 
@@ -136,6 +155,30 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("TOTP_ENC_KEY: %w", err)
 		}
 		c.TOTPEncKey = key
+	}
+
+	// OIDC providers (Phase 3).
+	c.PublicBaseURL = strings.TrimRight(getStr("PUBLIC_BASE_URL", ""), "/")
+	if raw := getStr("OIDC_PROVIDERS", ""); raw != "" {
+		ids := splitCSV(raw)
+		for _, id := range ids {
+			canon := strings.ToUpper(id)
+			name := getStr("OIDC_"+canon+"_NAME", "")
+			if name == "" {
+				name = strings.ToUpper(id[:1]) + id[1:]
+			}
+			cfg := OIDCProviderConfig{
+				ID:           id,
+				Name:         name,
+				Issuer:       getStr("OIDC_"+canon+"_ISSUER", ""),
+				ClientID:     getStr("OIDC_"+canon+"_CLIENT_ID", ""),
+				ClientSecret: getStr("OIDC_"+canon+"_CLIENT_SECRET", ""),
+				RedirectURL:  c.PublicBaseURL + "/api/v1/auth/oidc/" + id + "/callback",
+				Scopes:       splitCSV(getStr("OIDC_"+canon+"_SCOPES", "openid,email,profile")),
+				TrustEmail:   getBool("OIDC_"+canon+"_TRUST_EMAIL", false),
+			}
+			c.OIDCProviders = append(c.OIDCProviders, cfg)
+		}
 	}
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
@@ -260,6 +303,26 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if c.SessionRememberTTL <= 0 {
 		add("SESSION_REMEMBER_TTL must be positive")
+	}
+
+	// Auth Phase 3 — OIDC.
+	if len(c.OIDCProviders) > 0 && c.PublicBaseURL == "" {
+		add("PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set")
+	}
+	for _, prov := range c.OIDCProviders {
+		canon := strings.ToUpper(prov.ID)
+		if prov.Issuer == "" {
+			add("OIDC_%s_ISSUER is required", canon)
+		}
+		if prov.ClientID == "" {
+			add("OIDC_%s_CLIENT_ID is required", canon)
+		}
+		if prov.ClientSecret == "" {
+			add("OIDC_%s_CLIENT_SECRET is required", canon)
+		}
+	}
+	if c.RegistrationMode == "oidc-only" && len(c.OIDCProviders) == 0 {
+		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
 	}
 
 	if len(problems) > 0 {
