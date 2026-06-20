@@ -172,6 +172,7 @@ func run() error {
 				ID: c.ID, Name: c.Name, Issuer: c.Issuer,
 				ClientID: c.ClientID, ClientSecret: c.ClientSecret,
 				RedirectURL: c.RedirectURL, Scopes: c.Scopes,
+				TrustEmail: c.TrustEmail,
 			}
 		}
 		oidcRegistry := oidc.BuildRegistry(oidcConfigs)

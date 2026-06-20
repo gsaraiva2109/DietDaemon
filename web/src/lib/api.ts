@@ -81,13 +81,20 @@ export class RateLimitError extends ApiError {
   }
 }
 
-function handleUnauthorized(): UnauthorizedError {
+function handleUnauthorized(suppress = false): UnauthorizedError {
   // Fire the interceptor out-of-band so the throw still propagates to callers.
-  if (onUnauthorized) queueMicrotask(onUnauthorized)
+  // `suppress` is set for the anonymous boot/route-guard probe, where a 401 is
+  // expected and means "not signed in" — not an expired session.
+  if (!suppress && onUnauthorized) queueMicrotask(onUnauthorized)
   return new UnauthorizedError()
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface RequestOpts {
+  // Skip the global 401 handler (the "session expired" toast + redirect).
+  suppressUnauthorized?: boolean
+}
+
+async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
@@ -104,7 +111,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, 'Network error — is the DietDaemon server running?')
   }
 
-  if (res.status === 401) throw handleUnauthorized()
+  if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized)
   if (res.status === 429) {
     const ra = res.headers.get('Retry-After')
     throw new RateLimitError(ra ? Number(ra) : null)
@@ -173,8 +180,9 @@ export const api = {
 
   // --- Auth (Phase 1): sessions, registration, API keys ------------------
   auth: {
-    // Boot probe + route guard. 401 → anonymous (UnauthorizedError).
-    session: () => request<SessionResponse>('/auth/session'),
+    // Boot probe + route guard. 401 → anonymous (UnauthorizedError). Suppresses
+    // the global 401 handler: an anonymous load is normal, not an expiry.
+    session: () => request<SessionResponse>('/auth/session', undefined, { suppressUnauthorized: true }),
     // May resolve to a session OR an MFA challenge (Phase 2).
     login: (email: string, password: string, remember: boolean) =>
       request<LoginResponse>('/auth/login', {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,7 +50,6 @@ func (h *Handler) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	state := auth.NewToken()
 	nonce := auth.NewToken()
 	pkceVer := oauth2.GenerateVerifier()
-	pkceChallenge := oauth2.S256ChallengeFromVerifier(pkceVer)
 
 	stateID := auth.HashToken(state)
 	expiresAt := time.Now().UTC().Add(oidcStateTTL).Format(time.RFC3339)
@@ -71,7 +71,7 @@ func (h *Handler) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	authURL, err := prov.AuthCodeURL(ctx, state, nonce, pkceChallenge)
+	authURL, err := prov.AuthCodeURL(ctx, state, nonce, pkceVer)
 	if err != nil {
 		// Lazy discovery failed; clean up the state row.
 		_ = h.authStore.DeleteOIDCState(ctx, stateID)
@@ -94,6 +94,8 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Provider-reported error.
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		slog.Warn("oidc provider returned error", "provider", provID,
+			"error", errParam, "description", r.URL.Query().Get("error_description"))
 		h.redirectAuthCallback(w, r, "provider_error", "")
 		return
 	}
@@ -138,6 +140,7 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// Exchange authorization code.
 	tok, err := prov.Exchange(ctx, code, pkceVer)
 	if err != nil {
+		slog.Warn("oidc code exchange failed", "provider", provID, "err", err)
 		h.redirectAuthCallback(w, r, "provider_error", "")
 		return
 	}
@@ -145,20 +148,48 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// Verify ID token.
 	rawIDToken, ok := tok.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
+		slog.Warn("oidc token missing id_token", "provider", provID)
 		h.redirectAuthCallback(w, r, "provider_error", "")
 		return
 	}
 
 	claims, err := prov.VerifyIDToken(ctx, rawIDToken, nonce)
 	if err != nil {
+		slog.Warn("oidc id_token verify failed", "provider", provID, "err", err)
 		h.redirectAuthCallback(w, r, "provider_error", "")
 		return
+	}
+
+	// Some providers (e.g. Authentik) return email/profile only from the
+	// UserInfo endpoint, not in the ID token. Backfill when the ID token lacks a
+	// verified email so account creation / email auto-link still works.
+	if claims.Email == "" || !claims.EmailVerified || claims.Name == "" {
+		if ui, uiErr := prov.UserInfo(ctx, tok); uiErr == nil {
+			if claims.Email == "" {
+				claims.Email = ui.Email
+			}
+			if !claims.EmailVerified {
+				claims.EmailVerified = ui.EmailVerified
+			}
+			if claims.Name == "" {
+				claims.Name = ui.Name
+			}
+		} else {
+			slog.Warn("oidc userinfo backfill failed", "provider", provID, "err", uiErr)
+		}
 	}
 
 	subject := claims.Subject
 	email := strings.ToLower(strings.TrimSpace(claims.Email))
 	emailVerified := claims.EmailVerified
 	displayName := strings.TrimSpace(claims.Name)
+
+	// Operator opted to trust this provider's email (OIDC_<id>_TRUST_EMAIL):
+	// a non-empty address counts as verified even when the IdP omits the
+	// email_verified claim. Appropriate for self-hosted IdPs the operator owns.
+	if !emailVerified && email != "" && prov.TrustEmail {
+		emailVerified = true
+	}
 
 	ip := clientIP(r)
 	ua := r.UserAgent()
@@ -220,6 +251,8 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !emailVerified || email == "" {
+			slog.Warn("oidc account creation blocked: email unverified/missing",
+				"provider", provID, "has_email", email != "", "email_verified", emailVerified)
 			h.redirectAuthCallback(w, r, "email_unverified", "")
 			return
 		}
@@ -330,6 +363,9 @@ func (h *Handler) handleUnlinkIdentity(w http.ResponseWriter, r *http.Request, u
 func (h *Handler) redirectAuthCallback(w http.ResponseWriter, r *http.Request, errCode, extra string) {
 	params := url.Values{}
 	if errCode != "" {
+		// OIDC failures are otherwise silent server-side; log the reason so the
+		// operator can see why a sign-in was rejected.
+		slog.Warn("oidc auth callback rejected", "code", errCode, "path", r.URL.Path)
 		params.Set("error", errCode)
 	}
 	if extra != "" {

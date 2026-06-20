@@ -23,6 +23,7 @@ type ProviderConfig struct {
 	ClientSecret string   // OAuth2 client secret
 	RedirectURL  string   // {PUBLIC_BASE_URL}/api/v1/auth/oidc/{id}/callback
 	Scopes       []string // default ["openid","email","profile"]
+	TrustEmail   bool     // trust provider email even without email_verified
 }
 
 // Provider wraps a configured OIDC provider with lazy discovery. It is safe
@@ -35,6 +36,7 @@ type Provider struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string
+	TrustEmail   bool
 
 	once sync.Once
 	mu   sync.Mutex
@@ -42,6 +44,7 @@ type Provider struct {
 }
 
 type initResult struct {
+	provider *oidc.Provider
 	oauth2   *oauth2.Config
 	verifier *oidc.IDTokenVerifier
 	err      error
@@ -69,6 +72,7 @@ func BuildRegistry(configs []ProviderConfig) map[string]*Provider {
 			ClientSecret: c.ClientSecret,
 			RedirectURL:  c.RedirectURL,
 			Scopes:       scopes,
+			TrustEmail:   c.TrustEmail,
 		}
 	}
 	return m
@@ -92,11 +96,20 @@ func (p *Provider) ensure(ctx context.Context) error {
 			init.err = fmt.Errorf("oidc: discover %s (%s): %w", p.ID, p.Issuer, err)
 			return
 		}
+		init.provider = provider
+		// Pin the client-auth style to client_secret_post. Left as
+		// AuthStyleAutoDetect, oauth2 may send the first token request with one
+		// style, and on an unrecognized response retry with the other — but the
+		// authorization code is single-use, so the retry fails with
+		// "invalid_grant". Authentik (and every standard OIDC provider) accepts
+		// the secret in the POST body, so force it and exchange exactly once.
+		endpoint := provider.Endpoint()
+		endpoint.AuthStyle = oauth2.AuthStyleInParams
 		init.oauth2 = &oauth2.Config{
 			ClientID:     p.ClientID,
 			ClientSecret: p.ClientSecret,
 			RedirectURL:  p.RedirectURL,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			Scopes:       p.Scopes,
 		}
 		init.verifier = provider.Verifier(&oidc.Config{ClientID: p.ClientID})
@@ -116,14 +129,17 @@ func (p *Provider) ensure(ctx context.Context) error {
 }
 
 // AuthCodeURL builds the OAuth2 authorization URL with PKCE (S256), nonce, and
-// state. It lazily discovers the provider on first call.
-func (p *Provider) AuthCodeURL(ctx context.Context, state, nonce, pkceChallenge string) (string, error) {
+// state. It lazily discovers the provider on first call. pkceVerifier is the
+// raw verifier (from oauth2.GenerateVerifier) — S256ChallengeOption derives the
+// code_challenge from it, so callers must NOT pre-hash it (double hashing
+// produces a challenge the verifier can't satisfy → invalid_grant at exchange).
+func (p *Provider) AuthCodeURL(ctx context.Context, state, nonce, pkceVerifier string) (string, error) {
 	if err := p.ensure(ctx); err != nil {
 		return "", err
 	}
 	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("nonce", nonce),
-		oauth2.S256ChallengeOption(pkceChallenge),
+		oauth2.S256ChallengeOption(pkceVerifier),
 	}
 	return p.init.oauth2.AuthCodeURL(state, opts...), nil
 }
@@ -174,6 +190,36 @@ func (p *Provider) VerifyIDToken(ctx context.Context, rawIDToken, nonce string) 
 
 	return IDTokenClaims{
 		Subject:       claims.Subject,
+		Email:         claims.Email,
+		EmailVerified: claims.EmailVerified,
+		Name:          claims.Name,
+	}, nil
+}
+
+// UserInfo fetches the provider's UserInfo endpoint. Some providers (notably
+// Authentik) return email/profile claims only here, not in the ID token, so the
+// callback backfills from UserInfo when the ID token lacks a verified email.
+func (p *Provider) UserInfo(ctx context.Context, tok *oauth2.Token) (IDTokenClaims, error) {
+	if err := p.ensure(ctx); err != nil {
+		return IDTokenClaims{}, err
+	}
+
+	ui, err := p.init.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
+	if err != nil {
+		return IDTokenClaims{}, fmt.Errorf("oidc: userinfo: %w", err)
+	}
+
+	var claims struct {
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"email_verified"`
+		Name          string `json:"name"`
+	}
+	if err := ui.Claims(&claims); err != nil {
+		return IDTokenClaims{}, fmt.Errorf("oidc: unmarshal userinfo claims: %w", err)
+	}
+
+	return IDTokenClaims{
+		Subject:       ui.Subject,
 		Email:         claims.Email,
 		EmailVerified: claims.EmailVerified,
 		Name:          claims.Name,

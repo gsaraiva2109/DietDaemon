@@ -12,6 +12,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -36,7 +37,14 @@ func Handler() (http.Handler, error) {
 			p = "index.html"
 		}
 		if _, statErr := fs.Stat(sub, p); statErr != nil {
-			// Not a real asset — hand the SPA its entry point.
+			// A missing asset-like path (favicon.ico, vite.svg, …) must 404, not
+			// return the HTML shell — otherwise browsers get index.html where they
+			// expected an image and fall back to a stale/default favicon.
+			if path.Ext(p) != "" {
+				http.NotFound(w, r)
+				return
+			}
+			// Otherwise it's a client-side route — hand the SPA its entry point.
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
 		}

@@ -5,7 +5,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
-import { useDemo } from '@/lib/demo'
+import { useDemo, demoAvailable } from '@/lib/demo'
 import { useProviders } from '@/lib/queries'
 import { AUTH_ERROR, RateLimitError } from '@/lib/api'
 import { AuthLayout } from '@/components/AuthLayout'
@@ -92,7 +92,6 @@ export function Login() {
       }
     >
       <div className="flex flex-col gap-4">
-        <ProviderButtons verb="Sign in" />
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
@@ -130,9 +129,12 @@ export function Login() {
             </Button>
           </form>
         )}
-        <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
-          View demo
-        </Button>
+        <ProviderButtons verb="Sign in" />
+        {demoAvailable() && (
+          <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
+            View demo
+          </Button>
+        )}
       </div>
     </AuthLayout>
   )

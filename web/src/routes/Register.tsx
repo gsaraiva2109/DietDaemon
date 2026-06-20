@@ -57,7 +57,6 @@ export function Register() {
       }
     >
       <div className="flex flex-col gap-4">
-        <ProviderButtons verb="Sign up" />
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
@@ -96,6 +95,7 @@ export function Register() {
             </Button>
           </form>
         )}
+        <ProviderButtons verb="Sign up" />
       </div>
     </AuthLayout>
   )

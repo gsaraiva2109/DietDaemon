@@ -8,7 +8,22 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/lib/auth'
 import { AuthLayout } from '@/components/AuthLayout'
+import { OIDC_INTENT_KEY } from '@/components/ProviderButtons'
 import { Spinner } from '@/components/ui'
+
+// Maps the backend's ?error= codes (handler_oidc.go) to a human reason. The
+// callback is shared by sign-in and sign-up, so we surface *why* it failed
+// rather than guessing the verb — far more useful than a generic "cancelled".
+const OIDC_ERRORS: Record<string, string> = {
+  registration_closed:
+    'No account is linked to this provider yet, and registration is closed. Link it from Settings → Security, or ask for an invite.',
+  email_unverified:
+    "Your provider account doesn't have a verified email, so an account couldn't be created.",
+  already_linked: 'That provider account is already linked to a different user.',
+  provider_error: 'The identity provider rejected the sign-in. Please try again.',
+  invalid_state: 'The sign-in session expired or was interrupted. Please try again.',
+  unknown_provider: 'Unknown sign-in provider.',
+}
 
 export function AuthCallback() {
   const { refresh } = useAuth()
@@ -24,8 +39,13 @@ export function AuthCallback() {
     const linking = params.get('link') === '1'
     const next = params.get('next') || '/'
 
+    // Which verb the user clicked (set in ProviderButtons); words the toast.
+    const signingUp = sessionStorage.getItem(OIDC_INTENT_KEY) === 'signup'
+    sessionStorage.removeItem(OIDC_INTENT_KEY)
+    const verb = signingUp ? 'sign-up' : 'sign-in'
+
     if (error) {
-      toast.error('Sign-in was cancelled or failed. Please try again.')
+      toast.error(OIDC_ERRORS[error] ?? `Could not complete ${verb}. Please try again.`)
       navigate('/login', { replace: true })
       return
     }
@@ -35,7 +55,7 @@ export function AuthCallback() {
         toast.success('Account linked.')
         navigate('/settings/security', { replace: true })
       } else {
-        toast.success('Signed in.')
+        toast.success(signingUp ? 'Account created. Welcome!' : 'Signed in.')
         navigate(next, { replace: true })
       }
     })

@@ -26,6 +26,10 @@ type OIDCProviderConfig struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string
+	// TrustEmail treats a non-empty email from this provider as verified even
+	// when the provider omits/!email_verified. For self-hosted IdPs the operator
+	// controls (e.g. Authentik), the email is authoritative. Default false.
+	TrustEmail bool
 }
 
 // Config is the fully parsed, validated configuration. Location is derived from
@@ -171,6 +175,7 @@ func Load() (*Config, error) {
 				ClientSecret: getStr("OIDC_"+canon+"_CLIENT_SECRET", ""),
 				RedirectURL:  c.PublicBaseURL + "/api/v1/auth/oidc/" + id + "/callback",
 				Scopes:       splitCSV(getStr("OIDC_"+canon+"_SCOPES", "openid,email,profile")),
+				TrustEmail:   getBool("OIDC_"+canon+"_TRUST_EMAIL", false),
 			}
 			c.OIDCProviders = append(c.OIDCProviders, cfg)
 		}
