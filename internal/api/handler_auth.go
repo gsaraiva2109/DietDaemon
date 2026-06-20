@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ type userJSON struct {
 	Email         string `json:"email"`
 	DisplayName   string `json:"display_name"`
 	EmailVerified bool   `json:"email_verified"`
+	TOTPEnabled   bool   `json:"totp_enabled"`
 	CreatedAt     string `json:"created_at"`
 }
 
@@ -42,16 +44,18 @@ type providerJSON struct {
 	Name string `json:"name"`
 }
 
-func userToJSON(u types.User) userJSON {
-	ev := false
-	if u.EmailVerifiedAt != nil {
-		ev = true
+func (h *Handler) userToJSON(u types.User) userJSON {
+	ev := u.EmailVerifiedAt != nil
+	var totp bool
+	if h.totp != nil {
+		totp, _ = h.totp.HasConfirmedTOTP(context.Background(), u.ID)
 	}
 	return userJSON{
 		ID:            u.ID,
 		Email:         u.Email,
 		DisplayName:   u.DisplayName,
 		EmailVerified: ev,
+		TOTPEnabled:   totp,
 		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
 	}
 }
@@ -65,7 +69,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !h.ipLimiter.Allow(ip) {
 		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
 		return
 	}
 
@@ -76,7 +80,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
 		return
 	}
 
@@ -84,7 +88,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	password := body.Password
 	if email == "" || password == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
 		return
 	}
 
@@ -94,7 +98,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	switch h.registrationMode {
 	case types.RegistrationOIDCOnly:
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
 		return
 	case types.RegistrationInvite:
 		count, err := h.authStore.CountUsers(ctx)
@@ -104,7 +108,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		if count > 0 {
 			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
 			return
 		}
 	}
@@ -113,14 +117,14 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	phc, err := auth.Hash(password)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
 	// Reject duplicate email.
 	if _, err := h.authStore.GetUserByEmail(ctx, email); err == nil {
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrEmailTaken.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrEmailTaken.Error()})
 		return
 	} else if !errors.Is(err, types.ErrNotFound) {
 		h.writeErr(w, err)
@@ -152,7 +156,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, email)
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(sessionResponse{User: userToJSON(u)})
+	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +170,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.ipLimiter.Allow(ip) {
 		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
 		return
 	}
 
@@ -177,14 +181,14 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
 		return
 	}
 
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 	if email == "" || body.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
 		return
 	}
 
@@ -200,7 +204,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
 		return
 	}
 
@@ -230,8 +234,27 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Success.
 	_ = h.authStore.RecordLoginAttempt(ctx, email, true)
-
 	ua := r.UserAgent()
+
+	// Phase 2: MFA step-up when TOTP is confirmed.
+	if h.totp != nil {
+		if confirmed, err := h.totp.HasConfirmedTOTP(ctx, u.ID); err == nil && confirmed {
+			challengeTok := auth.NewToken()
+			challengeID := auth.HashToken(challengeTok)
+			expiresAt := time.Now().UTC().Add(5 * time.Minute)
+			if err := h.mfaChallenges.CreateMFAChallenge(ctx, challengeID, u.ID, body.Remember, expiresAt.Format(time.RFC3339)); err != nil {
+				h.writeErr(w, err)
+				return
+			}
+			h.writeAudit(ctx, u.AccountID, u.ID, "mfa.challenge_issued", ip, ua, "")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"mfa_required":    true,
+				"challenge_token": challengeTok,
+			})
+			return
+		}
+	}
+
 	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, body.Remember, ip, ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, body.Remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {
@@ -241,7 +264,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	h.writeAudit(ctx, u.AccountID, u.ID, "user.login", ip, ua, "")
 
-	json.NewEncoder(w).Encode(sessionResponse{User: userToJSON(u)})
+	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +289,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request, userID s
 		h.writeErr(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(sessionResponse{User: userToJSON(u)})
+	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +297,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request, userID s
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleProviders(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(providersResponse{
+	_ = json.NewEncoder(w).Encode(providersResponse{
 		RegistrationMode: string(h.registrationMode),
 		Providers:        []providerJSON{},
 	})
@@ -291,13 +314,13 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
 		return
 	}
 
 	if body.CurrentPassword == "" || body.NewPassword == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "current_password and new_password are required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "current_password and new_password are required"})
 		return
 	}
 
@@ -312,14 +335,14 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 	ok, err := auth.Verify(body.CurrentPassword, phc)
 	if err != nil || !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "current password is incorrect"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "current password is incorrect"})
 		return
 	}
 
 	newPhc, err := auth.Hash(body.NewPassword)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -359,7 +382,7 @@ func (h *Handler) handleListAPIKeys(w http.ResponseWriter, r *http.Request, user
 	if keys == nil {
 		keys = []types.APIKey{}
 	}
-	json.NewEncoder(w).Encode(keys)
+	_ = json.NewEncoder(w).Encode(keys)
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +395,7 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
 		return
 	}
 
@@ -392,7 +415,7 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 	h.writeAudit(r.Context(), "", userID, "api_key.created", ip, r.UserAgent(), keyID)
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(types.NewAPIKeyResponse{
+	_ = json.NewEncoder(w).Encode(types.NewAPIKeyResponse{
 		APIKey: types.APIKey{
 			ID:        keyID,
 			UserID:    userID,
@@ -472,6 +495,325 @@ func readSessionCookie(r *http.Request) string {
 }
 
 // ---------------------------------------------------------------------------
+// TOTP 2FA handlers (Phase 2)
+// ---------------------------------------------------------------------------
+
+// POST /auth/totp/enroll — begin enrollment, returns otpauth URL + secret.
+func (h *Handler) handleTOTPEnroll(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	ctx := r.Context()
+	u, err := h.store.GetUser(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	secret, otpauthURL, err := auth.GenerateSecret(h.totpIssuer, u.Email)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	// Encrypt the secret at rest.
+	encSecret, err := auth.Encrypt([]byte(secret), h.totpEncKey)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	if err := h.totp.UpsertTOTPSecret(ctx, userID, base64.RawStdEncoding.EncodeToString(encSecret)); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"otpauth_url": otpauthURL,
+		"secret":      secret,
+	})
+}
+
+// POST /auth/totp/verify — confirm enrollment with a TOTP code, return recovery codes.
+func (h *Handler) handleTOTPVerify(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	if !isSixDigit(body.Code) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		return
+	}
+
+	ctx := r.Context()
+	encSecret, confirmed, err := h.totp.GetTOTPSecret(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if confirmed {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "totp already enabled"})
+		return
+	}
+
+	ct, err := base64.RawStdEncoding.DecodeString(encSecret)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	plain, err := auth.Decrypt(ct, h.totpEncKey)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	if !auth.ValidateCode(string(plain), body.Code) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		return
+	}
+
+	if err := h.totp.ConfirmTOTP(ctx, userID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	// Generate and persist recovery codes.
+	codes, err := auth.GenerateRecoveryCodes(10)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	hashes := make([]string, len(codes))
+	for i, c := range codes {
+		hashes[i] = auth.HashToken(c)
+	}
+
+	if err := h.recoveryCodes.ReplaceRecoveryCodes(ctx, userID, hashes); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	ip := clientIP(r)
+	h.writeAudit(ctx, "", userID, "totp.enabled", ip, r.UserAgent(), "")
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"recovery_codes": codes,
+	})
+}
+
+// POST /auth/totp/challenge — second login step. Accepts TOTP code or recovery code.
+func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	var body struct {
+		ChallengeToken string `json:"challenge_token"`
+		Code           string `json:"code"`
+		RecoveryCode   string `json:"recovery_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	if body.ChallengeToken == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge_token is required"})
+		return
+	}
+
+	ctx := r.Context()
+	challengeID := auth.HashToken(body.ChallengeToken)
+
+	chUserID, remember, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		return
+	}
+
+	// Check expiry.
+	exp, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil || time.Now().UTC().After(exp) {
+		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge expired"})
+		return
+	}
+
+	ip := clientIP(r)
+	ua := r.UserAgent()
+
+	// Try recovery code first if provided.
+	if body.RecoveryCode != "" {
+		codeHash := auth.HashToken(body.RecoveryCode)
+		consumed, err := h.recoveryCodes.ConsumeRecoveryCode(ctx, chUserID, codeHash)
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+		if !consumed {
+			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad recovery code")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+			return
+		}
+	} else {
+		// Validate TOTP code.
+		if !isSixDigit(body.Code) {
+			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad code format")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+			return
+		}
+
+		encSecret, _, err := h.totp.GetTOTPSecret(ctx, chUserID)
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+
+		ct, err := base64.RawStdEncoding.DecodeString(encSecret)
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+
+		plain, err := auth.Decrypt(ct, h.totpEncKey)
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+
+		if !auth.ValidateCode(string(plain), body.Code) {
+			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad totp code")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+			return
+		}
+	}
+
+	// Success — delete challenge, create session.
+	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
+
+	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, ua, h.sessionCfg)
+	h.setSessionCookies(w, cookieTok, csrfTok, remember)
+	if err := h.sessions.CreateSession(ctx, sess); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	u, err := h.store.GetUser(ctx, chUserID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	h.writeAudit(ctx, u.AccountID, chUserID, "mfa.success", ip, ua, "")
+
+	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
+}
+
+// DELETE /auth/totp — disable TOTP factor for the authenticated user.
+func (h *Handler) handleTOTPDisable(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	ctx := r.Context()
+	if err := h.totp.DeleteTOTP(ctx, userID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	// Also clean up recovery codes.
+	_ = h.recoveryCodes.ReplaceRecoveryCodes(ctx, userID, nil)
+
+	ip := clientIP(r)
+	h.writeAudit(ctx, "", userID, "totp.disabled", ip, r.UserAgent(), "")
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /auth/totp/recovery-codes/regenerate — replace all recovery codes.
+func (h *Handler) handleRegenerateRecovery(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	ctx := r.Context()
+	confirmed, err := h.totp.HasConfirmedTOTP(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if !confirmed {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "totp not enabled"})
+		return
+	}
+
+	codes, err := auth.GenerateRecoveryCodes(10)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	hashes := make([]string, len(codes))
+	for i, c := range codes {
+		hashes[i] = auth.HashToken(c)
+	}
+
+	if err := h.recoveryCodes.ReplaceRecoveryCodes(ctx, userID, hashes); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"recovery_codes": codes,
+	})
+}
+
+// totpReady checks that TOTP is configured, writing 501 if not.
+func (h *Handler) totpReady(w http.ResponseWriter) bool {
+	if h.totpEncKey == nil || h.totp == nil {
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "totp not configured"})
+		return false
+	}
+	return true
+}
+
+func isSixDigit(s string) bool {
+	if len(s) != 6 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -494,7 +836,7 @@ func clientIP(r *http.Request) string {
 
 func (h *Handler) writeAuthError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 func (h *Handler) writeAudit(ctx context.Context, accountID, userID, event, ip, ua, meta string) {

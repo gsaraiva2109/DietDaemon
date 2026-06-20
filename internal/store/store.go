@@ -50,25 +50,25 @@ func New(dbPath string) (*Store, error) {
 	// Required for Docker Swarm / some overlay filesystems where the VFS
 	// shared-memory primitives (xShmMap, xShmLock, etc.) don't work.
 	if _, err := db.Exec("PRAGMA locking_mode = EXCLUSIVE"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: exclusive lock: %w", err)
 	}
 
 	// Enable WAL mode for concurrent reads and writes.
 	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: enable WAL: %w", err)
 	}
 
 	// Enforce foreign keys at the connection level.
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: enable foreign keys: %w", err)
 	}
 
 	s := &Store{db: db}
 	if err := s.runMigrations(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 
@@ -187,7 +187,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var users []types.User
 	for rows.Next() {
@@ -286,7 +286,7 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	const mealQ = `
 		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at)
@@ -335,7 +335,7 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string
@@ -413,7 +413,7 @@ func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate strin
 	if err != nil {
 		return nil, fmt.Errorf("store: query rollups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.DailyRollup
 	for rows.Next() {
@@ -468,7 +468,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 	if err != nil {
 		return nil, fmt.Errorf("store: query items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make(map[string][]types.ResolvedItem)
 	for rows.Next() {
@@ -565,7 +565,7 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	const foodQ = `
 		INSERT INTO food_library
@@ -625,7 +625,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Load the meal to get the at time for rollup lookup and the original items.
 	var atUTC string
@@ -651,7 +651,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	if err != nil {
 		return fmt.Errorf("store: query items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type itemRow struct {
 		rowid int64
@@ -771,7 +771,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
@@ -834,7 +834,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
@@ -864,12 +864,12 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.rowid, &r.m.Calories, &r.m.Protein, &r.m.Carbs, &r.m.Fat, &r.m.Fiber); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("store: scan item: %w", err)
 		}
 		items = append(items, r)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("store: items rows: %w", err)
 	}
@@ -1115,7 +1115,7 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	if err != nil {
 		return nil, fmt.Errorf("store: list foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1140,7 +1140,7 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 	if err != nil {
 		return nil, fmt.Errorf("store: search foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1160,7 +1160,7 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("store: frequent foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1192,7 +1192,7 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 	if err != nil {
 		return types.FoodDetail{}, fmt.Errorf("store: get food aliases: %w", err)
 	}
-	defer arows.Close()
+	defer func() { _ = arows.Close() }()
 	for arows.Next() {
 		var a types.FoodAlias
 		if err := arows.Scan(&a.FoodID, &a.Normalized); err != nil {
@@ -1295,7 +1295,7 @@ func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTe
 	if err != nil {
 		return nil, fmt.Errorf("store: get templates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTemplates(rows)
 }
 
@@ -1388,7 +1388,7 @@ func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]type
 	if err != nil {
 		return nil, fmt.Errorf("store: list weight: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanWeightEntries(rows)
 }
 
@@ -1480,7 +1480,7 @@ func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) (
 	if err != nil {
 		return nil, fmt.Errorf("store: list measurements: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanMeasurementEntries(rows)
 }
 
@@ -1554,7 +1554,7 @@ func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.P
 	if err != nil {
 		return nil, fmt.Errorf("store: list photo metadata: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.ProgressPhoto
 	for rows.Next() {
@@ -1623,7 +1623,7 @@ func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate 
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string

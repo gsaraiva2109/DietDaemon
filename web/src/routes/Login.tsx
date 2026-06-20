@@ -25,6 +25,8 @@ export function Login() {
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Set when login defers to a second factor (TOTP).
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -32,7 +34,11 @@ export function Login() {
     setBusy(true)
     setError(null)
     try {
-      await login(email, password, remember)
+      const res = await login(email, password, remember)
+      if (res.status === 'mfa_required') {
+        setChallengeToken(res.challengeToken)
+        return
+      }
       navigate(next, { replace: true })
     } catch (err) {
       if (err instanceof RateLimitError) {
@@ -53,6 +59,19 @@ export function Login() {
   function viewDemo() {
     setDemo(true)
     navigate('/', { replace: true })
+  }
+
+  if (challengeToken) {
+    return (
+      <MfaChallenge
+        challengeToken={challengeToken}
+        onVerified={() => navigate(next, { replace: true })}
+        onBack={() => {
+          setChallengeToken(null)
+          setPassword('')
+        }}
+      />
+    )
   }
 
   return (
@@ -107,6 +126,89 @@ export function Login() {
         <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
           View demo
         </Button>
+      </form>
+    </AuthLayout>
+  )
+}
+
+// Second step of a 2FA login: a TOTP code, or a recovery code as fallback.
+function MfaChallenge({
+  challengeToken,
+  onVerified,
+  onBack,
+}: {
+  challengeToken: string
+  onVerified: () => void
+  onBack: () => void
+}) {
+  const { verifyTotp } = useAuth()
+  const [code, setCode] = useState('')
+  const [recovery, setRecovery] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!code.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await verifyTotp(challengeToken, code.trim(), recovery)
+      onVerified()
+    } catch (err) {
+      setError(
+        err instanceof RateLimitError
+          ? 'Too many attempts. Try again shortly.'
+          : 'That code did not match. Try again.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AuthLayout
+      title="Two-factor verification"
+      subtitle={
+        recovery
+          ? 'Enter one of your recovery codes.'
+          : 'Enter the 6-digit code from your authenticator app.'
+      }
+      footer={
+        <button type="button" onClick={onBack} className="font-medium text-primary hover:underline">
+          Back to sign in
+        </button>
+      }
+    >
+      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+        <Field
+          label={recovery ? 'Recovery code' : 'Authentication code'}
+          inputMode={recovery ? 'text' : 'numeric'}
+          autoComplete="one-time-code"
+          autoFocus
+          maxLength={recovery ? 20 : 6}
+          value={code}
+          disabled={busy}
+          onChange={(e) =>
+            setCode(recovery ? e.target.value : e.target.value.replace(/\D/g, ''))
+          }
+          placeholder={recovery ? 'xxxxx-xxxxx' : '000000'}
+        />
+        <FormError>{error}</FormError>
+        <Button type="submit" disabled={busy || !code.trim()}>
+          {busy ? 'Verifying…' : 'Verify'}
+        </Button>
+        <button
+          type="button"
+          onClick={() => {
+            setRecovery((v) => !v)
+            setCode('')
+            setError(null)
+          }}
+          className="text-sm font-medium text-muted hover:text-ink"
+        >
+          {recovery ? 'Use authenticator code instead' : 'Use a recovery code instead'}
+        </button>
       </form>
     </AuthLayout>
   )

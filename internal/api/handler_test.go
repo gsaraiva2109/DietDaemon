@@ -388,6 +388,39 @@ func (s *fakeAuthStore) RecentFailedAttempts(_ context.Context, identifier strin
 	return count, nil
 }
 
+// --- auth.TOTPRepo ---
+
+func (s *fakeAuthStore) UpsertTOTPSecret(_ context.Context, userID, encSecret string) error {
+	return nil
+}
+func (s *fakeAuthStore) ConfirmTOTP(_ context.Context, userID string) error { return nil }
+func (s *fakeAuthStore) GetTOTPSecret(_ context.Context, userID string) (string, bool, error) {
+	return "", false, types.ErrNotFound
+}
+func (s *fakeAuthStore) DeleteTOTP(_ context.Context, userID string) error { return nil }
+func (s *fakeAuthStore) HasConfirmedTOTP(_ context.Context, userID string) (bool, error) {
+	return false, nil
+}
+
+// --- auth.MFAChallengeRepo ---
+
+func (s *fakeAuthStore) CreateMFAChallenge(_ context.Context, id, userID string, remember bool, expiresAt string) error {
+	return nil
+}
+func (s *fakeAuthStore) GetMFAChallenge(_ context.Context, id string) (string, bool, string, error) {
+	return "", false, "", types.ErrNotFound
+}
+func (s *fakeAuthStore) DeleteMFAChallenge(_ context.Context, id string) error { return nil }
+
+// --- auth.RecoveryCodeRepo ---
+
+func (s *fakeAuthStore) ReplaceRecoveryCodes(_ context.Context, userID string, hashes []string) error {
+	return nil
+}
+func (s *fakeAuthStore) ConsumeRecoveryCode(_ context.Context, userID, hash string) (bool, error) {
+	return false, nil
+}
+
 type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal
@@ -407,7 +440,8 @@ func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 // --- helpers ---
 
 func newHandler(store MealStore, logger MealLogger) *Handler {
-	return New(store, newFakeAuthStore(), logger, time.UTC, newFakeAuthStore(), newFakeAuthStore(), AuthConfig{
+	store2 := newFakeAuthStore()
+	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", AuthConfig{
 		SessionCfg: auth.SessionConfig{
 			IdleTTL:     1 * time.Hour,
 			AbsoluteTTL: 24 * time.Hour,

@@ -6,6 +6,8 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -71,6 +73,10 @@ type Config struct {
 	CookieSecure       bool
 	CookieDomain       string
 
+	// --- Auth (Phase 2 — TOTP 2FA) ---
+	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
+	TOTPIssuer string // otpauth issuer label
+
 	LogLevel string
 }
 
@@ -120,6 +126,16 @@ func Load() (*Config, error) {
 		CookieSecure:            getBool("COOKIE_SECURE", true),
 		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
+		TOTPIssuer:              getStr("TOTP_ISSUER", "DietDaemon"),
+	}
+
+	// TOTP encryption key: optional (TOTP is unavailable without it).
+	if raw := getStr("TOTP_ENC_KEY", ""); raw != "" {
+		key, err := decodeKey(raw)
+		if err != nil {
+			return nil, fmt.Errorf("TOTP_ENC_KEY: %w", err)
+		}
+		c.TOTPEncKey = key
 	}
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
@@ -319,6 +335,36 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// decodeKey accepts a base64 (standard or raw, with or without padding) or hex
+// encoded key and returns the decoded bytes. Returns an error if the decoded
+// key is not exactly 32 bytes.
+func decodeKey(raw string) ([]byte, error) {
+	// Try hex first (64 hex chars = 32 bytes).
+	if len(raw) == 64 {
+		key, err := hex.DecodeString(raw)
+		if err == nil {
+			return key, nil
+		}
+	}
+
+	// Try base64 variants.
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		key, err := enc.DecodeString(raw)
+		if err == nil {
+			if len(key) == 32 {
+				return key, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("must be a 32-byte key encoded as hex (64 chars) or base64, got %d chars", len(raw))
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {
@@ -336,7 +382,7 @@ func loadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

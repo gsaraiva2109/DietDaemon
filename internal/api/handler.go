@@ -120,6 +120,11 @@ type Handler struct {
 	// Auth sub-components.
 	sessions      auth.SessionRepo
 	loginAttempts auth.LoginAttemptRepo
+	totp          auth.TOTPRepo
+	mfaChallenges auth.MFAChallengeRepo
+	recoveryCodes auth.RecoveryCodeRepo
+	totpEncKey    []byte
+	totpIssuer    string
 
 	// Auth config.
 	sessionCfg       auth.SessionConfig
@@ -135,7 +140,7 @@ type Handler struct {
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
 // interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, cfg AuthConfig) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, cfg AuthConfig) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -146,6 +151,11 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		loc:              loc,
 		sessions:         sessions,
 		loginAttempts:    loginAttempts,
+		totp:             totpRepo,
+		mfaChallenges:    mfaChallenges,
+		recoveryCodes:    recoveryCodes,
+		totpEncKey:       totpEncKey,
+		totpIssuer:       totpIssuer,
 		sessionCfg:       cfg.SessionCfg,
 		lockoutCfg:       cfg.LockoutCfg,
 		registrationMode: cfg.RegistrationMode,
@@ -227,6 +237,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/api-keys", h.wrap(h.handleListAPIKeys))
 	mux.HandleFunc("POST /api/v1/auth/api-keys", h.wrap(h.handleCreateAPIKey))
 	mux.HandleFunc("DELETE /api/v1/auth/api-keys/{id}", h.wrap(h.handleRevokeAPIKey))
+
+	// Phase 2 — TOTP 2FA.
+	mux.HandleFunc("POST /api/v1/auth/totp/enroll", h.wrap(h.handleTOTPEnroll))
+	mux.HandleFunc("POST /api/v1/auth/totp/verify", h.wrap(h.handleTOTPVerify))
+	mux.HandleFunc("POST /api/v1/auth/totp/challenge", h.wrapPublic(h.handleTOTPChallenge))
+	mux.HandleFunc("DELETE /api/v1/auth/totp", h.wrap(h.handleTOTPDisable))
+	mux.HandleFunc("POST /api/v1/auth/totp/recovery-codes/regenerate", h.wrap(h.handleRegenerateRecovery))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
@@ -238,7 +255,7 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 		userID, err := h.authenticate(r)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 		next(w, r, userID)
@@ -314,7 +331,7 @@ func (h *Handler) handleRollupsToday(w http.ResponseWriter, r *http.Request, use
 		h.writeErr(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(rollup)
+	_ = json.NewEncoder(w).Encode(rollup)
 }
 
 func (h *Handler) handleRollupsRange(w http.ResponseWriter, r *http.Request, userID string) {
@@ -322,7 +339,7 @@ func (h *Handler) handleRollupsRange(w http.ResponseWriter, r *http.Request, use
 	end := r.URL.Query().Get("end")
 	if start == "" || end == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
 		return
 	}
 	rollups, err := h.store.GetRollups(r.Context(), userID, start, end)
@@ -333,7 +350,7 @@ func (h *Handler) handleRollupsRange(w http.ResponseWriter, r *http.Request, use
 	if rollups == nil {
 		rollups = []types.DailyRollup{}
 	}
-	json.NewEncoder(w).Encode(rollups)
+	_ = json.NewEncoder(w).Encode(rollups)
 }
 
 func (h *Handler) handleMealsList(w http.ResponseWriter, r *http.Request, userID string) {
@@ -351,7 +368,7 @@ func (h *Handler) handleMealsList(w http.ResponseWriter, r *http.Request, userID
 	if meals == nil {
 		meals = []types.Meal{}
 	}
-	json.NewEncoder(w).Encode(meals)
+	_ = json.NewEncoder(w).Encode(meals)
 }
 
 func (h *Handler) handleMealDetail(w http.ResponseWriter, r *http.Request, userID string) {
@@ -366,7 +383,7 @@ func (h *Handler) handleMealDetail(w http.ResponseWriter, r *http.Request, userI
 		h.writeErr(w, types.ErrNotFound)
 		return
 	}
-	json.NewEncoder(w).Encode(meal)
+	_ = json.NewEncoder(w).Encode(meal)
 }
 
 func (h *Handler) handleCorrectItem(w http.ResponseWriter, r *http.Request, userID string) {
@@ -376,14 +393,14 @@ func (h *Handler) handleCorrectItem(w http.ResponseWriter, r *http.Request, user
 	itemIndex, err := strconv.Atoi(itemIDStr)
 	if err != nil || itemIndex < 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "itemID must be a non-negative integer index"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "itemID must be a non-negative integer index"})
 		return
 	}
 
 	var corrected types.ResolvedItem
 	if err := json.NewDecoder(r.Body).Decode(&corrected); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 
@@ -399,7 +416,7 @@ func (h *Handler) handleCorrectItem(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(meal)
+	_ = json.NewEncoder(w).Encode(meal)
 }
 
 func (h *Handler) handleAddItem(w http.ResponseWriter, r *http.Request, userID string) {
@@ -408,7 +425,7 @@ func (h *Handler) handleAddItem(w http.ResponseWriter, r *http.Request, userID s
 	var item types.ResolvedItem
 	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	if err := h.store.AddMealItem(r.Context(), userID, mealID, item); err != nil {
@@ -423,7 +440,7 @@ func (h *Handler) handleDeleteItem(w http.ResponseWriter, r *http.Request, userI
 	itemIndex, err := strconv.Atoi(r.PathValue("itemID"))
 	if err != nil || itemIndex < 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "itemID must be a non-negative integer index"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "itemID must be a non-negative integer index"})
 		return
 	}
 	if err := h.store.DeleteMealItem(r.Context(), userID, mealID, itemIndex); err != nil {
@@ -445,7 +462,7 @@ func (h *Handler) returnMeal(w http.ResponseWriter, r *http.Request, mealID, use
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(meal)
+	_ = json.NewEncoder(w).Encode(meal)
 }
 
 func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userID string) {
@@ -454,14 +471,14 @@ func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userI
 		h.writeErr(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(dt)
+	_ = json.NewEncoder(w).Encode(dt)
 }
 
 func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userID string) {
 	var body types.Macros
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	dt := types.DailyTargets{UserID: userID, Targets: body}
@@ -476,7 +493,7 @@ func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(dt)
+	_ = json.NewEncoder(w).Encode(dt)
 }
 
 func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID string) {
@@ -485,12 +502,12 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	if body.Text == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "text field is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "text field is required"})
 		return
 	}
 
@@ -504,7 +521,7 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +534,7 @@ func (h *Handler) handleMealsLatest(w http.ResponseWriter, r *http.Request, user
 		h.writeErr(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"latest": latest})
+	_ = json.NewEncoder(w).Encode(map[string]string{"latest": latest})
 }
 
 // ---------------------------------------------------------------------------
@@ -546,14 +563,14 @@ func (h *Handler) handleListFoods(w http.ResponseWriter, r *http.Request, userID
 	if foods == nil {
 		foods = []types.FoodDetail{}
 	}
-	json.NewEncoder(w).Encode(foods)
+	_ = json.NewEncoder(w).Encode(foods)
 }
 
 func (h *Handler) handleSearchFoods(w http.ResponseWriter, r *http.Request, userID string) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "q query param is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "q query param is required"})
 		return
 	}
 	foods, err := h.store.SearchFoods(r.Context(), userID, q)
@@ -564,7 +581,7 @@ func (h *Handler) handleSearchFoods(w http.ResponseWriter, r *http.Request, user
 	if foods == nil {
 		foods = []types.FoodDetail{}
 	}
-	json.NewEncoder(w).Encode(foods)
+	_ = json.NewEncoder(w).Encode(foods)
 }
 
 func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, userID string) {
@@ -582,7 +599,7 @@ func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, us
 	if foods == nil {
 		foods = []types.FoodDetail{}
 	}
-	json.NewEncoder(w).Encode(foods)
+	_ = json.NewEncoder(w).Encode(foods)
 }
 
 func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID string) {
@@ -595,7 +612,7 @@ func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID s
 	if fd.Aliases == nil {
 		fd.Aliases = []types.FoodAlias{}
 	}
-	json.NewEncoder(w).Encode(fd)
+	_ = json.NewEncoder(w).Encode(fd)
 }
 
 func (h *Handler) handleAddAlias(w http.ResponseWriter, r *http.Request, userID string) {
@@ -605,7 +622,7 @@ func (h *Handler) handleAddAlias(w http.ResponseWriter, r *http.Request, userID 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Alias == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "alias field is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "alias field is required"})
 		return
 	}
 	if err := h.store.AddFoodAlias(r.Context(), userID, foodID, body.Alias); err != nil {
@@ -613,7 +630,7 @@ func (h *Handler) handleAddAlias(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "created"})
 }
 
 func (h *Handler) handleDeleteAlias(w http.ResponseWriter, r *http.Request, userID string) {
@@ -639,7 +656,7 @@ func (h *Handler) handleListTemplates(w http.ResponseWriter, r *http.Request, us
 	if templates == nil {
 		templates = []types.MealTemplate{}
 	}
-	json.NewEncoder(w).Encode(templates)
+	_ = json.NewEncoder(w).Encode(templates)
 }
 
 func (h *Handler) handleCreateTemplate(w http.ResponseWriter, r *http.Request, userID string) {
@@ -649,12 +666,12 @@ func (h *Handler) handleCreateTemplate(w http.ResponseWriter, r *http.Request, u
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	if body.Name == "" || len(body.Items) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "name and items are required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name and items are required"})
 		return
 	}
 	now := time.Now().UTC()
@@ -671,7 +688,7 @@ func (h *Handler) handleCreateTemplate(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(t)
+	_ = json.NewEncoder(w).Encode(t)
 }
 
 func (h *Handler) handleGetTemplate(w http.ResponseWriter, r *http.Request, userID string) {
@@ -685,7 +702,7 @@ func (h *Handler) handleGetTemplate(w http.ResponseWriter, r *http.Request, user
 		h.writeErr(w, types.ErrNotFound)
 		return
 	}
-	json.NewEncoder(w).Encode(t)
+	_ = json.NewEncoder(w).Encode(t)
 }
 
 func (h *Handler) handleDeleteTemplate(w http.ResponseWriter, r *http.Request, userID string) {
@@ -738,7 +755,7 @@ func (h *Handler) handleLogTemplate(w http.ResponseWriter, r *http.Request, user
 	_ = h.store.SaveTemplate(r.Context(), t)
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "logged", "meal_id": meal.ID})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "logged", "meal_id": meal.ID})
 }
 
 func (h *Handler) handleDuplicateMeal(w http.ResponseWriter, r *http.Request, userID string) {
@@ -769,7 +786,7 @@ func (h *Handler) handleDuplicateMeal(w http.ResponseWriter, r *http.Request, us
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "duplicated", "meal_id": newMeal.ID})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "duplicated", "meal_id": newMeal.ID})
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +810,7 @@ func (h *Handler) handleListWeight(w http.ResponseWriter, r *http.Request, userI
 	if entries == nil {
 		entries = []types.WeightEntry{}
 	}
-	json.NewEncoder(w).Encode(entries)
+	_ = json.NewEncoder(w).Encode(entries)
 }
 
 func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID string) {
@@ -804,12 +821,12 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	if body.WeightKg <= 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "weight_kg must be positive"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "weight_kg must be positive"})
 		return
 	}
 	entry := types.WeightEntry{
@@ -825,7 +842,7 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(entry)
+	_ = json.NewEncoder(w).Encode(entry)
 }
 
 func (h *Handler) handleWeightTrend(w http.ResponseWriter, r *http.Request, userID string) {
@@ -843,7 +860,7 @@ func (h *Handler) handleWeightTrend(w http.ResponseWriter, r *http.Request, user
 	if trend == nil {
 		trend = []types.WeightTrend{}
 	}
-	json.NewEncoder(w).Encode(trend)
+	_ = json.NewEncoder(w).Encode(trend)
 }
 
 func (h *Handler) handleDeleteWeight(w http.ResponseWriter, r *http.Request, userID string) {
@@ -872,14 +889,14 @@ func (h *Handler) handleListMeasurements(w http.ResponseWriter, r *http.Request,
 	if entries == nil {
 		entries = []types.MeasurementEntry{}
 	}
-	json.NewEncoder(w).Encode(entries)
+	_ = json.NewEncoder(w).Encode(entries)
 }
 
 func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, userID string) {
 	var body types.MeasurementEntry
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	body.ID = newHandlerID()
@@ -890,7 +907,7 @@ func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(body)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func (h *Handler) handleDeleteMeasurement(w http.ResponseWriter, r *http.Request, userID string) {
@@ -913,7 +930,7 @@ func (h *Handler) handleListPhotos(w http.ResponseWriter, r *http.Request, userI
 	if photos == nil {
 		photos = []types.ProgressPhoto{}
 	}
-	json.NewEncoder(w).Encode(photos)
+	_ = json.NewEncoder(w).Encode(photos)
 }
 
 func (h *Handler) handlePhotoData(w http.ResponseWriter, r *http.Request, userID string) {
@@ -929,7 +946,7 @@ func (h *Handler) handlePhotoData(w http.ResponseWriter, r *http.Request, userID
 	}
 	w.Header().Set("Content-Type", photo.MimeType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	w.Write(photo.Data)
+	_, _ = w.Write(photo.Data)
 }
 
 func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, userID string) {
@@ -937,17 +954,17 @@ func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, user
 	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(file, 5<<20))
 	if err != nil {
@@ -983,7 +1000,7 @@ func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, user
 	// Clear data before JSON response.
 	photo.Data = nil
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(photo)
+	_ = json.NewEncoder(w).Encode(photo)
 }
 
 func (h *Handler) handleDeletePhoto(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1007,7 +1024,7 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 
 	summary := types.BodyCompositionSummary{}
 	if len(entries) == 0 {
-		json.NewEncoder(w).Encode(summary)
+		_ = json.NewEncoder(w).Encode(summary)
 		return
 	}
 
@@ -1039,7 +1056,7 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 		summary.TrendDirection = "stable"
 	}
 
-	json.NewEncoder(w).Encode(summary)
+	_ = json.NewEncoder(w).Encode(summary)
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,14 +1072,14 @@ func (h *Handler) handleGetProfile(w http.ResponseWriter, r *http.Request, userI
 	if errors.Is(err, types.ErrNotFound) {
 		profile = types.UserProfile{UserID: userID, Onboarded: false}
 	}
-	json.NewEncoder(w).Encode(profile)
+	_ = json.NewEncoder(w).Encode(profile)
 }
 
 func (h *Handler) handleUpsertProfile(w http.ResponseWriter, r *http.Request, userID string) {
 	var body types.UserProfile
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
 	now := time.Now().UTC()
@@ -1075,7 +1092,7 @@ func (h *Handler) handleUpsertProfile(w http.ResponseWriter, r *http.Request, us
 		h.writeErr(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(body)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func (h *Handler) handleCalculateTDEE(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1088,7 +1105,7 @@ func (h *Handler) handleCalculateTDEE(w http.ResponseWriter, r *http.Request, us
 
 	if weightKg <= 0 || heightCm <= 0 || age <= 0 || gender == "" || activity == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"error": "weight_kg, height_cm, age, gender, and activity query params are required",
 		})
 		return
@@ -1103,14 +1120,14 @@ func (h *Handler) handleCalculateTDEE(w http.ResponseWriter, r *http.Request, us
 	}
 	result := calculateTDEE(params)
 	w.Header().Set("Cache-Control", "private, max-age=300")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, userID string) {
 	profile, err := h.store.GetProfile(r.Context(), userID)
 	if err != nil {
 		// No profile yet.
-		json.NewEncoder(w).Encode(types.GoalSuggestion{
+		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Complete your profile to get personalized goal suggestions.",
 		})
 		return
@@ -1140,14 +1157,14 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	now := time.Now()
 	birthDate := profile.BirthDate
 	if birthDate == "" {
-		json.NewEncoder(w).Encode(types.GoalSuggestion{
+		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Add your birth date in Profile settings to get personalized goal suggestions.",
 		})
 		return
 	}
 	parsed, err := time.Parse("2006-01-02", birthDate)
 	if err != nil {
-		json.NewEncoder(w).Encode(types.GoalSuggestion{
+		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Birth date is invalid — update it in Profile settings.",
 		})
 		return
@@ -1155,7 +1172,7 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	age := int(now.Sub(parsed).Hours() / 8766)
 
 	if profile.HeightCm <= 0 {
-		json.NewEncoder(w).Encode(types.GoalSuggestion{
+		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Add your height in Profile settings to get personalized goal suggestions.",
 		})
 		return
@@ -1164,7 +1181,7 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	// Get current weight for TDEE calc.
 	weights, _ := h.store.ListWeight(r.Context(), userID, 30)
 	if len(weights) == 0 {
-		json.NewEncoder(w).Encode(types.GoalSuggestion{
+		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Log your weight first to get personalized goal suggestions.",
 		})
 		return
@@ -1180,7 +1197,7 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	}
 	tdee := calculateTDEE(params)
 
-	var recommendedKcal float64 = tdee.MaintainCal
+	recommendedKcal := tdee.MaintainCal
 	switch profile.Goal {
 	case "lose":
 		recommendedKcal = tdee.CutCal
@@ -1191,17 +1208,18 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	targetLossKg := currentWeight - profile.TargetWeightKg
 
 	message := "Keep going! Track your meals consistently to reach your goals."
-	if profile.Goal == "lose" {
+	switch profile.Goal {
+	case "lose":
 		if currentLossKg > 0 {
 			message = fmt.Sprintf("You're losing ~%.1f kg/week. Keep it up!", currentLossKg)
 		} else {
 			message = "Weight is stable. Try reducing intake slightly to start losing."
 		}
-	} else if profile.Goal == "gain" {
+	case "gain":
 		message = fmt.Sprintf("Aim for %.0f kcal/day to support muscle gain.", recommendedKcal)
 	}
 
-	json.NewEncoder(w).Encode(types.GoalSuggestion{
+	_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 		CurrentIntakeKcal: avgKcal,
 		RecommendedKcal:   recommendedKcal,
 		CurrentLossKg:     currentLossKg,
@@ -1221,7 +1239,7 @@ func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, user
 
 	if start == "" || end == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
 		return
 	}
 
@@ -1240,7 +1258,7 @@ func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, user
 		if meals == nil {
 			meals = []types.Meal{}
 		}
-		json.NewEncoder(w).Encode(meals)
+		_ = json.NewEncoder(w).Encode(meals)
 	}
 }
 
@@ -1251,7 +1269,7 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 
 	if start == "" || end == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "start and end query params required (YYYY-MM-DD)"})
 		return
 	}
 
@@ -1269,18 +1287,18 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 		if rollups == nil {
 			rollups = []types.DailyRollup{}
 		}
-		json.NewEncoder(w).Encode(rollups)
+		_ = json.NewEncoder(w).Encode(rollups)
 	}
 }
 
 func (h *Handler) writeMealsCSV(w http.ResponseWriter, meals []types.Meal) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
-	fmt.Fprintln(w, "id,date,raw_text,kcal,protein,carbs,fat,fiber")
+	_, _ = fmt.Fprintln(w, "id,date,raw_text,kcal,protein,carbs,fat,fiber")
 	for _, m := range meals {
 		total := m.Total()
 		escaped := strings.ReplaceAll(m.RawText, `"`, `""`)
-		fmt.Fprintf(w, "%s,%s,\"%s\",%.0f,%.1f,%.1f,%.1f,%.1f\n",
+		_, _ = fmt.Fprintf(w, "%s,%s,\"%s\",%.0f,%.1f,%.1f,%.1f,%.1f\n",
 			m.ID, m.At.Format("2006-01-02"), escaped,
 			total.Calories, total.Protein, total.Carbs, total.Fat, total.Fiber,
 		)
@@ -1290,9 +1308,9 @@ func (h *Handler) writeMealsCSV(w http.ResponseWriter, meals []types.Meal) {
 func (h *Handler) writeRollupsCSV(w http.ResponseWriter, rollups []types.DailyRollup) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
-	fmt.Fprintln(w, "date,consumed_kcal,consumed_protein,consumed_carbs,consumed_fat,consumed_fiber,target_kcal,target_protein,target_carbs,target_fat,target_fiber")
+	_, _ = fmt.Fprintln(w, "date,consumed_kcal,consumed_protein,consumed_carbs,consumed_fat,consumed_fiber,target_kcal,target_protein,target_carbs,target_fat,target_fiber")
 	for _, r := range rollups {
-		fmt.Fprintf(w, "%s,%.0f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.1f\n",
+		_, _ = fmt.Fprintf(w, "%s,%.0f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.1f\n",
 			r.Date,
 			r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
 			r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
@@ -1350,12 +1368,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, types.ErrNotFound) || errors.Is(err, types.ErrNoMatch):
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 		// Log the real error server-side; return a generic message to avoid
 		// leaking internal details (DB paths, SQL errors, etc.) to clients.
 		slog.Error("api error", "err", err)
-		json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
 	}
 }
