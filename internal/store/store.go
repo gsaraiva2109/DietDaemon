@@ -85,42 +85,101 @@ func (s *Store) runMigrations() error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-
-		var already int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, entry.Name()).Scan(&already); err != nil {
-			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-		}
-		if already > 0 {
-			continue
-		}
-
-		content, err := migrations.FS.ReadFile(entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := s.db.Exec(string(content)); err != nil {
-			// Idempotency: databases that predate migration tracking may
-			// already have tables/columns/indexes from manual or older
-			// migration paths. Treat "already exists" errors as success
-			// so the migration is tracked and skipped on next start.
-			if isBenignMigrationErr(err) {
-				if _, recErr := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); recErr != nil {
-					return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
-				}
+	// Run the migration loop up to twice. A second pass is only needed
+	// when a legacy "mark all as applied" bug recorded migrations that
+	// never actually ran — the first pass detects the inconsistency,
+	// removes the bogus tracking entries, and the second pass applies
+	// them for real.
+	for pass := 0; pass < 2; pass++ {
+		applied := 0
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 				continue
 			}
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
+
+			var already int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, entry.Name()).Scan(&already); err != nil {
+				return fmt.Errorf("check migration %s: %w", entry.Name(), err)
+			}
+			if already > 0 {
+				continue
+			}
+
+			content, err := migrations.FS.ReadFile(entry.Name())
+			if err != nil {
+				return fmt.Errorf("read %s: %w", entry.Name(), err)
+			}
+			if _, err := s.db.Exec(string(content)); err != nil {
+				// Idempotency: databases that predate migration tracking may
+				// already have tables/columns/indexes from manual or older
+				// migration paths. Treat "already exists" errors as success
+				// so the migration is tracked and skipped on next start.
+				if isBenignMigrationErr(err) {
+					if _, recErr := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); recErr != nil {
+						return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
+					}
+					continue
+				}
+				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
+				return fmt.Errorf("record migration %s: %w", entry.Name(), err)
+			}
+			applied++
 		}
-		if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
-			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
+
+		// Self-heal: detect migrations that were tracked as applied by a
+		// buggy legacy path but whose DDL effects are actually missing.
+		// If found, delete the bogus entries so the next pass applies them.
+		if applied == 0 && pass == 0 {
+			if healed := s.healMissingColumns(); healed > 0 {
+				continue // re-run loop with cleaned tracking
+			}
 		}
+		break
 	}
 
 	return nil
+}
+
+// healMissingColumns detects migrations that are tracked as applied in
+// schema_migrations but whose key columns never materialised (legacy
+// "mark all as applied" bug). It removes the bogus tracking entries so
+// the next migration pass runs them for real.
+func (s *Store) healMissingColumns() int {
+	checks := []struct {
+		migration string
+		table     string
+		column    string
+	}{
+		// 011_auth_foundation adds account_id, email, status + more to users.
+		{"011_auth_foundation.sql", "users", "account_id"},
+		// 012_totp adds totp_secrets, recovery_codes.
+		{"012_totp.sql", "totp_secrets", "user_id"},
+	}
+	healed := 0
+	for _, c := range checks {
+		var tracked int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, c.migration).Scan(&tracked); err != nil {
+			continue
+		}
+		if tracked == 0 {
+			continue
+		}
+		// Check if the column/table actually exists.
+		var exists int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&exists); err != nil {
+			// Table might not exist either — that's also a sign of missing migration.
+			s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			healed++
+			continue
+		}
+		if exists == 0 {
+			s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			healed++
+		}
+	}
+	return healed
 }
 
 // isBenignMigrationErr returns true when err indicates the DDL/DML operation
