@@ -239,3 +239,136 @@ func TestListDeleteOIDCIdentities(t *testing.T) {
 		t.Fatalf("expected ErrNotFound for nonexistent, got %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Magic code upsert / get / increment / delete (Phase 5)
+// ---------------------------------------------------------------------------
+
+func TestMagicCodeUpsertGet(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	// Create a user first (FK constraint).
+	u, err := s.CreateUserWithPassword(ctx(), "acct-mc", "user-mc", "mc@example.com", "MC User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	codeHash := "abc123hash"
+	expiresAt := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+
+	// Upsert (insert).
+	if err := s.UpsertMagicCode(ctx(), u.ID, codeHash, expiresAt); err != nil {
+		t.Fatalf("UpsertMagicCode: %v", err)
+	}
+
+	// Get.
+	gotHash, gotExpiry, attempts, err := s.GetMagicCode(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("GetMagicCode: %v", err)
+	}
+	if gotHash != codeHash {
+		t.Fatalf("codeHash: expected %q, got %q", codeHash, gotHash)
+	}
+	if gotExpiry != expiresAt {
+		t.Fatalf("expiresAt: expected %q, got %q", expiresAt, gotExpiry)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts: expected 0, got %d", attempts)
+	}
+}
+
+func TestMagicCodeUpsertOverwrite(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-mc2", "user-mc2", "mc2@example.com", "MC2 User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	expiresAt := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+
+	// First upsert.
+	if err := s.UpsertMagicCode(ctx(), u.ID, "hash1", expiresAt); err != nil {
+		t.Fatalf("first UpsertMagicCode: %v", err)
+	}
+
+	// Second upsert (overwrite).
+	if err := s.UpsertMagicCode(ctx(), u.ID, "hash2", expiresAt); err != nil {
+		t.Fatalf("second UpsertMagicCode: %v", err)
+	}
+
+	gotHash, _, attempts, err := s.GetMagicCode(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("GetMagicCode: %v", err)
+	}
+	if gotHash != "hash2" {
+		t.Fatalf("expected hash2 after overwrite, got %q", gotHash)
+	}
+	// Attempts should be reset to 0 on overwrite.
+	if attempts != 0 {
+		t.Fatalf("attempts should reset to 0 on overwrite, got %d", attempts)
+	}
+}
+
+func TestMagicCodeNotFound(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	_, _, _, err := s.GetMagicCode(ctx(), "nonexistent")
+	if err != types.ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestMagicCodeIncrementAttempts(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-mc3", "user-mc3", "mc3@example.com", "MC3 User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	expiresAt := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+	if err := s.UpsertMagicCode(ctx(), u.ID, "somehash", expiresAt); err != nil {
+		t.Fatalf("UpsertMagicCode: %v", err)
+	}
+
+	if err := s.IncrementMagicCodeAttempts(ctx(), u.ID); err != nil {
+		t.Fatalf("IncrementMagicCodeAttempts: %v", err)
+	}
+
+	_, _, attempts, err := s.GetMagicCode(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("GetMagicCode: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts should be 1, got %d", attempts)
+	}
+}
+
+func TestMagicCodeDelete(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-mc4", "user-mc4", "mc4@example.com", "MC4 User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	expiresAt := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+	if err := s.UpsertMagicCode(ctx(), u.ID, "somehash", expiresAt); err != nil {
+		t.Fatalf("UpsertMagicCode: %v", err)
+	}
+
+	if err := s.DeleteMagicCode(ctx(), u.ID); err != nil {
+		t.Fatalf("DeleteMagicCode: %v", err)
+	}
+
+	_, _, _, err = s.GetMagicCode(ctx(), u.ID)
+	if err != types.ErrNotFound {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+}

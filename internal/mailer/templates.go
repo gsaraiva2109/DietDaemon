@@ -11,6 +11,15 @@ func VerificationEmail(link string) Message {
 	}
 }
 
+// MagicSigninEmail builds the "sign-in code + link" message for passwordless sign-in.
+func MagicSigninEmail(link, code string) Message {
+	return Message{
+		Subject:  "Your sign-in code — DietDaemon",
+		HTMLBody: fmt.Sprintf(`<p>Here is your sign-in code:</p><p style="font-size:32px;font-weight:bold;letter-spacing:4px;margin:16px 0">%s</p><p>Or <a href="%s">click here to sign in instantly</a>.</p><p>This code and link expire in 15 minutes. If you didn't request this, you can ignore it.</p>`, code, link),
+		TextBody: fmt.Sprintf("Your sign-in code: %s\n\nOr use this link: %s\n\nThis code and link expire in 15 minutes. If you didn't request this, you can ignore it.", code, link),
+	}
+}
+
 // PasswordResetEmail builds the "reset your password" message for a given link.
 func PasswordResetEmail(link string) Message {
 	return Message{

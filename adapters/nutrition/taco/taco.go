@@ -108,6 +108,7 @@ func loadEmbeddedCSV() ([][]string, error) {
 }
 
 func loadCSV(path string) ([][]string, error) {
+	// #nosec G304 -- path provided by operator at CLI, intentional file read
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("taco: open csv: %w", err)
