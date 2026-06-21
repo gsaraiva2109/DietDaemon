@@ -6,6 +6,8 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,6 +16,21 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
+
+// OIDCProviderConfig is the parsed static configuration for one OIDC provider.
+type OIDCProviderConfig struct {
+	ID           string
+	Name         string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	Scopes       []string
+	// TrustEmail treats a non-empty email from this provider as verified even
+	// when the provider omits/!email_verified. For self-hosted IdPs the operator
+	// controls (e.g. Authentik), the email is authoritative. Default false.
+	TrustEmail bool
+}
 
 // Config is the fully parsed, validated configuration. Location is derived from
 // DefaultTimezone so the rest of the app never re-parses the tz string.
@@ -61,6 +78,35 @@ type Config struct {
 	MultiUser    bool
 	APIAuthToken string
 
+	// --- Auth (Phase 1) ---
+	DBDriver           string
+	DatabaseURL        string
+	RegistrationMode   string
+	SessionIdleTTL     time.Duration
+	SessionAbsoluteTTL time.Duration
+	SessionRememberTTL time.Duration
+	CookieSecure       bool
+	CookieDomain       string
+
+	// --- Auth (Phase 2 — TOTP 2FA) ---
+	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
+	TOTPIssuer string // otpauth issuer label
+
+	// --- Auth (Phase 3 — OIDC) ---
+	OIDCProviders []OIDCProviderConfig
+	PublicBaseURL string
+
+	// --- Auth (Phase 4 — Mailer / Email) ---
+	EmailProvider string // resend | ses | smtp | none
+	EmailFrom     string // verified sender address
+	ResendAPIKey  string
+	SESRegion     string
+	SMTPHost      string
+	SMTPPort      int
+	SMTPUsername  string
+	SMTPPassword  string
+	SMTPTLS       bool
+
 	LogLevel string
 }
 
@@ -101,8 +147,61 @@ func Load() (*Config, error) {
 		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
 		MultiUser:               getBool("MULTI_USER", false),
 		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
+		DBDriver:                getStr("DB_DRIVER", "sqlite"),
+		DatabaseURL:             getStr("DATABASE_URL", ""),
+		RegistrationMode:        getStr("AUTH_REGISTRATION_MODE", "invite"),
+		SessionIdleTTL:          getDuration("SESSION_IDLE_TTL", 168*time.Hour),
+		SessionAbsoluteTTL:      getDuration("SESSION_ABSOLUTE_TTL", 720*time.Hour),
+		SessionRememberTTL:      getDuration("SESSION_REMEMBER_TTL", 2160*time.Hour),
+		CookieSecure:            getBool("COOKIE_SECURE", true),
+		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
+		TOTPIssuer:              getStr("TOTP_ISSUER", "DietDaemon"),
 	}
+
+	// TOTP encryption key: optional (TOTP is unavailable without it).
+	if raw := getStr("TOTP_ENC_KEY", ""); raw != "" {
+		key, err := decodeKey(raw)
+		if err != nil {
+			return nil, fmt.Errorf("TOTP_ENC_KEY: %w", err)
+		}
+		c.TOTPEncKey = key
+	}
+
+	// OIDC providers (Phase 3).
+	c.PublicBaseURL = strings.TrimRight(getStr("PUBLIC_BASE_URL", ""), "/")
+	if raw := getStr("OIDC_PROVIDERS", ""); raw != "" {
+		ids := splitCSV(raw)
+		for _, id := range ids {
+			canon := strings.ToUpper(id)
+			name := getStr("OIDC_"+canon+"_NAME", "")
+			if name == "" {
+				name = strings.ToUpper(id[:1]) + id[1:]
+			}
+			cfg := OIDCProviderConfig{
+				ID:           id,
+				Name:         name,
+				Issuer:       getStr("OIDC_"+canon+"_ISSUER", ""),
+				ClientID:     getStr("OIDC_"+canon+"_CLIENT_ID", ""),
+				ClientSecret: getStr("OIDC_"+canon+"_CLIENT_SECRET", ""),
+				RedirectURL:  c.PublicBaseURL + "/api/v1/auth/oidc/" + id + "/callback",
+				Scopes:       splitCSV(getStr("OIDC_"+canon+"_SCOPES", "openid,email,profile")),
+				TrustEmail:   getBool("OIDC_"+canon+"_TRUST_EMAIL", false),
+			}
+			c.OIDCProviders = append(c.OIDCProviders, cfg)
+		}
+	}
+
+	// Auth Phase 4 — Mailer / Email.
+	c.EmailProvider = strings.ToLower(getStr("EMAIL_PROVIDER", "none"))
+	c.EmailFrom = getStr("EMAIL_FROM", "")
+	c.ResendAPIKey = getStr("RESEND_API_KEY", "")
+	c.SESRegion = getStr("SES_REGION", "")
+	c.SMTPHost = getStr("SMTP_HOST", "")
+	c.SMTPPort = getInt("SMTP_PORT", 587)
+	c.SMTPUsername = getStr("SMTP_USERNAME", "")
+	c.SMTPPassword = getStr("SMTP_PASSWORD", "")
+	c.SMTPTLS = getBool("SMTP_TLS", true)
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
 	c.ParserTier = tier
@@ -210,6 +309,69 @@ func (c *Config) validate(tierErr error) error {
 		c.Location = loc
 	}
 
+	// Auth Phase 1.
+	if c.DBDriver != "sqlite" {
+		add("DB_DRIVER=%q not supported yet; only \"sqlite\"", c.DBDriver)
+	}
+	validModes := map[string]bool{"invite": true, "open": true, "oidc-only": true}
+	if !validModes[c.RegistrationMode] {
+		add("AUTH_REGISTRATION_MODE must be one of: invite, open, oidc-only, got %q", c.RegistrationMode)
+	}
+	if c.SessionIdleTTL <= 0 {
+		add("SESSION_IDLE_TTL must be positive")
+	}
+	if c.SessionAbsoluteTTL <= 0 {
+		add("SESSION_ABSOLUTE_TTL must be positive")
+	}
+	if c.SessionRememberTTL <= 0 {
+		add("SESSION_REMEMBER_TTL must be positive")
+	}
+
+	// Auth Phase 3 — OIDC.
+	if len(c.OIDCProviders) > 0 && c.PublicBaseURL == "" {
+		add("PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set")
+	}
+	for _, prov := range c.OIDCProviders {
+		canon := strings.ToUpper(prov.ID)
+		if prov.Issuer == "" {
+			add("OIDC_%s_ISSUER is required", canon)
+		}
+		if prov.ClientID == "" {
+			add("OIDC_%s_CLIENT_ID is required", canon)
+		}
+		if prov.ClientSecret == "" {
+			add("OIDC_%s_CLIENT_SECRET is required", canon)
+		}
+	}
+	if c.RegistrationMode == "oidc-only" && len(c.OIDCProviders) == 0 {
+		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
+	}
+
+	// Auth Phase 4 — Mailer / Email.
+	validProviders := map[string]bool{"resend": true, "ses": true, "smtp": true, "none": true, "": true}
+	if !validProviders[c.EmailProvider] {
+		add("EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got %q", c.EmailProvider)
+	}
+	if c.EmailProvider != "none" && c.EmailProvider != "" {
+		if c.EmailFrom == "" {
+			add("EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"")
+		}
+		if c.PublicBaseURL == "" {
+			add("PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\" (to build verification/reset links)")
+		}
+	}
+	if c.EmailProvider == "resend" && c.ResendAPIKey == "" {
+		add("RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
+	}
+	if c.EmailProvider == "smtp" {
+		if c.SMTPHost == "" {
+			add("SMTP_HOST is required when EMAIL_PROVIDER=smtp")
+		}
+		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
+			add("SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
+		}
+	}
+
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
@@ -258,6 +420,18 @@ func getFloat(key string, def float64) float64 {
 	return f
 }
 
+func getInt(key string, def int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return n
+}
+
 func getBool(key string, def bool) bool {
 	v, ok := os.LookupEnv(key)
 	if !ok {
@@ -283,6 +457,36 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// decodeKey accepts a base64 (standard or raw, with or without padding) or hex
+// encoded key and returns the decoded bytes. Returns an error if the decoded
+// key is not exactly 32 bytes.
+func decodeKey(raw string) ([]byte, error) {
+	// Try hex first (64 hex chars = 32 bytes).
+	if len(raw) == 64 {
+		key, err := hex.DecodeString(raw)
+		if err == nil {
+			return key, nil
+		}
+	}
+
+	// Try base64 variants.
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		key, err := enc.DecodeString(raw)
+		if err == nil {
+			if len(key) == 32 {
+				return key, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("must be a 32-byte key encoded as hex (64 chars) or base64, got %d chars", len(raw))
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {
@@ -300,7 +504,7 @@ func loadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

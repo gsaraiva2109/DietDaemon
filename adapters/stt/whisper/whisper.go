@@ -59,7 +59,7 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte) (string, string
 	if _, err := fw.Write(audio); err != nil {
 		return "", "", fmt.Errorf("whisper: write audio: %w", err)
 	}
-	w.Close()
+	_ = w.Close()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.url+"/inference", &buf)

@@ -2,10 +2,10 @@
 // always generic (never reveal which field). A "View demo" button drops into
 // demo mode (no backend). Honors ?next= to return where the guard sent us.
 
-import { useState, type SubmitEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
-import { useDemo } from '@/lib/demo'
+import { useDemo, demoAvailable } from '@/lib/demo'
 import { useProviders, useMagicRequest } from '@/lib/queries'
 import { AUTH_ERROR, RateLimitError } from '@/lib/api'
 import { loginWithPasskey, browserSupportsWebAuthn, isWebAuthnCancel } from '@/lib/webauthn'
@@ -35,7 +35,7 @@ export function Login() {
   const [magicEmail, setMagicEmail] = useState<string | null>(null)
   const magicRequest = useMagicRequest()
 
-  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password) return
     setBusy(true)
@@ -141,12 +141,6 @@ export function Login() {
       }
     >
       <div className="flex flex-col gap-4">
-        <ProviderButtons verb="Sign in" />
-        {browserSupportsWebAuthn() && (
-          <Button type="button" variant="ghost" onClick={signInWithPasskey} disabled={busy}>
-            Sign in with a passkey
-          </Button>
-        )}
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
@@ -200,16 +194,24 @@ export function Login() {
             </Button>
           </form>
         )}
-        <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
-          View demo
-        </Button>
+        <ProviderButtons verb="Sign in" />
+        {browserSupportsWebAuthn() && (
+          <Button type="button" variant="ghost" onClick={signInWithPasskey} disabled={busy}>
+            Sign in with a passkey
+          </Button>
+        )}
+        {demoAvailable() && (
+          <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
+            View demo
+          </Button>
+        )}
       </div>
     </AuthLayout>
   )
 }
 
 // Second step of a 2FA login: a TOTP code, or a recovery code as fallback.
-function MfaChallenge({
+export function MfaChallenge({
   challengeToken,
   onVerified,
   onBack,
@@ -224,7 +226,7 @@ function MfaChallenge({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!code.trim()) return
     setBusy(true)

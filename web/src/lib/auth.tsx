@@ -50,12 +50,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Guard against a stray 401 redirect firing repeatedly.
   const expiringRef = useRef(false)
 
+  // Derive effective auth: demo mode is always authenticated.
+  const effectiveStatus: AuthStatus = demo ? 'authed' : status
+
   // Probe the session on boot (skipped entirely in demo).
   useEffect(() => {
-    if (demo) {
-      setStatus('authed')
-      return
-    }
+    if (demo) return // effectiveStatus already 'authed' via derivation
     let alive = true
     api.auth
       .session()
@@ -147,14 +147,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('anon')
   }, [])
 
-  // Reflect demo toggles immediately.
-  useEffect(() => {
-    if (demo) setStatus('authed')
-  }, [demo])
-
   const value = useMemo<AuthValue>(
-    () => ({ status, user, login, verifyTotp, register, logout, refresh }),
-    [status, user, login, verifyTotp, register, logout, refresh],
+	    () => ({ status: effectiveStatus, user, login, verifyTotp, register, logout, refresh }),
+	    [effectiveStatus, user, login, verifyTotp, register, logout, refresh],
   )
   return <AuthContext value={value}>{children}</AuthContext>
 }

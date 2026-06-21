@@ -50,25 +50,25 @@ func New(dbPath string) (*Store, error) {
 	// Required for Docker Swarm / some overlay filesystems where the VFS
 	// shared-memory primitives (xShmMap, xShmLock, etc.) don't work.
 	if _, err := db.Exec("PRAGMA locking_mode = EXCLUSIVE"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: exclusive lock: %w", err)
 	}
 
 	// Enable WAL mode for concurrent reads and writes.
 	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: enable WAL: %w", err)
 	}
 
 	// Enforce foreign keys at the connection level.
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: enable foreign keys: %w", err)
 	}
 
 	s := &Store{db: db}
 	if err := s.runMigrations(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 
@@ -85,56 +85,124 @@ func (s *Store) runMigrations() error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	// If the tracking table is empty but the DB already has tables (existing
-	// install upgrading from before migration tracking existed), mark all
-	// current migration files as already applied so they are not re-run.
-	var tracked int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&tracked); err != nil {
-		return fmt.Errorf("count tracked migrations: %w", err)
-	}
-	if tracked == 0 {
-		var hasTables int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meals'`).Scan(&hasTables); err != nil {
-			return fmt.Errorf("check existing schema: %w", err)
-		}
-		if hasTables > 0 {
-			for _, entry := range entries {
-				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+	// Run the migration loop up to twice. A second pass is only needed
+	// when a legacy "mark all as applied" bug recorded migrations that
+	// never actually ran — the first pass detects the inconsistency,
+	// removes the bogus tracking entries, and the second pass applies
+	// them for real.
+	for pass := range 2 {
+		applied := 0
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+				continue
+			}
+
+			var already int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, entry.Name()).Scan(&already); err != nil {
+				return fmt.Errorf("check migration %s: %w", entry.Name(), err)
+			}
+			if already > 0 {
+				continue
+			}
+
+			content, err := migrations.FS.ReadFile(entry.Name())
+			if err != nil {
+				return fmt.Errorf("read %s: %w", entry.Name(), err)
+			}
+			if _, err := s.db.Exec(string(content)); err != nil {
+				// Idempotency: databases that predate migration tracking may
+				// already have tables/columns/indexes from manual or older
+				// migration paths. Treat "already exists" errors as success
+				// so the migration is tracked and skipped on next start.
+				if isBenignMigrationErr(err) {
+					if _, recErr := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); recErr != nil {
+						return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
+					}
 					continue
 				}
-				if _, err := s.db.Exec(`INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
-					return fmt.Errorf("record legacy migration %s: %w", entry.Name(), err)
-				}
+				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
+				return fmt.Errorf("record migration %s: %w", entry.Name(), err)
+			}
+			applied++
+		}
+
+		// Self-heal: detect migrations that were tracked as applied by a
+		// buggy legacy path but whose DDL effects are actually missing.
+		// If found, delete the bogus entries so the next pass applies them.
+		if applied == 0 && pass == 0 {
+			if healed := s.healMissingColumns(); healed > 0 {
+				continue // re-run loop with cleaned tracking
 			}
 		}
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-
-		var already int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, entry.Name()).Scan(&already); err != nil {
-			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-		}
-		if already > 0 {
-			continue
-		}
-
-		content, err := migrations.FS.ReadFile(entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := s.db.Exec(string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
-			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
-		}
+		break
 	}
 
 	return nil
+}
+
+// healMissingColumns detects migrations that are tracked as applied in
+// schema_migrations but whose key columns never materialised (legacy
+// "mark all as applied" bug). It removes the bogus tracking entries so
+// the next migration pass runs them for real.
+func (s *Store) healMissingColumns() int {
+	checks := []struct {
+		migration string
+		table     string
+		column    string
+	}{
+		// 006_food_metadata adds category, brand, barcode + more to food_library.
+		{"006_food_metadata.sql", "food_library", "category"},
+		// 008_body_tracking adds weight_log, measurement_log, progress_photos.
+		{"008_body_tracking.sql", "weight_log", "id"},
+		// 009_user_profile adds the user_profiles table.
+		{"009_user_profile.sql", "user_profiles", "user_id"},
+		// 011_auth_foundation adds account_id, email, status + more to users.
+		{"011_auth_foundation.sql", "users", "account_id"},
+		// 012_totp adds totp_secrets, recovery_codes.
+		{"012_totp.sql", "totp_secrets", "user_id"},
+	}
+	healed := 0
+	for _, c := range checks {
+		var tracked int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, c.migration).Scan(&tracked); err != nil {
+			continue
+		}
+		if tracked == 0 {
+			continue
+		}
+		// Check if the column/table actually exists.
+		var exists int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&exists); err != nil {
+			// Table might not exist either — that's also a sign of missing migration.
+			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			healed++
+			continue
+		}
+		if exists == 0 {
+			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			healed++
+		}
+	}
+	return healed
+}
+
+// isBenignMigrationErr returns true when err indicates the DDL/DML operation
+// was already applied — a duplicate column, table, index, or constraint.
+// This lets the migration runner treat pre-existing schema as success instead
+// of aborting startup.
+func isBenignMigrationErr(err error) bool {
+	msg := err.Error()
+	// SQLite error patterns for "already exists":
+	//   - "duplicate column name: X"
+	//   - "table X already exists"
+	//   - "index X already exists"
+	//   - "trigger X already exists"
+	//   - "UNIQUE constraint failed: schema_migrations.name" (harmless)
+	return strings.Contains(msg, "duplicate column name") ||
+		strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "UNIQUE constraint failed")
 }
 
 // DB returns the underlying *sql.DB so that callers (e.g. the embedding index)
@@ -150,19 +218,28 @@ func (s *Store) Close() error {
 // Users
 // ---------------------------------------------------------------------------
 
-// UpsertUser inserts or replaces a user row.
+// UpsertUser inserts or updates a user row. New auth columns are set via
+// separate auth-dedicated methods (CreateUserWithPassword); this method
+// preserves the existing id/timezone/created_at contract for the pipeline.
 func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 	const q = `
-		INSERT OR REPLACE INTO users (id, timezone, created_at)
-		VALUES (?, ?, ?)
+		INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET timezone = excluded.timezone
 	`
-	_, err := s.db.ExecContext(ctx, q, u.ID, u.Timezone, utcStr(u.CreatedAt))
+	var emailVerifiedAt any
+	if u.EmailVerifiedAt != nil {
+		emailVerifiedAt = utcStr(*u.EmailVerifiedAt)
+	}
+	_, err := s.db.ExecContext(ctx, q,
+		u.ID, nullStr(u.AccountID), nullStr(u.Email), emailVerifiedAt, u.Status, nullStr(u.DisplayName),
+		u.Timezone, utcStr(u.CreatedAt))
 	return err
 }
 
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
-	const q = `SELECT id, timezone, created_at FROM users WHERE id = ?`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, q, userID)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
@@ -173,21 +250,34 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	const q = `SELECT id, timezone, created_at FROM users ORDER BY id`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var users []types.User
 	for rows.Next() {
 		var u types.User
 		var ca string
-		if err := rows.Scan(&u.ID, &u.Timezone, &ca); err != nil {
+		var eva sql.NullString
+		var accountID, email, displayName, status sql.NullString
+		if err := rows.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
 			return nil, fmt.Errorf("store: scan user: %w", err)
 		}
+		u.AccountID = accountID.String
+		u.Email = email.String
+		u.DisplayName = displayName.String
+		u.Status = status.String
 		u.CreatedAt = parseUTC(ca)
+		if eva.Valid {
+			t := parseUTC(eva.String)
+			u.EmailVerifiedAt = &t
+		}
+		if !status.Valid {
+			u.Status = "active"
+		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
@@ -196,10 +286,23 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 func scanUser(row *sql.Row) (types.User, error) {
 	var u types.User
 	var ca string
-	if err := row.Scan(&u.ID, &u.Timezone, &ca); err != nil {
+	var eva sql.NullString
+	var accountID, email, displayName, status sql.NullString
+	if err := row.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
 		return types.User{}, err
 	}
+	u.AccountID = accountID.String
+	u.Email = email.String
+	u.DisplayName = displayName.String
+	u.Status = status.String
 	u.CreatedAt = parseUTC(ca)
+	if eva.Valid {
+		t := parseUTC(eva.String)
+		u.EmailVerifiedAt = &t
+	}
+	if !status.Valid {
+		u.Status = "active"
+	}
 	return u, nil
 }
 
@@ -207,17 +310,6 @@ func scanUser(row *sql.Row) (types.User, error) {
 // owning userID. Returns types.ErrNotFound when the token is invalid or expired.
 // In single-user mode this method is not called; the static API_AUTH_TOKEN is
 // checked directly.
-func (s *Store) ValidateToken(ctx context.Context, token string) (string, error) {
-	const q = `SELECT user_id FROM api_tokens WHERE token = ?`
-	row := s.db.QueryRowContext(ctx, q, token)
-	var userID string
-	if err := row.Scan(&userID); err == sql.ErrNoRows {
-		return "", types.ErrNotFound
-	} else if err != nil {
-		return "", fmt.Errorf("store: validate token: %w", err)
-	}
-	return userID, nil
-}
 
 // UpsertUserTimezone updates the users.timezone column for a user.
 func (s *Store) UpsertUserTimezone(ctx context.Context, userID, timezone string) error {
@@ -262,7 +354,7 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	const mealQ = `
 		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at)
@@ -311,7 +403,7 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string
@@ -389,7 +481,7 @@ func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate strin
 	if err != nil {
 		return nil, fmt.Errorf("store: query rollups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.DailyRollup
 	for rows.Next() {
@@ -444,7 +536,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 	if err != nil {
 		return nil, fmt.Errorf("store: query items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make(map[string][]types.ResolvedItem)
 	for rows.Next() {
@@ -541,7 +633,7 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	const foodQ = `
 		INSERT INTO food_library
@@ -601,7 +693,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Load the meal to get the at time for rollup lookup and the original items.
 	var atUTC string
@@ -627,7 +719,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	if err != nil {
 		return fmt.Errorf("store: query items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type itemRow struct {
 		rowid int64
@@ -747,7 +839,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
@@ -810,7 +902,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
@@ -840,12 +932,12 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.rowid, &r.m.Calories, &r.m.Protein, &r.m.Carbs, &r.m.Fat, &r.m.Fiber); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("store: scan item: %w", err)
 		}
 		items = append(items, r)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("store: items rows: %w", err)
 	}
@@ -1023,6 +1115,15 @@ func utcStr(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func utcNow() string { return time.Now().UTC().Format(time.RFC3339) }
 
+// nullStr returns nil for an empty string, otherwise returns the string.
+// Used to store nullable TEXT columns as SQL NULL instead of "".
+func nullStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func parseUTC(s string) time.Time {
 	if s == "" {
 		return time.Time{}
@@ -1032,6 +1133,23 @@ func parseUTC(s string) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+// ptrTime returns a pointer to t.
+func ptrTime(t time.Time) *time.Time {
+	p := new(time.Time)
+	*p = t
+	return p
+}
+
+// isUniqueViolation reports whether err is a SQL UNIQUE constraint violation.
+// Works with modernc.org/sqlite; kept simple and portable.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	// modernc.org/sqlite surfaces this in the error string.
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // newID returns a short pseudo-unique ID using a monotonic counter + timestamp
@@ -1082,7 +1200,7 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	if err != nil {
 		return nil, fmt.Errorf("store: list foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1107,7 +1225,7 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 	if err != nil {
 		return nil, fmt.Errorf("store: search foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1127,7 +1245,7 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("store: frequent foods: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanFoodDetails(rows)
 }
 
@@ -1159,7 +1277,7 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 	if err != nil {
 		return types.FoodDetail{}, fmt.Errorf("store: get food aliases: %w", err)
 	}
-	defer arows.Close()
+	defer func() { _ = arows.Close() }()
 	for arows.Next() {
 		var a types.FoodAlias
 		if err := arows.Scan(&a.FoodID, &a.Normalized); err != nil {
@@ -1262,7 +1380,7 @@ func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTe
 	if err != nil {
 		return nil, fmt.Errorf("store: get templates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTemplates(rows)
 }
 
@@ -1355,7 +1473,7 @@ func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]type
 	if err != nil {
 		return nil, fmt.Errorf("store: list weight: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanWeightEntries(rows)
 }
 
@@ -1402,10 +1520,7 @@ func (s *Store) WeightTrend(ctx context.Context, userID string, days int) ([]typ
 		wt := types.WeightTrend{Date: e.Date, WeightKg: e.WeightKg}
 
 		// 7-day rolling average.
-		start := i - 6
-		if start < 0 {
-			start = 0
-		}
+		start := max(i-6, 0)
 		sum := 0.0
 		count := 0
 		for j := start; j <= i; j++ {
@@ -1447,7 +1562,7 @@ func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) (
 	if err != nil {
 		return nil, fmt.Errorf("store: list measurements: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanMeasurementEntries(rows)
 }
 
@@ -1521,7 +1636,7 @@ func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.P
 	if err != nil {
 		return nil, fmt.Errorf("store: list photo metadata: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.ProgressPhoto
 	for rows.Next() {
@@ -1590,7 +1705,7 @@ func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate 
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string

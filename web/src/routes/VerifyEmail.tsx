@@ -15,16 +15,14 @@ export function VerifyEmail() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const ran = useRef(false)
-  const [state, setState] = useState<'verifying' | 'error'>('verifying')
+  const token = params.get('token')
+  const [state, setState] = useState<'verifying' | 'error'>(
+    token ? 'verifying' : 'error',
+  )
 
   useEffect(() => {
-    if (ran.current) return
+    if (ran.current || !token) return
     ran.current = true
-    const token = params.get('token')
-    if (!token) {
-      setState('error')
-      return
-    }
     verify
       .mutateAsync(token)
       .then(async () => {

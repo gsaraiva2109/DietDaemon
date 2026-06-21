@@ -39,9 +39,14 @@ const (
 // but the schema and core are keyed by user from day one so enabling it later
 // is not a rewrite.
 type User struct {
-	ID        string
-	Timezone  string // IANA tz (e.g. "America/Sao_Paulo"); empty falls back to DEFAULT_TIMEZONE
-	CreatedAt time.Time
+	ID              string
+	AccountID       string
+	Email           string
+	EmailVerifiedAt *time.Time
+	Status          string
+	DisplayName     string
+	Timezone        string // IANA tz (e.g. "America/Sao_Paulo"); empty falls back to DEFAULT_TIMEZONE
+	CreatedAt       time.Time
 }
 
 // InboundMessage is the canonical, channel-agnostic representation of a message
@@ -351,3 +356,56 @@ type GoalSuggestion struct {
 	TargetLossKg      float64 `json:"target_loss_kg"`
 	Message           string  `json:"message"`
 }
+
+// ---------------------------------------------------------------------------
+// Auth (Phase 1) — session + API key types
+// ---------------------------------------------------------------------------
+
+// APIKey is a machine-authentication key. The raw key is returned exactly
+// once on creation; only metadata is listed thereafter.
+type APIKey struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	Label      string     `json:"label"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+// NewAPIKeyResponse wraps an APIKey with the one-time raw secret.
+type NewAPIKeyResponse struct {
+	APIKey
+	Key string `json:"key"`
+}
+
+// AuditEvent is a single entry in the auth audit log.
+type AuditEvent struct {
+	ID        string `json:"id"`
+	AccountID string `json:"account_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	Event     string `json:"event"`
+	IP        string `json:"ip,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+	Meta      string `json:"meta,omitempty"`
+	CreatedAt time.Time
+}
+
+// OIDCIdentity is a linked OIDC provider identity.
+type OIDCIdentity struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"-"`
+	Provider  string    `json:"provider"`
+	Subject   string    `json:"-"`
+	Email     string    `json:"email"`
+	LinkedAt  time.Time `json:"linked_at"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// RegistrationMode enumerates how new accounts may be created.
+type RegistrationMode string
+
+const (
+	RegistrationOpen     RegistrationMode = "open"
+	RegistrationInvite   RegistrationMode = "invite"
+	RegistrationOIDCOnly RegistrationMode = "oidc-only"
+)

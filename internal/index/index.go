@@ -141,7 +141,7 @@ func (ix *SQLIndex) loadUser(ctx context.Context, userID string) ([]entry, error
 	if err != nil {
 		return nil, fmt.Errorf("index: load: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []entry
 	for rows.Next() {

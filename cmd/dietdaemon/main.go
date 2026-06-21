@@ -28,8 +28,11 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
+	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
+	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
+	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/deterministic"
 	"github.com/gsaraiva2109/dietdaemon/internal/parser/llm"
 	"github.com/gsaraiva2109/dietdaemon/internal/pendingstore"
@@ -76,7 +79,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	msg, err := buildMessaging(cfg)
 	if err != nil {
@@ -153,10 +156,47 @@ func run() error {
 
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
-		if cfg.APIAuthToken == "" && !cfg.MultiUser {
-			slog.Warn("dashboard running without authentication — set API_AUTH_TOKEN to protect the API")
+		authCfg := api.AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     cfg.SessionIdleTTL,
+				AbsoluteTTL: cfg.SessionAbsoluteTTL,
+				RememberTTL: cfg.SessionRememberTTL,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
+			CookieSecure:     cfg.CookieSecure,
 		}
-		apiHandler := api.New(st, engine, cfg.Location, cfg.APIAuthToken, cfg.MultiUser)
+		// Phase 3 — OIDC provider registry (lazy; no network at boot).
+		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
+		for i, c := range cfg.OIDCProviders {
+			oidcConfigs[i] = oidc.ProviderConfig{
+				ID: c.ID, Name: c.Name, Issuer: c.Issuer,
+				ClientID: c.ClientID, ClientSecret: c.ClientSecret,
+				RedirectURL: c.RedirectURL, Scopes: c.Scopes,
+				TrustEmail: c.TrustEmail,
+			}
+		}
+		oidcRegistry := oidc.BuildRegistry(oidcConfigs)
+
+		// Phase 4 — Mailer.
+		mailCfg := mailer.Config{
+			Provider:      cfg.EmailProvider,
+			From:          cfg.EmailFrom,
+			ResendAPIKey:  cfg.ResendAPIKey,
+			SESRegion:     cfg.SESRegion,
+			SMTPHost:      cfg.SMTPHost,
+			SMTPPort:      cfg.SMTPPort,
+			SMTPUsername:  cfg.SMTPUsername,
+			SMTPPassword:  cfg.SMTPPassword,
+			SMTPTLS:       cfg.SMTPTLS,
+			PublicBaseURL: cfg.PublicBaseURL,
+		}
+		m, err := mailer.New(mailCfg)
+		if err != nil {
+			return fmt.Errorf("mailer: %w", err)
+		}
+
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
@@ -203,7 +243,7 @@ func run() error {
 		return fmt.Errorf("messaging receive: %w", err)
 	}
 	go func() {
-		defer q.Close()
+		defer func() { _ = q.Close() }()
 		for m := range in {
 			if perr := q.Publish(ctx, m); perr != nil {
 				return // queue closed or context cancelled

@@ -10,7 +10,7 @@ import {
 } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/lib/auth'
-import { ThemeProvider } from '@/lib/theme'
+import { ThemeProvider, useTheme } from '@/lib/theme'
 import { DemoProvider } from '@/lib/demo'
 import { AppShell } from '@/components/AppShell'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
@@ -121,6 +121,13 @@ function AppRoutes() {
   )
 }
 
+// Sonner renders in its own portal outside the .dark scope, so it needs the
+// theme passed explicitly. Re-renders on toggle, recoloring toasts live.
+function ToasterWithTheme() {
+  const { theme } = useTheme()
+  return <Toaster position="top-center" richColors closeButton theme={theme} />
+}
+
 export default function App() {
   return (
     <MotionConfig reducedMotion="user">
@@ -129,7 +136,7 @@ export default function App() {
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
               <AuthProvider>
-                <Toaster position="top-center" richColors closeButton />
+                <ToasterWithTheme />
                 <AppRoutes />
               </AuthProvider>
             </BrowserRouter>

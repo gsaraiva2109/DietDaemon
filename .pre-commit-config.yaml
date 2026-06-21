@@ -26,3 +26,21 @@ repos:
           - -exclude=G104,G304
           # G104: defer Close() errors are standard Go idiom
           # G304: loadDotEnv + taco data path are hardcoded
+
+  # --- Frontend ---
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.39.1
+    hooks:
+      - id: eslint
+        files: ^web/src/.*\.(ts|tsx)$
+        types_or: [ts, tsx]
+        args: [--config, web/eslint.config.js]
+
+  - repo: local
+    hooks:
+      - id: tsc-check
+        name: TypeScript type-check
+        entry: bash -c 'cd web && npx tsc -b'
+        language: system
+        files: ^web/src/.*\.(ts|tsx)$
+        pass_filenames: false

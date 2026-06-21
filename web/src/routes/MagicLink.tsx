@@ -1,11 +1,15 @@
 // /magic?token=… — the one-click passwordless sign-in link. Verifies the token
-// (which sets the session cookie), refreshes, and routes into the app.
+// (which sets the session cookie), refreshes, and routes into the app. When the
+// account has TOTP enabled, the verify returns an MFA challenge instead of a
+// session; we hand off to <MfaChallenge>.
 
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { isMfaChallenge } from '@/lib/types'
+import { MfaChallenge } from '@/routes/Login'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Spinner } from '@/components/ui'
 
@@ -14,19 +18,24 @@ export function MagicLink() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const ran = useRef(false)
-  const [state, setState] = useState<'verifying' | 'error'>('verifying')
+  const token = params.get('token')
+  // Missing token is a render-time fact, not an effect side-effect — avoid
+  // synchronous setState in the effect (react-hooks/set-state-in-effect).
+  const [state, setState] = useState<'verifying' | 'error' | 'mfa'>(token ? 'verifying' : 'error')
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
 
   useEffect(() => {
     if (ran.current) return
     ran.current = true
-    const token = params.get('token')
-    if (!token) {
-      setState('error')
-      return
-    }
+    if (!token) return
     api.auth.magic
       .verifyToken(token)
-      .then(async () => {
+      .then(async (res) => {
+        if (isMfaChallenge(res)) {
+          setChallengeToken(res.challenge_token)
+          setState('mfa')
+          return
+        }
         await refresh()
         toast.success('Signed in.')
         navigate('/', { replace: true })
@@ -48,6 +57,22 @@ export function MagicLink() {
       >
         <span />
       </AuthLayout>
+    )
+  }
+
+  if (state === 'mfa' && challengeToken) {
+    return (
+      <MfaChallenge
+        challengeToken={challengeToken}
+        onVerified={async () => {
+          await refresh()
+          toast.success('Signed in.')
+          navigate('/', { replace: true })
+        }}
+        onBack={() => {
+          setState('error')
+        }}
+      />
     )
   }
 

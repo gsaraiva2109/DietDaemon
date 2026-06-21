@@ -2,7 +2,7 @@
 // server's registration_mode: hidden entirely when 'oidc-only'. Errors stay
 // generic (no per-field server detail).
 
-import { useState, type SubmitEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useProviders } from '@/lib/queries'
@@ -28,7 +28,7 @@ export function Register() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password) return
     setBusy(true)
@@ -57,7 +57,6 @@ export function Register() {
       }
     >
       <div className="flex flex-col gap-4">
-        <ProviderButtons verb="Sign up" />
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
@@ -96,6 +95,7 @@ export function Register() {
             </Button>
           </form>
         )}
+        <ProviderButtons verb="Sign up" />
       </div>
     </AuthLayout>
   )

@@ -12,6 +12,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -36,10 +37,29 @@ func Handler() (http.Handler, error) {
 			p = "index.html"
 		}
 		if _, statErr := fs.Stat(sub, p); statErr != nil {
-			// Not a real asset — hand the SPA its entry point.
+			// A missing asset-like path (favicon.ico, vite.svg, …) must 404, not
+			// return the HTML shell — otherwise browsers get index.html where they
+			// expected an image and fall back to a stale/default favicon.
+			if path.Ext(p) != "" {
+				http.NotFound(w, r)
+				return
+			}
+			// Otherwise it's a client-side route — hand the SPA its entry point.
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
+			p = "index.html"
 		}
+
+		// Cache policy: hashed assets (JS/CSS/fonts) are immutable —
+		// Vite changes the filename on every build, so cache forever.
+		// index.html must always revalidate so the browser sees new
+		// asset URLs after a deploy.
+		if p == "index.html" {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+
 		files.ServeHTTP(w, r)
 	}), nil
 }
