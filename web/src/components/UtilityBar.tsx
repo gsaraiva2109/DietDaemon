@@ -46,7 +46,7 @@ export function DemoBanner() {
     <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-transparent bg-primary-soft px-4 py-2.5 text-sm text-primary">
       <span className="flex items-center gap-2 font-medium">
         <SparkleIcon width={16} height={16} />
-        Demo data — sample meals &amp; trends, no backend needed.
+        Sample data, no backend needed.
       </span>
       <button onClick={() => setDemo(false)} className="font-semibold underline-offset-2 hover:underline">
         Turn off

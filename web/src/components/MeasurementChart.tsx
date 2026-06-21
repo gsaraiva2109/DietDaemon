@@ -1,4 +1,4 @@
-// Body measurements over time — one line per measurement field, with pill
+// Body measurements over time, one line per measurement field, with pill
 // toggles to show/hide individual series. Styled to match Trends.tsx.
 
 import { useMemo, useState } from 'react'

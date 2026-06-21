@@ -183,7 +183,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
 
           {demo && (
             <p className="mt-4 text-sm text-muted">
-              Export is unavailable in demo mode — connect a real account to download your data.
+              Export is unavailable here. Connect a real account to download your data.
             </p>
           )}
 

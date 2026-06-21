@@ -1,4 +1,4 @@
-// Today — the hero screen. Ring-focused (chosen in the prototype pass) and
+// Today, the hero screen. Ring-focused (chosen in the prototype pass) and
 // enriched: greeting + date, hero calories ring with macro satellites, streak,
 // 7-day calorie sparkline, energy-split donut, honest insights, inline quick
 // log, and today's meal timeline.
@@ -14,7 +14,10 @@ import { Sparkline } from '@/components/Sparkline'
 import { MealCard } from '@/components/MealCard'
 import { QuickLogCard } from '@/components/QuickLogCard'
 import { WeeklyDashboard } from '@/components/WeeklyDashboard'
-import { FastingTimer } from '@/components/FastingTimer'
+import { WaterCard } from '@/components/WaterCard'
+import { WorkoutCard } from '@/components/WorkoutCard'
+import { SleepCard } from '@/components/SleepCard'
+import { FastingCard } from '@/components/FastingCard'
 import { FrequentFoods } from '@/components/FrequentFoods'
 import { ShareCard } from '@/components/ShareCard'
 import { Card, Eyebrow, EmptyState, Pill, Spinner, Button } from '@/components/ui'
@@ -136,7 +139,6 @@ export function Dashboard() {
                 </div>
               </Card>
               <WeightMiniCard body={body.data} />
-              <FastingTimer />
               <Card className="flex flex-1 flex-col p-5">
                 <Eyebrow>Last 7 days · calories</Eyebrow>
                 <div className="mt-auto pt-3">
@@ -187,6 +189,22 @@ export function Dashboard() {
 
       {view === 'day' && (
         <>
+          {/* Health, quiet secondary section, subordinate to the macro hero. */}
+          <section>
+            <Eyebrow>Health</Eyebrow>
+            <motion.div
+              variants={stagger}
+              initial="hidden"
+              animate="show"
+              className="mt-3 grid gap-5 md:grid-cols-2"
+            >
+              <motion.div variants={fadeUp}><WaterCard /></motion.div>
+              <motion.div variants={fadeUp}><FastingCard /></motion.div>
+              <motion.div variants={fadeUp}><WorkoutCard /></motion.div>
+              <motion.div variants={fadeUp}><SleepCard /></motion.div>
+            </motion.div>
+          </section>
+
           {/* Frequent foods */}
           <FrequentFoods />
 
@@ -198,7 +216,7 @@ export function Dashboard() {
             ) : !meals.data?.length ? (
               <EmptyState
                 title="Nothing logged yet"
-                hint="Use Quick log above, or send a meal through your chat bot. Try Demo mode to see it populated."
+                hint="Use Quick log above, or send a meal through your chat bot."
               />
             ) : (
               <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2.5">

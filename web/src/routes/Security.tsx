@@ -1,4 +1,4 @@
-// Security — machine API keys + change password. Single-level Cards, matching
+// Security, machine API keys + change password. Single-level Cards, matching
 // Settings. A freshly created key's raw secret is revealed exactly once in a
 // scaleIn panel with a copy button; after that only metadata is ever shown.
 
@@ -70,10 +70,10 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold text-ink">Email address</h2>
-        {demo && <Pill tone="muted">disabled in demo</Pill>}
+        {demo && <Pill tone="muted">read only</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Current: <span className="font-medium text-ink">{user?.email ?? '—'}</span>. Changing it
+        Current: <span className="font-medium text-ink">{user?.email ?? 'n/a'}</span>. Changing it
         requires verifying the new address.
       </p>
       <form onSubmit={onSubmit} className="flex max-w-sm flex-col gap-3">
@@ -100,10 +100,10 @@ function PasskeysCard({ demo }: { demo: boolean }) {
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold text-ink">Passkeys</h2>
-        {demo && <Pill tone="muted">disabled in demo</Pill>}
+        {demo && <Pill tone="muted">read only</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Sign in with Face ID, Touch ID, or a security key — no password needed.
+        Sign in with Face ID, Touch ID, or a security key, no password needed.
       </p>
       {demo ? (
         <p className="text-sm text-muted">Connect a real backend to manage passkeys.</p>
@@ -119,7 +119,7 @@ function LinkedAccountsCard({ demo }: { demo: boolean }) {
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold text-ink">Linked accounts</h2>
-        {demo && <Pill tone="muted">disabled in demo</Pill>}
+        {demo && <Pill tone="muted">read only</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
         Connect a provider to sign in without a password.
@@ -172,7 +172,7 @@ function TwoFactorCard({ demo }: { demo: boolean }) {
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold text-ink">Two-factor authentication</h2>
         {demo ? (
-          <Pill tone="muted">disabled in demo</Pill>
+          <Pill tone="muted">read only</Pill>
         ) : (
           <Pill tone={enabled ? 'primary' : 'muted'}>{enabled ? 'On' : 'Off'}</Pill>
         )}
@@ -223,7 +223,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
       await navigator.clipboard.writeText(value)
       toast.success('API key copied to clipboard.')
     } catch {
-      toast.error('Could not copy — select and copy it manually.')
+      toast.error('Could not copy, select and copy it manually.')
     }
   }
 
@@ -234,7 +234,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold text-ink">API keys</h2>
-        {demo && <Pill tone="muted">disabled in demo</Pill>}
+        {demo && <Pill tone="muted">read only</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
         Machine keys for scripts and integrations. Send as{' '}
@@ -249,7 +249,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
           className="mb-4 rounded-xl border border-primary/40 bg-primary-soft/50 p-4"
         >
           <p className="text-sm font-medium text-ink">
-            Copy your new key now — it won't be shown again.
+            Copy your new key now, it won't be shown again.
           </p>
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink tnum">
@@ -263,7 +263,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
             onClick={() => setFresh(null)}
             className="mt-3 text-xs font-medium text-muted hover:text-ink"
           >
-            I've saved it — dismiss
+            I've saved it, dismiss
           </button>
         </motion.div>
       )}
@@ -345,7 +345,7 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
     <Card className="p-5">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-semibold text-ink">Change password</h2>
-        {demo && <Pill tone="muted">disabled in demo</Pill>}
+        {demo && <Pill tone="muted">read only</Pill>}
       </div>
       <form onSubmit={onSubmit} className="flex max-w-sm flex-col gap-4">
         <Field

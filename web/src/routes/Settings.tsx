@@ -1,4 +1,4 @@
-// Settings — editable daily targets (PUT /targets), theme, demo, token.
+// Settings, editable daily targets (PUT /targets), theme, demo, token.
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
@@ -9,7 +9,7 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill, Spinner } from '@/components/ui'
 import { ExportModal } from '@/components/ExportModal'
-import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon, SettingsIcon } from '@/components/icons'
+import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon, SettingsIcon, LinkIcon } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
@@ -30,9 +30,18 @@ export function Settings() {
     navigate('/login', { replace: true })
   }
 
-  // null = not yet edited; derive values from server data.
+  // null = not yet edited; derive values from server data. Targets can carry
+  // long decimals from the TDEE calc, so round to whole units for display and
+  // for whatever gets saved back.
   const [draft, setDraft] = useState<Macros | null>(null)
-  const serverTargets = today.data?.Targets ?? ZERO
+  const raw = today.data?.Targets ?? ZERO
+  const serverTargets: Macros = {
+    Calories: Math.round(raw.Calories),
+    Protein: Math.round(raw.Protein),
+    Carbs: Math.round(raw.Carbs),
+    Fat: Math.round(raw.Fat),
+    Fiber: Math.round(raw.Fiber),
+  }
   const values = draft ?? serverTargets
 
   function set(k: keyof Macros, v: number) {
@@ -46,7 +55,7 @@ export function Settings() {
       <Card className="mb-5 p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold text-ink">Daily targets</h2>
-          {demo && <Pill tone="muted">disabled in demo</Pill>}
+          {demo && <Pill tone="muted">read only</Pill>}
         </div>
 
         {today.isLoading ? (
@@ -99,9 +108,10 @@ export function Settings() {
         )}
       </Card>
 
-      {/* Manage — links to the new feature surfaces. */}
+      {/* Manage, links to the new feature surfaces. */}
       <Card className="mb-5 p-2">
         <RowLink to="/settings/security" Icon={SettingsIcon} label="Security" hint="API keys & password" />
+        <RowLink to="/settings/link-bot" Icon={LinkIcon} label="Link Bot" hint="Connect Telegram, Discord, or Matrix" />
         <RowLink to="/goals" Icon={GoalIcon} label="Body profile & goals" hint="TDEE, targets, onboarding" />
         <RowLink to="/settings/aliases" Icon={FoodsIcon} label="Food aliases" hint="Manage learned names" />
         <button

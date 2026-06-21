@@ -1,4 +1,4 @@
-// Linked accounts — connect/disconnect OIDC providers for the current user.
+// Linked accounts, connect/disconnect OIDC providers for the current user.
 // Lists configured providers; each row shows the linked identity (with Unlink)
 // or a Link button that begins the OIDC flow in link mode.
 

@@ -1,4 +1,4 @@
-// /verify-email?token=… — landed on from the verification email. POSTs the
+// /verify-email?token=…, landed on from the verification email. POSTs the
 // token, then refreshes the session so the verify banner clears, and routes on.
 
 import { useEffect, useRef, useState } from 'react'

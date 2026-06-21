@@ -1,6 +1,6 @@
 // Calm 4-step onboarding overlay. Opens automatically for a not-yet-onboarded
 // user (never in demo), and on demand via a window 'dd:onboarding' CustomEvent
-// for "edit profile" — in which case it pre-fills and "Skip" becomes "Cancel".
+// for "edit profile", in which case it pre-fills and "Skip" becomes "Cancel".
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -20,7 +20,7 @@ import { easeOut } from '@/lib/motion'
 
 interface Draft {
   height_cm: number
-  weight_kg: number // local only — feeds TDEE, not persisted to the profile
+  weight_kg: number // local only, feeds TDEE, not persisted to the profile
   birth_date: string
   gender: 'male' | 'female'
   activity_level: string

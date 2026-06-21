@@ -92,7 +92,7 @@ export function PhotoGrid({
               >
                 <AuthedImage
                   id={p.id}
-                  alt={`${p.view} — ${p.date}`}
+                  alt={`${p.view}, ${p.date}`}
                   className="size-full object-cover transition group-hover:brightness-105"
                 />
                 <span className="absolute bottom-1 left-1 rounded-full bg-ink/60 px-2 py-0.5 text-[10px] font-medium capitalize text-surface">

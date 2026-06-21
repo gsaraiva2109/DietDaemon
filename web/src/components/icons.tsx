@@ -200,6 +200,25 @@ export const CopyIcon = (p: IconProps) => (
   </svg>
 )
 
+export const DropletIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3.5c3 3.5 5.5 6.4 5.5 9.4a5.5 5.5 0 0 1-11 0c0-3 2.5-5.9 5.5-9.4z" />
+  </svg>
+)
+
+export const DumbbellIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 9v6M6 7v10M18 7v10M21 9v6M6 12h12" />
+  </svg>
+)
+
+export const LinkIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1.5 1.5" />
+    <path d="M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1.5-1.5" />
+  </svg>
+)
+
 // Generic fallback for OIDC providers without a brand mark (stroke style, to
 // match the line icons above): a small key.
 export const KeyIcon = (p: IconProps) => (

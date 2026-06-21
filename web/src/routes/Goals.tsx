@@ -1,4 +1,4 @@
-// Goals & Planning — current targets, the TDEE breakdown for the user's
+// Goals & Planning, current targets, the TDEE breakdown for the user's
 // profile, and a suggested adjustment. Profile edits + recalculation flow back
 // through the onboarding wizard and the targets endpoint.
 

@@ -1,4 +1,4 @@
-// Horizontal target bar — the primary affordance for bar-based layouts.
+// Horizontal target bar, the primary affordance for bar-based layouts.
 // Always pairs color with a text label + numbers (a11y: never color alone).
 
 import { motion } from 'framer-motion'

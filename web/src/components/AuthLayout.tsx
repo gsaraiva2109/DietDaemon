@@ -1,7 +1,7 @@
 // Calm centered shell for every auth route (Login/Register/Forgot/Reset/…).
 // Extracted from the old TokenGate: LeafIcon badge, max-w-sm column, fadeUp
 // reveal, heading + muted subtitle, ThemeToggle in the corner. Auth screens are
-// chrome — quiet, single-purpose, no marketing energy.
+// chrome, quiet, single-purpose, no marketing energy.
 
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'

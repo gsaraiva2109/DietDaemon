@@ -1,4 +1,4 @@
-// Recovery codes — shown ONCE after TOTP enrollment or regeneration. Each code
+// Recovery codes, shown ONCE after TOTP enrollment or regeneration. Each code
 // is a one-time fallback if the authenticator is lost. Offer copy + download,
 // then make the user acknowledge before dismissing.
 
@@ -20,7 +20,7 @@ export function RecoveryCodes({
       await navigator.clipboard.writeText(codes.join('\n'))
       toast.success('Recovery codes copied.')
     } catch {
-      toast.error('Could not copy — select and copy them manually.')
+      toast.error('Could not copy, select and copy them manually.')
     }
   }
 
@@ -44,7 +44,7 @@ export function RecoveryCodes({
       className="rounded-xl border border-primary/40 bg-primary-soft/50 p-4"
     >
       <p className="text-sm font-medium text-ink">
-        Save these recovery codes somewhere safe — they won't be shown again.
+        Save these recovery codes somewhere safe, they won't be shown again.
       </p>
       <p className="mt-1 text-xs text-muted">
         Each code works once if you lose access to your authenticator.

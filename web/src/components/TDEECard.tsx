@@ -55,8 +55,8 @@ export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }
       <Eyebrow>Energy budget</Eyebrow>
 
       <div className="mt-4 space-y-3.5">
-        <Bar label="BMR — at rest" value={result.bmr} max={maxBar} tone="muted" />
-        <Bar label="TDEE — maintenance" value={result.tdee} max={maxBar} tone="primary" />
+        <Bar label="BMR, at rest" value={result.bmr} max={maxBar} tone="muted" />
+        <Bar label="TDEE, maintenance" value={result.tdee} max={maxBar} tone="primary" />
       </div>
 
       <div className="mt-5">

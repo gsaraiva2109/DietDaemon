@@ -153,7 +153,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
             </button>
           </div>
 
-          {/* Captured node — explicit inline colors only (no Tailwind tokens). */}
+          {/* Captured node, explicit inline colors only (no Tailwind tokens). */}
           <div className="grid place-items-center">
             <div
               ref={captureRef}
