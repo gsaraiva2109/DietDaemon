@@ -88,7 +88,7 @@ func (p *Parser) Extract(ctx context.Context, text, locale string) ([]types.Pars
 		}
 		// quantity==0 is the model's signal for a vague portion ("some rice").
 		// Keep it zero: NormalizeUnit yields grams=0, so the resolver flags the
-		// item as portion-unknown and the Phase-4 clarification loop owns it.
+		// item as portion-unknown and the clarification loop owns it.
 		// Never invent a default portion here — that would silently guess.
 		qty := it.Quantity
 		canonicalUnit, grams := normalize.NormalizeUnit(qty, it.Unit, food, locale)

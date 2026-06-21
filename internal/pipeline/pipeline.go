@@ -1,5 +1,6 @@
 // Package pipeline wires the per-message flow of DietDaemon: an inbound message
-// is parsed (Stage A), resolved to macros (Stage B), persisted as a Meal, folded
+// is first checked against the command registry, then — if no command matched —
+// parsed (Stage A), resolved to macros (Stage B), persisted as a Meal, folded
 // into the day's rollup, and acknowledged with an in-channel reply. It depends
 // only on narrow interfaces, so the concrete parser, resolver, store, and
 // messaging adapter all plug in without the pipeline importing them.
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/commands"
+	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
 )
 
 // Parser is Stage A. Satisfied by internal/parser/deterministic.Parser.
@@ -74,6 +77,8 @@ type Engine struct {
 	loc         *time.Location
 	threshold   float64 // replies flag low confidence when confidence < threshold
 	channelName string  // e.g. "telegram", used for user_channels mapping
+	registry    *commands.Registry
+	i18n        *i18n.Bundle
 
 	now   func() time.Time
 	idgen func() string
@@ -84,7 +89,8 @@ type Engine struct {
 // to double-check amounts. pending holds the clarification loop's state.
 // channelName is the messaging adapter identifier used for user_channels mapping.
 // transcriber is optional (nil = audio messages receive a "text only" reply).
-func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string, transcriber Transcriber) *Engine {
+// registry dispatches bot commands; i18n resolves locale-aware strings.
+func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string, transcriber Transcriber, registry *commands.Registry, i18nbundle *i18n.Bundle) *Engine {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -98,6 +104,8 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 		loc:         loc,
 		threshold:   threshold,
 		channelName: channelName,
+		registry:    registry,
+		i18n:        i18nbundle,
 		now:         time.Now,
 		idgen:       randomID,
 	}
@@ -161,14 +169,29 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	}
 
 	// Commands take precedence over meal logging and the clarification loop.
-	if strings.HasPrefix(text, "/target") {
-		return e.handleTarget(ctx, msg, text)
-	}
-	if strings.HasPrefix(strings.ToLower(text), "/cancel") {
-		return e.cancelPending(ctx, msg)
-	}
-	if strings.HasPrefix(text, "/timezone") {
-		return e.handleTimezone(ctx, msg, text)
+	if e.registry != nil {
+		// Resolve the user's locale: preference > channel hint > "en".
+		locale := e.resolveLocale(ctx, msg)
+
+		reply, matched, err := e.registry.Dispatch(ctx, msg, text)
+		if err != nil {
+			return fmt.Errorf("pipeline: command dispatch: %w", err)
+		}
+		if matched {
+			// Merge locale and channel metadata into the reply before sending.
+			if reply.Locale == "" {
+				reply.Locale = locale
+			}
+			if reply.ChannelMeta == nil {
+				reply.ChannelMeta = msg.ChannelMeta
+			}
+			reply.UserID = msg.UserID
+			// Skip reply for web-originated messages (no channel metadata).
+			if len(reply.ChannelMeta) == 0 {
+				return nil
+			}
+			return e.replier.Send(ctx, reply)
+		}
 	}
 
 	// A live pending meal turns the next message into a clarification answer.
@@ -303,6 +326,18 @@ func (e *Engine) cancelPending(ctx context.Context, msg types.InboundMessage) er
 		return fmt.Errorf("pipeline: delete pending: %w", err)
 	}
 	return e.reply(ctx, msg, "Discarded the pending meal.")
+}
+
+// resolveLocale determines the user's preferred locale: stored preference >
+// channel hint (msg.Locale) > "en".
+func (e *Engine) resolveLocale(ctx context.Context, msg types.InboundMessage) string {
+	if u, err := e.store.GetUser(ctx, msg.UserID); err == nil && u.Locale != "" {
+		return u.Locale
+	}
+	if msg.Locale != "" {
+		return msg.Locale
+	}
+	return "en"
 }
 
 // userLoc returns the user's timezone from the database, falling back to the
@@ -452,83 +487,6 @@ func parseGrams(text string, qty float64) (float64, bool) {
 		g *= qty
 	}
 	return g, true
-}
-
-// handleTarget sets the user's daily macro goals from a command such as
-// "/target kcal=3000 protein=180 carbs=350 fat=90".
-func (e *Engine) handleTarget(ctx context.Context, msg types.InboundMessage, text string) error {
-	macros, ok := parseTargetCommand(text)
-	if !ok {
-		return e.reply(ctx, msg, "Usage: /target kcal=3000 protein=180 carbs=350 fat=90")
-	}
-	if err := e.store.SetTargets(ctx, types.DailyTargets{UserID: msg.UserID, Targets: macros}); err != nil {
-		return fmt.Errorf("pipeline: set targets: %w", err)
-	}
-	return e.reply(ctx, msg, fmt.Sprintf("Targets set: %.0f kcal | P %.0fg · C %.0fg · F %.0fg",
-		macros.Calories, macros.Protein, macros.Carbs, macros.Fat))
-}
-
-// parseTargetCommand reads "key=value" pairs after "/target" into a Macros. ok
-// is false if no recognized key was provided.
-func parseTargetCommand(text string) (types.Macros, bool) {
-	var m types.Macros
-	found := false
-	for _, f := range strings.Fields(text)[1:] { // skip "/target"
-		k, v, hasEq := strings.Cut(f, "=")
-		if !hasEq {
-			continue
-		}
-		val, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			continue
-		}
-		switch strings.ToLower(k) {
-		case "kcal", "calories", "cal":
-			m.Calories, found = val, true
-		case "protein", "p":
-			m.Protein, found = val, true
-		case "carbs", "c":
-			m.Carbs, found = val, true
-		case "fat", "f":
-			m.Fat, found = val, true
-		case "fiber":
-			m.Fiber, found = val, true
-		}
-	}
-	return m, found
-}
-
-// handleTimezone sets the user's timezone from a command such as
-// "/timezone America/Sao_Paulo". Validates the IANA name before saving.
-func (e *Engine) handleTimezone(ctx context.Context, msg types.InboundMessage, text string) error {
-	tz := parseTimezoneCommand(text)
-	if tz == "" {
-		return e.reply(ctx, msg, "Usage: /timezone <IANA name> (e.g. /timezone America/Sao_Paulo)")
-	}
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return e.reply(ctx, msg, fmt.Sprintf("%q is not a valid IANA timezone.", tz))
-	}
-	// Update the user record with the new timezone.
-	u, err := e.store.GetUser(ctx, msg.UserID)
-	if err != nil {
-		u = types.User{ID: msg.UserID, CreatedAt: e.now().UTC()}
-	}
-	u.Timezone = loc.String()
-	if err := e.store.UpsertUser(ctx, u); err != nil {
-		return fmt.Errorf("pipeline: upsert user timezone: %w", err)
-	}
-	return e.reply(ctx, msg, fmt.Sprintf("Timezone set to %s.", loc.String()))
-}
-
-// parseTimezoneCommand extracts the first word after "/timezone". Returns ""
-// when nothing follows the command.
-func parseTimezoneCommand(text string) string {
-	parts := strings.Fields(text)
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(parts[1])
 }
 
 func (e *Engine) reply(ctx context.Context, msg types.InboundMessage, text string) error {

@@ -79,7 +79,7 @@ type Config struct {
 	MultiUser    bool
 	APIAuthToken string
 
-	// --- Auth (Phase 1) ---
+	// --- Auth ---
 	DBDriver           string
 	DatabaseURL        string
 	RegistrationMode   string
@@ -89,15 +89,15 @@ type Config struct {
 	CookieSecure       bool
 	CookieDomain       string
 
-	// --- Auth (Phase 2 — TOTP 2FA) ---
+	// --- Auth — TOTP two-factor authentication ---
 	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
 	TOTPIssuer string // otpauth issuer label
 
-	// --- Auth (Phase 3 — OIDC) ---
+	// --- Auth — OIDC ---
 	OIDCProviders []OIDCProviderConfig
 	PublicBaseURL string
 
-	// --- Auth (Phase 4 — Mailer / Email) ---
+	// --- Auth — Mailer / Email ---
 	EmailProvider string // resend | ses | smtp | none
 	EmailFrom     string // verified sender address
 	ResendAPIKey  string
@@ -108,7 +108,7 @@ type Config struct {
 	SMTPPassword  string
 	SMTPTLS       bool
 
-	// --- Auth (Phase 6 — WebAuthn / Passkeys) ---
+	// --- Auth — WebAuthn / Passkeys ---
 	WebAuthnRPID          string
 	WebAuthnRPOrigins     []string
 	WebAuthnRPDisplayName string
@@ -212,7 +212,7 @@ func Load() (*Config, error) {
 		c.TOTPEncKey = key
 	}
 
-	// OIDC providers (Phase 3).
+	// OIDC providers.
 	c.PublicBaseURL = strings.TrimRight(getStr("PUBLIC_BASE_URL", ""), "/")
 	if raw := getStr("OIDC_PROVIDERS", ""); raw != "" {
 		ids := splitCSV(raw)
@@ -236,7 +236,7 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Auth Phase 4 — Mailer / Email.
+	// Auth mailer / email settings.
 	c.EmailProvider = strings.ToLower(getStr("EMAIL_PROVIDER", "none"))
 	c.EmailFrom = getStr("EMAIL_FROM", "")
 	c.ResendAPIKey = getStr("RESEND_API_KEY", "")
@@ -247,7 +247,7 @@ func Load() (*Config, error) {
 	c.SMTPPassword = getStr("SMTP_PASSWORD", "")
 	c.SMTPTLS = getBool("SMTP_TLS", true)
 
-	// Auth Phase 6 — WebAuthn / Passkeys.
+	// WebAuthn / Passkeys settings.
 	c.WebAuthnRPID = getStr("WEBAUTHN_RP_ID", "")
 	if raw := getStr("WEBAUTHN_RP_ORIGINS", ""); raw != "" {
 		c.WebAuthnRPOrigins = splitCSV(raw)
@@ -360,7 +360,7 @@ func (c *Config) validate(tierErr error) error {
 		c.Location = loc
 	}
 
-	// Auth Phase 1.
+	// Core auth settings.
 	if c.DBDriver != "sqlite" {
 		add("DB_DRIVER=%q not supported yet; only \"sqlite\"", c.DBDriver)
 	}
@@ -378,7 +378,7 @@ func (c *Config) validate(tierErr error) error {
 		add("SESSION_REMEMBER_TTL must be positive")
 	}
 
-	// Auth Phase 3 — OIDC.
+	// OIDC settings.
 	if len(c.OIDCProviders) > 0 && c.PublicBaseURL == "" {
 		add("PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set")
 	}
@@ -398,7 +398,7 @@ func (c *Config) validate(tierErr error) error {
 		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
 	}
 
-	// Auth Phase 4 — Mailer / Email.
+	// Mailer / email settings.
 	validProviders := map[string]bool{"resend": true, "ses": true, "smtp": true, "none": true, "": true}
 	if !validProviders[c.EmailProvider] {
 		add("EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got %q", c.EmailProvider)

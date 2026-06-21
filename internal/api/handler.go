@@ -5,11 +5,13 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,7 +39,7 @@ type AuthStore interface {
 	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
 	RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error
 
-	// OIDC (Phase 3).
+	// OIDC.
 	GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error)
 	LinkOIDCIdentity(ctx context.Context, id, userID, provider, subject, email string) error
 	ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error)
@@ -47,20 +49,20 @@ type AuthStore interface {
 	ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error)
 	DeleteOIDCState(ctx context.Context, id string) error
 
-	// Email tokens (Phase 4).
+	// Email tokens.
 	MarkEmailVerified(ctx context.Context, userID string) error
 	UpdateUserEmail(ctx context.Context, userID, email string) error
 	CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error
 	ConsumeEmailToken(ctx context.Context, id, purpose string) (userID string, err error)
 
-	// Magic codes (Phase 5).
+	// Magic codes.
 	UpsertMagicCode(ctx context.Context, userID, codeHash, expiresAt string) error
 	GetMagicCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error)
 	IncrementMagicCodeAttempts(ctx context.Context, userID string) error
 	DeleteMagicCode(ctx context.Context, userID string) error
 	DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error
 
-	// Phase 6 — WebAuthn passkeys.
+	// WebAuthn passkeys.
 	GetOrCreateWebAuthnHandle(ctx context.Context, userID string) (string, error)
 	GetUserByWebAuthnHandle(ctx context.Context, handle string) (types.User, error)
 	CreateWebAuthnCredential(ctx context.Context, id, userID, label, credentialJSON string, signCount int, createdAt string) error
@@ -70,11 +72,11 @@ type AuthStore interface {
 	RenameWebAuthnCredential(ctx context.Context, userID, id, label string) error
 	DeleteWebAuthnCredential(ctx context.Context, userID, id string) error
 
-	// Phase 6 — WebAuthn ceremony sessions.
+	// WebAuthn ceremony sessions.
 	CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error
 	ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error)
 
-	// Phase 6 — MFA email codes.
+	// MFA email codes.
 	UpsertMFAEmailCode(ctx context.Context, challengeID, codeHash, expiresAt string) error
 	GetMFAEmailCode(ctx context.Context, challengeID string) (codeHash, expiresAt string, attempts int, err error)
 	IncrementMFAEmailCodeAttempts(ctx context.Context, challengeID string) error
@@ -147,6 +149,11 @@ type MealStore interface {
 	// Profile & goals.
 	GetProfile(ctx context.Context, userID string) (types.UserProfile, error)
 	UpsertProfile(ctx context.Context, p types.UserProfile) error
+
+	// Linking codes for bot account linking.
+	CreateLinkingCode(ctx context.Context, userID, platform, code string) error
+	LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error)
+	ConsumeLinkingCode(ctx context.Context, code string) error
 }
 
 // MealLogger submits raw text through the parsing pipeline, and can also directly
@@ -173,15 +180,15 @@ type Handler struct {
 	totpEncKey    []byte
 	totpIssuer    string
 
-	// OIDC (Phase 3).
+	// OIDC.
 	providers map[string]*oidc.Provider
 
-	// Mailer (Phase 4).
+	// Mailer.
 	mailer        mailer.Mailer
 	emailProvider string
 	publicBaseURL string
 
-	// WebAuthn (Phase 6).
+	// WebAuthn.
 	webauthn *gowa.WebAuthn
 
 	// Auth config.
@@ -244,10 +251,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
 	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
 
-	// Phase 1 — Meals Latest.
+	// Meals — latest.
 	mux.HandleFunc("GET /api/v1/meals/latest", h.wrap(h.handleMealsLatest))
 
-	// Phase 2 — Food Discovery.
+	// Food discovery.
 	mux.HandleFunc("GET /api/v1/foods", h.wrap(h.handleListFoods))
 	mux.HandleFunc("GET /api/v1/foods/search", h.wrap(h.handleSearchFoods))
 	mux.HandleFunc("GET /api/v1/foods/frequent", h.wrap(h.handleFrequentFoods))
@@ -255,7 +262,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
 
-	// Phase 3 — Meal Templates.
+	// Meal templates.
 	mux.HandleFunc("GET /api/v1/templates", h.wrap(h.handleListTemplates))
 	mux.HandleFunc("POST /api/v1/templates", h.wrap(h.handleCreateTemplate))
 	mux.HandleFunc("GET /api/v1/templates/{id}", h.wrap(h.handleGetTemplate))
@@ -263,37 +270,37 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/templates/{id}/log", h.wrap(h.handleLogTemplate))
 	mux.HandleFunc("POST /api/v1/meals/{mealID}/duplicate", h.wrap(h.handleDuplicateMeal))
 
-	// Phase 4 — Body Tracking: Weight.
+	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
 	mux.HandleFunc("POST /api/v1/body/weight", h.wrap(h.handleLogWeight))
 	mux.HandleFunc("GET /api/v1/body/weight/trend", h.wrap(h.handleWeightTrend))
 	mux.HandleFunc("DELETE /api/v1/body/weight/{id}", h.wrap(h.handleDeleteWeight))
 
-	// Phase 4 — Body Tracking: Measurements.
+	// Body tracking — measurements.
 	mux.HandleFunc("GET /api/v1/body/measurements", h.wrap(h.handleListMeasurements))
 	mux.HandleFunc("POST /api/v1/body/measurements", h.wrap(h.handleLogMeasurements))
 	mux.HandleFunc("DELETE /api/v1/body/measurements/{id}", h.wrap(h.handleDeleteMeasurement))
 
-	// Phase 4 — Body Tracking: Photos.
+	// Body tracking — photos.
 	mux.HandleFunc("GET /api/v1/body/photos", h.wrap(h.handleListPhotos))
 	mux.HandleFunc("GET /api/v1/body/photos/{id}/data", h.wrap(h.handlePhotoData))
 	mux.HandleFunc("POST /api/v1/body/photos", h.wrap(h.handleUploadPhoto))
 	mux.HandleFunc("DELETE /api/v1/body/photos/{id}", h.wrap(h.handleDeletePhoto))
 
-	// Phase 4 — Body Tracking: Summary.
+	// Body tracking — summary.
 	mux.HandleFunc("GET /api/v1/body/summary", h.wrap(h.handleBodySummary))
 
-	// Phase 5 — Goals & Profile.
+	// Goals & profile.
 	mux.HandleFunc("GET /api/v1/profile", h.wrap(h.handleGetProfile))
 	mux.HandleFunc("PUT /api/v1/profile", h.wrap(h.handleUpsertProfile))
 	mux.HandleFunc("GET /api/v1/tdee", h.wrap(h.handleCalculateTDEE))
 	mux.HandleFunc("GET /api/v1/goals/suggestions", h.wrap(h.handleGoalSuggestions))
 
-	// Phase 6 — Export.
+	// Data export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
 
-	// Phase 1 — Auth endpoints.
+	// Auth endpoints.
 	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublic(h.handleRegister))
 	mux.HandleFunc("POST /api/v1/auth/login", h.wrapPublic(h.handleLogin))
 	mux.HandleFunc("POST /api/v1/auth/logout", h.wrap(h.handleLogout))
@@ -304,31 +311,31 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/api-keys", h.wrap(h.handleCreateAPIKey))
 	mux.HandleFunc("DELETE /api/v1/auth/api-keys/{id}", h.wrap(h.handleRevokeAPIKey))
 
-	// Phase 2 — TOTP 2FA.
+	// TOTP two-factor authentication.
 	mux.HandleFunc("POST /api/v1/auth/totp/enroll", h.wrap(h.handleTOTPEnroll))
 	mux.HandleFunc("POST /api/v1/auth/totp/verify", h.wrap(h.handleTOTPVerify))
 	mux.HandleFunc("POST /api/v1/auth/totp/challenge", h.wrapPublic(h.handleTOTPChallenge))
 	mux.HandleFunc("DELETE /api/v1/auth/totp", h.wrap(h.handleTOTPDisable))
 	mux.HandleFunc("POST /api/v1/auth/totp/recovery-codes/regenerate", h.wrap(h.handleRegenerateRecovery))
 
-	// Phase 3 — OIDC client login + account linking.
+	// OIDC client login + account linking.
 	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/start", h.wrapPublic(h.handleOIDCStart))
 	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", h.wrapPublic(h.handleOIDCCallback))
 	mux.HandleFunc("GET /api/v1/auth/identities", h.wrap(h.handleListIdentities))
 	mux.HandleFunc("DELETE /api/v1/auth/identities/{id}", h.wrap(h.handleUnlinkIdentity))
 
-	// Phase 4 — Email verification + password reset.
+	// Email verification + password reset.
 	mux.HandleFunc("POST /api/v1/auth/email/verify", h.wrapPublic(h.handleEmailVerify))
 	mux.HandleFunc("POST /api/v1/auth/email/verify/resend", h.wrap(h.handleResendVerify))
 	mux.HandleFunc("POST /api/v1/auth/email/change", h.wrap(h.handleEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/password/forgot", h.wrapPublic(h.handleForgotPassword))
 	mux.HandleFunc("POST /api/v1/auth/password/reset", h.wrapPublic(h.handleResetPassword))
 
-	// Phase 5 — Passwordless email sign-in (magic code + link).
+	// Passwordless email sign-in.
 	mux.HandleFunc("POST /api/v1/auth/magic/request", h.wrapPublic(h.handleMagicRequest))
 	mux.HandleFunc("POST /api/v1/auth/magic/verify", h.wrapPublic(h.handleMagicVerify))
 
-	// Phase 6 — Passkeys (management: session+CSRF; login ceremony: public).
+	// Passkeys (WebAuthn) — management and login.
 	mux.HandleFunc("GET /api/v1/auth/passkeys", h.wrap(h.handleListPasskeys))
 	mux.HandleFunc("POST /api/v1/auth/passkeys/register/begin", h.wrap(h.handlePasskeyRegisterBegin))
 	mux.HandleFunc("POST /api/v1/auth/passkeys/register/finish", h.wrap(h.handlePasskeyRegisterFinish))
@@ -336,11 +343,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/auth/passkeys/{id}", h.wrap(h.handleDeletePasskey))
 	mux.HandleFunc("POST /api/v1/auth/passkeys/login/begin", h.wrapPublic(h.handlePasskeyLoginBegin))
 	mux.HandleFunc("POST /api/v1/auth/passkeys/login/finish", h.wrapPublic(h.handlePasskeyLoginFinish))
-	// Phase 6 — Passkey-as-2FA + email-OTP fallback (public; challenge-scoped).
+	// Passkey-as-2FA + email-OTP fallback.
 	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/begin", h.wrapPublic(h.handleMFAPasskeyBegin))
 	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/finish", h.wrapPublic(h.handleMFAPasskeyFinish))
 	mux.HandleFunc("POST /api/v1/auth/mfa/email/send", h.wrapPublic(h.handleMFAEmailSend))
 	mux.HandleFunc("POST /api/v1/auth/mfa/email/verify", h.wrapPublic(h.handleMFAEmailVerify))
+
+	// Bot account linking.
+	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))
+	mux.HandleFunc("POST /api/v1/bot/link", h.wrap(h.handleCompleteLink))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
@@ -622,7 +633,7 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Meals Latest
+// Meals — latest
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleMealsLatest(w http.ResponseWriter, r *http.Request, userID string) {
@@ -635,7 +646,7 @@ func (h *Handler) handleMealsLatest(w http.ResponseWriter, r *http.Request, user
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Food Discovery
+// Food discovery
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleListFoods(w http.ResponseWriter, r *http.Request, userID string) {
@@ -741,7 +752,7 @@ func (h *Handler) handleDeleteAlias(w http.ResponseWriter, r *http.Request, user
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Meal Templates
+// Meal templates
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleListTemplates(w http.ResponseWriter, r *http.Request, userID string) {
@@ -887,7 +898,7 @@ func (h *Handler) handleDuplicateMeal(w http.ResponseWriter, r *http.Request, us
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Body Tracking
+// Body tracking
 // ---------------------------------------------------------------------------
 
 // --- Weight ---
@@ -1157,7 +1168,7 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Goals & Profile
+// Goals & profile
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleGetProfile(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1326,7 +1337,7 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6 — Export
+// Data export
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, userID string) {
@@ -1413,6 +1424,94 @@ func (h *Handler) writeRollupsCSV(w http.ResponseWriter, rollups []types.DailyRo
 			r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
 		)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Bot account linking handlers
+// ---------------------------------------------------------------------------
+
+// handleCreateLinkCode generates a one-time linking code for bot account linking.
+// POST /api/v1/bot/link-code
+func (h *Handler) handleCreateLinkCode(w http.ResponseWriter, r *http.Request, userID string) {
+	var req struct {
+		Platform string `json:"platform"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Platform == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "platform is required"})
+		return
+	}
+
+	code := generateLinkCode()
+	if err := h.store.CreateLinkingCode(r.Context(), userID, req.Platform, code); err != nil {
+		slog.Error("create linking code", "err", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to create linking code"})
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"code": code})
+}
+
+// handleCompleteLink is the dashboard-side endpoint to complete a bot linking
+// flow. The user enters the code on the dashboard; this endpoint validates the
+// code and marks it as consumed.
+// POST /api/v1/bot/link
+func (h *Handler) handleCompleteLink(w http.ResponseWriter, r *http.Request, userID string) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Code == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "code is required"})
+		return
+	}
+
+	lc, err := h.store.LookupLinkingCode(r.Context(), req.Code)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
+		return
+	}
+
+	// Verify the code belongs to the authenticated user.
+	if lc.UserID != userID {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "code does not belong to this account"})
+		return
+	}
+
+	if err := h.store.ConsumeLinkingCode(r.Context(), req.Code); err != nil {
+		slog.Error("consume linking code", "err", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to complete linking"})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "linked"})
+}
+
+// generateLinkCode returns a 6-character alphanumeric code suitable for
+// one-time linking. It excludes ambiguous characters (0/O, 1/I/l).
+func generateLinkCode() string {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, 6)
+	for i := range b {
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		b[i] = alphabet[n.Int64()]
+	}
+	return string(b)
 }
 
 // ---------------------------------------------------------------------------

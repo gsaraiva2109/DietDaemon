@@ -100,7 +100,7 @@ func (s *emailTestAuthStore) DeleteUserSessions(_ context.Context, userID string
 	return nil
 }
 
-// Phase 5 — Magic codes.
+// Magic codes.
 func (s *emailTestAuthStore) UpsertMagicCode(_ context.Context, userID, codeHash, expiresAt string) error {
 	return nil
 }
@@ -246,7 +246,7 @@ func TestPasswordResetRevokesSessions(t *testing.T) {
 	}
 }
 
-// Phase 6 stubs — not exercised by existing tests.
+// Stubs — not exercised by existing tests.
 
 func (s *emailTestAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
 	return "", nil

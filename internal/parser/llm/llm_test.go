@@ -220,7 +220,7 @@ func TestExtractEmptyFoodSkipped(t *testing.T) {
 // cannot segment ("had a couple eggs and some rice this morning"). The model
 // untangles it into two items, one with a known count (2 eggs) and one with a
 // vague portion (rice). The vague portion MUST stay quantity 0 / grams 0 so the
-// resolver flags it portion-unknown and Phase-4 clarification asks the user —
+// resolver flags it portion-unknown and clarification asks the user —
 // the parser never guesses a portion.
 func TestTier2MessyProse(t *testing.T) {
 	model := &stubModel{

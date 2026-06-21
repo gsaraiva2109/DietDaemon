@@ -185,12 +185,12 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  // --- Auth (Phase 1): sessions, registration, API keys ------------------
+  // --- Auth: sessions, registration, API keys ------------------
   auth: {
     // Boot probe + route guard. 401 → anonymous (UnauthorizedError). Suppresses
     // the global 401 handler: an anonymous load is normal, not an expiry.
     session: () => request<SessionResponse>('/auth/session', undefined, { suppressUnauthorized: true }),
-    // May resolve to a session OR an MFA challenge (Phase 2).
+    // May resolve to a session OR an MFA challenge.
     login: (email: string, password: string, remember: boolean) =>
       request<LoginResponse>('/auth/login', {
         method: 'POST',
@@ -202,9 +202,9 @@ export const api = {
         body: JSON.stringify({ email, password, display_name: displayName }),
       }),
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
-    // Drives login/register gating; providers populate in Phase 3.
+    // Drives login/register gating.
     providers: () => request<ProvidersResponse>('/auth/providers'),
-    // --- OIDC (Phase 3) -------------------------------------------------
+    // --- OIDC -------------------------------------------------
     // Full-page redirect target that begins a provider sign-in (or link).
     oidcStartUrl: (id: string, link = false) =>
       `${BASE}/auth/oidc/${encodeURIComponent(id)}/start${link ? '?link=1' : ''}`,
@@ -213,7 +213,7 @@ export const api = {
       unlink: (id: string) =>
         request<void>(`/auth/identities/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
-    // --- Email verification & change (Phase 4) --------------------------
+    // --- Email verification & change --------------------------
     email: {
       verify: (verifyToken: string) =>
         request<void>('/auth/email/verify', {
@@ -227,7 +227,7 @@ export const api = {
           body: JSON.stringify({ email }),
         }),
     },
-    // --- Passwordless magic code / link (Phase 5) -----------------------
+    // --- Passwordless magic code / link -----------------------
     magic: {
       // Request a sign-in code + link by email. Always responds generically.
       request: (email: string) =>
@@ -249,7 +249,7 @@ export const api = {
           body: JSON.stringify({ token: magicToken }),
         }),
     },
-    // --- Passkeys / WebAuthn (Phase 6) ----------------------------------
+    // --- Passkeys / WebAuthn ----------------------------------
     passkeys: {
       list: () => request<Passkey[]>('/auth/passkeys'),
       registerBegin: () =>
@@ -279,7 +279,7 @@ export const api = {
       remove: (id: string) =>
         request<void>(`/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
-    // --- Password reset (Phase 4). forgot() always responds generically. ---
+    // --- Password reset. forgot() always responds generically. ---
     password: {
       forgot: (email: string) =>
         request<void>('/auth/password/forgot', {
@@ -308,8 +308,8 @@ export const api = {
       revoke: (id: string) =>
         request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
-    // --- TOTP / MFA (Phase 2) -------------------------------------------
-    // --- MFA step-up: passkey + email-OTP fallback (Phase 6) ------------
+    // --- TOTP / MFA -------------------------------------------
+    // --- MFA step-up: passkey + email-OTP fallback ------------
     mfa: {
       passkeyBegin: (challengeToken: string) =>
         request<PublicKeyCredentialRequestOptionsJSON>('/auth/mfa/passkey/begin', {
@@ -359,7 +359,7 @@ export const api = {
     },
   },
 
-  // --- Phase 2: Food Discovery -------------------------------------------
+  // --- Food Discovery -------------------------------------------
   foods: {
     list: (source = '', limit = 30, offset = 0) =>
       request<FoodDetail[]>(
@@ -380,7 +380,7 @@ export const api = {
       ),
   },
 
-  // --- Phase 3: Meal Templates -------------------------------------------
+  // --- Meal Templates -------------------------------------------
   templates: {
     list: () => request<MealTemplate[]>('/templates'),
     get: (id: string) => request<MealTemplate>(`/templates/${encodeURIComponent(id)}`),
@@ -405,7 +405,7 @@ export const api = {
       { method: 'POST' },
     ),
 
-  // --- Phase 4: Body Tracking --------------------------------------------
+  // --- Body Tracking --------------------------------------------
   body: {
     weight: {
       list: (days = 90) => request<WeightEntry[]>(`/body/weight?days=${days}`),
@@ -448,7 +448,7 @@ export const api = {
     summary: () => request<BodyCompositionSummary>('/body/summary'),
   },
 
-  // --- Phase 5: Goals & Planning -----------------------------------------
+  // --- Goals & Planning -----------------------------------------
   profile: {
     get: () => request<UserProfile>('/profile'),
     put: (profile: UserProfile) =>
@@ -461,7 +461,7 @@ export const api = {
     ),
   goalSuggestions: () => request<GoalSuggestion>('/goals/suggestions'),
 
-  // --- Phase 6: Export ---------------------------------------------------
+  // --- Export ---------------------------------------------------
   // Returns a Blob; callers trigger a download. format is "csv" | "json".
   export: {
     meals: (format: string, start: string, end: string) =>

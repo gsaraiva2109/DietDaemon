@@ -29,7 +29,10 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/commands"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
+	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
+	"github.com/gsaraiva2109/dietdaemon/internal/i18n/locales"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
@@ -90,8 +93,6 @@ func run() error {
 		return err
 	}
 
-	// --- Phase 5 wiring ---
-
 	var (
 		parser  ports.Parser
 		matcher resolver.Matcher  = nil
@@ -118,7 +119,7 @@ func run() error {
 		slog.Info("parser tier 1 (deterministic + embedding)", "embed_model", cfg.EmbedModel)
 
 	default:
-		// Tier 0: deterministic splitter, exact-alias match (Phase 4 behaviour).
+		// Tier 0: deterministic splitter, exact-alias match.
 		parser = deterministic.New()
 		slog.Info("parser tier 0 (deterministic, no model)")
 	}
@@ -132,7 +133,51 @@ func run() error {
 		slog.Info("STT enabled", "whisper_url", cfg.WhisperURL)
 	}
 
-	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber)
+	// Set up i18n bundle.
+	i18nBundle := i18n.NewBundle()
+	if err := i18nBundle.LoadEmbedded(locales.FS); err != nil {
+		return fmt.Errorf("i18n: load embedded locales: %w", err)
+	}
+	slog.Info("i18n loaded", "locales", "en,pt-BR")
+
+	// Set up command registry with all bot commands.
+	cmdRegistry := commands.NewRegistry()
+	if err := cmdRegistry.Register(commands.NewTargetCommand(st)); err != nil {
+		return fmt.Errorf("register target command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewCancelCommand(pend)); err != nil {
+		return fmt.Errorf("register cancel command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewTimezoneCommand(st)); err != nil {
+		return fmt.Errorf("register timezone command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry)); err != nil {
+		return fmt.Errorf("register help command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewStartCommand(st)); err != nil {
+		return fmt.Errorf("register start command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewLinkCommand(st, st, cfg.MessagingAdapter)); err != nil {
+		return fmt.Errorf("register link command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewStatusCommand(st, cfg.Location)); err != nil {
+		return fmt.Errorf("register status command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewWeightCommand(st)); err != nil {
+		return fmt.Errorf("register weight command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewProfileCommand(st)); err != nil {
+		return fmt.Errorf("register profile command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewFoodCommand(st)); err != nil {
+		return fmt.Errorf("register food command: %w", err)
+	}
+
+	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
+
+	if err := cmdRegistry.Register(commands.NewTemplateCommand(st, engine)); err != nil {
+		return fmt.Errorf("register template command: %w", err)
+	}
 
 	var notifier ports.Notifier
 	if cfg.EnableNotifications {
@@ -166,7 +211,6 @@ func run() error {
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
 		}
-		// Phase 3 — OIDC provider registry (lazy; no network at boot).
 		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
 		for i, c := range cfg.OIDCProviders {
 			oidcConfigs[i] = oidc.ProviderConfig{
@@ -178,7 +222,6 @@ func run() error {
 		}
 		oidcRegistry := oidc.BuildRegistry(oidcConfigs)
 
-		// Phase 4 — Mailer.
 		mailCfg := mailer.Config{
 			Provider:      cfg.EmailProvider,
 			From:          cfg.EmailFrom,
@@ -196,7 +239,6 @@ func run() error {
 			return fmt.Errorf("mailer: %w", err)
 		}
 
-		// Phase 6 — WebAuthn.
 		wa, waErr := auth.NewWebAuthn(cfg.WebAuthnConfig())
 		if waErr != nil {
 			return fmt.Errorf("webauthn: %w", waErr)

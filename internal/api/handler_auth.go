@@ -156,7 +156,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, email)
 
-	// Phase 4 — Email verification: auto-verify when EMAIL_PROVIDER=none,
+	// Email verification: auto-verify when EMAIL_PROVIDER=none,
 	// otherwise send verification email.
 	if h.emailProvider == "" || h.emailProvider == "none" {
 		// No mailer configured or explicitly "none" — auto-verify.
@@ -258,7 +258,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = h.authStore.RecordLoginAttempt(ctx, email, true)
 	ua := r.UserAgent()
 
-	// Phase 2: MFA step-up when TOTP is confirmed.
+	// MFA step-up when TOTP is confirmed.
 	if h.totp != nil {
 		if confirmed, err := h.totp.HasConfirmedTOTP(ctx, u.ID); err == nil && confirmed {
 			challengeTok := auth.NewToken()
@@ -524,7 +524,7 @@ func readSessionCookie(r *http.Request) string {
 }
 
 // ---------------------------------------------------------------------------
-// TOTP 2FA handlers (Phase 2)
+// TOTP two-factor authentication handlers
 // ---------------------------------------------------------------------------
 
 // POST /auth/totp/enroll — begin enrollment, returns otpauth URL + secret.

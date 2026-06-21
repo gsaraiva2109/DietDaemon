@@ -241,7 +241,7 @@ func TestListDeleteOIDCIdentities(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Magic code upsert / get / increment / delete (Phase 5)
+// Magic code upsert / get / increment / delete
 // ---------------------------------------------------------------------------
 
 func TestMagicCodeUpsertGet(t *testing.T) {

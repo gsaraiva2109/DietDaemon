@@ -269,9 +269,9 @@ func TestEmbeddingOnWrite(t *testing.T) {
 	}
 }
 
-// TestProfileOffRegression is the Phase-5 safety guarantee: with the ai profile
+// TestProfileOffRegression is the safety guarantee: with the ai profile
 // off (nil matcher, nil embedder — exactly how cmd wires PARSER_TIER=0), no
-// Phase-5 code path executes and behavior is the Phase-4 baseline. We prove the
+// We prove the
 // bypass by contrast: the same fixture wired WITH a matcher/embedder takes a
 // different path (matcher hit, embed-on-write). Tier 0 must ignore both.
 func TestProfileOffRegression(t *testing.T) {
@@ -303,11 +303,11 @@ func TestProfileOffRegression(t *testing.T) {
 		t.Errorf("tier-0 external calls = %d, want 1", srcOff.calls)
 	}
 	if len(embOff.embeds) != 0 {
-		t.Errorf("tier-0 embedder fired %d times, want 0 (no phase-5 write-back)", len(embOff.embeds))
+		t.Errorf("tier-0 embedder fired %d times, want 0", len(embOff.embeds))
 	}
 
 	// Tier 1: same fixture, but matcher + embedder wired. Different path proves
-	// the only thing gating Phase 5 is the wiring, not hidden always-on code.
+	// the only thing gating the feature is the wiring, not hidden always-on code.
 	m := spyMatch()
 	stOn := &fakeStore{lib: map[string]types.FoodMatch{}}
 	srcOn := &fakeSource{name: "off", phr: "frango", match: chicken()}

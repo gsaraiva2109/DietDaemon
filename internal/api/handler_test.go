@@ -34,11 +34,11 @@ type fakeMealStore struct {
 	addErr      error
 	deleteErr   error
 
-	// Phase 1.
+	// Latest meal.
 	latestMealTime    string
 	latestMealTimeErr error
 
-	// Phase 2.
+	// Food discovery.
 	foodList       []types.FoodDetail
 	foodListErr    error
 	foodDetail     types.FoodDetail
@@ -46,7 +46,7 @@ type fakeMealStore struct {
 	addAliasErr    error
 	deleteAliasErr error
 
-	// Phase 3.
+	// Meal templates.
 	templates         []types.MealTemplate
 	templatesErr      error
 	template          types.MealTemplate
@@ -56,7 +56,7 @@ type fakeMealStore struct {
 	logTemplateErr    error
 	saveMealErr       error
 
-	// Phase 4.
+	// Body tracking.
 	weights              []types.WeightEntry
 	weightsErr           error
 	logWeightErr         error
@@ -74,12 +74,12 @@ type fakeMealStore struct {
 	uploadPhotoErr       error
 	deletePhotoErr       error
 
-	// Phase 5.
+	// Goals & profile.
 	profile          types.UserProfile
 	profileErr       error
 	upsertProfileErr error
 
-	// Phase 4 / shared.
+	// Body tracking / shared.
 	mealsInRange    []types.Meal
 	mealsInRangeErr error
 }
@@ -172,12 +172,12 @@ func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error)
 }
 func (s *fakeMealStore) UpsertUser(_ context.Context, u types.User) error { s.user = u; return nil }
 
-// Phase 1.
+// Latest meal.
 func (s *fakeMealStore) LatestMealTime(_ context.Context, _ string) (string, error) {
 	return s.latestMealTime, s.latestMealTimeErr
 }
 
-// Phase 2.
+// Food discovery.
 func (s *fakeMealStore) ListFoods(_ context.Context, _, _ string, _, _ int) ([]types.FoodDetail, error) {
 	return s.foodList, s.foodListErr
 }
@@ -197,7 +197,7 @@ func (s *fakeMealStore) DeleteFoodAlias(_ context.Context, _, _, _ string) error
 	return s.deleteAliasErr
 }
 
-// Phase 3.
+// Meal templates.
 func (s *fakeMealStore) SaveTemplate(_ context.Context, _ types.MealTemplate) error {
 	return s.saveTemplateErr
 }
@@ -217,7 +217,7 @@ func (s *fakeMealStore) SaveMeal(_ context.Context, _ types.Meal) error {
 	return s.saveMealErr
 }
 
-// Phase 4 — Weight.
+// Body tracking — weight.
 func (s *fakeMealStore) ListWeight(_ context.Context, _ string, _ int) ([]types.WeightEntry, error) {
 	return s.weights, s.weightsErr
 }
@@ -231,7 +231,7 @@ func (s *fakeMealStore) WeightTrend(_ context.Context, _ string, _ int) ([]types
 	return s.weightTrend, s.weightTrendErr
 }
 
-// Phase 4 — Measurements.
+// Body tracking — measurements.
 func (s *fakeMealStore) ListMeasurements(_ context.Context, _ string, _ int) ([]types.MeasurementEntry, error) {
 	return s.measurements, s.measurementsErr
 }
@@ -242,7 +242,7 @@ func (s *fakeMealStore) DeleteMeasurement(_ context.Context, _, _ string) error 
 	return s.deleteMeasurementErr
 }
 
-// Phase 4 — Photos.
+// Body tracking — photos.
 func (s *fakeMealStore) ListPhotoMetadata(_ context.Context, _ string) ([]types.ProgressPhoto, error) {
 	return s.photoMetadata, s.photoMetadataErr
 }
@@ -256,17 +256,28 @@ func (s *fakeMealStore) DeletePhoto(_ context.Context, _, _ string) error {
 	return s.deletePhotoErr
 }
 
-// Phase 4 / shared.
+// Body tracking / shared.
 func (s *fakeMealStore) GetMealsInRange(_ context.Context, _, _, _ string) ([]types.Meal, error) {
 	return s.mealsInRange, s.mealsInRangeErr
 }
 
-// Phase 5.
+// Goals & profile.
 func (s *fakeMealStore) GetProfile(_ context.Context, _ string) (types.UserProfile, error) {
 	return s.profile, s.profileErr
 }
 func (s *fakeMealStore) UpsertProfile(_ context.Context, _ types.UserProfile) error {
 	return s.upsertProfileErr
+}
+
+// Linking codes.
+func (s *fakeMealStore) CreateLinkingCode(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) LookupLinkingCode(_ context.Context, _ string) (types.LinkingCode, error) {
+	return types.LinkingCode{}, s.rollupErr
+}
+func (s *fakeMealStore) ConsumeLinkingCode(_ context.Context, _ string) error {
+	return nil
 }
 
 // fakeAuthStore implements AuthStore for tests.
@@ -421,7 +432,7 @@ func (s *fakeAuthStore) ConsumeRecoveryCode(_ context.Context, userID, hash stri
 	return false, nil
 }
 
-// OIDC stubs (Phase 3).
+// OIDC stubs.
 func (s *fakeAuthStore) GetUserByOIDCIdentity(_ context.Context, provider, subject string) (types.User, error) {
 	return types.User{}, types.ErrNotFound
 }
@@ -448,7 +459,7 @@ func (s *fakeAuthStore) DeleteOIDCState(_ context.Context, id string) error {
 	return nil
 }
 
-// Phase 4 — Email tokens.
+// Email tokens.
 func (s *fakeAuthStore) MarkEmailVerified(_ context.Context, userID string) error      { return nil }
 func (s *fakeAuthStore) UpdateUserEmail(_ context.Context, userID, email string) error { return nil }
 func (s *fakeAuthStore) CreateEmailToken(_ context.Context, id, userID, purpose, expiresAt string) error {
@@ -458,7 +469,7 @@ func (s *fakeAuthStore) ConsumeEmailToken(_ context.Context, id, purpose string)
 	return "", types.ErrNotFound
 }
 
-// Phase 5 — Magic codes.
+// Magic codes.
 func (s *fakeAuthStore) UpsertMagicCode(_ context.Context, userID, codeHash, expiresAt string) error {
 	return nil
 }
@@ -921,7 +932,7 @@ func TestDeleteMealItemForbiddenOtherUser(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Meals Latest
+// Meals — latest
 // ---------------------------------------------------------------------------
 
 func TestMealsLatest(t *testing.T) {
@@ -955,7 +966,7 @@ func TestMealsLatestEmpty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Food Discovery
+// Food discovery
 // ---------------------------------------------------------------------------
 
 func TestListFoods(t *testing.T) {
@@ -1090,7 +1101,7 @@ func TestDeleteAlias(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Meal Templates
+// Meal templates
 // ---------------------------------------------------------------------------
 
 func TestListTemplates(t *testing.T) {
@@ -1193,7 +1204,7 @@ func TestDuplicateMeal(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Body Tracking
+// Body tracking
 // ---------------------------------------------------------------------------
 
 func TestListWeight(t *testing.T) {
@@ -1344,7 +1355,7 @@ func TestBodySummaryEmpty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Goals & Profile
+// Goals & profile
 // ---------------------------------------------------------------------------
 
 func TestGetProfileNotOnboarded(t *testing.T) {
@@ -1424,7 +1435,7 @@ func TestGoalSuggestionsNoProfile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6 — Export
+// Data export
 // ---------------------------------------------------------------------------
 
 func TestExportMealsJSON(t *testing.T) {
@@ -1497,7 +1508,7 @@ func TestExportMissingParams(t *testing.T) {
 	}
 }
 
-// Phase 6 stubs — not exercised by existing tests.
+// Stubs — not exercised by existing tests.
 
 func (s *fakeAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
 	return "", nil
