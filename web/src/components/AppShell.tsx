@@ -80,13 +80,13 @@ function Brand() {
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="relative min-h-[100dvh]">
-      {/* Calm gradient-mesh backdrop — sage glows, fixed behind everything. */}
+      {/* Calm gradient-mesh backdrop, sage glows, fixed behind everything. */}
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -left-32 -top-24 size-[34rem] rounded-full bg-primary/20 blur-[120px]" />
         <div className="absolute right-[-10rem] top-1/3 size-[30rem] rounded-full bg-fiber/15 blur-[130px]" />
         <div className="absolute bottom-[-12rem] left-1/4 size-[32rem] rounded-full bg-carbs/10 blur-[140px]" />
       </div>
-      {/* Sidebar — desktop */}
+      {/* Sidebar, desktop */}
       <aside className="fixed inset-y-0 left-0 z-[1100] hidden w-60 flex-col gap-1 overflow-y-auto border-r border-line bg-surface/60 px-3 py-5 backdrop-blur md:flex">
         <Brand />
         <nav className="mt-6 flex flex-col gap-4">
@@ -130,7 +130,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </main>
 
-      {/* Bottom bar — mobile */}
+      {/* Bottom bar, mobile */}
       <nav className="fixed inset-x-0 bottom-0 z-[1100] flex items-stretch justify-around border-t border-line bg-surface/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
         {MOBILE_NAV.map(({ to, label, Icon, end }) => (
           <NavLink

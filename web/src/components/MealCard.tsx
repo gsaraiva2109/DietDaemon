@@ -1,4 +1,4 @@
-// A single meal summary row — raw text, time, total calories, and provenance
+// A single meal summary row, raw text, time, total calories, and provenance
 // chips (parser tier + confidence). Used in the dashboard timeline and history.
 
 import { Link } from 'react-router-dom'

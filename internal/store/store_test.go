@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -578,5 +579,69 @@ func TestNudgeDedupe(t *testing.T) {
 	done, _ = s.WasNudged(ctx(), "u1", "2026-06-17", "rule-2")
 	if done {
 		t.Error("different rule should not be nudged")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fasting
+// ---------------------------------------------------------------------------
+
+func TestFastingLifecycle(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	// No active fast yet.
+	if _, err := s.GetActiveFast(ctx(), "user-1"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("GetActiveFast: expected ErrNotFound, got %v", err)
+	}
+
+	start := time.Now().UTC().Add(-17 * time.Hour)
+	f := types.Fast{
+		ID:          "fast-1",
+		UserID:      "user-1",
+		StartAt:     start,
+		TargetHours: 16,
+		CreatedAt:   start,
+	}
+	if err := s.StartFast(ctx(), f); err != nil {
+		t.Fatalf("StartFast: %v", err)
+	}
+
+	active, err := s.GetActiveFast(ctx(), "user-1")
+	if err != nil {
+		t.Fatalf("GetActiveFast: %v", err)
+	}
+	if active.ID != "fast-1" || active.EndAt != nil {
+		t.Errorf("unexpected active fast: %+v", active)
+	}
+
+	end := time.Now().UTC()
+	ended, err := s.EndFast(ctx(), "user-1", "fast-1", end, true)
+	if err != nil {
+		t.Fatalf("EndFast: %v", err)
+	}
+	if ended.EndAt == nil || !ended.Completed {
+		t.Errorf("ended fast not closed correctly: %+v", ended)
+	}
+
+	// Active is gone.
+	if _, err := s.GetActiveFast(ctx(), "user-1"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("GetActiveFast after end: expected ErrNotFound, got %v", err)
+	}
+
+	// Ending again → ErrNotFound.
+	if _, err := s.EndFast(ctx(), "user-1", "fast-1", end, false); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("EndFast twice: expected ErrNotFound, got %v", err)
+	}
+
+	// History has the one fast.
+	hist, err := s.ListFasts(ctx(), "user-1", 10)
+	if err != nil {
+		t.Fatalf("ListFasts: %v", err)
+	}
+	if len(hist) != 1 || hist[0].ID != "fast-1" {
+		t.Errorf("unexpected history: %+v", hist)
 	}
 }

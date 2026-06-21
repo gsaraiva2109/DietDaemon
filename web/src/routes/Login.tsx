@@ -1,4 +1,4 @@
-// Login — email + password + remember, inside the calm AuthLayout. Errors are
+// Login, email + password + remember, inside the calm AuthLayout. Errors are
 // always generic (never reveal which field). A "View demo" button drops into
 // demo mode (no backend). Honors ?next= to return where the guard sent us.
 
@@ -97,7 +97,7 @@ export function Login() {
     try {
       await magicRequest.mutateAsync(addr)
     } catch {
-      // Generic — never leak whether the address exists.
+      // Generic, never leak whether the address exists.
     }
     setMagicEmail(addr)
   }

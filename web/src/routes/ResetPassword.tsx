@@ -1,4 +1,4 @@
-// /reset-password?token=… — set a new password from the emailed link. On
+// /reset-password?token=…, set a new password from the emailed link. On
 // success, send the user to /login to sign in with the new password.
 
 import { useState, type FormEvent } from 'react'

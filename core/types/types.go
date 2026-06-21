@@ -284,6 +284,18 @@ type WeightEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Fast is a single intermittent-fasting window. EndAt is nil while the fast is
+// still in progress; Completed is set true at end if the target was reached.
+type Fast struct {
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	StartAt     time.Time  `json:"start_at"`
+	EndAt       *time.Time `json:"end_at,omitempty"`
+	TargetHours float64    `json:"target_hours"`
+	Completed   bool       `json:"completed"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 // MeasurementEntry is a single body measurement record.
 type MeasurementEntry struct {
 	ID           string    `json:"id"`

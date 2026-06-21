@@ -1,4 +1,4 @@
-// Tiny 7-day trend sparkline. No axes, no chrome — just the shape of recent
+// Tiny 7-day trend sparkline. No axes, no chrome, just the shape of recent
 // days, with a soft gradient fill.
 
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'

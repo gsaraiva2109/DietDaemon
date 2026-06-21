@@ -77,7 +77,7 @@ export const MACRO_META: Record<MacroKey, MacroMeta> = {
 export interface WeeklyStats {
   days: DailyRollup[]
   avg: Macros // element-wise average of Consumed across logged days
-  adherence: number // 0..1 — fraction of days within ±10% of the calorie target
+  adherence: number // 0..1, fraction of days within ±10% of the calorie target
   calorieTrend: TrendDirection
   proteinTrend: TrendDirection
   bestDay: DailyRollup | null // closest to calorie target
@@ -173,6 +173,63 @@ export interface BodyCompositionSummary {
   latest_trend_point?: WeightTrend | null
 }
 
+// ---------------------------------------------------------------------------
+// Health tracking, fasting (live backend) + water / workout / sleep (Phase 4;
+// endpoints 404 until shipped, cards fall back to empty state).
+// ---------------------------------------------------------------------------
+
+// A single intermittent-fasting window. end_at is absent while in progress.
+export interface Fast {
+  id: string
+  user_id: string
+  start_at: string // RFC3339
+  end_at?: string | null // RFC3339; null/absent while fasting
+  target_hours: number
+  completed: boolean
+  created_at: string
+}
+
+export interface WaterLog {
+  id: string
+  user_id: string
+  amount_ml: number
+  logged_at: string
+  note?: string
+}
+
+// GET /body/water, today's running total against the daily goal.
+export interface WaterToday {
+  logs: WaterLog[]
+  today_ml: number
+  goal_ml: number
+}
+
+export type WorkoutIntensity = 'light' | 'moderate' | 'heavy'
+
+export interface Workout {
+  id: string
+  user_id: string
+  name: string
+  duration_min: number
+  intensity: WorkoutIntensity
+  calories_burned?: number
+  note?: string
+  logged_at: string
+}
+
+export type SleepQuality = 'poor' | 'fair' | 'good' | 'great'
+
+export interface SleepLog {
+  id: string
+  user_id: string
+  sleep_at: string // HH:MM
+  wake_at: string // HH:MM
+  duration_hours: number
+  quality: SleepQuality
+  note?: string
+  logged_at: string
+}
+
 // The numeric measurement fields, for chart series + form rendering.
 export const MEASUREMENT_FIELDS = [
   { key: 'waist_cm', label: 'Waist' },
@@ -220,9 +277,9 @@ export interface GoalSuggestion {
 
 export const ACTIVITY_LEVELS = [
   { value: 'sedentary', label: 'Sedentary', hint: 'Little or no exercise, desk job' },
-  { value: 'light', label: 'Lightly active', hint: 'Light exercise 1–3 days/week' },
-  { value: 'moderate', label: 'Moderately active', hint: 'Moderate exercise 3–5 days/week' },
-  { value: 'active', label: 'Very active', hint: 'Hard exercise 6–7 days/week' },
+  { value: 'light', label: 'Lightly active', hint: 'Light exercise 1 to 3 days/week' },
+  { value: 'moderate', label: 'Moderately active', hint: 'Moderate exercise 3 to 5 days/week' },
+  { value: 'active', label: 'Very active', hint: 'Hard exercise 6 to 7 days/week' },
   { value: 'very_active', label: 'Extra active', hint: 'Physical job or 2× daily training' },
 ] as const
 
@@ -241,15 +298,15 @@ export interface User {
   totp_enabled?: boolean
 }
 
-// GET /auth/session — the authenticated user, or 401 when anonymous.
+// GET /auth/session, the authenticated user, or 401 when anonymous.
 export interface SessionResponse {
   user: User
 }
 
 // How new accounts may be created. Drives login/register screen gating.
-//   open      — anyone may register
-//   invite    — only the bootstrap (first) user; closed thereafter
-//   oidc-only — no password form; sign in with a provider
+//   open, anyone may register
+//   invite, only the bootstrap (first) user; closed thereafter
+//   oidc-only, no password form; sign in with a provider
 export type RegistrationMode = 'open' | 'invite' | 'oidc-only'
 
 // A configured OIDC provider. `id` is the route slug used in
@@ -259,7 +316,7 @@ export interface OidcProvider {
   name: string
 }
 
-// GET /auth/providers — drives the login screen. `providers` is empty until
+// GET /auth/providers, drives the login screen. `providers` is empty until
 export interface ProvidersResponse {
   registration_mode: RegistrationMode
   providers: OidcProvider[]
@@ -283,14 +340,14 @@ export interface ApiKey {
 }
 
 export interface NewApiKey extends ApiKey {
-  key: string // "ddk_…" — shown once, never stored client-side
+  key: string // "ddk_…", shown once, never stored client-side
 }
 
 // ---------------------------------------------------------------------------
 // TOTP / MFA
 // ---------------------------------------------------------------------------
 
-// POST /auth/totp/enroll — provisioning data for the authenticator app.
+// POST /auth/totp/enroll, provisioning data for the authenticator app.
 export interface TotpEnrollResponse {
   otpauth_url: string // otpauth://totp/… (rendered as a QR)
   secret: string // base32, for manual entry

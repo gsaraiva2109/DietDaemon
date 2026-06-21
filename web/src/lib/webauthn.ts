@@ -35,7 +35,7 @@ export async function mfaWithPasskey(challengeToken: string): Promise<SessionRes
   return api.auth.mfa.passkeyFinish(challengeToken, credential)
 }
 
-// User aborted the native prompt (NotAllowedError) — treat as a soft cancel.
+// User aborted the native prompt (NotAllowedError), treat as a soft cancel.
 export function isWebAuthnCancel(err: unknown): boolean {
   return err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError')
 }

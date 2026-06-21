@@ -1,4 +1,4 @@
-// /forgot-password — request a reset link. The response is ALWAYS generic
+// /forgot-password, request a reset link. The response is ALWAYS generic
 // (never reveals whether an account exists), so we show the same confirmation
 // regardless of outcome.
 
@@ -21,7 +21,7 @@ export function ForgotPassword() {
     try {
       await forgot.mutateAsync(email.trim().toLowerCase())
     } catch {
-      // Deliberately ignore failures — never leak account existence.
+      // Deliberately ignore failures, never leak account existence.
     } finally {
       setBusy(false)
       setSent(true)

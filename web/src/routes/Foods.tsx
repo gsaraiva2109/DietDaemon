@@ -1,4 +1,4 @@
-// Foods — browse and search the food library across all sources, filter by
+// Foods, browse and search the food library across all sources, filter by
 // provenance, and open any food for the full breakdown.
 
 import { useEffect, useMemo, useState } from 'react'
@@ -91,7 +91,7 @@ export function Foods() {
           hint={
             searching
               ? 'Try a different name or alias.'
-              : 'Foods appear here as you log meals. Turn on Demo mode to explore.'
+              : 'Foods appear here as you log meals.'
           }
         />
       ) : (

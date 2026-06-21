@@ -1,4 +1,4 @@
-// Body tracking hub — weight, measurements, and progress photos. Sub-tabs are
+// Body tracking hub, weight, measurements, and progress photos. Sub-tabs are
 // driven by the :tab route param so each view is linkable. Write controls are
 // disabled in demo mode (reads still return sample data).
 
@@ -47,7 +47,7 @@ function isoDaysAgo(n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-const DEMO_NOTE = 'Demo mode — logging is disabled.'
+const DEMO_NOTE = 'Logging is disabled here.'
 
 export function Body() {
   const { tab } = useParams<{ tab?: string }>()

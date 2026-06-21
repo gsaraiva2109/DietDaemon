@@ -1,5 +1,5 @@
 // Inline quick-log so the primary action is one keystroke away on the
-// dashboard — no need to navigate to the Log tab.
+// dashboard, no need to navigate to the Log tab.
 
 import { useState, type FormEvent } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -52,7 +52,7 @@ export function QuickLogCard() {
             exit={{ opacity: 0, height: 0 }}
             className="mt-2 text-xs font-medium text-primary"
           >
-            Logged — updating shortly.
+            Logged, updating shortly.
           </motion.p>
         )}
       </AnimatePresence>

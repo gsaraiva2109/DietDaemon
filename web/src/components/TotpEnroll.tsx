@@ -30,7 +30,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
         try {
           setQr(await QRCode.toDataURL(res.otpauth_url, { width: 200, margin: 1 }))
         } catch {
-          /* QR render failed — manual secret entry still works. */
+          /* QR render failed, manual secret entry still works. */
         }
       })
       .catch(() => alive && setError('Could not start enrollment. Try again.'))

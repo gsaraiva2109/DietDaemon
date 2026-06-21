@@ -62,7 +62,7 @@ export function CommandPalette() {
         ? [
             {
               id: 'demo' as const,
-              label: demo ? 'Turn demo data off' : 'Turn demo data on',
+              label: demo ? 'Turn sample data off' : 'Turn sample data on',
               Icon: SparkleIcon,
               run: () => {
                 setDemo(!demo)
@@ -86,7 +86,7 @@ export function CommandPalette() {
         e.preventDefault()
         setOpen((o) => {
           if (!o) {
-            // Reset search state when opening — fire-and-forget
+            // Reset search state when opening, fire-and-forget
             // updates in the same render batch, no cascading effects.
             setQ('')
             setActive(0)

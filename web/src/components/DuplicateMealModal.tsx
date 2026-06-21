@@ -117,7 +117,7 @@ export function DuplicateMealModal({ onClose }: Props) {
           )}
 
           {demo && (
-            <p className="mb-3 text-xs text-muted">Duplicating is disabled in demo mode.</p>
+            <p className="mb-3 text-xs text-muted">Duplicating is currently unavailable.</p>
           )}
 
           <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">

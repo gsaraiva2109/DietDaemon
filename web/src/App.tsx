@@ -26,7 +26,7 @@ import { ResetPassword } from '@/routes/ResetPassword'
 import { MagicLink } from '@/routes/MagicLink'
 
 // Lazy-load all routes so recharts (~300KB) only ships when Trends or
-// Summary is visited. Route components use named exports — wrap with
+// Summary is visited. Route components use named exports, wrap with
 // .then() to feed React.lazy the { default } shape it expects.
 const Dashboard = lazy(() => import('@/routes/Dashboard').then(m => ({ default: m.Dashboard })))
 const LogMeal = lazy(() => import('@/routes/LogMeal').then(m => ({ default: m.LogMeal })))
@@ -36,6 +36,7 @@ const Trends = lazy(() => import('@/routes/Trends').then(m => ({ default: m.Tren
 const Summary = lazy(() => import('@/routes/Summary').then(m => ({ default: m.Summary })))
 const Settings = lazy(() => import('@/routes/Settings').then(m => ({ default: m.Settings })))
 const Security = lazy(() => import('@/routes/Security').then(m => ({ default: m.Security })))
+const LinkBot = lazy(() => import('@/routes/LinkBot').then(m => ({ default: m.LinkBot })))
 const Foods = lazy(() => import('@/routes/Foods').then(m => ({ default: m.Foods })))
 const Aliases = lazy(() => import('@/routes/Aliases').then(m => ({ default: m.Aliases })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
@@ -109,6 +110,7 @@ function AppRoutes() {
           <Route path="/summary" element={<Summary />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/security" element={<Security />} />
+          <Route path="/settings/link-bot" element={<LinkBot />} />
           <Route path="/settings/aliases" element={<Aliases />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />

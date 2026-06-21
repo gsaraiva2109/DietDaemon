@@ -1,5 +1,5 @@
 // TanStack Query hooks. No WebSocket exists on the backend, so "live" data is
-// polled. Logging is async (202) — after it we invalidate today's rollup and
+// polled. Logging is async (202), after it we invalidate today's rollup and
 // the meal list so the dashboard reflects the new meal once the pipeline runs.
 //
 // Demo mode (useDemo) short-circuits every read to sample data so the UI can be
@@ -34,10 +34,23 @@ import type {
   Meal,
   MeasurementEntry,
   ResolvedItem,
+  SleepQuality,
   UserProfile,
+  WorkoutIntensity,
 } from './types'
 
 const POLL_MS = 30_000
+
+// Reads for Phase-4 domains whose backend may not exist yet: a 404 (route not
+// registered) is "no data", not an error. Mirrors useToday's fallback.
+async function emptyOn404<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return fallback
+    throw err
+  }
+}
 
 export const keys = {
   today: (demo: boolean) => ['rollup', 'today', demo] as const,
@@ -370,6 +383,115 @@ export function useBodySummary() {
 }
 
 // ---------------------------------------------------------------------------
+// Health tracking, water / workout / sleep (Phase 4 backends; 404 → empty)
+// ---------------------------------------------------------------------------
+
+export function useWaterToday() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['water', 'today', demo],
+    queryFn: () => (demo ? null : emptyOn404(() => api.body.water.today(), null)),
+    refetchInterval: demo ? false : POLL_MS,
+  })
+}
+
+export function useLogWater() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ amountMl, note }: { amountMl: number; note?: string }) =>
+      api.body.water.log(amountMl, note),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['water'] }),
+  })
+}
+
+export function useWorkouts(limit = 5) {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['workouts', limit, demo],
+    queryFn: () => (demo ? [] : emptyOn404(() => api.body.workouts.list(limit), [])),
+  })
+}
+
+export function useLogWorkout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (w: { name: string; duration_min: number; intensity: WorkoutIntensity; note?: string }) =>
+      api.body.workouts.log(w),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workouts'] }),
+  })
+}
+
+export function useSleep(days = 7) {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['sleep', days, demo],
+    queryFn: () => (demo ? [] : emptyOn404(() => api.body.sleep.list(days), [])),
+  })
+}
+
+export function useLogSleep() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (s: { sleep_at: string; wake_at: string; quality: SleepQuality; note?: string }) =>
+      api.body.sleep.log(s),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sleep'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Fasting (live backend). active 404s when no fast is in progress.
+// ---------------------------------------------------------------------------
+
+export function useActiveFast() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['fasting', 'active', demo],
+    queryFn: () => (demo ? null : emptyOn404(() => api.fasting.active(), null)),
+    refetchInterval: demo ? false : POLL_MS,
+  })
+}
+
+export function useFastHistory(limit = 10) {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['fasting', 'history', limit, demo],
+    queryFn: () => (demo ? [] : emptyOn404(() => api.fasting.history(limit), [])),
+  })
+}
+
+export function useStartFast() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (targetHours?: number) => api.fasting.start(targetHours),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fasting'] }),
+  })
+}
+
+export function useEndFast() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.fasting.end(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fasting'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Bot account linking
+// ---------------------------------------------------------------------------
+
+export function useCreateLinkCode() {
+  return useMutation({
+    mutationFn: (platform: string) => api.bot.createLinkCode(platform),
+  })
+}
+
+export function useCompleteLink() {
+  return useMutation({
+    mutationFn: (code: string) => api.bot.completeLink(code),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Goals & Planning
 // ---------------------------------------------------------------------------
 
@@ -410,7 +532,7 @@ export function useTDEE(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Auth — providers gating, API keys, change password.
+// Auth, providers gating, API keys, change password.
 // Session/login/register/logout state lives in the AuthProvider (auth.tsx),
 // the single source of truth; these hooks cover the data-ish surfaces.
 // Demo short-circuits reads so the screens render with no backend.

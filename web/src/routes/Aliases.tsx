@@ -1,4 +1,4 @@
-// Aliases — manage the alternate names that map free-text phrases to a food.
+// Aliases, manage the alternate names that map free-text phrases to a food.
 // A settings sub-page: search the library, then add/remove aliases per food.
 // Write controls are disabled in demo mode (mirrors MealDetail).
 
@@ -44,7 +44,7 @@ export function Aliases() {
 
       {demo && (
         <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-muted">
-          Aliases are read-only in demo mode.
+          Aliases are read only here.
         </p>
       )}
 

@@ -87,7 +87,7 @@ export function GoalSuggestion() {
                 'Apply'
               )}
             </Button>
-            {demo && <span className="text-xs text-muted">disabled in demo</span>}
+            {demo && <span className="text-xs text-muted">unavailable</span>}
             {setTargets.isError && (
               <motion.span
                 initial={{ opacity: 0 }}

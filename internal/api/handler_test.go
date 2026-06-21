@@ -63,6 +63,12 @@ type fakeMealStore struct {
 	deleteWeightErr      error
 	weightTrend          []types.WeightTrend
 	weightTrendErr       error
+	activeFast           *types.Fast
+	fasts                []types.Fast
+	startFastErr         error
+	endFastErr           error
+	activeFastErr        error
+	listFastsErr         error
 	measurements         []types.MeasurementEntry
 	measurementsErr      error
 	logMeasurementErr    error
@@ -229,6 +235,45 @@ func (s *fakeMealStore) DeleteWeight(_ context.Context, _, _ string) error {
 }
 func (s *fakeMealStore) WeightTrend(_ context.Context, _ string, _ int) ([]types.WeightTrend, error) {
 	return s.weightTrend, s.weightTrendErr
+}
+
+// Fasting.
+func (s *fakeMealStore) StartFast(_ context.Context, f types.Fast) error {
+	if s.startFastErr != nil {
+		return s.startFastErr
+	}
+	cp := f
+	s.activeFast = &cp
+	s.fasts = append([]types.Fast{cp}, s.fasts...)
+	return nil
+}
+func (s *fakeMealStore) GetActiveFast(_ context.Context, _ string) (types.Fast, error) {
+	if s.activeFastErr != nil {
+		return types.Fast{}, s.activeFastErr
+	}
+	if s.activeFast == nil {
+		return types.Fast{}, types.ErrNotFound
+	}
+	return *s.activeFast, nil
+}
+func (s *fakeMealStore) EndFast(_ context.Context, _, fastID string, endAt time.Time, completed bool) (types.Fast, error) {
+	if s.endFastErr != nil {
+		return types.Fast{}, s.endFastErr
+	}
+	if s.activeFast == nil || s.activeFast.ID != fastID {
+		return types.Fast{}, types.ErrNotFound
+	}
+	f := *s.activeFast
+	f.EndAt = &endAt
+	f.Completed = completed
+	s.activeFast = nil
+	if len(s.fasts) > 0 {
+		s.fasts[0] = f
+	}
+	return f, nil
+}
+func (s *fakeMealStore) ListFasts(_ context.Context, _ string, _ int) ([]types.Fast, error) {
+	return s.fasts, s.listFastsErr
 }
 
 // Body tracking — measurements.
@@ -1540,3 +1585,92 @@ func (s *fakeAuthStore) GetMFAEmailCode(_ context.Context, _ string) (string, st
 }
 func (s *fakeAuthStore) IncrementMFAEmailCodeAttempts(_ context.Context, _ string) error { return nil }
 func (s *fakeAuthStore) DeleteMFAEmailCode(_ context.Context, _ string) error            { return nil }
+
+// --- Fasting ---
+
+func TestStartAndEndFast(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/fasting/start", map[string]any{"target_hours": 16}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("start: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	started := decodeJSON[types.Fast](t, rec)
+	if started.EndAt != nil {
+		t.Errorf("started fast should have nil end_at")
+	}
+	if started.TargetHours != 16 {
+		t.Errorf("expected target_hours 16, got %v", started.TargetHours)
+	}
+
+	rec = doRequest(h, "GET", "/api/v1/fasting/active", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("active: expected 200, got %d", rec.Code)
+	}
+
+	rec = doRequest(h, "POST", "/api/v1/fasting/end", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("end: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ended := decodeJSON[types.Fast](t, rec)
+	if ended.EndAt == nil {
+		t.Errorf("ended fast should have end_at set")
+	}
+
+	rec = doRequest(h, "GET", "/api/v1/fasting/active", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("active after end: expected 404, got %d", rec.Code)
+	}
+}
+
+func TestStartFastDefaultsTarget(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/fasting/start", nil, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	f := decodeJSON[types.Fast](t, rec)
+	if f.TargetHours != 16 {
+		t.Errorf("expected default target_hours 16, got %v", f.TargetHours)
+	}
+}
+
+func TestStartFastConflict(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	if rec := doRequest(h, "POST", "/api/v1/fasting/start", nil, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("first start: expected 201, got %d", rec.Code)
+	}
+	rec := doRequest(h, "POST", "/api/v1/fasting/start", nil, nil)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("second start: expected 409, got %d", rec.Code)
+	}
+}
+
+func TestEndFastNoActive(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/fasting/end", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestListFastsEmpty(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/fasting/history", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	fasts := decodeJSON[[]types.Fast](t, rec)
+	if len(fasts) != 0 {
+		t.Errorf("expected empty history, got %d", len(fasts))
+	}
+}

@@ -1,4 +1,4 @@
-// A single food summary card — name, source, a per-100g macro mini-grid, and a
+// A single food summary card, name, source, a per-100g macro mini-grid, and a
 // usage footnote. Whole card is clickable into the FoodDetailModal.
 
 import { motion } from 'framer-motion'

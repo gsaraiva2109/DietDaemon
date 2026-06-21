@@ -1,4 +1,4 @@
-// Trends — multi-day macros vs targets. Functional baseline; richer charting
+// Trends, multi-day macros vs targets. Functional baseline; richer charting
 // and GSAP scroll choreography land in later tasks.
 
 import { useMemo, useState } from 'react'

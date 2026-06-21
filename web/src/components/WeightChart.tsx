@@ -1,4 +1,4 @@
-// Weight over time — raw daily points plus a smoother rolling average, with an
+// Weight over time, raw daily points plus a smoother rolling average, with an
 // optional faint calorie-intake bar overlay on a second axis. Styled to match
 // Trends.tsx (grid var(--color-line), muted axes, surface tooltip).
 

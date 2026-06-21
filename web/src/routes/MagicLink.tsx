@@ -1,4 +1,4 @@
-// /magic?token=… — the one-click passwordless sign-in link. Verifies the token
+// /magic?token=…, the one-click passwordless sign-in link. Verifies the token
 // (which sets the session cookie), refreshes, and routes into the app. When the
 // account has TOTP enabled, the verify returns an MFA challenge instead of a
 // session; we hand off to <MfaChallenge>.
@@ -19,7 +19,7 @@ export function MagicLink() {
   const [params] = useSearchParams()
   const ran = useRef(false)
   const token = params.get('token')
-  // Missing token is a render-time fact, not an effect side-effect — avoid
+  // Missing token is a render-time fact, not an effect side-effect, avoid
   // synchronous setState in the effect (react-hooks/set-state-in-effect).
   const [state, setState] = useState<'verifying' | 'error' | 'mfa'>(token ? 'verifying' : 'error')
   const [challengeToken, setChallengeToken] = useState<string | null>(null)

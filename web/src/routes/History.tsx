@@ -1,4 +1,4 @@
-// History — recent meals with search, parser-tier filtering, and day grouping.
+// History, recent meals with search, parser-tier filtering, and day grouping.
 
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
@@ -89,7 +89,7 @@ export function History() {
       {meals.isLoading ? (
         <Spinner />
       ) : !meals.data?.length ? (
-        <EmptyState title="No meals logged yet" hint="Turn on Demo mode to explore with sample data." />
+        <EmptyState title="No meals logged yet" hint="Your logged meals will appear here." />
       ) : !filtered.length ? (
         <EmptyState title="No matches" hint="Try a different search or filter." />
       ) : (

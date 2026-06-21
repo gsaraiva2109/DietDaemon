@@ -28,7 +28,7 @@ export function VerifyEmailBanner() {
       className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/10 px-4 py-3"
     >
       <p className="text-sm text-ink">
-        <span className="font-semibold">Verify your email</span> — we sent a link to{' '}
+        <span className="font-semibold">Verify your email</span>, we sent a link to{' '}
         <span className="font-medium">{user.email}</span>.
       </p>
       <button

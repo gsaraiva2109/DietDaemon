@@ -1,4 +1,4 @@
-// Templates — saved meals you can re-log with one tap. List, log, and delete.
+// Templates, saved meals you can re-log with one tap. List, log, and delete.
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'

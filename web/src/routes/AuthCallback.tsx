@@ -1,4 +1,4 @@
-// /auth/callback — where the backend lands the browser after an OIDC round
+// /auth/callback, where the backend lands the browser after an OIDC round
 // trip. On success the session cookie is already set by the redirect, so we
 // just re-probe the session and route into the app; on ?error= we bounce back
 // to /login with a generic message. ?link=1 means an account-link flow.
@@ -13,7 +13,7 @@ import { Spinner } from '@/components/ui'
 
 // Maps the backend's ?error= codes (handler_oidc.go) to a human reason. The
 // callback is shared by sign-in and sign-up, so we surface *why* it failed
-// rather than guessing the verb — far more useful than a generic "cancelled".
+// rather than guessing the verb, far more useful than a generic "cancelled".
 const OIDC_ERRORS: Record<string, string> = {
   registration_closed:
     'No account is linked to this provider yet, and registration is closed. Link it from Settings → Security, or ask for an invite.',

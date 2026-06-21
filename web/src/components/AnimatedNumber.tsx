@@ -1,4 +1,4 @@
-// A number that springs to its value — the one motion that earns its keep
+// A number that springs to its value, the one motion that earns its keep
 // (DESIGN.md): it explains change when macros update. tabular-nums keeps the
 // width stable. Honors reduced motion via the app-level MotionConfig.
 

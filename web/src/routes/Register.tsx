@@ -1,4 +1,4 @@
-// Register — email + password + display name, inside AuthLayout. Gated by the
+// Register, email + password + display name, inside AuthLayout. Gated by the
 // server's registration_mode: hidden entirely when 'oidc-only'. Errors stay
 // generic (no per-field server detail).
 
@@ -68,7 +68,7 @@ export function Register() {
               disabled={busy}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Your name"
-              hint="Optional — what we'll call you."
+              hint="Optional, what we'll call you."
             />
             <Field
               label="Email"

@@ -1,4 +1,4 @@
-// Full food detail in a modal — fetched fresh by id. Shows the complete
+// Full food detail in a modal, fetched fresh by id. Shows the complete
 // per-100g breakdown, serving info, provenance, aliases, and a shortcut to log.
 
 import { useEffect } from 'react'

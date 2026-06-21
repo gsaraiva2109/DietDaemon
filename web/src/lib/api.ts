@@ -15,6 +15,7 @@ import type {
   ApiKey,
   BodyCompositionSummary,
   DailyRollup,
+  Fast,
   FoodDetail,
   GoalSuggestion,
   LinkedIdentity,
@@ -30,16 +31,22 @@ import type {
   RecoveryCodesResponse,
   ResolvedItem,
   SessionResponse,
+  SleepLog,
+  SleepQuality,
   TDEEResult,
   TotpEnrollResponse,
   UserProfile,
+  WaterLog,
+  WaterToday,
   WeightEntry,
   WeightTrend,
+  Workout,
+  WorkoutIntensity,
 } from './types'
 
 const BASE = '/api/v1'
 
-// Generic, field-agnostic auth copy — never reveal which field was wrong.
+// Generic, field-agnostic auth copy, never reveal which field was wrong.
 export const AUTH_ERROR = 'Invalid email or password.'
 
 // Read a non-HttpOnly cookie value (used for the CSRF double-submit token).
@@ -52,7 +59,7 @@ export function readCookie(name: string): string | null {
 
 // A single 401 interceptor. AuthProvider registers a callback here so any
 // request that 401s (session expired, revoked) flips the app back to anon and
-// routes to /login — without each call site handling it.
+// routes to /login, without each call site handling it.
 type UnauthorizedHandler = () => void
 let onUnauthorized: UnauthorizedHandler | null = null
 export function setUnauthorizedHandler(fn: UnauthorizedHandler | null) {
@@ -91,7 +98,7 @@ export class RateLimitError extends ApiError {
 function handleUnauthorized(suppress = false): UnauthorizedError {
   // Fire the interceptor out-of-band so the throw still propagates to callers.
   // `suppress` is set for the anonymous boot/route-guard probe, where a 401 is
-  // expected and means "not signed in" — not an expired session.
+  // expected and means "not signed in", not an expired session.
   if (!suppress && onUnauthorized) queueMicrotask(onUnauthorized)
   return new UnauthorizedError()
 }
@@ -115,7 +122,7 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
   try {
     res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })
   } catch {
-    throw new ApiError(0, 'Network error — is the DietDaemon server running?')
+    throw new ApiError(0, 'Network error, is the DietDaemon server running?')
   }
 
   if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized)
@@ -398,7 +405,7 @@ export const api = {
       ),
   },
 
-  // POST /meals/{id}/duplicate — clones a past meal as a fresh "today" meal.
+  // POST /meals/{id}/duplicate, clones a past meal as a fresh "today" meal.
   duplicateMeal: (mealID: string) =>
     request<{ status: string; meal_id: string }>(
       `/meals/${encodeURIComponent(mealID)}/duplicate`,
@@ -430,7 +437,7 @@ export const api = {
     },
     photos: {
       list: () => request<ProgressPhoto[]>('/body/photos'),
-      // Multipart upload — the request() helper is JSON-only, so go direct.
+      // Multipart upload, the request() helper is JSON-only, so go direct.
       upload: (file: File, view: string, date: string) => {
         const fd = new FormData()
         fd.append('file', file)
@@ -446,6 +453,54 @@ export const api = {
         request<void>(`/body/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
     summary: () => request<BodyCompositionSummary>('/body/summary'),
+    // --- Phase 4 health domains (backend pending; 404 → empty in queries) ---
+    water: {
+      today: () => request<WaterToday>('/body/water'),
+      log: (amountMl: number, note?: string) =>
+        request<WaterLog>('/body/water', {
+          method: 'POST',
+          body: JSON.stringify({ amount_ml: amountMl, note }),
+        }),
+    },
+    workouts: {
+      list: (limit = 5) => request<Workout[]>(`/body/workouts?limit=${limit}`),
+      log: (w: { name: string; duration_min: number; intensity: WorkoutIntensity; note?: string }) =>
+        request<Workout>('/body/workouts', { method: 'POST', body: JSON.stringify(w) }),
+    },
+    sleep: {
+      list: (days = 7) => request<SleepLog[]>(`/body/sleep?days=${days}`),
+      log: (s: { sleep_at: string; wake_at: string; quality: SleepQuality; note?: string }) =>
+        request<SleepLog>('/body/sleep', { method: 'POST', body: JSON.stringify(s) }),
+    },
+  },
+
+  // --- Fasting (Phase 4d; live backend) -------------------------
+  fasting: {
+    // GET active fast; 404 when none in progress (treat as "no active fast").
+    active: () => request<Fast>('/fasting/active'),
+    history: (limit = 10) => request<Fast[]>(`/fasting/history?limit=${limit}`),
+    start: (targetHours?: number) =>
+      request<Fast>('/fasting/start', {
+        method: 'POST',
+        body: JSON.stringify({ target_hours: targetHours ?? 16 }),
+      }),
+    end: () => request<Fast>('/fasting/end', { method: 'POST' }),
+  },
+
+  // --- Bot account linking --------------------------------------
+  bot: {
+    // Generate a one-time code to link a chat platform to this account.
+    createLinkCode: (platform: string) =>
+      request<{ code: string }>('/bot/link-code', {
+        method: 'POST',
+        body: JSON.stringify({ platform }),
+      }),
+    // Dashboard-side completion (the bot's /link command is the usual path).
+    completeLink: (code: string) =>
+      request<{ status: string }>('/bot/link', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      }),
   },
 
   // --- Goals & Planning -----------------------------------------

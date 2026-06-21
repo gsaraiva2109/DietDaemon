@@ -43,7 +43,7 @@ function TrendArrow({ dir }: { dir: TrendDirection }) {
   const map: Record<TrendDirection, { glyph: string; cls: string; label: string }> = {
     up: { glyph: '▲', cls: 'text-accent', label: 'trending up' },
     down: { glyph: '▼', cls: 'text-primary', label: 'trending down' },
-    flat: { glyph: '–', cls: 'text-muted', label: 'flat' },
+    flat: { glyph: '→', cls: 'text-muted', label: 'flat' },
   }
   const t = map[dir]
   return (

@@ -98,7 +98,7 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
   )
 }
 
-// Input — the calm bordered field, extracted from the old TokenGate so every
+// Input, the calm bordered field, extracted from the old TokenGate so every
 // auth form shares one focus/disabled treatment. No parallel styling.
 export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -109,7 +109,7 @@ export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInput
   )
 }
 
-// Field — label + input + inline error, wired for a11y (label htmlFor,
+// Field, label + input + inline error, wired for a11y (label htmlFor,
 // aria-invalid, aria-describedby). The visible error pairs colour with text.
 export function Field({
   label,
@@ -143,7 +143,7 @@ export function Field({
   )
 }
 
-// FormError — a single form-level error line (generic auth copy). role=alert so
+// FormError, a single form-level error line (generic auth copy). role=alert so
 // it's announced; colour is never the only signal (it always carries text).
 export function FormError({ children }: { children: ReactNode }) {
   if (!children) return null

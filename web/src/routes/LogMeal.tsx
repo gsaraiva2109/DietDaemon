@@ -61,7 +61,7 @@ export function LogMeal() {
             animate="show"
             className="mt-4 rounded-lg bg-primary-soft px-4 py-3 text-sm font-medium text-primary"
           >
-            Logged — processing now. It'll appear on Today in a moment.
+            Logged, processing now. It'll appear on Today in a moment.
           </motion.p>
         )}
         {log.isError && (
@@ -97,7 +97,7 @@ export function LogMeal() {
           <p className="text-sm text-muted">No templates yet. Save one from a meal's detail page.</p>
         )}
         {logTemplate.isSuccess && (
-          <p className="text-sm font-medium text-primary">Template logged — appearing on Today shortly.</p>
+          <p className="text-sm font-medium text-primary">Template logged, appearing on Today shortly.</p>
         )}
       </div>
 

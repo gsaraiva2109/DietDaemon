@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -1549,6 +1550,120 @@ func scanWeightEntries(rows *sql.Rows) ([]types.WeightEntry, error) {
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// --- Fasting ---
+
+// StartFast inserts a new fasting window. Callers should ensure no active fast
+// exists first (see GetActiveFast).
+func (s *Store) StartFast(ctx context.Context, f types.Fast) error {
+	const q = `
+		INSERT INTO fasts (id, user_id, start_at, end_at, target_hours, completed, created_at)
+		VALUES (?, ?, ?, NULL, ?, 0, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q, f.ID, f.UserID, utcStr(f.StartAt), f.TargetHours, utcStr(f.CreatedAt))
+	if err != nil {
+		return fmt.Errorf("store: start fast: %w", err)
+	}
+	return nil
+}
+
+// GetActiveFast returns the user's in-progress fast (end_at IS NULL), or
+// ErrNotFound if none is active.
+func (s *Store) GetActiveFast(ctx context.Context, userID string) (types.Fast, error) {
+	const q = `
+		SELECT id, user_id, start_at, end_at, target_hours, completed, created_at
+		FROM fasts
+		WHERE user_id = ? AND end_at IS NULL
+		ORDER BY start_at DESC
+		LIMIT 1
+	`
+	return scanFast(s.db.QueryRowContext(ctx, q, userID))
+}
+
+// EndFast closes a fasting window by id, marking its end time and completion.
+// Returns the updated fast, or ErrNotFound if no matching active fast exists.
+func (s *Store) EndFast(ctx context.Context, userID, fastID string, endAt time.Time, completed bool) (types.Fast, error) {
+	const q = `
+		UPDATE fasts SET end_at = ?, completed = ?
+		WHERE id = ? AND user_id = ? AND end_at IS NULL
+	`
+	res, err := s.db.ExecContext(ctx, q, utcStr(endAt), boolToInt(completed), fastID, userID)
+	if err != nil {
+		return types.Fast{}, fmt.Errorf("store: end fast: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return types.Fast{}, types.ErrNotFound
+	}
+	const sel = `
+		SELECT id, user_id, start_at, end_at, target_hours, completed, created_at
+		FROM fasts WHERE id = ? AND user_id = ?
+	`
+	return scanFast(s.db.QueryRowContext(ctx, sel, fastID, userID))
+}
+
+// ListFasts returns the user's most recent fasting windows, newest first.
+func (s *Store) ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error) {
+	const q = `
+		SELECT id, user_id, start_at, end_at, target_hours, completed, created_at
+		FROM fasts
+		WHERE user_id = ?
+		ORDER BY start_at DESC
+		LIMIT ?
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list fasts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.Fast
+	for rows.Next() {
+		f, err := scanFastRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// scanRow is the minimal interface shared by *sql.Row and *sql.Rows.
+type scanRow interface {
+	Scan(dest ...any) error
+}
+
+func scanFast(row scanRow) (types.Fast, error) {
+	f, err := scanFastRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return types.Fast{}, types.ErrNotFound
+	}
+	return f, err
+}
+
+func scanFastRow(row scanRow) (types.Fast, error) {
+	var f types.Fast
+	var startStr, createdStr string
+	var endStr sql.NullString
+	var completed int
+	if err := row.Scan(&f.ID, &f.UserID, &startStr, &endStr, &f.TargetHours, &completed, &createdStr); err != nil {
+		return types.Fast{}, err
+	}
+	f.StartAt = parseUTC(startStr)
+	f.CreatedAt = parseUTC(createdStr)
+	f.Completed = completed != 0
+	if endStr.Valid && endStr.String != "" {
+		t := parseUTC(endStr.String)
+		f.EndAt = &t
+	}
+	return f, nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // ListMeasurements returns measurement entries for the last N days.

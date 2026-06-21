@@ -158,7 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.auth.logout()
     } catch {
-      // Even if the call fails, drop local state — the cookie is gone or stale.
+      // Even if the call fails, drop local state, the cookie is gone or stale.
     }
     setUser(null)
     setStatus('anon')

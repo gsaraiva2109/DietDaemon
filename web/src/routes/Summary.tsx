@@ -1,4 +1,4 @@
-// Summary — period rollup: averages, target adherence, best/hardest days, and
+// Summary, period rollup: averages, target adherence, best/hardest days, and
 // per-macro average vs target. Uses GET /rollups/range.
 
 import { useMemo, useState } from 'react'
@@ -56,7 +56,7 @@ export function Summary() {
       {range.isLoading ? (
         <Spinner />
       ) : !stats ? (
-        <EmptyState title="No data in range" hint="Log meals across a few days, or turn on Demo mode." />
+        <EmptyState title="No data in range" hint="Log meals across a few days to see your rollup." />
       ) : (
         <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-5">
           {/* Stat tiles */}
@@ -89,14 +89,14 @@ export function Summary() {
             <motion.div variants={fadeUp}>
               <Card className="p-5">
                 <Eyebrow>Closest to target</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? '—'}</p>
+                <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? 'n/a'}</p>
                 <p className="text-sm text-muted">{stats.best ? `${formatNumber(stats.best.kcal)} kcal` : 'No data'}</p>
               </Card>
             </motion.div>
             <motion.div variants={fadeUp}>
               <Card className="p-5">
                 <Eyebrow>Furthest from target</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? '—'}</p>
+                <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? 'n/a'}</p>
                 <p className="text-sm text-muted">{stats.worst ? `${formatNumber(stats.worst.kcal)} kcal` : 'No data'}</p>
               </Card>
             </motion.div>
