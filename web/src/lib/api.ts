@@ -267,7 +267,7 @@ export const api = {
           body: JSON.stringify(email ? { email } : {}),
         }),
       loginFinish: (credential: AuthenticationResponseJSON) =>
-        request<SessionResponse>('/auth/passkeys/login/finish', {
+        request<LoginResponse>('/auth/passkeys/login/finish', {
           method: 'POST',
           body: JSON.stringify({ credential }),
         }),
@@ -309,6 +309,29 @@ export const api = {
         request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
     // --- TOTP / MFA (Phase 2) -------------------------------------------
+    // --- MFA step-up: passkey + email-OTP fallback (Phase 6) ------------
+    mfa: {
+      passkeyBegin: (challengeToken: string) =>
+        request<PublicKeyCredentialRequestOptionsJSON>('/auth/mfa/passkey/begin', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken }),
+        }),
+      passkeyFinish: (challengeToken: string, credential: AuthenticationResponseJSON) =>
+        request<SessionResponse>('/auth/mfa/passkey/finish', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken, credential }),
+        }),
+      emailSend: (challengeToken: string) =>
+        request<void>('/auth/mfa/email/send', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken }),
+        }),
+      emailVerify: (challengeToken: string, code: string) =>
+        request<SessionResponse>('/auth/mfa/email/verify', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken, code }),
+        }),
+    },
     totp: {
       // Begin enrollment: returns otpauth_url (QR) + base32 secret.
       enroll: () => request<TotpEnrollResponse>('/auth/totp/enroll', { method: 'POST' }),

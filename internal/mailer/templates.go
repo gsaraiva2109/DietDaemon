@@ -28,3 +28,12 @@ func PasswordResetEmail(link string) Message {
 		TextBody: fmt.Sprintf("A password reset was requested for your account.\n\nReset your password: %s\n\nOr copy this link: %s\n\nThis link expires in 1 hour. If you didn't request this, you can ignore it.", link, link),
 	}
 }
+
+// MFAEmailCodeEmail builds the "your verification code" message for MFA step-up.
+func MFAEmailCodeEmail(code string) Message {
+	return Message{
+		Subject:  "Your verification code — DietDaemon",
+		HTMLBody: fmt.Sprintf(`<p>Here is your verification code:</p><p style="font-size:32px;font-weight:bold;letter-spacing:4px;margin:16px 0">%s</p><p>This code expires in 10 minutes. If you didn't request this, you can ignore it — your account is still secure.</p>`, code),
+		TextBody: fmt.Sprintf("Your verification code: %s\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore it.", code),
+	}
+}

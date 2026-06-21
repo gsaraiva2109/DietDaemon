@@ -80,7 +80,7 @@ func (s *Store) CreateUserWithPassword(ctx context.Context, accountID, userID, e
 // GetUserByEmail returns the user for a given lowercase email. Returns
 // types.ErrNotFound when no user matches.
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
 		FROM users WHERE email = ?`
 	row := s.db.QueryRowContext(ctx, q, email)
 	u, err := scanUser(row)
@@ -145,7 +145,7 @@ func (s *Store) GetUserByAPIKey(ctx context.Context, hashedKey string) (types.Us
 	// Touch last_used_at.
 	_, _ = tx.ExecContext(ctx, `UPDATE api_keys SET last_used_at = ? WHERE hashed_key = ?`, utcNow(), hashedKey)
 
-	const userQ = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at
+	const userQ = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
 		FROM users WHERE id = ?`
 	row := tx.QueryRowContext(ctx, userQ, userID)
 	u, err := scanUser(row)
@@ -460,7 +460,7 @@ func (s *Store) DeleteMFAChallenge(ctx context.Context, id string) error {
 // GetUserByOIDCIdentity returns the user linked to a provider+subject pair.
 // Returns types.ErrNotFound when no matching identity exists.
 func (s *Store) GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error) {
-	const q = `SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.created_at
+	const q = `SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.created_at, u.webauthn_handle
 		FROM oidc_identities oi JOIN users u ON u.id = oi.user_id
 		WHERE oi.provider = ? AND oi.subject = ?`
 	row := s.db.QueryRowContext(ctx, q, provider, subject)
@@ -762,6 +762,225 @@ func (s *Store) IncrementMagicCodeAttempts(ctx context.Context, userID string) e
 func (s *Store) DeleteMagicCode(ctx context.Context, userID string) error {
 	const q = `DELETE FROM auth_magic_codes WHERE user_id = ?`
 	_, err := s.db.ExecContext(ctx, q, userID)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — WebAuthn passkeys, ceremony sessions, and MFA email codes.
+// ---------------------------------------------------------------------------
+
+// --- WebAuthn user handle ---
+
+// GetOrCreateWebAuthnHandle reads the user's webauthn_handle. If it's empty,
+// generates a new one, persists it, and returns it.
+func (s *Store) GetOrCreateWebAuthnHandle(ctx context.Context, userID string) (string, error) {
+	const q = `SELECT webauthn_handle FROM users WHERE id = ?`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var handle sql.NullString
+	if err := row.Scan(&handle); err == sql.ErrNoRows {
+		return "", types.ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("store: get webauthn handle: %w", err)
+	}
+	if handle.Valid && handle.String != "" {
+		return handle.String, nil
+	}
+
+	newHandle := auth.NewWebAuthnHandle()
+	const up = `UPDATE users SET webauthn_handle = ? WHERE id = ?`
+	if _, err := s.db.ExecContext(ctx, up, newHandle, userID); err != nil {
+		return "", fmt.Errorf("store: set webauthn handle: %w", err)
+	}
+	return newHandle, nil
+}
+
+// GetUserByWebAuthnHandle returns the user for a given webauthn handle (used in
+// discoverable login to resolve the user from the authenticator response).
+func (s *Store) GetUserByWebAuthnHandle(ctx context.Context, handle string) (types.User, error) {
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
+		FROM users WHERE webauthn_handle = ?`
+	row := s.db.QueryRowContext(ctx, q, handle)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return types.User{}, types.ErrNotFound
+	}
+	return u, err
+}
+
+// --- WebAuthn credentials ---
+
+// CreateWebAuthnCredential inserts a new passkey credential row.
+func (s *Store) CreateWebAuthnCredential(ctx context.Context, id, userID, label, credentialJSON string, signCount int, createdAt string) error {
+	const q = `INSERT INTO webauthn_credentials (id, user_id, label, credential_json, sign_count, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, label, credentialJSON, signCount, createdAt)
+	return err
+}
+
+// ListWebAuthnCredentials returns the user-visible passkey list for a user.
+func (s *Store) ListWebAuthnCredentials(ctx context.Context, userID string) ([]types.Passkey, error) {
+	const q = `SELECT id, label, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list webauthn credentials: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.Passkey
+	for rows.Next() {
+		var pk types.Passkey
+		var lua sql.NullString
+		if err := rows.Scan(&pk.ID, &pk.Label, &pk.CreatedAt, &lua); err != nil {
+			return nil, fmt.Errorf("store: scan webauthn credential: %w", err)
+		}
+		pk.LastUsedAt = lua.String
+		out = append(out, pk)
+	}
+	return out, rows.Err()
+}
+
+// GetWebAuthnCredentialsRaw returns the raw credential rows needed to build a
+// WebAuthnUser for ceremony operations.
+func (s *Store) GetWebAuthnCredentialsRaw(ctx context.Context, userID string) ([]types.WebAuthnCredential, error) {
+	const q = `SELECT id, credential_json FROM webauthn_credentials WHERE user_id = ?`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: get webauthn credentials raw: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.WebAuthnCredential
+	for rows.Next() {
+		var c types.WebAuthnCredential
+		if err := rows.Scan(&c.ID, &c.CredentialJSON); err != nil {
+			return nil, fmt.Errorf("store: scan webauthn credential raw: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UpdateWebAuthnCredentialOnAuth rewrites the credential JSON, sign count, and
+// last_used_at after a successful assertion.
+func (s *Store) UpdateWebAuthnCredentialOnAuth(ctx context.Context, id, credentialJSON string, signCount int, lastUsedAt string) error {
+	const q = `UPDATE webauthn_credentials SET credential_json = ?, sign_count = ?, last_used_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, credentialJSON, signCount, lastUsedAt, id)
+	return err
+}
+
+// RenameWebAuthnCredential updates the label for a passkey, scoped by user.
+func (s *Store) RenameWebAuthnCredential(ctx context.Context, userID, id, label string) error {
+	const q = `UPDATE webauthn_credentials SET label = ? WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, label, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: rename webauthn credential: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// DeleteWebAuthnCredential removes a passkey, scoped by user.
+func (s *Store) DeleteWebAuthnCredential(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete webauthn credential: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// --- WebAuthn ceremony sessions ---
+
+// CreateWebAuthnSession persists a go-webauthn SessionData. userID may be ""
+// for discoverable login (the user is not yet known).
+func (s *Store) CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error {
+	const q = `INSERT INTO webauthn_sessions (id, user_id, session_data, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, nullStr(userID), sessionDataJSON, expiresAt, utcNow())
+	return err
+}
+
+// ConsumeWebAuthnSession reads and deletes a ceremony session in one
+// transaction (single-use). Returns types.ErrNotFound when the session is
+// absent or expired.
+func (s *Store) ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("store: consume webauthn session tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var uid sql.NullString
+	const q = `SELECT user_id, session_data, expires_at FROM webauthn_sessions WHERE id = ?`
+	row := tx.QueryRowContext(ctx, q, id)
+	var expiresAt string
+	if scanErr := row.Scan(&uid, &sessionDataJSON, &expiresAt); scanErr == sql.ErrNoRows {
+		return "", "", types.ErrNotFound
+	} else if scanErr != nil {
+		return "", "", fmt.Errorf("store: scan webauthn session: %w", scanErr)
+	}
+
+	// Check expiry.
+	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
+	if parseErr != nil || time.Now().UTC().After(exp) {
+		_ = tx.Commit()
+		return "", "", types.ErrNotFound
+	}
+
+	if _, delErr := tx.ExecContext(ctx, `DELETE FROM webauthn_sessions WHERE id = ?`, id); delErr != nil {
+		return "", "", fmt.Errorf("store: delete webauthn session: %w", delErr)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", fmt.Errorf("store: commit consume webauthn session: %w", err)
+	}
+
+	if uid.Valid {
+		userID = uid.String
+	}
+	return userID, sessionDataJSON, nil
+}
+
+// --- MFA email codes ---
+
+// UpsertMFAEmailCode inserts or replaces the active email code for an MFA challenge.
+// One active code per challenge (challenge_id PK); resend overwrites.
+func (s *Store) UpsertMFAEmailCode(ctx context.Context, challengeID, codeHash, expiresAt string) error {
+	const q = `INSERT INTO mfa_email_codes (challenge_id, code_hash, expires_at, attempts, created_at)
+		VALUES (?, ?, ?, 0, ?)
+		ON CONFLICT(challenge_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
+	_, err := s.db.ExecContext(ctx, q, challengeID, codeHash, expiresAt, utcNow())
+	return err
+}
+
+// GetMFAEmailCode returns the stored email code info for a challenge, or types.ErrNotFound.
+func (s *Store) GetMFAEmailCode(ctx context.Context, challengeID string) (codeHash, expiresAt string, attempts int, err error) {
+	const q = `SELECT code_hash, expires_at, attempts FROM mfa_email_codes WHERE challenge_id = ?`
+	row := s.db.QueryRowContext(ctx, q, challengeID)
+	if scanErr := row.Scan(&codeHash, &expiresAt, &attempts); scanErr == sql.ErrNoRows {
+		return "", "", 0, types.ErrNotFound
+	} else if scanErr != nil {
+		return "", "", 0, fmt.Errorf("store: get mfa email code: %w", scanErr)
+	}
+	return codeHash, expiresAt, attempts, nil
+}
+
+// IncrementMFAEmailCodeAttempts bumps the attempt counter for an active code.
+func (s *Store) IncrementMFAEmailCodeAttempts(ctx context.Context, challengeID string) error {
+	const q = `UPDATE mfa_email_codes SET attempts = attempts + 1 WHERE challenge_id = ?`
+	_, err := s.db.ExecContext(ctx, q, challengeID)
+	return err
+}
+
+// DeleteMFAEmailCode removes the active email code for a challenge.
+func (s *Store) DeleteMFAEmailCode(ctx context.Context, challengeID string) error {
+	const q = `DELETE FROM mfa_email_codes WHERE challenge_id = ?`
+	_, err := s.db.ExecContext(ctx, q, challengeID)
 	return err
 }
 

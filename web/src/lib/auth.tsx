@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { api, setUnauthorizedHandler } from './api'
 import { useDemo } from './demo'
 import { isMfaChallenge, type User } from './types'
+import { mfaWithPasskey } from './webauthn'
 
 type AuthStatus = 'checking' | 'authed' | 'anon'
 
@@ -34,6 +35,8 @@ interface AuthValue {
   user: User | null
   login: (email: string, password: string, remember: boolean) => Promise<LoginResult>
   verifyTotp: (challengeToken: string, code: string, recovery?: boolean) => Promise<void>
+  verifyMfaPasskey: (challengeToken: string) => Promise<void>
+  verifyMfaEmail: (challengeToken: string, code: string) => Promise<void>
   register: (email: string, password: string, displayName: string) => Promise<void>
   logout: () => Promise<void>
   /** Re-probe the session (e.g. after enabling/disabling a factor). */
@@ -116,6 +119,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const verifyMfaPasskey = useCallback(async (challengeToken: string) => {
+    const res = await mfaWithPasskey(challengeToken)
+    expiringRef.current = false
+    setUser(res.user)
+    setStatus('authed')
+  }, [])
+
+  const verifyMfaEmail = useCallback(async (challengeToken: string, code: string) => {
+    const res = await api.auth.mfa.emailVerify(challengeToken, code)
+    expiringRef.current = false
+    setUser(res.user)
+    setStatus('authed')
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
       const res = await api.auth.session()
@@ -148,8 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthValue>(
-	    () => ({ status: effectiveStatus, user, login, verifyTotp, register, logout, refresh }),
-	    [effectiveStatus, user, login, verifyTotp, register, logout, refresh],
+	    () => ({ status: effectiveStatus, user, login, verifyTotp, verifyMfaPasskey, verifyMfaEmail, register, logout, refresh }),
+	    [effectiveStatus, user, login, verifyTotp, verifyMfaPasskey, verifyMfaEmail, register, logout, refresh],
   )
   return <AuthContext value={value}>{children}</AuthContext>
 }

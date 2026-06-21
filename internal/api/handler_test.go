@@ -502,7 +502,7 @@ func newHandler(store MealStore, logger MealLogger) *Handler {
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	})
+	}, nil)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -1496,3 +1496,36 @@ func TestExportMissingParams(t *testing.T) {
 		t.Errorf("expected 400 for missing params, got %d", rec.Code)
 	}
 }
+
+// Phase 6 stubs — not exercised by existing tests.
+
+func (s *fakeAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (s *fakeAuthStore) GetUserByWebAuthnHandle(_ context.Context, _ string) (types.User, error) {
+	return types.User{}, types.ErrNotFound
+}
+func (s *fakeAuthStore) CreateWebAuthnCredential(_ context.Context, _, _, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *fakeAuthStore) ListWebAuthnCredentials(_ context.Context, _ string) ([]types.Passkey, error) {
+	return nil, nil
+}
+func (s *fakeAuthStore) GetWebAuthnCredentialsRaw(_ context.Context, _ string) ([]types.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (s *fakeAuthStore) UpdateWebAuthnCredentialOnAuth(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *fakeAuthStore) RenameWebAuthnCredential(_ context.Context, _, _, _ string) error { return nil }
+func (s *fakeAuthStore) DeleteWebAuthnCredential(_ context.Context, _, _ string) error    { return nil }
+func (s *fakeAuthStore) CreateWebAuthnSession(_ context.Context, _, _, _, _ string) error { return nil }
+func (s *fakeAuthStore) ConsumeWebAuthnSession(_ context.Context, _ string) (string, string, error) {
+	return "", "", nil
+}
+func (s *fakeAuthStore) UpsertMFAEmailCode(_ context.Context, _, _, _ string) error { return nil }
+func (s *fakeAuthStore) GetMFAEmailCode(_ context.Context, _ string) (string, string, int, error) {
+	return "", "", 0, nil
+}
+func (s *fakeAuthStore) IncrementMFAEmailCodeAttempts(_ context.Context, _ string) error { return nil }
+func (s *fakeAuthStore) DeleteMFAEmailCode(_ context.Context, _ string) error            { return nil }

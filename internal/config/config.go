@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 )
 
 // OIDCProviderConfig is the parsed static configuration for one OIDC provider.
@@ -107,7 +108,50 @@ type Config struct {
 	SMTPPassword  string
 	SMTPTLS       bool
 
+	// --- Auth (Phase 6 — WebAuthn / Passkeys) ---
+	WebAuthnRPID          string
+	WebAuthnRPOrigins     []string
+	WebAuthnRPDisplayName string
+
 	LogLevel string
+}
+
+// WebAuthnConfig builds a WebAuthnConfig from the parsed configuration.
+func (c *Config) WebAuthnConfig() auth.WebAuthnConfig {
+	rpID := c.WebAuthnRPID
+	if rpID == "" {
+		rpID = hostFromBaseURL(c.PublicBaseURL)
+	}
+	origins := c.WebAuthnRPOrigins
+	if len(origins) == 0 {
+		if c.PublicBaseURL != "" {
+			origins = []string{c.PublicBaseURL}
+		} else {
+			origins = []string{"http://localhost:8080"}
+		}
+	}
+	displayName := c.WebAuthnRPDisplayName
+	if displayName == "" {
+		displayName = "DietDaemon"
+	}
+	return auth.WebAuthnConfig{
+		RPID:          rpID,
+		RPDisplayName: displayName,
+		RPOrigins:     origins,
+	}
+}
+
+// hostFromBaseURL extracts the host from a URL like "https://example.com".
+func hostFromBaseURL(raw string) string {
+	s := strings.TrimPrefix(raw, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	if idx := strings.Index(s, ":"); idx > 0 {
+		s = s[:idx]
+	}
+	if idx := strings.Index(s, "/"); idx > 0 {
+		s = s[:idx]
+	}
+	return s
 }
 
 // Load reads configuration from the environment, applying values from a .env
@@ -202,6 +246,13 @@ func Load() (*Config, error) {
 	c.SMTPUsername = getStr("SMTP_USERNAME", "")
 	c.SMTPPassword = getStr("SMTP_PASSWORD", "")
 	c.SMTPTLS = getBool("SMTP_TLS", true)
+
+	// Auth Phase 6 — WebAuthn / Passkeys.
+	c.WebAuthnRPID = getStr("WEBAUTHN_RP_ID", "")
+	if raw := getStr("WEBAUTHN_RP_ORIGINS", ""); raw != "" {
+		c.WebAuthnRPOrigins = splitCSV(raw)
+	}
+	c.WebAuthnRPDisplayName = getStr("WEBAUTHN_RP_DISPLAY_NAME", "DietDaemon")
 
 	tier, tierErr := parseTier(getStr("PARSER_TIER", "0"))
 	c.ParserTier = tier

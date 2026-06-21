@@ -95,7 +95,7 @@ func buildMagicHandler(authStore *magicTestAuthStore, m mailer.Mailer) *Handler 
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	})
+	}, nil)
 }
 
 // --- Magic request tests ---
@@ -418,3 +418,44 @@ func TestMagicVerifyTokenCleansUpSiblingCode(t *testing.T) {
 		t.Error("sibling magic code should be deleted on token success")
 	}
 }
+
+// Phase 6 stubs — not exercised by existing tests.
+
+func (s *magicTestAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (s *magicTestAuthStore) GetUserByWebAuthnHandle(_ context.Context, _ string) (types.User, error) {
+	return types.User{}, types.ErrNotFound
+}
+func (s *magicTestAuthStore) CreateWebAuthnCredential(_ context.Context, _, _, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) ListWebAuthnCredentials(_ context.Context, _ string) ([]types.Passkey, error) {
+	return nil, nil
+}
+func (s *magicTestAuthStore) GetWebAuthnCredentialsRaw(_ context.Context, _ string) ([]types.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (s *magicTestAuthStore) UpdateWebAuthnCredentialOnAuth(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) RenameWebAuthnCredential(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) DeleteWebAuthnCredential(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) CreateWebAuthnSession(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) ConsumeWebAuthnSession(_ context.Context, _ string) (string, string, error) {
+	return "", "", nil
+}
+func (s *magicTestAuthStore) UpsertMFAEmailCode(_ context.Context, _, _, _ string) error { return nil }
+func (s *magicTestAuthStore) GetMFAEmailCode(_ context.Context, _ string) (string, string, int, error) {
+	return "", "", 0, nil
+}
+func (s *magicTestAuthStore) IncrementMFAEmailCodeAttempts(_ context.Context, _ string) error {
+	return nil
+}
+func (s *magicTestAuthStore) DeleteMFAEmailCode(_ context.Context, _ string) error { return nil }

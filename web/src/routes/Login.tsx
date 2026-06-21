@@ -7,8 +7,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useDemo, demoAvailable } from '@/lib/demo'
 import { useProviders, useMagicRequest } from '@/lib/queries'
-import { AUTH_ERROR, RateLimitError } from '@/lib/api'
+import { api, AUTH_ERROR, RateLimitError } from '@/lib/api'
 import { loginWithPasskey, browserSupportsWebAuthn, isWebAuthnCancel } from '@/lib/webauthn'
+import { isMfaChallenge } from '@/lib/types'
 import { AuthLayout } from '@/components/AuthLayout'
 import { ProviderButtons } from '@/components/ProviderButtons'
 import { MagicCodeEntry } from '@/components/MagicCodeEntry'
@@ -72,7 +73,11 @@ export function Login() {
     setError(null)
     setBusy(true)
     try {
-      await loginWithPasskey()
+      const res = await loginWithPasskey()
+      if (isMfaChallenge(res)) {
+        setChallengeToken(res.challenge_token)
+        return
+      }
       await refresh()
       navigate(next, { replace: true })
     } catch (err) {
@@ -210,7 +215,7 @@ export function Login() {
   )
 }
 
-// Second step of a 2FA login: a TOTP code, or a recovery code as fallback.
+// Second step of a 2FA login: TOTP, passkey, or email-OTP fallback (Phase 6).
 export function MfaChallenge({
   challengeToken,
   onVerified,
@@ -220,11 +225,13 @@ export function MfaChallenge({
   onVerified: () => void
   onBack: () => void
 }) {
-  const { verifyTotp } = useAuth()
+  const { verifyTotp, verifyMfaPasskey, verifyMfaEmail } = useAuth()
   const [code, setCode] = useState('')
   const [recovery, setRecovery] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Email-OTP state: null = not requested yet, 'sent' = code on the way, 'entering' = user is typing code.
+  const [emailOtp, setEmailOtp] = useState<null | 'sent' | 'entering'>(null)
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -232,7 +239,11 @@ export function MfaChallenge({
     setBusy(true)
     setError(null)
     try {
-      await verifyTotp(challengeToken, code.trim(), recovery)
+      if (emailOtp === 'entering') {
+        await verifyMfaEmail(challengeToken, code.trim())
+      } else {
+        await verifyTotp(challengeToken, code.trim(), recovery)
+      }
       onVerified()
     } catch (err) {
       setError(
@@ -243,6 +254,89 @@ export function MfaChallenge({
     } finally {
       setBusy(false)
     }
+  }
+
+  async function usePasskey() {
+    setError(null)
+    setBusy(true)
+    try {
+      await verifyMfaPasskey(challengeToken)
+      onVerified()
+    } catch (err) {
+      if (!isWebAuthnCancel(err)) setError('Passkey verification failed. Try another method.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendEmailCode() {
+    setError(null)
+    setBusy(true)
+    try {
+      await api.auth.mfa.emailSend(challengeToken)
+      setEmailOtp('sent')
+      setCode('')
+    } catch {
+      setError('Could not send code. Try another method.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Email-OTP code entry view.
+  if (emailOtp === 'entering' || (emailOtp === 'sent')) {
+    return (
+      <AuthLayout
+        title="Email verification"
+        subtitle="Enter the 6-digit code we just sent to your verified email address."
+        footer={
+          <button type="button" onClick={onBack} className="font-medium text-primary hover:underline">
+            Back to sign in
+          </button>
+        }
+      >
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setEmailOtp('entering')
+              setCode('')
+              setError(null)
+            }}
+            disabled={busy}
+          >
+            {emailOtp === 'sent' ? 'Enter the code →' : 'Resend code'}
+          </Button>
+          {emailOtp === 'entering' && (
+            <>
+              <Field
+                label="Verification code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                maxLength={6}
+                value={code}
+                disabled={busy}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+              />
+              <FormError>{error}</FormError>
+              <Button type="submit" disabled={busy || code.length < 6}>
+                {busy ? 'Verifying…' : 'Verify'}
+              </Button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setEmailOtp(null)}
+            className="text-sm font-medium text-muted hover:text-ink"
+          >
+            Back to two-factor options
+          </button>
+        </form>
+      </AuthLayout>
+    )
   }
 
   return (
@@ -288,6 +382,15 @@ export function MfaChallenge({
         >
           {recovery ? 'Use authenticator code instead' : 'Use a recovery code instead'}
         </button>
+        <hr className="border-line" />
+        {browserSupportsWebAuthn() && (
+          <Button type="button" variant="ghost" onClick={usePasskey} disabled={busy}>
+            Use a passkey instead
+          </Button>
+        )}
+        <Button type="button" variant="ghost" onClick={sendEmailCode} disabled={busy}>
+          Email me a code
+        </Button>
       </form>
     </AuthLayout>
   )

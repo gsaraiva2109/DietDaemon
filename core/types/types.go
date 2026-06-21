@@ -47,6 +47,7 @@ type User struct {
 	DisplayName     string
 	Timezone        string // IANA tz (e.g. "America/Sao_Paulo"); empty falls back to DEFAULT_TIMEZONE
 	CreatedAt       time.Time
+	WebAuthnHandle  string // base64 stable handle for passkey operations; empty until first passkey
 }
 
 // InboundMessage is the canonical, channel-agnostic representation of a message
@@ -399,6 +400,21 @@ type OIDCIdentity struct {
 	Email     string    `json:"email"`
 	LinkedAt  time.Time `json:"linked_at"`
 	CreatedAt time.Time `json:"-"`
+}
+
+// Passkey is a user-facing WebAuthn credential summary returned by the API.
+type Passkey struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at"` // empty if never used
+}
+
+// WebAuthnCredential is the raw stored credential data used to reconstruct a
+// go-webauthn user for ceremony operations.
+type WebAuthnCredential struct {
+	ID             string `json:"id"` // base64url credential ID
+	CredentialJSON string `json:"credential_json"`
 }
 
 // RegistrationMode enumerates how new accounts may be created.
