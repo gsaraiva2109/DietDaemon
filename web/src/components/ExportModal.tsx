@@ -1,4 +1,4 @@
-// Export & Share — Phase 6. Pulls meals or daily rollups as CSV/JSON over a
+// Export & Share. Pulls meals or daily rollups as CSV/JSON over a
 // date range and saves them to disk. Hits the real API, so it's disabled in
 // demo mode (the demo dataset is synthetic and has no backing export route).
 

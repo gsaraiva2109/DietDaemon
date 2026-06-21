@@ -2,8 +2,7 @@
 package store
 
 // Dialect abstracts SQL dialect differences between SQLite and Postgres.
-// Currently constructs the SQLite variant; Postgres is reserved for
-// future phases.
+// Currently constructs the SQLite variant; Postgres is reserved for the future
 type Dialect interface {
 	// Placeholder returns the parameter placeholder for the n-th argument
 	// (1-based): "?" for SQLite, "$n" for Postgres.

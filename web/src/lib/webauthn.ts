@@ -28,7 +28,7 @@ export async function loginWithPasskey(email?: string): Promise<LoginResponse> {
   return api.auth.passkeys.loginFinish(credential)
 }
 
-// Complete MFA step-up with a passkey (Phase 6).
+// Complete MFA step-up with a passkey.
 export async function mfaWithPasskey(challengeToken: string): Promise<SessionResponse> {
   const optionsJSON = await api.auth.mfa.passkeyBegin(challengeToken)
   const credential = await startAuthentication({ optionsJSON })
