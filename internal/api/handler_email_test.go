@@ -100,6 +100,21 @@ func (s *emailTestAuthStore) DeleteUserSessions(_ context.Context, userID string
 	return nil
 }
 
+// Phase 5 — Magic codes.
+func (s *emailTestAuthStore) UpsertMagicCode(_ context.Context, userID, codeHash, expiresAt string) error {
+	return nil
+}
+func (s *emailTestAuthStore) GetMagicCode(_ context.Context, userID string) (string, string, int, error) {
+	return "", "", 0, types.ErrNotFound
+}
+func (s *emailTestAuthStore) IncrementMagicCodeAttempts(_ context.Context, userID string) error {
+	return nil
+}
+func (s *emailTestAuthStore) DeleteMagicCode(_ context.Context, userID string) error { return nil }
+func (s *emailTestAuthStore) DeleteEmailTokensByUserAndPurpose(_ context.Context, userID, purpose string) error {
+	return nil
+}
+
 func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler {
 	store := newFakeMealStore()
 	store.user = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}

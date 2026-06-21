@@ -50,6 +50,13 @@ type AuthStore interface {
 	UpdateUserEmail(ctx context.Context, userID, email string) error
 	CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error
 	ConsumeEmailToken(ctx context.Context, id, purpose string) (userID string, err error)
+
+	// Magic codes (Phase 5).
+	UpsertMagicCode(ctx context.Context, userID, codeHash, expiresAt string) error
+	GetMagicCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error)
+	IncrementMagicCodeAttempts(ctx context.Context, userID string) error
+	DeleteMagicCode(ctx context.Context, userID string) error
+	DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
@@ -290,6 +297,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/email/change", h.wrap(h.handleEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/password/forgot", h.wrapPublic(h.handleForgotPassword))
 	mux.HandleFunc("POST /api/v1/auth/password/reset", h.wrapPublic(h.handleResetPassword))
+
+	// Phase 5 — Passwordless email sign-in (magic code + link).
+	mux.HandleFunc("POST /api/v1/auth/magic/request", h.wrapPublic(h.handleMagicRequest))
+	mux.HandleFunc("POST /api/v1/auth/magic/verify", h.wrapPublic(h.handleMagicVerify))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.

@@ -228,15 +228,16 @@ export const api = {
           method: 'POST',
           body: JSON.stringify({ email }),
         }),
-      // Complete sign-in with the emailed code (scoped by email) …
+      // Complete sign-in with the emailed code (scoped by email). May return
+      // a session directly, or an MFA challenge when TOTP is enabled.
       verifyCode: (email: string, code: string) =>
-        request<SessionResponse>('/auth/magic/verify', {
+        request<LoginResponse>('/auth/magic/verify', {
           method: 'POST',
           body: JSON.stringify({ email, code }),
         }),
-      // … or the one-click link token.
+      // … or the one-click link token. Same MFA-aware return type.
       verifyToken: (magicToken: string) =>
-        request<SessionResponse>('/auth/magic/verify', {
+        request<LoginResponse>('/auth/magic/verify', {
           method: 'POST',
           body: JSON.stringify({ token: magicToken }),
         }),

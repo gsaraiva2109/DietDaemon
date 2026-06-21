@@ -718,6 +718,53 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, id, purpose string) (user
 	return userID, nil
 }
 
+// DeleteEmailTokensByUserAndPurpose removes all email tokens for a user+purpose
+// combination. Used to clean up sibling credentials on successful magic sign-in.
+func (s *Store) DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error {
+	const q = `DELETE FROM auth_email_tokens WHERE user_id = ? AND purpose = ?`
+	_, err := s.db.ExecContext(ctx, q, userID, purpose)
+	return err
+}
+
+// --- Magic codes (Phase 5) ---
+
+// UpsertMagicCode inserts or replaces the active magic code for a user.
+// One active code per user (user_id PK); resend overwrites.
+func (s *Store) UpsertMagicCode(ctx context.Context, userID, codeHash, expiresAt string) error {
+	const q = `INSERT INTO auth_magic_codes (user_id, code_hash, expires_at, attempts, created_at)
+		VALUES (?, ?, ?, 0, ?)
+		ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
+	_, err := s.db.ExecContext(ctx, q, userID, codeHash, expiresAt, utcNow())
+	return err
+}
+
+// GetMagicCode returns the stored magic code info for a user, or types.ErrNotFound.
+func (s *Store) GetMagicCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error) {
+	const q = `SELECT code_hash, expires_at, attempts FROM auth_magic_codes WHERE user_id = ?`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	if scanErr := row.Scan(&codeHash, &expiresAt, &attempts); scanErr == sql.ErrNoRows {
+		return "", "", 0, types.ErrNotFound
+	} else if scanErr != nil {
+		return "", "", 0, fmt.Errorf("store: get magic code: %w", scanErr)
+	}
+	return codeHash, expiresAt, attempts, nil
+}
+
+// IncrementMagicCodeAttempts bumps the attempt counter for an active code.
+func (s *Store) IncrementMagicCodeAttempts(ctx context.Context, userID string) error {
+	const q = `UPDATE auth_magic_codes SET attempts = attempts + 1 WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, q, userID)
+	return err
+}
+
+// DeleteMagicCode removes the active magic code for a user (consume on success,
+// clear on expiry/cap).
+func (s *Store) DeleteMagicCode(ctx context.Context, userID string) error {
+	const q = `DELETE FROM auth_magic_codes WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, q, userID)
+	return err
+}
+
 // Compile-time checks that *Store satisfies the auth interfaces.
 var (
 	_ auth.SessionRepo      = (*Store)(nil)

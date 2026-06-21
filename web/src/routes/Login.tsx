@@ -191,7 +191,7 @@ export function Login() {
 }
 
 // Second step of a 2FA login: a TOTP code, or a recovery code as fallback.
-function MfaChallenge({
+export function MfaChallenge({
   challengeToken,
   onVerified,
   onBack,

@@ -458,6 +458,21 @@ func (s *fakeAuthStore) ConsumeEmailToken(_ context.Context, id, purpose string)
 	return "", types.ErrNotFound
 }
 
+// Phase 5 — Magic codes.
+func (s *fakeAuthStore) UpsertMagicCode(_ context.Context, userID, codeHash, expiresAt string) error {
+	return nil
+}
+func (s *fakeAuthStore) GetMagicCode(_ context.Context, userID string) (string, string, int, error) {
+	return "", "", 0, types.ErrNotFound
+}
+func (s *fakeAuthStore) IncrementMagicCodeAttempts(_ context.Context, userID string) error {
+	return nil
+}
+func (s *fakeAuthStore) DeleteMagicCode(_ context.Context, userID string) error { return nil }
+func (s *fakeAuthStore) DeleteEmailTokensByUserAndPurpose(_ context.Context, userID, purpose string) error {
+	return nil
+}
+
 type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal

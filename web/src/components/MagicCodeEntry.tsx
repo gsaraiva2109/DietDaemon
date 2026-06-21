@@ -1,10 +1,14 @@
 // Code-entry step for passwordless sign-in. The user requested a code by email
 // (the mock logs it to its console); here they enter it to complete sign-in.
-// Includes a resend button with a short cooldown.
+// Includes a resend button with a short cooldown. When the account has TOTP
+// enabled, the verify step returns an MFA challenge instead of a session; we
+// hand off to <MfaChallenge> which issues the session on success.
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useMagicRequest, useMagicVerifyCode } from '@/lib/queries'
+import { isMfaChallenge } from '@/lib/types'
+import { MfaChallenge } from '@/routes/Login'
 import { Button, Field, FormError } from './ui'
 
 const RESEND_COOLDOWN = 30
@@ -24,6 +28,7 @@ export function MagicCodeEntry({
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN)
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -36,7 +41,11 @@ export function MagicCodeEntry({
     if (!code.trim()) return
     setError(null)
     try {
-      await verify.mutateAsync({ email, code: code.trim() })
+      const res = await verify.mutateAsync({ email, code: code.trim() })
+      if (isMfaChallenge(res)) {
+        setChallengeToken(res.challenge_token)
+        return
+      }
       await refresh()
       onVerified()
     } catch {
@@ -50,6 +59,22 @@ export function MagicCodeEntry({
     } finally {
       setCooldown(RESEND_COOLDOWN)
     }
+  }
+
+  if (challengeToken) {
+    return (
+      <MfaChallenge
+        challengeToken={challengeToken}
+        onVerified={() => {
+          refresh()
+          onVerified()
+        }}
+        onBack={() => {
+          setChallengeToken(null)
+          setCode('')
+        }}
+      />
+    )
   }
 
   return (
