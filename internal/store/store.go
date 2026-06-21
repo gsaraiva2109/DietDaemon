@@ -90,7 +90,7 @@ func (s *Store) runMigrations() error {
 	// never actually ran — the first pass detects the inconsistency,
 	// removes the bogus tracking entries, and the second pass applies
 	// them for real.
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		applied := 0
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
@@ -176,12 +176,12 @@ func (s *Store) healMissingColumns() int {
 		var exists int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&exists); err != nil {
 			// Table might not exist either — that's also a sign of missing migration.
-			s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
 			healed++
 			continue
 		}
 		if exists == 0 {
-			s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
+			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
 			healed++
 		}
 	}
@@ -1136,7 +1136,11 @@ func parseUTC(s string) time.Time {
 }
 
 // ptrTime returns a pointer to t.
-func ptrTime(t time.Time) *time.Time { return &t }
+func ptrTime(t time.Time) *time.Time {
+	p := new(time.Time)
+	*p = t
+	return p
+}
 
 // isUniqueViolation reports whether err is a SQL UNIQUE constraint violation.
 // Works with modernc.org/sqlite; kept simple and portable.
@@ -1516,10 +1520,7 @@ func (s *Store) WeightTrend(ctx context.Context, userID string, days int) ([]typ
 		wt := types.WeightTrend{Date: e.Date, WeightKg: e.WeightKg}
 
 		// 7-day rolling average.
-		start := i - 6
-		if start < 0 {
-			start = 0
-		}
+		start := max(i-6, 0)
 		sum := 0.0
 		count := 0
 		for j := start; j <= i; j++ {

@@ -100,6 +100,7 @@ func run(ollamaURL, embedModel, dbPath string) error {
 }
 
 func loadPhrases(path string) ([]phraseEntry, error) {
+	// #nosec G304 -- path provided by operator at CLI, intentional file read
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

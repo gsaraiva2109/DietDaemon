@@ -165,7 +165,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		return
 	}
 	var hd helloData
-	json.Unmarshal(hello.D, &hd)
+	_ = json.Unmarshal(hello.D, &hd)
 
 	// Start heartbeat goroutine.
 	heartbeatCtx, cancelBeat := context.WithCancel(ctx)
@@ -253,7 +253,7 @@ func (a *Adapter) fetchGatewayURL(ctx context.Context) (string, error) {
 	var result struct {
 		URL string `json:"url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	_ = json.NewDecoder(resp.Body).Decode(&result)
 	return result.URL, nil
 }
 
@@ -280,7 +280,7 @@ func (a *Adapter) sendHeartbeat(conn *tls.Conn, seq *int) {
 		b, _ := json.Marshal(*seq)
 		pl.D = b
 	}
-	writeGatewayFrame(conn, pl)
+	_ = writeGatewayFrame(conn, pl)
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ func dialWebSocket(ctx context.Context, rawURL string) (*tls.Conn, error) {
 	req += "\r\n"
 
 	if _, err := tlsConn.Write([]byte(req)); err != nil {
-		tlsConn.Close()
+		_ = tlsConn.Close()
 		return nil, fmt.Errorf("discord: ws handshake write: %w", err)
 	}
 
@@ -328,11 +328,11 @@ func dialWebSocket(ctx context.Context, rawURL string) (*tls.Conn, error) {
 	br := bufio.NewReader(tlsConn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
-		tlsConn.Close()
+		_ = tlsConn.Close()
 		return nil, fmt.Errorf("discord: ws handshake read: %w", err)
 	}
 	if resp.StatusCode != 101 {
-		tlsConn.Close()
+		_ = tlsConn.Close()
 		return nil, fmt.Errorf("discord: ws upgrade got %d", resp.StatusCode)
 	}
 

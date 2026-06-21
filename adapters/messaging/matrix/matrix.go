@@ -160,10 +160,10 @@ func (a *Adapter) syncLoop(ctx context.Context, ch chan<- types.InboundMessage) 
 
 		var sr syncResponse
 		if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		since = sr.NextBatch
 
