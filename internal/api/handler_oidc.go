@@ -15,7 +15,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// OIDC client login + account linking (Phase 3)
+// OIDC client login and account linking.
 // ---------------------------------------------------------------------------
 
 const oidcStateTTL = 10 * time.Minute

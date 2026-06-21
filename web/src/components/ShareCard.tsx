@@ -1,4 +1,4 @@
-// Share card — Phase 6. Renders a screenshot-ready summary card (calories +
+// Share card. Renders a screenshot-ready summary card (calories +
 // macro row) and lets the user save it as a PNG or copy it to the clipboard.
 // Pure client-side: it captures a styled DOM node with html-to-image, so it
 // works in demo mode too (it only reads the macros passed in).

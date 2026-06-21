@@ -99,6 +99,16 @@ type Store interface {
 	Close() error
 }
 
+// Command is a bot command that can be dispatched by name. Each command
+// registers itself with the registry and handles inbound messages that match
+// its name or aliases.
+type Command interface {
+	Name() string
+	Aliases() []string
+	Help() types.I18nKey
+	Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error)
+}
+
 // PendingStore holds the short-lived conversational state of meals awaiting
 // clarification, keyed by user (one open pending meal per user). The pipeline
 // stores a PendingMeal when an item needs a portion or correction and reads it

@@ -419,7 +419,7 @@ func TestMagicVerifyTokenCleansUpSiblingCode(t *testing.T) {
 	}
 }
 
-// Phase 6 stubs — not exercised by existing tests.
+// Stubs — not exercised by existing tests.
 
 func (s *magicTestAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
 	return "", nil

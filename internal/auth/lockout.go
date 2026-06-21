@@ -20,7 +20,7 @@ type LockoutConfig struct {
 	LockDuration time.Duration // how long the lockout lasts
 }
 
-// DefaultLockoutConfig returns the Phase 1 policy: 5 fails in 15 min → locked 15 min.
+// DefaultLockoutConfig returns the standard policy: 5 fails in 15 min → locked 15 min.
 func DefaultLockoutConfig() LockoutConfig {
 	return LockoutConfig{
 		MaxAttempts:  5,

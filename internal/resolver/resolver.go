@@ -5,7 +5,7 @@
 // time each food is seen. External lookups are written back to the library and
 // their query frequency is recorded so common foods rank first.
 //
-// When a Matcher is configured (Phase 5 / Tier >= 1), the resolver also
+// When a Matcher is configured (Tier >= 1), the resolver also
 // consults an embedding nearest-neighbour search after the exact alias lookup
 // and before external sources. On an external hit the resolver embeds the
 // canonical food name into the index so future queries can match it via

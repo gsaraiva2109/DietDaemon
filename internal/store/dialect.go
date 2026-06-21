@@ -2,8 +2,7 @@
 package store
 
 // Dialect abstracts SQL dialect differences between SQLite and Postgres.
-// Phase 1 only constructs the SQLite variant; Postgres is reserved for
-// future phases.
+// Currently constructs the SQLite variant; Postgres is reserved for the future
 type Dialect interface {
 	// Placeholder returns the parameter placeholder for the n-th argument
 	// (1-based): "?" for SQLite, "$n" for Postgres.
@@ -15,7 +14,7 @@ type sqliteDialect struct{}
 
 func (d sqliteDialect) Placeholder(int) string { return "?" }
 
-// NewDialect returns the dialect for the given driver. Phase 1 only
+// NewDialect returns the dialect for the given driver. Currently
 // supports "sqlite".
 func NewDialect(driver string) (Dialect, error) {
 	if driver != "sqlite" {

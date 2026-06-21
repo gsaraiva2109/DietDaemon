@@ -74,10 +74,6 @@ export const MACRO_META: Record<MacroKey, MacroMeta> = {
   Fiber: { key: 'Fiber', label: 'Fiber', unit: 'g', colorVar: '--color-fiber' },
 }
 
-// ---------------------------------------------------------------------------
-// Phase 1 — computed weekly stats (frontend-only, from DailyRollup[]).
-// ---------------------------------------------------------------------------
-
 export interface WeeklyStats {
   days: DailyRollup[]
   avg: Macros // element-wise average of Consumed across logged days
@@ -98,8 +94,6 @@ export type TrendDirection = 'up' | 'down' | 'flat'
 // which has no json tags, so its nested fields stay PascalCase even when it
 // appears inside a snake_case parent (e.g. MealTemplate.items).
 // ---------------------------------------------------------------------------
-
-// Phase 2 — Food Discovery -------------------------------------------------
 
 export interface FoodAlias {
   food_id: string
@@ -123,8 +117,6 @@ export interface FoodDetail {
   aliases?: FoodAlias[]
 }
 
-// Phase 3 — Meal Templates -------------------------------------------------
-
 export interface MealTemplate {
   id: string
   user_id: string
@@ -133,8 +125,6 @@ export interface MealTemplate {
   created_at: string // RFC3339
   last_used: string // RFC3339
 }
-
-// Phase 4 — Body Tracking --------------------------------------------------
 
 export interface WeightEntry {
   id: string
@@ -195,8 +185,6 @@ export const MEASUREMENT_FIELDS = [
 ] as const
 export type MeasurementField = (typeof MEASUREMENT_FIELDS)[number]['key']
 
-// Phase 5 — Goals & Planning ----------------------------------------------
-
 export interface UserProfile {
   user_id: string
   height_cm: number
@@ -244,18 +232,12 @@ export const GOALS = [
   { value: 'bulk', label: 'Bulk', hint: 'Build muscle in a calorie surplus' },
 ] as const
 
-// ---------------------------------------------------------------------------
-// Auth (Phase 1) — httpOnly server sessions + machine API keys.
-// Mirrors the frozen API contract: snake_case json from the Go backend.
-// ---------------------------------------------------------------------------
-
 export interface User {
   id: string
   email: string
   display_name: string
   email_verified: boolean
   created_at: string
-  // Phase 2 — whether a confirmed TOTP factor is active on the account.
   totp_enabled?: boolean
 }
 
@@ -267,10 +249,10 @@ export interface SessionResponse {
 // How new accounts may be created. Drives login/register screen gating.
 //   open      — anyone may register
 //   invite    — only the bootstrap (first) user; closed thereafter
-//   oidc-only — no password form; sign in with a provider (Phase 3)
+//   oidc-only — no password form; sign in with a provider
 export type RegistrationMode = 'open' | 'invite' | 'oidc-only'
 
-// A configured OIDC provider (Phase 3). `id` is the route slug used in
+// A configured OIDC provider. `id` is the route slug used in
 // /auth/oidc/{id}/start; `name` is the human label on the button.
 export interface OidcProvider {
   id: string
@@ -278,13 +260,12 @@ export interface OidcProvider {
 }
 
 // GET /auth/providers — drives the login screen. `providers` is empty until
-// Phase 3 wires real OIDC providers.
 export interface ProvidersResponse {
   registration_mode: RegistrationMode
   providers: OidcProvider[]
 }
 
-// A provider account linked to the current user (Phase 3).
+// A provider account linked to the current user.
 export interface LinkedIdentity {
   id: string
   provider: string // matches OidcProvider.id
@@ -306,7 +287,7 @@ export interface NewApiKey extends ApiKey {
 }
 
 // ---------------------------------------------------------------------------
-// TOTP / MFA (Phase 2)
+// TOTP / MFA
 // ---------------------------------------------------------------------------
 
 // POST /auth/totp/enroll — provisioning data for the authenticator app.
@@ -334,7 +315,7 @@ export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
 }
 
 // ---------------------------------------------------------------------------
-// Passkeys / WebAuthn (Phase 6)
+// Passkeys / WebAuthn
 // ---------------------------------------------------------------------------
 
 export interface Passkey {

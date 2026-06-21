@@ -46,6 +46,7 @@ type User struct {
 	Status          string
 	DisplayName     string
 	Timezone        string // IANA tz (e.g. "America/Sao_Paulo"); empty falls back to DEFAULT_TIMEZONE
+	Locale          string // BCP-47 locale preference (e.g. "en", "pt-BR"); empty = auto-detect
 	CreatedAt       time.Time
 	WebAuthnHandle  string // base64 stable handle for passkey operations; empty until first passkey
 }
@@ -71,7 +72,24 @@ type Reply struct {
 	UserID      string
 	Text        string
 	ChannelMeta map[string]string
+	Locale      string       // BCP-47 locale for i18n rendering
+	Markup      *ReplyMarkup // optional inline keyboard / components
 }
+
+// ReplyMarkup carries platform-agnostic interactive UI elements for a reply.
+// Adapters translate this to native controls (inline keyboard, components, text).
+type ReplyMarkup struct {
+	InlineKeyboard [][]InlineButton
+}
+
+// InlineButton is one button in an inline keyboard row.
+type InlineButton struct {
+	Text         string
+	CallbackData string
+}
+
+// I18nKey is a translation key used with the i18n bundle to look up a template.
+type I18nKey string
 
 // ParsedItem is one food item extracted from a message in Stage A, before macros
 // are resolved. Quantity/Unit are the raw extracted measure; the pipeline fills
@@ -202,7 +220,7 @@ type DailyRollup struct {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Food Discovery
+// Food library types
 // ---------------------------------------------------------------------------
 
 // FoodDetail is a full food library entry with metadata and aliases.
@@ -231,7 +249,7 @@ type FoodAlias struct {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Meal Templates
+// Meal templates
 // ---------------------------------------------------------------------------
 
 // MealTemplate is a reusable meal with pre-resolved items.
@@ -253,7 +271,7 @@ type TemplateLog struct {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Body Tracking
+// Body tracking types
 // ---------------------------------------------------------------------------
 
 // WeightEntry is a single weight measurement.
@@ -310,7 +328,7 @@ type BodyCompositionSummary struct {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Goals & Planning
+// Goals & planning types
 // ---------------------------------------------------------------------------
 
 // UserProfile holds body metrics and goals for a user.
@@ -359,7 +377,7 @@ type GoalSuggestion struct {
 }
 
 // ---------------------------------------------------------------------------
-// Auth (Phase 1) — session + API key types
+// Auth types — sessions and API keys
 // ---------------------------------------------------------------------------
 
 // APIKey is a machine-authentication key. The raw key is returned exactly
@@ -415,6 +433,16 @@ type Passkey struct {
 type WebAuthnCredential struct {
 	ID             string `json:"id"` // base64url credential ID
 	CredentialJSON string `json:"credential_json"`
+}
+
+// LinkingCode is a one-time code for linking a chat platform account to a
+// dashboard user. Codes expire after 10 minutes.
+type LinkingCode struct {
+	Code      string `json:"code"`
+	UserID    string `json:"user_id"`
+	Platform  string `json:"platform"`
+	ExpiresAt string `json:"expires_at"` // UTC datetime string "2006-01-02 15:04:05"
+	UsedAt    string `json:"used_at"`    // empty if not yet used
 }
 
 // RegistrationMode enumerates how new accounts may be created.

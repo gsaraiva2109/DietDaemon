@@ -18,7 +18,7 @@ const mfaEmailTTL = 10 * time.Minute
 const mfaEmailMaxAttempts = 5
 
 // ---------------------------------------------------------------------------
-// Email-OTP fallback factor for MFA step-up (Phase 6).
+// Email OTP fallback for MFA step-up.
 // ---------------------------------------------------------------------------
 
 // POST /auth/mfa/email/send

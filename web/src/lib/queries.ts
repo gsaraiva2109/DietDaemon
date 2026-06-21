@@ -164,7 +164,7 @@ export function useSetTargets() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Food Discovery
+// Food Discovery
 // ---------------------------------------------------------------------------
 
 export function useFoods(source = '') {
@@ -224,7 +224,7 @@ export function useDeleteAlias(foodID: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Meal Templates
+// Meal Templates
 // ---------------------------------------------------------------------------
 
 export function useTemplates() {
@@ -276,7 +276,7 @@ export function useDuplicateMeal() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Body Tracking
+// Body Tracking
 // ---------------------------------------------------------------------------
 
 export function useWeightLog(days = 90) {
@@ -370,7 +370,7 @@ export function useBodySummary() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Goals & Planning
+// Goals & Planning
 // ---------------------------------------------------------------------------
 
 export function useProfile() {
@@ -410,7 +410,7 @@ export function useTDEE(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Auth (Phase 1) — providers gating, API keys, change password.
+// Auth — providers gating, API keys, change password.
 // Session/login/register/logout state lives in the AuthProvider (auth.tsx),
 // the single source of truth; these hooks cover the data-ish surfaces.
 // Demo short-circuits reads so the screens render with no backend.
@@ -459,7 +459,7 @@ export function useChangePassword() {
   })
 }
 
-// --- TOTP / MFA (Phase 2). Session-state changes flow through auth.refresh().
+// --- TOTP / MFA. Session-state changes flow through auth.refresh().
 
 export function useTotpEnroll() {
   return useMutation({ mutationFn: () => api.auth.totp.enroll() })
@@ -477,7 +477,7 @@ export function useRegenerateRecovery() {
   return useMutation({ mutationFn: () => api.auth.totp.regenerateRecovery() })
 }
 
-// --- OIDC linked accounts (Phase 3) ---------------------------------------
+// --- OIDC linked accounts ---------------------------------------
 
 export function useIdentities() {
   const { demo } = useDemo()
@@ -495,7 +495,7 @@ export function useUnlinkIdentity() {
   })
 }
 
-// --- Email verification / change + password reset (Phase 4) ---------------
+// --- Email verification / change + password reset ---------------
 
 export function useVerifyEmail() {
   return useMutation({ mutationFn: (token: string) => api.auth.email.verify(token) })
@@ -520,7 +520,7 @@ export function useResetPassword() {
   })
 }
 
-// --- Passwordless magic code / link (Phase 5) -----------------------------
+// --- Passwordless magic code / link -----------------------------
 
 export function useMagicRequest() {
   return useMutation({ mutationFn: (email: string) => api.auth.magic.request(email) })
@@ -533,7 +533,7 @@ export function useMagicVerifyCode() {
   })
 }
 
-// --- Passkeys / WebAuthn (Phase 6) ----------------------------------------
+// --- Passkeys / WebAuthn ----------------------------------------
 
 export function usePasskeys() {
   const { demo } = useDemo()

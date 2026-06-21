@@ -16,7 +16,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Passwordless email sign-in (magic code + magic link).
+// Passwordless email sign-in with magic codes and links.
 // ---------------------------------------------------------------------------
 
 const magicTTL = 15 * time.Minute

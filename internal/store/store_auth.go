@@ -644,7 +644,7 @@ func (s *Store) DeleteOIDCState(ctx context.Context, id string) error {
 	return err
 }
 
-// --- Email tokens (Phase 4) ---
+// --- Email tokens ---
 
 // MarkEmailVerified sets email_verified_at to now for the user.
 func (s *Store) MarkEmailVerified(ctx context.Context, userID string) error {
@@ -726,7 +726,7 @@ func (s *Store) DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, p
 	return err
 }
 
-// --- Magic codes (Phase 5) ---
+// --- Magic codes ---
 
 // UpsertMagicCode inserts or replaces the active magic code for a user.
 // One active code per user (user_id PK); resend overwrites.
@@ -766,7 +766,7 @@ func (s *Store) DeleteMagicCode(ctx context.Context, userID string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6 — WebAuthn passkeys, ceremony sessions, and MFA email codes.
+// WebAuthn passkeys, ceremony sessions, and MFA email codes.
 // ---------------------------------------------------------------------------
 
 // --- WebAuthn user handle ---

@@ -1164,7 +1164,7 @@ func newID() string {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Latest Meal
+// Latest meal
 // ---------------------------------------------------------------------------
 
 // LatestMealTime returns the most recent meal timestamp for a user, or
@@ -1182,7 +1182,7 @@ func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, erro
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Food Discovery
+// Food discovery
 // ---------------------------------------------------------------------------
 
 // ListFoods returns paginated food library entries, optionally filtered by source.
@@ -1350,7 +1350,7 @@ func scanFoodDetails(rows *sql.Rows) ([]types.FoodDetail, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — Meal Templates
+// Meal templates
 // ---------------------------------------------------------------------------
 
 // SaveTemplate inserts or upserts a meal template.
@@ -1460,7 +1460,7 @@ func scanTemplates(rows *sql.Rows) ([]types.MealTemplate, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Body Tracking
+// Body tracking
 // ---------------------------------------------------------------------------
 
 // ListWeight returns weight entries for the last N days.
@@ -1738,7 +1738,7 @@ func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate 
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — Goals & Profile
+// Goals & profile
 // ---------------------------------------------------------------------------
 
 // GetProfile returns the user profile, or ErrNotFound.
@@ -1792,6 +1792,43 @@ func (s *Store) UpsertProfile(ctx context.Context, p types.UserProfile) error {
 		p.UserID, p.HeightCm, p.BirthDate, p.Gender, p.ActivityLevel, p.Goal,
 		p.TargetWeightKg, p.WeeklyRate, onboarded,
 		utcStr(p.CreatedAt), utcStr(p.UpdatedAt),
+	)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Linking codes
+// ---------------------------------------------------------------------------
+
+// CreateLinkingCode inserts a new one-time linking code. The code expires after
+// 10 minutes. The caller is responsible for generating the 6-char code.
+func (s *Store) CreateLinkingCode(ctx context.Context, userID, platform, code string) error {
+	expiresAt := time.Now().UTC().Add(10 * time.Minute).Format("2006-01-02 15:04:05")
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO linking_codes (code, user_id, platform, expires_at) VALUES (?, ?, ?, ?)`,
+		code, userID, platform, expiresAt,
+	)
+	return err
+}
+
+// LookupLinkingCode returns an unused linking code by its code string.
+func (s *Store) LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error) {
+	var lc types.LinkingCode
+	err := s.db.QueryRowContext(ctx,
+		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') FROM linking_codes WHERE code = ? AND used_at IS NULL`,
+		code,
+	).Scan(&lc.Code, &lc.UserID, &lc.Platform, &lc.ExpiresAt, &lc.UsedAt)
+	if err != nil {
+		return lc, err
+	}
+	return lc, nil
+}
+
+// ConsumeLinkingCode marks a linking code as used.
+func (s *Store) ConsumeLinkingCode(ctx context.Context, code string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE linking_codes SET used_at = datetime('now') WHERE code = ? AND used_at IS NULL`,
+		code,
 	)
 	return err
 }

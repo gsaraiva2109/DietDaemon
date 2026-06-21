@@ -215,7 +215,7 @@ export function Login() {
   )
 }
 
-// Second step of a 2FA login: TOTP, passkey, or email-OTP fallback (Phase 6).
+// Second step of a 2FA login: TOTP, passkey, or email-OTP fallback.
 export function MfaChallenge({
   challengeToken,
   onVerified,

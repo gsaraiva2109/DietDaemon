@@ -12,7 +12,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Email verification + password reset handlers.
+// Email verification and password reset handlers.
 // ---------------------------------------------------------------------------
 
 const (
