@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	gowa "github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
@@ -57,6 +59,26 @@ type AuthStore interface {
 	IncrementMagicCodeAttempts(ctx context.Context, userID string) error
 	DeleteMagicCode(ctx context.Context, userID string) error
 	DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error
+
+	// Phase 6 — WebAuthn passkeys.
+	GetOrCreateWebAuthnHandle(ctx context.Context, userID string) (string, error)
+	GetUserByWebAuthnHandle(ctx context.Context, handle string) (types.User, error)
+	CreateWebAuthnCredential(ctx context.Context, id, userID, label, credentialJSON string, signCount int, createdAt string) error
+	ListWebAuthnCredentials(ctx context.Context, userID string) ([]types.Passkey, error)
+	GetWebAuthnCredentialsRaw(ctx context.Context, userID string) ([]types.WebAuthnCredential, error)
+	UpdateWebAuthnCredentialOnAuth(ctx context.Context, id, credentialJSON string, signCount int, lastUsedAt string) error
+	RenameWebAuthnCredential(ctx context.Context, userID, id, label string) error
+	DeleteWebAuthnCredential(ctx context.Context, userID, id string) error
+
+	// Phase 6 — WebAuthn ceremony sessions.
+	CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error
+	ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error)
+
+	// Phase 6 — MFA email codes.
+	UpsertMFAEmailCode(ctx context.Context, challengeID, codeHash, expiresAt string) error
+	GetMFAEmailCode(ctx context.Context, challengeID string) (codeHash, expiresAt string, attempts int, err error)
+	IncrementMFAEmailCodeAttempts(ctx context.Context, challengeID string) error
+	DeleteMFAEmailCode(ctx context.Context, challengeID string) error
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
@@ -159,6 +181,9 @@ type Handler struct {
 	emailProvider string
 	publicBaseURL string
 
+	// WebAuthn (Phase 6).
+	webauthn *gowa.WebAuthn
+
 	// Auth config.
 	sessionCfg       auth.SessionConfig
 	lockoutCfg       auth.LockoutConfig
@@ -173,7 +198,7 @@ type Handler struct {
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
 // interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -196,6 +221,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		mailer:           m,
 		emailProvider:    emailProvider,
 		publicBaseURL:    publicBaseURL,
+		webauthn:         wa,
 		sessionCfg:       cfg.SessionCfg,
 		lockoutCfg:       cfg.LockoutCfg,
 		registrationMode: cfg.RegistrationMode,
@@ -301,6 +327,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Phase 5 — Passwordless email sign-in (magic code + link).
 	mux.HandleFunc("POST /api/v1/auth/magic/request", h.wrapPublic(h.handleMagicRequest))
 	mux.HandleFunc("POST /api/v1/auth/magic/verify", h.wrapPublic(h.handleMagicVerify))
+
+	// Phase 6 — Passkeys (management: session+CSRF; login ceremony: public).
+	mux.HandleFunc("GET /api/v1/auth/passkeys", h.wrap(h.handleListPasskeys))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/register/begin", h.wrap(h.handlePasskeyRegisterBegin))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/register/finish", h.wrap(h.handlePasskeyRegisterFinish))
+	mux.HandleFunc("PATCH /api/v1/auth/passkeys/{id}", h.wrap(h.handleRenamePasskey))
+	mux.HandleFunc("DELETE /api/v1/auth/passkeys/{id}", h.wrap(h.handleDeletePasskey))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/login/begin", h.wrapPublic(h.handlePasskeyLoginBegin))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/login/finish", h.wrapPublic(h.handlePasskeyLoginFinish))
+	// Phase 6 — Passkey-as-2FA + email-OTP fallback (public; challenge-scoped).
+	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/begin", h.wrapPublic(h.handleMFAPasskeyBegin))
+	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/finish", h.wrapPublic(h.handleMFAPasskeyFinish))
+	mux.HandleFunc("POST /api/v1/auth/mfa/email/send", h.wrapPublic(h.handleMFAEmailSend))
+	mux.HandleFunc("POST /api/v1/auth/mfa/email/verify", h.wrapPublic(h.handleMFAEmailVerify))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.

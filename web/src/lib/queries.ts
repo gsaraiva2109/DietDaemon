@@ -533,6 +533,33 @@ export function useMagicVerifyCode() {
   })
 }
 
+// --- Passkeys / WebAuthn (Phase 6) ----------------------------------------
+
+export function usePasskeys() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['auth', 'passkeys', demo],
+    queryFn: () => (demo ? [] : api.auth.passkeys.list()),
+  })
+}
+
+export function useRenamePasskey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, label }: { id: string; label: string }) =>
+      api.auth.passkeys.rename(id, label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] }),
+  })
+}
+
+export function useDeletePasskey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.auth.passkeys.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] }),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({

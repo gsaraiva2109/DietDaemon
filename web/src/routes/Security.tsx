@@ -2,7 +2,7 @@
 // Settings. A freshly created key's raw secret is revealed exactly once in a
 // scaleIn panel with a copy button; after that only metadata is ever shown.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import {
@@ -21,6 +21,7 @@ import { Button, Card, Field, FormError, Input, Pill, Spinner } from '@/componen
 import { TotpEnroll } from '@/components/TotpEnroll'
 import { RecoveryCodes } from '@/components/RecoveryCodes'
 import { LinkedAccounts } from '@/components/LinkedAccounts'
+import { PasskeyManager } from '@/components/PasskeyManager'
 import { CopyIcon, TrashIcon } from '@/components/icons'
 import { scaleIn } from '@/lib/motion'
 import type { NewApiKey } from '@/lib/types'
@@ -32,6 +33,7 @@ export function Security() {
     <div>
       <PageHeader eyebrow="Settings" title="Security" />
       <TwoFactorCard demo={demo} />
+      <PasskeysCard demo={demo} />
       <LinkedAccountsCard demo={demo} />
       <ApiKeysCard demo={demo} />
       <ChangeEmailCard demo={demo} />
@@ -46,7 +48,7 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     const next = email.trim().toLowerCase()
@@ -89,6 +91,25 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
           {change.isPending ? 'Saving…' : 'Change email'}
         </Button>
       </form>
+    </Card>
+  )
+}
+
+function PasskeysCard({ demo }: { demo: boolean }) {
+  return (
+    <Card className="mb-5 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-ink">Passkeys</h2>
+        {demo && <Pill tone="muted">disabled in demo</Pill>}
+      </div>
+      <p className="mb-4 text-sm text-muted">
+        Sign in with Face ID, Touch ID, or a security key — no password needed.
+      </p>
+      {demo ? (
+        <p className="text-sm text-muted">Connect a real backend to manage passkeys.</p>
+      ) : (
+        <PasskeyManager />
+      )}
     </Card>
   )
 }
@@ -189,7 +210,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
   const [label, setLabel] = useState('')
   const [fresh, setFresh] = useState<NewApiKey | null>(null)
 
-  async function onCreate(e: FormEvent) {
+  async function onCreate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!label.trim()) return
     const key = await create.mutateAsync(label.trim())
@@ -298,7 +319,7 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
     if (next !== confirm) {

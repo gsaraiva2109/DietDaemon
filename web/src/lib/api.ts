@@ -6,6 +6,12 @@
 // (double-submit CSRF). No token lives in JS/localStorage anymore.
 
 import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/browser'
+import type {
   ApiKey,
   BodyCompositionSummary,
   DailyRollup,
@@ -18,6 +24,7 @@ import type {
   MealTemplate,
   MeasurementEntry,
   NewApiKey,
+  Passkey,
   ProgressPhoto,
   ProvidersResponse,
   RecoveryCodesResponse,
@@ -242,6 +249,36 @@ export const api = {
           body: JSON.stringify({ token: magicToken }),
         }),
     },
+    // --- Passkeys / WebAuthn (Phase 6) ----------------------------------
+    passkeys: {
+      list: () => request<Passkey[]>('/auth/passkeys'),
+      registerBegin: () =>
+        request<PublicKeyCredentialCreationOptionsJSON>('/auth/passkeys/register/begin', {
+          method: 'POST',
+        }),
+      registerFinish: (label: string, credential: RegistrationResponseJSON) =>
+        request<Passkey>('/auth/passkeys/register/finish', {
+          method: 'POST',
+          body: JSON.stringify({ label, credential }),
+        }),
+      loginBegin: (email?: string) =>
+        request<PublicKeyCredentialRequestOptionsJSON>('/auth/passkeys/login/begin', {
+          method: 'POST',
+          body: JSON.stringify(email ? { email } : {}),
+        }),
+      loginFinish: (credential: AuthenticationResponseJSON) =>
+        request<LoginResponse>('/auth/passkeys/login/finish', {
+          method: 'POST',
+          body: JSON.stringify({ credential }),
+        }),
+      rename: (id: string, label: string) =>
+        request<Passkey>(`/auth/passkeys/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ label }),
+        }),
+      remove: (id: string) =>
+        request<void>(`/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
     // --- Password reset (Phase 4). forgot() always responds generically. ---
     password: {
       forgot: (email: string) =>
@@ -272,6 +309,29 @@ export const api = {
         request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
     // --- TOTP / MFA (Phase 2) -------------------------------------------
+    // --- MFA step-up: passkey + email-OTP fallback (Phase 6) ------------
+    mfa: {
+      passkeyBegin: (challengeToken: string) =>
+        request<PublicKeyCredentialRequestOptionsJSON>('/auth/mfa/passkey/begin', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken }),
+        }),
+      passkeyFinish: (challengeToken: string, credential: AuthenticationResponseJSON) =>
+        request<SessionResponse>('/auth/mfa/passkey/finish', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken, credential }),
+        }),
+      emailSend: (challengeToken: string) =>
+        request<void>('/auth/mfa/email/send', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken }),
+        }),
+      emailVerify: (challengeToken: string, code: string) =>
+        request<SessionResponse>('/auth/mfa/email/verify', {
+          method: 'POST',
+          body: JSON.stringify({ challenge_token: challengeToken, code }),
+        }),
+    },
     totp: {
       // Begin enrollment: returns otpauth_url (QR) + base32 secret.
       enroll: () => request<TotpEnrollResponse>('/auth/totp/enroll', { method: 'POST' }),

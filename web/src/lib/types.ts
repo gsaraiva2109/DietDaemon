@@ -332,3 +332,14 @@ export type LoginResponse = SessionResponse | MfaChallenge
 export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
   return 'mfa_required' in r && r.mfa_required === true
 }
+
+// ---------------------------------------------------------------------------
+// Passkeys / WebAuthn (Phase 6)
+// ---------------------------------------------------------------------------
+
+export interface Passkey {
+  id: string
+  label: string
+  created_at: string
+  last_used_at: string | null
+}

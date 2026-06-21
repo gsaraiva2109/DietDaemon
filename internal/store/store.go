@@ -239,7 +239,7 @@ func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users WHERE id = ?`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, q, userID)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
@@ -250,7 +250,7 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at FROM users ORDER BY id`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
@@ -262,8 +262,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 		var u types.User
 		var ca string
 		var eva sql.NullString
-		var accountID, email, displayName, status sql.NullString
-		if err := rows.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
+		var accountID, email, displayName, status, wh sql.NullString
+		if err := rows.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca, &wh); err != nil {
 			return nil, fmt.Errorf("store: scan user: %w", err)
 		}
 		u.AccountID = accountID.String
@@ -271,6 +271,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 		u.DisplayName = displayName.String
 		u.Status = status.String
 		u.CreatedAt = parseUTC(ca)
+		u.WebAuthnHandle = wh.String
 		if eva.Valid {
 			t := parseUTC(eva.String)
 			u.EmailVerifiedAt = &t
@@ -287,8 +288,8 @@ func scanUser(row *sql.Row) (types.User, error) {
 	var u types.User
 	var ca string
 	var eva sql.NullString
-	var accountID, email, displayName, status sql.NullString
-	if err := row.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca); err != nil {
+	var accountID, email, displayName, status, wh sql.NullString
+	if err := row.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca, &wh); err != nil {
 		return types.User{}, err
 	}
 	u.AccountID = accountID.String
@@ -296,6 +297,7 @@ func scanUser(row *sql.Row) (types.User, error) {
 	u.DisplayName = displayName.String
 	u.Status = status.String
 	u.CreatedAt = parseUTC(ca)
+	u.WebAuthnHandle = wh.String
 	if eva.Valid {
 		t := parseUTC(eva.String)
 		u.EmailVerifiedAt = &t

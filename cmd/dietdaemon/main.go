@@ -196,7 +196,13 @@ func run() error {
 			return fmt.Errorf("mailer: %w", err)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg)
+		// Phase 6 — WebAuthn.
+		wa, waErr := auth.NewWebAuthn(cfg.WebAuthnConfig())
+		if waErr != nil {
+			return fmt.Errorf("webauthn: %w", waErr)
+		}
+
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

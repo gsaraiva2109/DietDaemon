@@ -127,7 +127,7 @@ func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler 
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	})
+	}, nil)
 }
 
 func TestEmailVerifySuccess(t *testing.T) {
@@ -245,3 +245,44 @@ func TestPasswordResetRevokesSessions(t *testing.T) {
 		t.Error("password reset should delete all user sessions")
 	}
 }
+
+// Phase 6 stubs — not exercised by existing tests.
+
+func (s *emailTestAuthStore) GetOrCreateWebAuthnHandle(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (s *emailTestAuthStore) GetUserByWebAuthnHandle(_ context.Context, _ string) (types.User, error) {
+	return types.User{}, types.ErrNotFound
+}
+func (s *emailTestAuthStore) CreateWebAuthnCredential(_ context.Context, _, _, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) ListWebAuthnCredentials(_ context.Context, _ string) ([]types.Passkey, error) {
+	return nil, nil
+}
+func (s *emailTestAuthStore) GetWebAuthnCredentialsRaw(_ context.Context, _ string) ([]types.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (s *emailTestAuthStore) UpdateWebAuthnCredentialOnAuth(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) RenameWebAuthnCredential(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) DeleteWebAuthnCredential(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) CreateWebAuthnSession(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) ConsumeWebAuthnSession(_ context.Context, _ string) (string, string, error) {
+	return "", "", nil
+}
+func (s *emailTestAuthStore) UpsertMFAEmailCode(_ context.Context, _, _, _ string) error { return nil }
+func (s *emailTestAuthStore) GetMFAEmailCode(_ context.Context, _ string) (string, string, int, error) {
+	return "", "", 0, nil
+}
+func (s *emailTestAuthStore) IncrementMFAEmailCodeAttempts(_ context.Context, _ string) error {
+	return nil
+}
+func (s *emailTestAuthStore) DeleteMFAEmailCode(_ context.Context, _ string) error { return nil }
