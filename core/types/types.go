@@ -457,6 +457,53 @@ type LinkingCode struct {
 	UsedAt    string `json:"used_at"`    // empty if not yet used
 }
 
+// ---------------------------------------------------------------------------
+// Water, workout, and sleep tracking types
+// ---------------------------------------------------------------------------
+
+// WaterLog tracks water consumption entries.
+type WaterLog struct {
+	ID       string `json:"id"`
+	UserID   string `json:"userId"`
+	AmountML int    `json:"amountMl"`
+	LoggedAt string `json:"loggedAt"`
+	Note     string `json:"note,omitempty"`
+}
+
+// Workout tracks an exercise session.
+type Workout struct {
+	ID             string            `json:"id"`
+	UserID         string            `json:"userId"`
+	Name           string            `json:"name"`
+	DurationMin    int               `json:"durationMin"`
+	Intensity      string            `json:"intensity"`
+	CaloriesBurned *int              `json:"caloriesBurned,omitempty"`
+	Note           string            `json:"note,omitempty"`
+	LoggedAt       string            `json:"loggedAt"`
+	Exercises      []WorkoutExercise `json:"exercises,omitempty"`
+}
+
+// WorkoutExercise is an individual exercise within a workout.
+type WorkoutExercise struct {
+	ID        string   `json:"id,omitempty"`
+	WorkoutID string   `json:"workoutId,omitempty"`
+	Name      string   `json:"name"`
+	Sets      *int     `json:"sets,omitempty"`
+	Reps      *int     `json:"reps,omitempty"`
+	WeightKg  *float64 `json:"weightKg,omitempty"`
+	Note      string   `json:"note,omitempty"`
+}
+
+// SleepLog tracks sleep sessions.
+type SleepLog struct {
+	ID      string  `json:"id"`
+	UserID  string  `json:"userId"`
+	SleepAt string  `json:"sleepAt"`
+	WakeAt  *string `json:"wakeAt,omitempty"`
+	Quality string  `json:"quality"`
+	Note    string  `json:"note,omitempty"`
+}
+
 // RegistrationMode enumerates how new accounts may be created.
 type RegistrationMode string
 

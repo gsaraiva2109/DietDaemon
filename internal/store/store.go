@@ -1947,3 +1947,301 @@ func (s *Store) ConsumeLinkingCode(ctx context.Context, code string) error {
 	)
 	return err
 }
+
+// ---------------------------------------------------------------------------
+// Water tracking
+// ---------------------------------------------------------------------------
+
+// LogWater inserts a water consumption entry.
+func (s *Store) LogWater(ctx context.Context, w types.WaterLog) error {
+	const q = `
+		INSERT INTO water_logs (id, user_id, amount_ml, logged_at, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q, w.ID, w.UserID, w.AmountML, w.LoggedAt, nullStr(w.Note), utcNow())
+	if err != nil {
+		return fmt.Errorf("store: log water: %w", err)
+	}
+	return nil
+}
+
+// GetWaterToday returns water logs for a specific local date, along with the
+// total ml consumed that day.
+func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error) {
+	const q = `
+		SELECT id, user_id, amount_ml, logged_at, COALESCE(note, '')
+		FROM water_logs
+		WHERE user_id = ? AND date(logged_at) = ?
+		ORDER BY logged_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, localDate)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: get water today: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var logs []types.WaterLog
+	total := 0
+	for rows.Next() {
+		var w types.WaterLog
+		if err := rows.Scan(&w.ID, &w.UserID, &w.AmountML, &w.LoggedAt, &w.Note); err != nil {
+			return nil, 0, fmt.Errorf("store: scan water log: %w", err)
+		}
+		total += w.AmountML
+		logs = append(logs, w)
+	}
+	return logs, total, rows.Err()
+}
+
+// DeleteWater deletes a water log entry by user + ID. Returns ErrNotFound if absent.
+func (s *Store) DeleteWater(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM water_logs WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete water: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Workout tracking
+// ---------------------------------------------------------------------------
+
+// LogWorkout inserts a workout and its exercises inside a transaction.
+func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const workoutQ = `
+		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = tx.ExecContext(ctx, workoutQ,
+		w.ID, w.UserID, w.Name, w.DurationMin, w.Intensity,
+		w.CaloriesBurned, nullStr(w.Note), w.LoggedAt, utcNow(),
+	)
+	if err != nil {
+		return fmt.Errorf("store: insert workout: %w", err)
+	}
+
+	const exerciseQ = `
+		INSERT INTO workout_exercises (id, workout_id, name, sets, reps, weight_kg, note)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	for _, e := range w.Exercises {
+		exID := e.ID
+		if exID == "" {
+			exID = newID()
+		}
+		_, err = tx.ExecContext(ctx, exerciseQ,
+			exID, w.ID, e.Name, e.Sets, e.Reps, e.WeightKg, nullStr(e.Note),
+		)
+		if err != nil {
+			return fmt.Errorf("store: insert exercise: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetWorkout returns a single workout by ID with its exercises populated.
+// Returns types.ErrNotFound when the workout does not exist.
+func (s *Store) GetWorkout(ctx context.Context, id string) (types.Workout, error) {
+	const q = `
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		FROM workouts WHERE id = ?
+	`
+	row := s.db.QueryRowContext(ctx, q, id)
+	var w types.Workout
+	if err := row.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return types.Workout{}, types.ErrNotFound
+		}
+		return types.Workout{}, fmt.Errorf("store: get workout: %w", err)
+	}
+
+	exercises, err := s.loadWorkoutExercises(ctx, id)
+	if err != nil {
+		return types.Workout{}, err
+	}
+	w.Exercises = exercises
+	return w, nil
+}
+
+// ListWorkouts returns the user's most recent workouts without exercises.
+func (s *Store) ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error) {
+	const q = `
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		FROM workouts
+		WHERE user_id = ?
+		ORDER BY logged_at DESC
+		LIMIT ?
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list workouts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.Workout
+	for rows.Next() {
+		var w types.Workout
+		if err := rows.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
+			return nil, fmt.Errorf("store: scan workout: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// DeleteWorkout deletes a workout by user + ID. Exercises are cascade-deleted.
+// Returns ErrNotFound if absent.
+func (s *Store) DeleteWorkout(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM workouts WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete workout: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]types.WorkoutExercise, error) {
+	const q = `
+		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '')
+		FROM workout_exercises
+		WHERE workout_id = ?
+		ORDER BY rowid
+	`
+	rows, err := s.db.QueryContext(ctx, q, workoutID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query exercises: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.WorkoutExercise
+	for rows.Next() {
+		var e types.WorkoutExercise
+		if err := rows.Scan(&e.ID, &e.WorkoutID, &e.Name, &e.Sets, &e.Reps, &e.WeightKg, &e.Note); err != nil {
+			return nil, fmt.Errorf("store: scan exercise: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Sleep tracking
+// ---------------------------------------------------------------------------
+
+// LogSleep inserts a new sleep log entry.
+func (s *Store) LogSleep(ctx context.Context, sl types.SleepLog) error {
+	const q = `
+		INSERT INTO sleep_logs (id, user_id, sleep_at, wake_at, quality, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, q,
+		sl.ID, sl.UserID, sl.SleepAt, sl.WakeAt, sl.Quality, nullStr(sl.Note), utcNow(),
+	)
+	if err != nil {
+		return fmt.Errorf("store: log sleep: %w", err)
+	}
+	return nil
+}
+
+// GetActiveSleep returns the user's in-progress sleep (wake_at IS NULL), or
+// ErrNotFound if none is active.
+func (s *Store) GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error) {
+	const q = `
+		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '')
+		FROM sleep_logs
+		WHERE user_id = ? AND wake_at IS NULL
+		ORDER BY sleep_at DESC
+		LIMIT 1
+	`
+	row := s.db.QueryRowContext(ctx, q, userID)
+	var sl types.SleepLog
+	var wakeAt sql.NullString
+	if err := row.Scan(&sl.ID, &sl.UserID, &sl.SleepAt, &wakeAt, &sl.Quality, &sl.Note); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, types.ErrNotFound
+		}
+		return nil, fmt.Errorf("store: get active sleep: %w", err)
+	}
+	if wakeAt.Valid {
+		sl.WakeAt = &wakeAt.String
+	}
+	return &sl, nil
+}
+
+// EndSleep closes a sleep log by setting wake_at and quality. Returns
+// ErrNotFound if no matching active sleep log exists.
+func (s *Store) EndSleep(ctx context.Context, userID, id, wakeAt, quality string) error {
+	const q = `
+		UPDATE sleep_logs SET wake_at = ?, quality = ?
+		WHERE id = ? AND user_id = ? AND wake_at IS NULL
+	`
+	res, err := s.db.ExecContext(ctx, q, wakeAt, quality, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: end sleep: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// ListSleep returns the user's most recent sleep logs, newest first.
+func (s *Store) ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error) {
+	const q = `
+		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '')
+		FROM sleep_logs
+		WHERE user_id = ?
+		ORDER BY sleep_at DESC
+		LIMIT ?
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list sleep: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.SleepLog
+	for rows.Next() {
+		var sl types.SleepLog
+		var wakeAt sql.NullString
+		if err := rows.Scan(&sl.ID, &sl.UserID, &sl.SleepAt, &wakeAt, &sl.Quality, &sl.Note); err != nil {
+			return nil, fmt.Errorf("store: scan sleep: %w", err)
+		}
+		if wakeAt.Valid {
+			sl.WakeAt = &wakeAt.String
+		}
+		out = append(out, sl)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSleep deletes a sleep log by user + ID. Returns ErrNotFound if absent.
+func (s *Store) DeleteSleep(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM sleep_logs WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete sleep: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}

@@ -172,6 +172,18 @@ func run() error {
 	if err := cmdRegistry.Register(commands.NewFoodCommand(st)); err != nil {
 		return fmt.Errorf("register food command: %w", err)
 	}
+	if err := cmdRegistry.Register(commands.NewWaterCommand(st)); err != nil {
+		return fmt.Errorf("register water command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewWorkoutCommand(st)); err != nil {
+		return fmt.Errorf("register workout command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewSleepCommand(st)); err != nil {
+		return fmt.Errorf("register sleep command: %w", err)
+	}
+	if err := cmdRegistry.Register(commands.NewFastCommand(st)); err != nil {
+		return fmt.Errorf("register fast command: %w", err)
+	}
 
 	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
 
