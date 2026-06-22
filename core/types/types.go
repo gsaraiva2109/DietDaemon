@@ -464,44 +464,45 @@ type LinkingCode struct {
 // WaterLog tracks water consumption entries.
 type WaterLog struct {
 	ID       string `json:"id"`
-	UserID   string `json:"userId"`
-	AmountML int    `json:"amountMl"`
-	LoggedAt string `json:"loggedAt"`
+	UserID   string `json:"user_id"`
+	AmountML int    `json:"amount_ml"`
+	LoggedAt string `json:"logged_at"`
 	Note     string `json:"note,omitempty"`
 }
 
 // Workout tracks an exercise session.
 type Workout struct {
 	ID             string            `json:"id"`
-	UserID         string            `json:"userId"`
+	UserID         string            `json:"user_id"`
 	Name           string            `json:"name"`
-	DurationMin    int               `json:"durationMin"`
+	DurationMin    int               `json:"duration_min"`
 	Intensity      string            `json:"intensity"`
-	CaloriesBurned *int              `json:"caloriesBurned,omitempty"`
+	CaloriesBurned *int              `json:"calories_burned,omitempty"`
 	Note           string            `json:"note,omitempty"`
-	LoggedAt       string            `json:"loggedAt"`
+	LoggedAt       string            `json:"logged_at"`
 	Exercises      []WorkoutExercise `json:"exercises,omitempty"`
 }
 
 // WorkoutExercise is an individual exercise within a workout.
 type WorkoutExercise struct {
 	ID        string   `json:"id,omitempty"`
-	WorkoutID string   `json:"workoutId,omitempty"`
+	WorkoutID string   `json:"workout_id,omitempty"`
 	Name      string   `json:"name"`
 	Sets      *int     `json:"sets,omitempty"`
 	Reps      *int     `json:"reps,omitempty"`
-	WeightKg  *float64 `json:"weightKg,omitempty"`
+	WeightKg  *float64 `json:"weight_kg,omitempty"`
 	Note      string   `json:"note,omitempty"`
 }
 
 // SleepLog tracks sleep sessions.
 type SleepLog struct {
-	ID      string  `json:"id"`
-	UserID  string  `json:"userId"`
-	SleepAt string  `json:"sleepAt"`
-	WakeAt  *string `json:"wakeAt,omitempty"`
-	Quality string  `json:"quality"`
-	Note    string  `json:"note,omitempty"`
+	ID            string  `json:"id"`
+	UserID        string  `json:"user_id"`
+	SleepAt       string  `json:"sleep_at"`
+	WakeAt        *string `json:"wake_at,omitempty"`
+	DurationHours float64 `json:"duration_hours,omitempty"`
+	Quality       string  `json:"quality"`
+	Note          string  `json:"note,omitempty"`
 }
 
 // RegistrationMode enumerates how new accounts may be created.

@@ -307,22 +307,22 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/fasting/history", h.wrap(h.handleListFasts))
 
 	// Water tracking.
-	mux.HandleFunc("POST /api/v1/water", h.wrap(h.handleLogWater))
-	mux.HandleFunc("GET /api/v1/water/today", h.wrap(h.handleGetWaterToday))
-	mux.HandleFunc("DELETE /api/v1/water/{id}", h.wrap(h.handleDeleteWater))
+	mux.HandleFunc("POST /api/v1/body/water", h.wrap(h.handleLogWater))
+	mux.HandleFunc("GET /api/v1/body/water", h.wrap(h.handleGetWaterToday))
+	mux.HandleFunc("DELETE /api/v1/body/water/{id}", h.wrap(h.handleDeleteWater))
 
 	// Workout tracking.
-	mux.HandleFunc("POST /api/v1/workouts", h.wrap(h.handleLogWorkout))
-	mux.HandleFunc("GET /api/v1/workouts", h.wrap(h.handleListWorkouts))
-	mux.HandleFunc("GET /api/v1/workouts/{id}", h.wrap(h.handleGetWorkout))
-	mux.HandleFunc("DELETE /api/v1/workouts/{id}", h.wrap(h.handleDeleteWorkout))
+	mux.HandleFunc("POST /api/v1/body/workouts", h.wrap(h.handleLogWorkout))
+	mux.HandleFunc("GET /api/v1/body/workouts", h.wrap(h.handleListWorkouts))
+	mux.HandleFunc("GET /api/v1/body/workouts/{id}", h.wrap(h.handleGetWorkout))
+	mux.HandleFunc("DELETE /api/v1/body/workouts/{id}", h.wrap(h.handleDeleteWorkout))
 
 	// Sleep tracking.
-	mux.HandleFunc("POST /api/v1/sleep", h.wrap(h.handleLogSleep))
-	mux.HandleFunc("GET /api/v1/sleep", h.wrap(h.handleListSleep))
-	mux.HandleFunc("GET /api/v1/sleep/active", h.wrap(h.handleGetActiveSleep))
-	mux.HandleFunc("PATCH /api/v1/sleep/{id}/end", h.wrap(h.handleEndSleep))
-	mux.HandleFunc("DELETE /api/v1/sleep/{id}", h.wrap(h.handleDeleteSleep))
+	mux.HandleFunc("POST /api/v1/body/sleep", h.wrap(h.handleLogSleep))
+	mux.HandleFunc("GET /api/v1/body/sleep", h.wrap(h.handleListSleep))
+	mux.HandleFunc("GET /api/v1/body/sleep/active", h.wrap(h.handleGetActiveSleep))
+	mux.HandleFunc("PATCH /api/v1/body/sleep/{id}/end", h.wrap(h.handleEndSleep))
+	mux.HandleFunc("DELETE /api/v1/body/sleep/{id}", h.wrap(h.handleDeleteSleep))
 
 	// Body tracking — measurements.
 	mux.HandleFunc("GET /api/v1/body/measurements", h.wrap(h.handleListMeasurements))
@@ -1301,9 +1301,9 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 
 func (h *Handler) handleLogWater(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
-		AmountML int    `json:"amountMl"`
+		AmountML int    `json:"amount_ml"`
 		Note     string `json:"note,omitempty"`
-		LoggedAt string `json:"loggedAt"`
+		LoggedAt string `json:"logged_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1343,9 +1343,12 @@ func (h *Handler) handleGetWaterToday(w http.ResponseWriter, r *http.Request, us
 	if logs == nil {
 		logs = []types.WaterLog{}
 	}
+	// Default water goal; TODO: read from daily_targets.water_goal_ml.
+	goalMl := 2000
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"logs":    logs,
-		"totalMl": total,
+		"logs":     logs,
+		"today_ml": total,
+		"goal_ml":  goalMl,
 	})
 }
 
@@ -1363,9 +1366,9 @@ func (h *Handler) handleDeleteWater(w http.ResponseWriter, r *http.Request, user
 func (h *Handler) handleLogWorkout(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
 		Name           string                  `json:"name"`
-		DurationMin    int                     `json:"durationMin"`
+		DurationMin    int                     `json:"duration_min"`
 		Intensity      string                  `json:"intensity"`
-		CaloriesBurned *int                    `json:"caloriesBurned,omitempty"`
+		CaloriesBurned *int                    `json:"calories_burned,omitempty"`
 		Note           string                  `json:"note,omitempty"`
 		LoggedAt       string                  `json:"loggedAt"`
 		Exercises      []types.WorkoutExercise `json:"exercises,omitempty"`
@@ -1382,7 +1385,7 @@ func (h *Handler) handleLogWorkout(w http.ResponseWriter, r *http.Request, userI
 	}
 	if body.DurationMin <= 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "durationMin must be positive"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "duration_min must be positive"})
 		return
 	}
 	if body.Intensity == "" {
@@ -1456,10 +1459,29 @@ func (h *Handler) handleDeleteWorkout(w http.ResponseWriter, r *http.Request, us
 
 // --- Sleep ---
 
+// sleepDurationHours computes the duration of a sleep log in hours.
+// If wakeAt is nil (active sleep), duration is from sleepAt to now.
+func sleepDurationHours(sleepAt string, wakeAt *string) float64 {
+	start, err := time.Parse(time.RFC3339, sleepAt)
+	if err != nil {
+		return 0
+	}
+	var end time.Time
+	if wakeAt != nil {
+		end, err = time.Parse(time.RFC3339, *wakeAt)
+		if err != nil {
+			return 0
+		}
+	} else {
+		end = time.Now().UTC()
+	}
+	return end.Sub(start).Hours()
+}
+
 func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
-		SleepAt string  `json:"sleepAt"`
-		WakeAt  *string `json:"wakeAt,omitempty"`
+		SleepAt string  `json:"sleep_at"`
+		WakeAt  *string `json:"wake_at,omitempty"`
 		Quality string  `json:"quality"`
 		Note    string  `json:"note,omitempty"`
 	}
@@ -1475,12 +1497,13 @@ func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID 
 		body.Quality = "ok"
 	}
 	entry := types.SleepLog{
-		ID:      newHandlerID(),
-		UserID:  userID,
-		SleepAt: body.SleepAt,
-		WakeAt:  body.WakeAt,
-		Quality: body.Quality,
-		Note:    body.Note,
+		ID:            newHandlerID(),
+		UserID:        userID,
+		SleepAt:       body.SleepAt,
+		WakeAt:        body.WakeAt,
+		DurationHours: sleepDurationHours(body.SleepAt, body.WakeAt),
+		Quality:       body.Quality,
+		Note:          body.Note,
 	}
 	if err := h.store.LogSleep(r.Context(), entry); err != nil {
 		h.writeErr(w, err)
@@ -1505,6 +1528,9 @@ func (h *Handler) handleListSleep(w http.ResponseWriter, r *http.Request, userID
 	if sleeps == nil {
 		sleeps = []types.SleepLog{}
 	}
+	for i := range sleeps {
+		sleeps[i].DurationHours = sleepDurationHours(sleeps[i].SleepAt, sleeps[i].WakeAt)
+	}
 	_ = json.NewEncoder(w).Encode(sleeps)
 }
 
@@ -1514,13 +1540,14 @@ func (h *Handler) handleGetActiveSleep(w http.ResponseWriter, r *http.Request, u
 		h.writeErr(w, err)
 		return
 	}
+	sleep.DurationHours = sleepDurationHours(sleep.SleepAt, sleep.WakeAt)
 	_ = json.NewEncoder(w).Encode(sleep)
 }
 
 func (h *Handler) handleEndSleep(w http.ResponseWriter, r *http.Request, userID string) {
 	id := r.PathValue("id")
 	var body struct {
-		WakeAt  string `json:"wakeAt"`
+		WakeAt  string `json:"wake_at"`
 		Quality string `json:"quality"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
