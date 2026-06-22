@@ -160,6 +160,24 @@ type MealStore interface {
 	CreateLinkingCode(ctx context.Context, userID, platform, code string) error
 	LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error)
 	ConsumeLinkingCode(ctx context.Context, code string) error
+
+	// Water tracking.
+	LogWater(ctx context.Context, w types.WaterLog) error
+	GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error)
+	DeleteWater(ctx context.Context, userID, id string) error
+
+	// Workout tracking.
+	LogWorkout(ctx context.Context, w types.Workout) error
+	GetWorkout(ctx context.Context, id string) (types.Workout, error)
+	ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error)
+	DeleteWorkout(ctx context.Context, userID, id string) error
+
+	// Sleep tracking.
+	LogSleep(ctx context.Context, sl types.SleepLog) error
+	GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error)
+	EndSleep(ctx context.Context, userID, id, wakeAt, quality string) error
+	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
+	DeleteSleep(ctx context.Context, userID, id string) error
 }
 
 // MealLogger submits raw text through the parsing pipeline, and can also directly
@@ -287,6 +305,24 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/fasting/end", h.wrap(h.handleEndFast))
 	mux.HandleFunc("GET /api/v1/fasting/active", h.wrap(h.handleGetActiveFast))
 	mux.HandleFunc("GET /api/v1/fasting/history", h.wrap(h.handleListFasts))
+
+	// Water tracking.
+	mux.HandleFunc("POST /api/v1/water", h.wrap(h.handleLogWater))
+	mux.HandleFunc("GET /api/v1/water/today", h.wrap(h.handleGetWaterToday))
+	mux.HandleFunc("DELETE /api/v1/water/{id}", h.wrap(h.handleDeleteWater))
+
+	// Workout tracking.
+	mux.HandleFunc("POST /api/v1/workouts", h.wrap(h.handleLogWorkout))
+	mux.HandleFunc("GET /api/v1/workouts", h.wrap(h.handleListWorkouts))
+	mux.HandleFunc("GET /api/v1/workouts/{id}", h.wrap(h.handleGetWorkout))
+	mux.HandleFunc("DELETE /api/v1/workouts/{id}", h.wrap(h.handleDeleteWorkout))
+
+	// Sleep tracking.
+	mux.HandleFunc("POST /api/v1/sleep", h.wrap(h.handleLogSleep))
+	mux.HandleFunc("GET /api/v1/sleep", h.wrap(h.handleListSleep))
+	mux.HandleFunc("GET /api/v1/sleep/active", h.wrap(h.handleGetActiveSleep))
+	mux.HandleFunc("PATCH /api/v1/sleep/{id}/end", h.wrap(h.handleEndSleep))
+	mux.HandleFunc("DELETE /api/v1/sleep/{id}", h.wrap(h.handleDeleteSleep))
 
 	// Body tracking — measurements.
 	mux.HandleFunc("GET /api/v1/body/measurements", h.wrap(h.handleListMeasurements))
@@ -1261,6 +1297,260 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 }
 
 // ---------------------------------------------------------------------------
+// --- Water ---
+
+func (h *Handler) handleLogWater(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		AmountML int    `json:"amountMl"`
+		Note     string `json:"note,omitempty"`
+		LoggedAt string `json:"loggedAt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.AmountML <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "amountMl must be positive"})
+		return
+	}
+	if body.LoggedAt == "" {
+		body.LoggedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	entry := types.WaterLog{
+		ID:       newHandlerID(),
+		UserID:   userID,
+		AmountML: body.AmountML,
+		Note:     body.Note,
+		LoggedAt: body.LoggedAt,
+	}
+	if err := h.store.LogWater(r.Context(), entry); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(entry)
+}
+
+func (h *Handler) handleGetWaterToday(w http.ResponseWriter, r *http.Request, userID string) {
+	today := time.Now().In(h.loc).Format("2006-01-02")
+	logs, total, err := h.store.GetWaterToday(r.Context(), userID, today)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if logs == nil {
+		logs = []types.WaterLog{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"logs":    logs,
+		"totalMl": total,
+	})
+}
+
+func (h *Handler) handleDeleteWater(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.DeleteWater(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Workout ---
+
+func (h *Handler) handleLogWorkout(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Name           string                  `json:"name"`
+		DurationMin    int                     `json:"durationMin"`
+		Intensity      string                  `json:"intensity"`
+		CaloriesBurned *int                    `json:"caloriesBurned,omitempty"`
+		Note           string                  `json:"note,omitempty"`
+		LoggedAt       string                  `json:"loggedAt"`
+		Exercises      []types.WorkoutExercise `json:"exercises,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.Name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name is required"})
+		return
+	}
+	if body.DurationMin <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "durationMin must be positive"})
+		return
+	}
+	if body.Intensity == "" {
+		body.Intensity = "moderate"
+	}
+	if body.LoggedAt == "" {
+		body.LoggedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	entry := types.Workout{
+		ID:             newHandlerID(),
+		UserID:         userID,
+		Name:           body.Name,
+		DurationMin:    body.DurationMin,
+		Intensity:      body.Intensity,
+		CaloriesBurned: body.CaloriesBurned,
+		Note:           body.Note,
+		LoggedAt:       body.LoggedAt,
+		Exercises:      body.Exercises,
+	}
+	if entry.Exercises == nil {
+		entry.Exercises = []types.WorkoutExercise{}
+	}
+	if err := h.store.LogWorkout(r.Context(), entry); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(entry)
+}
+
+func (h *Handler) handleListWorkouts(w http.ResponseWriter, r *http.Request, userID string) {
+	limit := 10
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	workouts, err := h.store.ListWorkouts(r.Context(), userID, limit)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if workouts == nil {
+		workouts = []types.Workout{}
+	}
+	_ = json.NewEncoder(w).Encode(workouts)
+}
+
+func (h *Handler) handleGetWorkout(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	workout, err := h.store.GetWorkout(r.Context(), id)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if workout.UserID != userID {
+		h.writeErr(w, types.ErrNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(workout)
+}
+
+func (h *Handler) handleDeleteWorkout(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.DeleteWorkout(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Sleep ---
+
+func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		SleepAt string  `json:"sleepAt"`
+		WakeAt  *string `json:"wakeAt,omitempty"`
+		Quality string  `json:"quality"`
+		Note    string  `json:"note,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.SleepAt == "" {
+		body.SleepAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if body.Quality == "" {
+		body.Quality = "ok"
+	}
+	entry := types.SleepLog{
+		ID:      newHandlerID(),
+		UserID:  userID,
+		SleepAt: body.SleepAt,
+		WakeAt:  body.WakeAt,
+		Quality: body.Quality,
+		Note:    body.Note,
+	}
+	if err := h.store.LogSleep(r.Context(), entry); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(entry)
+}
+
+func (h *Handler) handleListSleep(w http.ResponseWriter, r *http.Request, userID string) {
+	limit := 10
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	sleeps, err := h.store.ListSleep(r.Context(), userID, limit)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if sleeps == nil {
+		sleeps = []types.SleepLog{}
+	}
+	_ = json.NewEncoder(w).Encode(sleeps)
+}
+
+func (h *Handler) handleGetActiveSleep(w http.ResponseWriter, r *http.Request, userID string) {
+	sleep, err := h.store.GetActiveSleep(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(sleep)
+}
+
+func (h *Handler) handleEndSleep(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	var body struct {
+		WakeAt  string `json:"wakeAt"`
+		Quality string `json:"quality"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.WakeAt == "" {
+		body.WakeAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if body.Quality == "" {
+		body.Quality = "ok"
+	}
+	if err := h.store.EndSleep(r.Context(), userID, id, body.WakeAt, body.Quality); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ended"})
+}
+
+func (h *Handler) handleDeleteSleep(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.DeleteSleep(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Goals & profile
 // ---------------------------------------------------------------------------
 

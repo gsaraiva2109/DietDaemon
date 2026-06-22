@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,11 +46,30 @@ func New(token string) *Adapter {
 func (a *Adapter) Name() string { return "discord" }
 
 // ---------------------------------------------------------------------------
+// Discord component types for inline keyboards
+// ---------------------------------------------------------------------------
+
+// actionRow is an Action Row (type 1) containing button components.
+type actionRow struct {
+	Type       int               `json:"type"` // 1 = ActionRow
+	Components []buttonComponent `json:"components"`
+}
+
+// buttonComponent is a Button (type 2) component within an action row.
+type buttonComponent struct {
+	Type     int    `json:"type"`  // 2 = Button
+	Style    int    `json:"style"` // 1 = PRIMARY (blurple)
+	Label    string `json:"label"`
+	CustomID string `json:"custom_id"`
+}
+
+// ---------------------------------------------------------------------------
 // Send — POST /channels/{channel_id}/messages
 // ---------------------------------------------------------------------------
 
 type sendMessageRequest struct {
-	Content string `json:"content"`
+	Content    string      `json:"content"`
+	Components []actionRow `json:"components,omitempty"`
 }
 
 // Send delivers a reply to the channel identified by reply.ChannelMeta["channel_id"].
@@ -60,6 +80,26 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	}
 
 	body := sendMessageRequest{Content: reply.Text}
+
+	// Convert markup to Discord action rows.
+	if reply.Markup != nil && len(reply.Markup.InlineKeyboard) > 0 {
+		rows := make([]actionRow, len(reply.Markup.InlineKeyboard))
+		for i, row := range reply.Markup.InlineKeyboard {
+			buttons := make([]buttonComponent, len(row))
+			for j, btn := range row {
+				buttons[j] = buttonComponent{
+					Type:     2, // Button
+					Style:    1, // PRIMARY
+					Label:    btn.Text,
+					CustomID: btn.CallbackData,
+				}
+			}
+			rows[i] = actionRow{Type: 1, Components: buttons}
+		}
+		body.Components = rows
+		log.Printf("discord: sent action rows with %d row(s)", len(reply.Markup.InlineKeyboard))
+	}
+
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("discord: marshal: %w", err)
@@ -89,7 +129,7 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 }
 
 // ---------------------------------------------------------------------------
-// Receive — gateway WebSocket (opcode 0 DISPATCH, t MESSAGE_CREATE)
+// Receive — gateway WebSocket (opcode 0 DISPATCH, t MESSAGE_CREATE / INTERACTION_CREATE)
 // ---------------------------------------------------------------------------
 
 // gatewayPayload is the JSON structure for Discord gateway messages.
@@ -125,6 +165,25 @@ type messageCreateData struct {
 		Bot      bool   `json:"bot"`
 	} `json:"author"`
 	Content string `json:"content"`
+}
+
+// interactionCreateData is the payload for an INTERACTION_CREATE event,
+// specifically for message component (button) interactions.
+type interactionCreateData struct {
+	ID        string `json:"id"`
+	ChannelID string `json:"channel_id"`
+	Type      int    `json:"type"`
+	Data      struct {
+		CustomID      string `json:"custom_id"`
+		ComponentType int    `json:"component_type"`
+	} `json:"data"`
+	Member *struct {
+		User struct {
+			ID  string `json:"id"`
+			Bot bool   `json:"bot"`
+		} `json:"user"`
+	} `json:"member,omitempty"`
+	Token string `json:"token"`
 }
 
 const (
@@ -189,7 +248,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		return
 	}
 
-	// Read loop: filter DISPATCH MESSAGE_CREATE events.
+	// Read loop: filter DISPATCH MESSAGE_CREATE / INTERACTION_CREATE events.
 	var lastSeq *int
 	for {
 		select {
@@ -208,7 +267,8 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 
 		switch pl.Op {
 		case gatewayOpDispatch:
-			if pl.T == "MESSAGE_CREATE" {
+			switch pl.T {
+			case "MESSAGE_CREATE":
 				var msg messageCreateData
 				if err := json.Unmarshal(pl.D, &msg); err != nil {
 					continue
@@ -231,7 +291,48 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 				case <-ctx.Done():
 					return
 				}
+
+			case "INTERACTION_CREATE":
+				var interaction interactionCreateData
+				if err := json.Unmarshal(pl.D, &interaction); err != nil {
+					continue
+				}
+				// Skip bot interactions.
+				if interaction.Member != nil && interaction.Member.User.Bot {
+					continue
+				}
+				if interaction.Data.CustomID == "" {
+					continue
+				}
+
+				userID := ""
+				if interaction.Member != nil {
+					userID = interaction.Member.User.ID
+				}
+				if userID == "" {
+					continue // No identifiable user.
+				}
+
+				log.Printf("discord: received interaction %s = %q", interaction.ID, interaction.Data.CustomID)
+
+				select {
+				case ch <- types.InboundMessage{
+					UserID: userID,
+					At:     time.Now().UTC(),
+					Kind:   types.MessageText,
+					Text:   interaction.Data.CustomID,
+					ChannelMeta: map[string]string{
+						"channel_id":        interaction.ChannelID,
+						"is_callback":       "true",
+						"interaction_id":    interaction.ID,
+						"interaction_token": interaction.Token,
+					},
+				}:
+				case <-ctx.Done():
+					return
+				}
 			}
+
 		case gatewayOpHeartbeat:
 			// Server requests heartbeat — respond immediately.
 			a.sendHeartbeat(conn, lastSeq)

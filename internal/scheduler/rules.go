@@ -59,3 +59,74 @@ func macroValue(m types.Macros, which Macro) float64 {
 		return 0
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Health domain nudging rules
+// ---------------------------------------------------------------------------
+
+// HealthRule evaluates a non-macro health domain condition. Each rule fires at
+// most once per user per local day (enforced by the NudgeStore via ID).
+type HealthRule struct {
+	ID      string // stable identifier, used for dedupe
+	Domain  string // "water", "workout", "sleep", "fasting"
+	Message string // static message sent when triggered
+
+	// CheckHour restricts evaluation to after this local hour (0-23). When 0 the
+	// rule is evaluated on every tick (e.g. fast-ending, which is time-of-fast
+	// dependent rather than time-of-day dependent).
+	CheckHour int
+
+	// MaxGapHours sets the maximum permitted gap in hours for water or sleep
+	// logging before a nudge fires. 0 means unused.
+	MaxGapHours int
+
+	// MaxGapDays sets the maximum permitted gap in days for workout logging
+	// before a nudge fires. 0 means unused.
+	MaxGapDays int
+
+	// MinDailyAmount is the minimum daily amount expected for the domain
+	// (e.g. millilitres for water). The rule triggers when today's total is
+	// below this threshold. 0 means unused / check only for existence.
+	MinDailyAmount float64
+}
+
+// DefaultHealthRules returns the built-in health domain nudging rules. They
+// nudge about water intake, missed workouts, sleep logging, and fasting
+// windows. Nil-able on the Scheduler so they can be opted into independently
+// of macro rules.
+func DefaultHealthRules() []HealthRule {
+	return []HealthRule{
+		{
+			ID:             "water-afternoon",
+			Domain:         "water",
+			CheckHour:      16,
+			MinDailyAmount: 500,
+			Message:        "\U0001f4a7 Don't forget to hydrate! Log your water intake with /water",
+		},
+		{
+			ID:             "water-evening",
+			Domain:         "water",
+			CheckHour:      20,
+			MinDailyAmount: 1600,
+			Message:        "\U0001f4a7 Still behind on water — squeeze in a glass before bed!",
+		},
+		{
+			ID:         "workout-reminder",
+			Domain:     "workout",
+			CheckHour:  10,
+			MaxGapDays: 3,
+			Message:    "\U0001f3cb️ No workout logged in 3 days. Time to move! Log with /workout",
+		},
+		{
+			ID:        "sleep-reminder",
+			Domain:    "sleep",
+			CheckHour: 22,
+			Message:   "\U0001f634 Ready for bed? Log your sleep with /sleep 23:00 07:00",
+		},
+		{
+			ID:      "fast-ending",
+			Domain:  "fasting",
+			Message: "⏰ Your fasting window is almost complete! Get ready to break your fast with /fast end",
+		},
+	}
+}

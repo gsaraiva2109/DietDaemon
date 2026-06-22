@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
@@ -20,25 +23,78 @@ var _ ports.MessagingAdapter = (*Adapter)(nil)
 
 // Adapter satisfies ports.MessagingAdapter for Matrix.
 type Adapter struct {
-	homeserverURL string // e.g. "https://matrix-client.matrix.org"
-	userID        string // e.g. "@dietdaemon:example.com"
-	token         string // access token
-	client        *http.Client
+	homeserverURL  string // e.g. "https://matrix-client.matrix.org"
+	userID         string // e.g. "@dietdaemon:example.com"
+	token          string // access token
+	client         *http.Client
+	pendingMarkups *pendingMarkupStore // stores recent markups for number-to-callback resolution
 }
 
 // New returns a ready Adapter. homeserverURL is the Matrix homeserver base,
 // userID is the bot's full Matrix ID, and token is the access token from login.
 func New(homeserverURL, userID, token string) *Adapter {
 	return &Adapter{
-		homeserverURL: strings.TrimRight(homeserverURL, "/"),
-		userID:        userID,
-		token:         token,
-		client:        &http.Client{Timeout: 60 * time.Second},
+		homeserverURL:  strings.TrimRight(homeserverURL, "/"),
+		userID:         userID,
+		token:          token,
+		client:         &http.Client{Timeout: 60 * time.Second},
+		pendingMarkups: newPendingMarkupStore(),
 	}
 }
 
 // Name returns "matrix".
 func (a *Adapter) Name() string { return "matrix" }
+
+// ---------------------------------------------------------------------------
+// Pending markup store — maps room IDs to the last sent markup so a numbered
+// reply can be resolved to a callback data value.
+// ---------------------------------------------------------------------------
+
+type pendingMarkupStore struct {
+	mu      sync.Mutex
+	markups map[string]types.ReplyMarkup // roomID -> markup
+}
+
+func newPendingMarkupStore() *pendingMarkupStore {
+	return &pendingMarkupStore{markups: make(map[string]types.ReplyMarkup)}
+}
+
+func (s *pendingMarkupStore) store(roomID string, markup types.ReplyMarkup) {
+	s.mu.Lock()
+	s.markups[roomID] = markup
+	s.mu.Unlock()
+}
+
+func (s *pendingMarkupStore) get(roomID string) (types.ReplyMarkup, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.markups[roomID]
+	return m, ok
+}
+
+// countButtons returns the total number of buttons across all rows.
+func countButtons(markup types.ReplyMarkup) int {
+	n := 0
+	for _, row := range markup.InlineKeyboard {
+		n += len(row)
+	}
+	return n
+}
+
+// callbackDataByIndex returns the CallbackData of the button at the given
+// flat index (0-based), or false if the index is out of range.
+func callbackDataByIndex(markup types.ReplyMarkup, idx int) (string, bool) {
+	cur := 0
+	for _, row := range markup.InlineKeyboard {
+		for _, btn := range row {
+			if cur == idx {
+				return btn.CallbackData, true
+			}
+			cur++
+		}
+	}
+	return "", false
+}
 
 // ---------------------------------------------------------------------------
 // Send — PUT /_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}
@@ -50,6 +106,9 @@ type matrixMessageContent struct {
 }
 
 // Send delivers a text reply to the room identified by reply.ChannelMeta["room_id"].
+// When the reply has a Markup, numbered options are appended as text fallback
+// and the markup is stored so the next user reply can resolve numbers to
+// callback data.
 func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	roomID := reply.ChannelMeta["room_id"]
 	if roomID == "" {
@@ -59,6 +118,26 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	txnID := fmt.Sprintf("dietdaemon-%d", time.Now().UnixNano())
 
 	body := matrixMessageContent{MsgType: "m.text", Body: reply.Text}
+
+	// Convert markup to numbered text fallback.
+	if reply.Markup != nil && len(reply.Markup.InlineKeyboard) > 0 {
+		var b strings.Builder
+		b.WriteString(reply.Text)
+		b.WriteString("\n\nReply with:")
+		idx := 1
+		for _, row := range reply.Markup.InlineKeyboard {
+			for _, btn := range row {
+				fmt.Fprintf(&b, "\n%d — %s", idx, btn.Text)
+				idx++
+			}
+		}
+		body.Body = b.String()
+		log.Printf("matrix: appended %d option(s) to message body", idx-1)
+
+		// Store the markup so numbered replies can be resolved.
+		a.pendingMarkups.store(roomID, *reply.Markup)
+	}
+
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("matrix: marshal: %w", err)
@@ -178,12 +257,26 @@ func (a *Adapter) syncLoop(ctx context.Context, ch chan<- types.InboundMessage) 
 				if ev.Content.MsgType != "m.text" {
 					continue
 				}
+
+				text := ev.Content.Body
+
+				// Check for numbered reply that maps to a pending inline keyboard.
+				if markup, ok := a.pendingMarkups.get(roomID); ok {
+					trimmed := strings.TrimSpace(text)
+					if num, err := strconv.Atoi(trimmed); err == nil {
+						if cb, found := callbackDataByIndex(markup, num-1); found {
+							log.Printf("matrix: resolved number %d to callback data %q in room %s", num, cb, roomID)
+							text = cb
+						}
+					}
+				}
+
 				select {
 				case ch <- types.InboundMessage{
 					UserID: ev.Sender,
 					At:     time.Now().UTC(),
 					Kind:   types.MessageText,
-					Text:   ev.Content.Body,
+					Text:   text,
 					ChannelMeta: map[string]string{
 						"room_id":  roomID,
 						"event_id": ev.EventID,

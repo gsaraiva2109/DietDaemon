@@ -194,6 +194,12 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 		}
 	}
 
+	// Callback button presses that didn't match a command: skip clarification
+	// and meal parsing. Route directly to command dispatch (done above).
+	if msg.ChannelMeta["is_callback"] == "true" {
+		return nil
+	}
+
 	// A live pending meal turns the next message into a clarification answer.
 	if pm, err := e.pending.Get(ctx, msg.UserID); err == nil {
 		return e.handleClarification(ctx, msg, pm, text)

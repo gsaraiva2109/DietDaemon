@@ -325,6 +325,43 @@ func (s *fakeMealStore) ConsumeLinkingCode(_ context.Context, _ string) error {
 	return nil
 }
 
+func (s *fakeMealStore) LogWater(_ context.Context, _ types.WaterLog) error {
+	return nil
+}
+func (s *fakeMealStore) GetWaterToday(_ context.Context, _, _ string) ([]types.WaterLog, int, error) {
+	return nil, 0, nil
+}
+func (s *fakeMealStore) DeleteWater(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) LogWorkout(_ context.Context, _ types.Workout) error {
+	return nil
+}
+func (s *fakeMealStore) GetWorkout(_ context.Context, _ string) (types.Workout, error) {
+	return types.Workout{}, types.ErrNotFound
+}
+func (s *fakeMealStore) ListWorkouts(_ context.Context, _ string, _ int) ([]types.Workout, error) {
+	return nil, nil
+}
+func (s *fakeMealStore) DeleteWorkout(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) LogSleep(_ context.Context, _ types.SleepLog) error {
+	return nil
+}
+func (s *fakeMealStore) GetActiveSleep(_ context.Context, _ string) (*types.SleepLog, error) {
+	return nil, types.ErrNotFound
+}
+func (s *fakeMealStore) EndSleep(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) ListSleep(_ context.Context, _ string, _ int) ([]types.SleepLog, error) {
+	return nil, nil
+}
+func (s *fakeMealStore) DeleteSleep(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // fakeAuthStore implements AuthStore for tests.
 type fakeAuthStore struct {
 	users         map[string]types.User

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,8 +46,9 @@ func (a *Adapter) Name() string { return "telegram" }
 
 // update is a minimal Telegram Update payload. Only fields used are decoded.
 type update struct {
-	UpdateID int    `json:"update_id"`
-	Message  *tgMsg `json:"message"`
+	UpdateID      int            `json:"update_id"`
+	Message       *tgMsg         `json:"message"`
+	CallbackQuery *callbackQuery `json:"callback_query"`
 }
 
 type tgMsg struct {
@@ -62,6 +64,25 @@ type tgChat struct {
 
 type tgUser struct {
 	LanguageCode string `json:"language_code"`
+}
+
+// callbackQuery represents a Telegram callback query from an inline button press.
+type callbackQuery struct {
+	ID      string `json:"id"`
+	From    tgUser `json:"from"`
+	Message *tgMsg `json:"message"`
+	Data    string `json:"data"`
+}
+
+// tgInlineKeyboardButton is one button in a Telegram inline keyboard.
+type tgInlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+// tgInlineKeyboardMarkup wraps the inline keyboard for Telegram's JSON format.
+type tgInlineKeyboardMarkup struct {
+	InlineKeyboard [][]tgInlineKeyboardButton `json:"inline_keyboard"`
 }
 
 type getUpdatesResponse struct {
@@ -106,6 +127,38 @@ func (a *Adapter) poll(ctx context.Context, ch chan<- types.InboundMessage) {
 		}
 
 		for _, u := range updates {
+			// Handle callback queries (inline button presses).
+			if u.CallbackQuery != nil {
+				if u.CallbackQuery.Message == nil {
+					continue
+				}
+				cb := u.CallbackQuery
+				log.Printf("telegram: received callback query %s = %q", cb.ID, cb.Data)
+				msg := types.InboundMessage{
+					UserID: strconv.FormatInt(cb.Message.Chat.ID, 10),
+					At:     time.Now().UTC(),
+					Kind:   types.MessageText,
+					Text:   cb.Data,
+					Locale: cb.From.LanguageCode,
+					ChannelMeta: map[string]string{
+						"chat_id":     strconv.FormatInt(cb.Message.Chat.ID, 10),
+						"message_id":  strconv.Itoa(cb.Message.MessageID),
+						"callback_id": cb.ID,
+						"is_callback": "true",
+					},
+				}
+				select {
+				case ch <- msg:
+				case <-ctx.Done():
+					return
+				}
+				// Answer immediately to dismiss the loading spinner.
+				if err := a.answerCallbackQuery(ctx, cb.ID); err != nil {
+					log.Printf("telegram: answerCallbackQuery: %v", err)
+				}
+				continue
+			}
+
 			if u.Message == nil || u.Message.Text == "" {
 				continue
 			}
@@ -140,7 +193,7 @@ func (a *Adapter) fetchUpdates(ctx context.Context, pollURL string, offset int) 
 		q.Set("offset", strconv.Itoa(offset))
 	}
 	q.Set("timeout", "30")
-	q.Set("allowed_updates", `["message"]`)
+	q.Set("allowed_updates", `["message", "callback_query"]`)
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -176,8 +229,9 @@ func (a *Adapter) fetchUpdates(ctx context.Context, pollURL string, offset int) 
 // ---------------------------------------------------------------------------
 
 type sendMessageRequest struct {
-	ChatID string `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID      string           `json:"chat_id"`
+	Text        string           `json:"text"`
+	ReplyMarkup *json.RawMessage `json:"reply_markup,omitempty"`
 }
 
 type sendMessageResponse struct {
@@ -192,6 +246,30 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	}
 
 	body := sendMessageRequest{ChatID: chatID, Text: reply.Text}
+
+	// Convert markup to Telegram inline keyboard format.
+	if reply.Markup != nil && len(reply.Markup.InlineKeyboard) > 0 {
+		kb := tgInlineKeyboardMarkup{
+			InlineKeyboard: make([][]tgInlineKeyboardButton, len(reply.Markup.InlineKeyboard)),
+		}
+		for i, row := range reply.Markup.InlineKeyboard {
+			kb.InlineKeyboard[i] = make([]tgInlineKeyboardButton, len(row))
+			for j, btn := range row {
+				kb.InlineKeyboard[i][j] = tgInlineKeyboardButton{
+					Text:         btn.Text,
+					CallbackData: btn.CallbackData,
+				}
+			}
+		}
+		kbJSON, err := json.Marshal(kb)
+		if err != nil {
+			return fmt.Errorf("telegram: marshal inline keyboard: %w", err)
+		}
+		rm := json.RawMessage(kbJSON)
+		body.ReplyMarkup = &rm
+		log.Printf("telegram: sent inline keyboard with %d row(s)", len(reply.Markup.InlineKeyboard))
+	}
+
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("telegram: marshal: %w", err)
@@ -218,6 +296,47 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	}
 	if !r.OK {
 		return fmt.Errorf("telegram: sendMessage not ok")
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// answerCallbackQuery — dismisses the button loading spinner
+// ---------------------------------------------------------------------------
+
+// answerCallbackQuery acknowledges a callback query to dismiss the loading
+// spinner on the inline button. This is non-critical; errors are logged but
+// not returned to the pipeline.
+func (a *Adapter) answerCallbackQuery(ctx context.Context, callbackID string) error {
+	body := map[string]string{"callback_query_id": callbackID}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		a.apiURL+"/bot"+a.token+"/answerCallbackQuery",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var r struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	if !r.OK {
+		return fmt.Errorf("not ok")
 	}
 	return nil
 }
