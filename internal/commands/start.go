@@ -19,7 +19,7 @@ func NewStartCommand(s MealStore) *StartCommand {
 
 func (c *StartCommand) Name() string        { return "/start" }
 func (c *StartCommand) Aliases() []string   { return nil }
-func (c *StartCommand) Help() types.I18nKey { return "cmd.start.welcome" }
+func (c *StartCommand) Help() types.I18nKey { return "cmd.start.help" }
 
 func (c *StartCommand) Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	// Language selection callback from inline keyboard.

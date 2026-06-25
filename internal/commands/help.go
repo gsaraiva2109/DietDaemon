@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"html"
 	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -42,7 +43,7 @@ func (c *HelpCommand) Handle(ctx context.Context, msg types.InboundMessage, args
 		for _, cmd := range cmds {
 			if cmd.Name() == name {
 				aliases := strings.Join(cmd.Aliases(), ", ")
-				desc := c.i18n.T(locale, cmd.Help(), nil)
+				desc := html.EscapeString(c.i18n.T(locale, cmd.Help(), nil))
 				data := map[string]any{
 					"Name":        name,
 					"Aliases":     aliases,
@@ -73,7 +74,7 @@ func (c *HelpCommand) Handle(ctx context.Context, msg types.InboundMessage, args
 		if len(cmd.Aliases()) > 0 {
 			aliases = fmt.Sprintf(" (%s)", strings.Join(cmd.Aliases(), ", "))
 		}
-		desc := c.i18n.T(locale, cmd.Help(), nil)
+		desc := html.EscapeString(c.i18n.T(locale, cmd.Help(), nil))
 		fmt.Fprintf(&b, "<b>%s</b>%s\n  %s\n\n", cmd.Name(), aliases, desc)
 	}
 	b.WriteString(footer)
