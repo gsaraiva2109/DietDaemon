@@ -151,7 +151,7 @@ func run() error {
 	if err := cmdRegistry.Register(commands.NewTimezoneCommand(st)); err != nil {
 		return fmt.Errorf("register timezone command: %w", err)
 	}
-	if err := cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry)); err != nil {
+	if err := cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry, i18nBundle)); err != nil {
 		return fmt.Errorf("register help command: %w", err)
 	}
 	if err := cmdRegistry.Register(commands.NewStartCommand(st)); err != nil {

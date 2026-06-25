@@ -231,6 +231,7 @@ func (a *Adapter) fetchUpdates(ctx context.Context, pollURL string, offset int) 
 type sendMessageRequest struct {
 	ChatID      string           `json:"chat_id"`
 	Text        string           `json:"text"`
+	ParseMode   string           `json:"parse_mode,omitempty"`
 	ReplyMarkup *json.RawMessage `json:"reply_markup,omitempty"`
 }
 
@@ -246,6 +247,9 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	}
 
 	body := sendMessageRequest{ChatID: chatID, Text: reply.Text}
+	if reply.ParseMode != "" {
+		body.ParseMode = reply.ParseMode
+	}
 
 	// Convert markup to Telegram inline keyboard format.
 	if reply.Markup != nil && len(reply.Markup.InlineKeyboard) > 0 {

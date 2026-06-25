@@ -74,6 +74,7 @@ type Reply struct {
 	ChannelMeta map[string]string
 	Locale      string       // BCP-47 locale for i18n rendering
 	Markup      *ReplyMarkup // optional inline keyboard / components
+	ParseMode   string       // e.g. "MarkdownV2", "HTML" for rich-text formatting
 }
 
 // ReplyMarkup carries platform-agnostic interactive UI elements for a reply.
