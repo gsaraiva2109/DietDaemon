@@ -501,6 +501,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ code }),
       }),
+    // SSE stream that pushes a "linked" event when the bot consumes the code.
+    streamLinkCode: (code: string) =>
+      new EventSource(`${BASE}/bot/link-code/${encodeURIComponent(code)}/stream`, {
+        withCredentials: true,
+      }),
   },
 
   // --- Goals & Planning -----------------------------------------
