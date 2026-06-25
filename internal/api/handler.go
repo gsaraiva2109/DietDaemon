@@ -159,6 +159,7 @@ type MealStore interface {
 	// Linking codes for bot account linking.
 	CreateLinkingCode(ctx context.Context, userID, platform, code string) error
 	LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error)
+	LookupLinkingCodeAny(ctx context.Context, code string) (types.LinkingCode, error)
 	ConsumeLinkingCode(ctx context.Context, code string) error
 
 	// Water tracking.
@@ -1973,7 +1974,7 @@ func (h *Handler) handleStreamLinkCode(w http.ResponseWriter, r *http.Request, u
 			flusher.Flush()
 			return
 		case <-ticker.C:
-			current, err := h.store.LookupLinkingCode(r.Context(), code)
+			current, err := h.store.LookupLinkingCodeAny(r.Context(), code)
 			if err != nil {
 				// Code no longer exists — treat as expired.
 				fmt.Fprintf(w, "event: expired\ndata: {}\n\n")

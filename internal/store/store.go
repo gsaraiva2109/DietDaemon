@@ -1939,6 +1939,21 @@ func (s *Store) LookupLinkingCode(ctx context.Context, code string) (types.Linki
 	return lc, nil
 }
 
+// LookupLinkingCodeAny returns a linking code regardless of whether it has been
+// used. The SSE stream uses this to detect the transition from unused → used
+// (LookupLinkingCode filters used_at IS NULL and would miss the transition).
+func (s *Store) LookupLinkingCodeAny(ctx context.Context, code string) (types.LinkingCode, error) {
+	var lc types.LinkingCode
+	err := s.db.QueryRowContext(ctx,
+		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') FROM linking_codes WHERE code = ?`,
+		code,
+	).Scan(&lc.Code, &lc.UserID, &lc.Platform, &lc.ExpiresAt, &lc.UsedAt)
+	if err != nil {
+		return lc, err
+	}
+	return lc, nil
+}
+
 // ConsumeLinkingCode marks a linking code as used.
 func (s *Store) ConsumeLinkingCode(ctx context.Context, code string) error {
 	_, err := s.db.ExecContext(ctx,
