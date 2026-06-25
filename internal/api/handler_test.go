@@ -321,6 +321,9 @@ func (s *fakeMealStore) CreateLinkingCode(_ context.Context, _, _, _ string) err
 func (s *fakeMealStore) LookupLinkingCode(_ context.Context, _ string) (types.LinkingCode, error) {
 	return types.LinkingCode{}, s.rollupErr
 }
+func (s *fakeMealStore) LookupLinkingCodeAny(_ context.Context, _ string) (types.LinkingCode, error) {
+	return types.LinkingCode{}, s.rollupErr
+}
 func (s *fakeMealStore) ConsumeLinkingCode(_ context.Context, _ string) error {
 	return nil
 }
