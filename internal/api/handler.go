@@ -400,6 +400,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Bot account linking.
 	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))
 	mux.HandleFunc("POST /api/v1/bot/link", h.wrap(h.handleCompleteLink))
+	mux.HandleFunc("GET /api/v1/bot/link-code/{code}/stream", h.wrap(h.handleStreamLinkCode))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
@@ -1910,6 +1911,82 @@ func (h *Handler) handleCompleteLink(w http.ResponseWriter, r *http.Request, use
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "linked"})
+}
+
+// handleStreamLinkCode is an SSE endpoint that streams the status of a linking
+// code. The client connects after generating a code and receives a "linked"
+// event when the bot consumes the code (via /link). If the code expires the
+// stream closes without a "linked" event.
+// GET /api/v1/bot/link-code/{code}/stream
+func (h *Handler) handleStreamLinkCode(w http.ResponseWriter, r *http.Request, userID string) {
+	code := r.PathValue("code")
+	if code == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "code is required"})
+		return
+	}
+
+	// Verify the code exists and belongs to this user before streaming.
+	lc, err := h.store.LookupLinkingCode(r.Context(), code)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
+		return
+	}
+	if lc.UserID != userID {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "code does not belong to this account"})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "streaming not supported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// Parse expiry to compute deadline.
+	expiresAt, err := time.Parse("2006-01-02 15:04:05", lc.ExpiresAt)
+	if err != nil {
+		expiresAt = time.Now().UTC().Add(10 * time.Minute)
+	}
+	deadline := time.NewTimer(time.Until(expiresAt))
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-deadline.C:
+			// Code expired without being consumed.
+			fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		case <-ticker.C:
+			current, err := h.store.LookupLinkingCode(r.Context(), code)
+			if err != nil {
+				// Code no longer exists — treat as expired.
+				fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
+				flusher.Flush()
+				return
+			}
+			if current.UsedAt != "" {
+				fmt.Fprintf(w, "event: linked\ndata: {}\n\n")
+				flusher.Flush()
+				return
+			}
+		}
+	}
 }
 
 // generateLinkCode returns a 6-character alphanumeric code suitable for

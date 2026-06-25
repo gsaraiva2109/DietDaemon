@@ -2,13 +2,18 @@
 // Discord / Matrix) to this account. Consumes the existing bot link-code
 // backend (POST /bot/link-code). The code is single-use and expires after 10
 // minutes; the user pastes `/link CODE` into the bot to complete the link.
+//
+// After generating a code the page opens an SSE stream that listens for the
+// bot to consume the code. When linked the page transitions to a success
+// state automatically — no manual polling or refresh needed.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill } from '@/components/ui'
 import { CopyIcon, LinkIcon } from '@/components/icons'
 import { useCreateLinkCode } from '@/lib/queries'
+import { api } from '@/lib/api'
 
 const PLATFORMS = [
   { id: 'telegram', label: 'Telegram' },
@@ -24,22 +29,60 @@ export function LinkBot() {
   const [platform, setPlatform] = useState<Platform>('telegram')
   const [code, setCode] = useState<string | null>(null)
   const [remaining, setRemaining] = useState(0)
+  const [linked, setLinked] = useState(false)
   const createCode = useCreateLinkCode()
+  const sseRef = useRef<EventSource | null>(null)
 
-  // Reset any live code when the target platform changes, a code is bound to
+  // Close any open SSE stream.
+  function closeStream() {
+    if (sseRef.current) {
+      sseRef.current.close()
+      sseRef.current = null
+    }
+  }
+
+  // Reset any live code when the target platform changes — a code is bound to
   // the platform it was minted for.
   function pick(p: Platform) {
     if (p === platform) return
     setPlatform(p)
     setCode(null)
     setRemaining(0)
+    setLinked(false)
+    closeStream()
   }
 
   async function generate() {
+    closeStream()
+    setLinked(false)
     const res = await createCode.mutateAsync(platform)
     setCode(res.code)
     setRemaining(CODE_TTL_S)
+
+    // Subscribe to SSE so we know when the bot consumes the code.
+    const es = api.bot.streamLinkCode(res.code)
+    sseRef.current = es
+
+    es.addEventListener('linked', () => {
+      setLinked(true)
+      closeStream()
+      toast.success('Bot connected! Your account is now linked.')
+    })
+
+    es.addEventListener('expired', () => {
+      closeStream()
+    })
+
+    es.onerror = () => {
+      // EventSource errors on close — ignore if we already closed it.
+      closeStream()
+    }
   }
+
+  // Clean up SSE on unmount.
+  useEffect(() => {
+    return () => closeStream()
+  }, [])
 
   // Countdown tick. Text-only, so reduced-motion needs no special-casing.
   useEffect(() => {
@@ -83,7 +126,9 @@ export function LinkBot() {
           })}
         </div>
 
-        {code === null ? (
+        {linked ? (
+          <SuccessPanel platformLabel={platformLabel} onLinkAnother={() => { setCode(null); setLinked(false); closeStream() }} />
+        ) : code === null ? (
           <Button onClick={generate} disabled={createCode.isPending}>
             {createCode.isPending ? 'Generating…' : 'Generate code'}
           </Button>
@@ -116,6 +161,30 @@ export function LinkBot() {
           <li>The bot confirms and your account is linked. The code works once.</li>
         </ol>
       </Card>
+    </div>
+  )
+}
+
+function SuccessPanel({
+  platformLabel,
+  onLinkAnother,
+}: {
+  platformLabel: string
+  onLinkAnother: () => void
+}) {
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-3 rounded-xl border border-green-500/30 bg-green-500/10 px-5 py-4">
+        <div>
+          <p className="font-semibold text-ink">Connected!</p>
+          <p className="text-sm text-muted">
+            Your {platformLabel} account is now linked. You can start logging meals from the bot.
+          </p>
+        </div>
+      </div>
+      <Button variant="ghost" onClick={onLinkAnother}>
+        Link another platform
+      </Button>
     </div>
   )
 }
