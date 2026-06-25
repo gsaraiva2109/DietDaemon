@@ -3,7 +3,7 @@
   "cmd.help.description": "Available commands:",
   "cmd.help.footer": "Type /help <command> for details on a specific command.",
   "cmd.help.unknown": "Unknown command: {{.Command}}",
-  "cmd.help.detail": "{{.Name}}{{if .Aliases}} ({{.Aliases}}){{end}}: {{.Description}}",
+  "cmd.help.detail": "<b>{{.Name}}</b>{{if .Aliases}} ({{.Aliases}}){{end}}: {{.Description}}",
   "cmd.start.welcome": "Welcome to DietDaemon, {{.Name}}! 🥗\n\nI help you track nutrition through chat. Let's get you set up.\n\nFirst, choose your language:",
   "cmd.start.already_onboarded": "You're all set, {{.Name}}! Type /help to see what I can do.",
   "cmd.start.link_prompt": "Your account isn't linked yet. Open the dashboard → Settings → Link Bot, then send me the code with:\n/link YOUR_CODE",

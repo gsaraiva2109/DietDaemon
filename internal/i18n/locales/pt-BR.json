@@ -3,7 +3,7 @@
   "cmd.help.description": "Comandos disponíveis:",
   "cmd.help.footer": "Digite /help <comando> para detalhes sobre um comando específico.",
   "cmd.help.unknown": "Comando desconhecido: {{.Command}}",
-  "cmd.help.detail": "{{.Name}}{{if .Aliases}} ({{.Aliases}}){{end}}: {{.Description}}",
+  "cmd.help.detail": "<b>{{.Name}}</b>{{if .Aliases}} ({{.Aliases}}){{end}}: {{.Description}}",
   "cmd.start.welcome": "Bem-vindo ao DietDaemon, {{.Name}}! 🥗\n\nEu ajudo você a acompanhar sua nutrição pelo chat. Vamos configurar.\n\nPrimeiro, escolha seu idioma:",
   "cmd.start.already_onboarded": "Você já está configurado, {{.Name}}! Digite /help para ver o que posso fazer.",
   "cmd.start.link_prompt": "Sua conta ainda não está vinculada. Abra o dashboard → Configurações → Vincular Bot e me envie o código com:\n/link SEU_CODIGO",
