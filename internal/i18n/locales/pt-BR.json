@@ -1,9 +1,9 @@
 {
-  "cmd.help.title": "📋 Comandos",
+  "cmd.help.title": "Comandos",
   "cmd.help.description": "Comandos disponíveis:",
   "cmd.help.footer": "Digite /help seguido do nome de um comando para detalhes.",
-  "cmd.help.unknown": "Comando desconhecido: {{.Command}}",
-  "cmd.help.detail": "<b>{{.Name}}</b>{{if .Aliases}} ({{.Aliases}}){{end}}: {{.Description}}",
+  "cmd.help.unknown": "Comando desconhecido: <b>{{.Command}}</b>",
+  "cmd.help.detail": "<b>{{.Name}}</b>{{if .Aliases}} <i>({{.Aliases}})</i>{{end}}\n\n{{.Description}}",
   "cmd.start.welcome": "Bem-vindo ao DietDaemon, {{.Name}}! 🥗\n\nEu ajudo você a acompanhar sua nutrição pelo chat. Vamos configurar.\n\nPrimeiro, escolha seu idioma:",
   "cmd.start.help": "Inicia o assistente de configuração para definir seu idioma e perfil.",
   "cmd.start.already_onboarded": "Você já está configurado, {{.Name}}! Digite /help para ver o que posso fazer.",

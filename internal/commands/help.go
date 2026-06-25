@@ -58,26 +58,28 @@ func (c *HelpCommand) Handle(ctx context.Context, msg types.InboundMessage, args
 			}
 		}
 		return types.Reply{
-			Text:        c.i18n.T(locale, "cmd.help.unknown", map[string]any{"Command": args}),
+			Text:        c.i18n.T(locale, "cmd.help.unknown", map[string]any{"Command": html.EscapeString(args)}),
 			ChannelMeta: msg.ChannelMeta,
+			ParseMode:   "HTML",
 		}, nil
 	}
 
-	// List all commands.
+	// List all commands — single line per command.
 	var b strings.Builder
 	title := c.i18n.T(locale, "cmd.help.title", nil)
 	footer := c.i18n.T(locale, "cmd.help.footer", nil)
-	b.WriteString(title)
-	b.WriteString("\n\n")
+
+	fmt.Fprintf(&b, "📋 <b>%s</b>\n", title)
 	for _, cmd := range cmds {
 		aliases := ""
 		if len(cmd.Aliases()) > 0 {
-			aliases = fmt.Sprintf(" (%s)", strings.Join(cmd.Aliases(), ", "))
+			aliases = fmt.Sprintf(" <i>(%s)</i>", strings.Join(cmd.Aliases(), ", "))
 		}
 		desc := html.EscapeString(c.i18n.T(locale, cmd.Help(), nil))
-		fmt.Fprintf(&b, "<b>%s</b>%s\n  %s\n\n", cmd.Name(), aliases, desc)
+		fmt.Fprintf(&b, "\n<b>%s</b>%s — %s", cmd.Name(), aliases, desc)
 	}
-	b.WriteString(footer)
+	fmt.Fprintf(&b, "\n\n<i>%s</i>", footer)
+
 	return types.Reply{
 		Text:        b.String(),
 		ChannelMeta: msg.ChannelMeta,
