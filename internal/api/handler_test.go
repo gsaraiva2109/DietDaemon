@@ -45,6 +45,7 @@ type fakeMealStore struct {
 	foodDetailErr  error
 	addAliasErr    error
 	deleteAliasErr error
+	foodsByID      map[string]types.FoodMatch
 
 	// Pending aliases.
 	pendingAliases         []types.PendingAlias
@@ -206,6 +207,12 @@ func (s *fakeMealStore) FrequentFoods(_ context.Context, _ string, _ int) ([]typ
 }
 func (s *fakeMealStore) GetFoodDetail(_ context.Context, _, _ string) (types.FoodDetail, error) {
 	return s.foodDetail, s.foodDetailErr
+}
+func (s *fakeMealStore) GetFood(_ context.Context, _, foodID string) (types.FoodMatch, error) {
+	if fm, ok := s.foodsByID[foodID]; ok {
+		return fm, nil
+	}
+	return types.FoodMatch{}, types.ErrNoMatch
 }
 func (s *fakeMealStore) AddFoodAlias(_ context.Context, _, _, _ string) error {
 	return s.addAliasErr
@@ -1257,6 +1264,65 @@ func TestCreateTemplateValidation(t *testing.T) {
 	rec := doRequest(h, "POST", "/api/v1/templates", map[string]string{"name": ""}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("empty name expected 400, got %d", rec.Code)
+	}
+}
+
+func TestComposeTemplate(t *testing.T) {
+	store := newFakeMealStore()
+	store.foodsByID = map[string]types.FoodMatch{
+		"egg": {FoodID: "egg", Name: "Egg", Source: "food_library", Per100g: types.Macros{Calories: 155, Protein: 13, Carbs: 1.1, Fat: 11}},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"name": "Breakfast",
+		"items": []map[string]any{
+			{"food_id": "egg", "grams": 200},
+		},
+	}
+	rec := doRequest(h, "POST", "/api/v1/templates/compose", body, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	tmpl := decodeJSON[types.MealTemplate](t, rec)
+	if len(tmpl.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(tmpl.Items))
+	}
+	item := tmpl.Items[0]
+	if item.Macros.Calories != 310 {
+		t.Errorf("expected scaled calories 310, got %v", item.Macros.Calories)
+	}
+	if item.Parsed.NormalizedGrams != 200 {
+		t.Errorf("expected 200g, got %v", item.Parsed.NormalizedGrams)
+	}
+}
+
+func TestComposeTemplateUnknownFood(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"name": "Breakfast",
+		"items": []map[string]any{
+			{"food_id": "missing-food", "grams": 100},
+		},
+	}
+	rec := doRequest(h, "POST", "/api/v1/templates/compose", body, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing-food") {
+		t.Errorf("expected error to name bad food_id, got %s", rec.Body.String())
+	}
+}
+
+func TestComposeTemplateValidation(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/templates/compose", map[string]string{"name": ""}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("empty name/items expected 400, got %d", rec.Code)
 	}
 }
 

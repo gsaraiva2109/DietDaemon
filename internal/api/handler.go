@@ -119,6 +119,7 @@ type MealStore interface {
 	SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
+	GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
 
@@ -308,6 +309,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Meal templates.
 	mux.HandleFunc("GET /api/v1/templates", h.wrap(h.handleListTemplates))
 	mux.HandleFunc("POST /api/v1/templates", h.wrap(h.handleCreateTemplate))
+	mux.HandleFunc("POST /api/v1/templates/compose", h.wrap(h.handleComposeTemplate))
 	mux.HandleFunc("GET /api/v1/templates/{id}", h.wrap(h.handleGetTemplate))
 	mux.HandleFunc("DELETE /api/v1/templates/{id}", h.wrap(h.handleDeleteTemplate))
 	mux.HandleFunc("POST /api/v1/templates/{id}/log", h.wrap(h.handleLogTemplate))
@@ -926,6 +928,57 @@ func (h *Handler) handleCreateTemplate(w http.ResponseWriter, r *http.Request, u
 		UserID:    userID,
 		Name:      body.Name,
 		Items:     body.Items,
+		CreatedAt: now,
+		LastUsed:  now,
+	}
+	if err := h.store.SaveTemplate(r.Context(), t); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(t)
+}
+
+func (h *Handler) handleComposeTemplate(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Name  string `json:"name"`
+		Items []struct {
+			FoodID string  `json:"food_id"`
+			Grams  float64 `json:"grams"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.Name == "" || len(body.Items) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name and items are required"})
+		return
+	}
+
+	items := make([]types.ResolvedItem, 0, len(body.Items))
+	for _, it := range body.Items {
+		food, err := h.store.GetFood(r.Context(), userID, it.FoodID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown food_id: " + it.FoodID})
+			return
+		}
+		items = append(items, types.ResolvedItem{
+			Parsed: types.ParsedItem{RawPhrase: food.Name, NormalizedGrams: it.Grams},
+			Match:  food,
+			Macros: food.Per100g.Scale(it.Grams / 100.0),
+		})
+	}
+
+	now := time.Now().UTC()
+	t := types.MealTemplate{
+		ID:        newHandlerID(),
+		UserID:    userID,
+		Name:      body.Name,
+		Items:     items,
 		CreatedAt: now,
 		LastUsed:  now,
 	}
