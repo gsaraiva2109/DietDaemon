@@ -191,6 +191,77 @@ func TestSaveAndRecentMeals(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// CorrectMealItem ownership check
+// ---------------------------------------------------------------------------
+
+// TestCorrectMealItemOwnership verifies that CorrectMealItem refuses to touch
+// a meal belonging to a different user, mirroring AddMealItem/DeleteMealItem's
+// ownership check. Regression test for a bug where any authenticated user
+// could correct another user's meal by guessing/observing its mealID.
+func TestCorrectMealItemOwnership(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "userA", CreatedAt: time.Now().UTC()})
+	mustUser(t, s, types.User{ID: "userB", CreatedAt: time.Now().UTC()})
+
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	meal := types.Meal{
+		ID:         "meal-a1",
+		UserID:     "userA",
+		At:         now,
+		RawText:    "200g frango",
+		Confidence: 0.95,
+		ParserTier: types.TierDeterministic,
+		CreatedAt:  now,
+		Items: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "frango", Quantity: 200, Unit: "g", NormalizedGrams: 200},
+				Match: types.FoodMatch{
+					FoodID: "frango-grelhado", Name: "Frango Grelhado", Source: "taco", MatchScore: 1.0,
+					Per100g: types.Macros{Calories: 165, Protein: 31, Carbs: 0, Fat: 3.6, Fiber: 0},
+				},
+				Macros: types.Macros{Calories: 330, Protein: 62, Carbs: 0, Fat: 7.2, Fiber: 0},
+			},
+		},
+	}
+	if err := s.SaveMeal(ctx(), meal); err != nil {
+		t.Fatalf("SaveMeal: %v", err)
+	}
+
+	corrected := types.ResolvedItem{
+		Parsed: types.ParsedItem{RawPhrase: "frango grelhado extra", Quantity: 150, Unit: "g", NormalizedGrams: 150},
+		Match: types.FoodMatch{
+			FoodID: "frango-grelhado", Name: "Frango Grelhado", Source: "taco", MatchScore: 1.0,
+			Per100g: types.Macros{Calories: 165, Protein: 31, Carbs: 0, Fat: 3.6, Fiber: 0},
+		},
+		Macros: types.Macros{Calories: 247.5, Protein: 46.5, Carbs: 0, Fat: 5.4, Fiber: 0},
+	}
+
+	// userB attempts to correct userA's meal.
+	err := s.CorrectMealItem(ctx(), "userB", meal.ID, 0, corrected)
+	if err != types.ErrNotFound {
+		t.Fatalf("expected ErrNotFound for cross-user correction, got %v", err)
+	}
+
+	// Meal must be unchanged.
+	got, err := s.GetMeal(ctx(), meal.ID)
+	if err != nil {
+		t.Fatalf("GetMeal: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Macros != meal.Items[0].Macros {
+		t.Fatalf("meal item was modified by cross-user correction: got %+v", got.Items)
+	}
+
+	// Rollup must be unchanged (no row should exist, since SaveMeal doesn't
+	// write rollups directly and CorrectMealItem must not have run).
+	localDate := now.Format("2006-01-02")
+	if _, err := s.GetRollup(ctx(), "userA", localDate); err != types.ErrNotFound {
+		t.Fatalf("expected no rollup row for userA (CorrectMealItem must not have touched it), got err=%v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Food library: upsert → lookup → record-query (frequency ordering)
 // ---------------------------------------------------------------------------
 

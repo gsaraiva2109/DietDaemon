@@ -721,13 +721,16 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	defer func() { _ = tx.Rollback() }()
 
 	// Load the meal to get the at time for rollup lookup and the original items.
-	var atUTC string
-	const mealQ = `SELECT at_utc FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC); err != nil {
+	var atUTC, mealUser string
+	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
 		if err == sql.ErrNoRows {
 			return types.ErrNotFound
 		}
 		return fmt.Errorf("store: get meal: %w", err)
+	}
+	if mealUser != userID {
+		return types.ErrNotFound
 	}
 	mealAt := parseUTC(atUTC)
 
