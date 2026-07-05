@@ -8,6 +8,7 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, Button, Pill, Spinner, EmptyState } from '@/components/ui'
 import { TemplateIcon, TrashIcon, LogIcon, CheckIcon } from '@/components/icons'
+import { ComposeTemplateModal } from '@/components/ComposeTemplateModal'
 import { stagger, fadeUp } from '@/lib/motion'
 import { formatNumber, relativeTime } from '@/lib/format'
 
@@ -18,10 +19,19 @@ function templateKcal(t: MealTemplate): number {
 export function Templates() {
   const templates = useTemplates()
   const { demo } = useDemo()
+  const [composing, setComposing] = useState(false)
 
   return (
     <div>
-      <PageHeader eyebrow="Templates" title="Saved meals" />
+      <PageHeader eyebrow="Templates" title="Saved meals">
+        {!demo && (
+          <Button onClick={() => setComposing(true)} className="px-4 py-2 text-sm">
+            New from scratch
+          </Button>
+        )}
+      </PageHeader>
+
+      {composing && <ComposeTemplateModal onClose={() => setComposing(false)} />}
 
       {templates.isLoading ? (
         <Spinner label="Loading templates" />

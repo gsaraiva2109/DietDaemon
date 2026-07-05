@@ -396,6 +396,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ name, items }),
       }),
+    compose: (name: string, items: { food_id: string; grams: number }[]) =>
+      request<MealTemplate>('/templates/compose', {
+        method: 'POST',
+        body: JSON.stringify({ name, items }),
+      }),
     delete: (id: string) =>
       request<void>(`/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     log: (id: string) =>

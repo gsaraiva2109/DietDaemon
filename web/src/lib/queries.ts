@@ -257,6 +257,15 @@ export function useCreateTemplate() {
   })
 }
 
+export function useComposeTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, items }: { name: string; items: { food_id: string; grams: number }[] }) =>
+      api.templates.compose(name, items),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
 export function useDeleteTemplate() {
   const qc = useQueryClient()
   return useMutation({
