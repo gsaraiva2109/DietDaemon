@@ -25,6 +25,8 @@ import type {
   MealTemplate,
   MeasurementEntry,
   NewApiKey,
+  NudgeRuleUpdate,
+  NudgeRuleView,
   Passkey,
   ProgressPhoto,
   ProvidersResponse,
@@ -520,6 +522,23 @@ export const api = {
         `&gender=${encodeURIComponent(p.gender)}&activity=${encodeURIComponent(p.activity)}`,
     ),
   goalSuggestions: () => request<GoalSuggestion>('/goals/suggestions'),
+
+  // --- Nudge settings ---------------------------------------------
+  nudges: {
+    get: () => request<NudgeRuleView[]>('/settings/nudges'),
+    // Save an enabled flag and/or param overrides for one rule.
+    set: (update: NudgeRuleUpdate) =>
+      request<{ status: string }>('/settings/nudges', {
+        method: 'PUT',
+        body: JSON.stringify(update),
+      }),
+    // Remove the override so the rule falls back to its hardcoded default.
+    reset: (ruleID: string) =>
+      request<{ status: string }>('/settings/nudges', {
+        method: 'PUT',
+        body: JSON.stringify({ rule_id: ruleID, enabled: true, reset: true }),
+      }),
+  },
 
   // --- Export ---------------------------------------------------
   // Returns a Blob; callers trigger a download. format is "csv" | "json".

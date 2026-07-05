@@ -34,6 +34,8 @@ type fakeMealStore struct {
 	addErr      error
 	deleteErr   error
 
+	nudgeRuleConfig map[string]types.NudgeRuleConfig
+
 	// Latest meal.
 	latestMealTime    string
 	latestMealTimeErr error
@@ -168,6 +170,26 @@ func (s *fakeMealStore) SetTargets(_ context.Context, t types.DailyTargets) erro
 }
 func (s *fakeMealStore) UpdateRollupTargets(_ context.Context, _, _ string, t types.Macros) error {
 	s.rollup.Targets = t
+	return nil
+}
+func (s *fakeMealStore) GetNudgeRuleConfig(_ context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	var out []types.NudgeRuleConfig
+	for _, c := range s.nudgeRuleConfig {
+		if c.UserID == userID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+func (s *fakeMealStore) SetNudgeRuleConfig(_ context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error {
+	if s.nudgeRuleConfig == nil {
+		s.nudgeRuleConfig = map[string]types.NudgeRuleConfig{}
+	}
+	s.nudgeRuleConfig[userID+"|"+ruleID] = types.NudgeRuleConfig{UserID: userID, RuleID: ruleID, Enabled: enabled, Params: params}
+	return nil
+}
+func (s *fakeMealStore) DeleteNudgeRuleConfig(_ context.Context, userID, ruleID string) error {
+	delete(s.nudgeRuleConfig, userID+"|"+ruleID)
 	return nil
 }
 func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error) {

@@ -214,7 +214,11 @@ func run() error {
 
 	// Nudge scheduler: only meaningful when a notifier is configured.
 	if notifier != nil {
-		sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval)
+		sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval,
+			scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()),
+			scheduler.WithRuleConfig(st),
+			scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
+		)
 		go sched.Run(ctx)
 		slog.Info("scheduler running", "interval", nudgeInterval.String())
 	}

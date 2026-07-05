@@ -381,3 +381,26 @@ export interface Passkey {
   created_at: string
   last_used_at: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Nudge rules
+// ---------------------------------------------------------------------------
+
+export type NudgeRuleKind = 'macro' | 'health' | 'digest'
+
+// Rule is a JSON blob of the underlying Go rule struct's own fields (Rule,
+// HealthRule, or DigestRule — shape depends on `kind`), so field names are
+// Go's PascalCase, mirrored verbatim per the note atop this file.
+export interface NudgeRuleView {
+  rule_id: string
+  kind: NudgeRuleKind
+  enabled: boolean
+  rule: Record<string, unknown>
+}
+
+export interface NudgeRuleUpdate {
+  rule_id: string
+  enabled: boolean
+  params?: Record<string, unknown>
+  reset?: boolean
+}

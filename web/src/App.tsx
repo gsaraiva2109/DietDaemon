@@ -39,6 +39,7 @@ const Security = lazy(() => import('@/routes/Security').then(m => ({ default: m.
 const LinkBot = lazy(() => import('@/routes/LinkBot').then(m => ({ default: m.LinkBot })))
 const Foods = lazy(() => import('@/routes/Foods').then(m => ({ default: m.Foods })))
 const Aliases = lazy(() => import('@/routes/Aliases').then(m => ({ default: m.Aliases })))
+const NudgeSettings = lazy(() => import('@/routes/NudgeSettings').then(m => ({ default: m.NudgeSettings })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
 const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals })))
@@ -112,6 +113,7 @@ function AppRoutes() {
           <Route path="/settings/security" element={<Security />} />
           <Route path="/settings/link-bot" element={<LinkBot />} />
           <Route path="/settings/aliases" element={<Aliases />} />
+          <Route path="/settings/nudges" element={<NudgeSettings />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/body" element={<Body />} />

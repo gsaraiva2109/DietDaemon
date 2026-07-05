@@ -23,6 +23,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
+	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 )
 
 // AuthStore is the subset of store methods the auth endpoints need.
@@ -109,6 +110,11 @@ type MealStore interface {
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
+
+	// Nudge rule config (per-user overrides of scheduler rules).
+	GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error)
+	SetNudgeRuleConfig(ctx context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error
+	DeleteNudgeRuleConfig(ctx context.Context, userID, ruleID string) error
 
 	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
@@ -275,6 +281,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/meals/log", h.wrap(h.handleLogMeal))
 	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
 	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
+	mux.HandleFunc("GET /api/v1/settings/nudges", h.wrap(h.handleGetNudgeSettings))
+	mux.HandleFunc("PUT /api/v1/settings/nudges", h.wrap(h.handleSetNudgeSettings))
 
 	// Meals — latest.
 	mux.HandleFunc("GET /api/v1/meals/latest", h.wrap(h.handleMealsLatest))
@@ -652,6 +660,91 @@ func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userI
 	}
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(dt)
+}
+
+// nudgeRuleView is the effective (default merged with the user's override)
+// state of one nudge rule, as returned by GET /settings/nudges.
+type nudgeRuleView struct {
+	RuleID  string          `json:"rule_id"`
+	Kind    string          `json:"kind"` // "macro", "health", or "digest"
+	Enabled bool            `json:"enabled"`
+	Rule    json.RawMessage `json:"rule"` // the rule's own fields, with any override applied
+}
+
+// buildNudgeRuleView merges a stored override onto a copy of the rule's
+// hardcoded default, mirroring scheduler.resolveRule's behavior so the UI
+// shows exactly what the scheduler will evaluate.
+func buildNudgeRuleView[T any](ruleID, kind string, base T, overrides map[string]types.NudgeRuleConfig) nudgeRuleView {
+	enabled := true
+	if c, ok := overrides[ruleID]; ok {
+		enabled = c.Enabled
+		if enabled && len(c.Params) > 0 {
+			_ = json.Unmarshal(c.Params, &base)
+		}
+	}
+	ruleJSON, _ := json.Marshal(base)
+	return nudgeRuleView{RuleID: ruleID, Kind: kind, Enabled: enabled, Rule: ruleJSON}
+}
+
+// handleGetNudgeSettings returns every built-in nudge rule (macro, health,
+// digest) merged with the user's stored overrides, so the UI always shows
+// the full rule set with each rule's effective enabled/params state.
+func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request, userID string) {
+	overrides, err := h.store.GetNudgeRuleConfig(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	byID := make(map[string]types.NudgeRuleConfig, len(overrides))
+	for _, c := range overrides {
+		byID[c.RuleID] = c
+	}
+
+	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules()))
+	for _, base := range scheduler.DefaultRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "macro", base, byID))
+	}
+	for _, base := range scheduler.DefaultHealthRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "health", base, byID))
+	}
+	for _, base := range scheduler.DefaultDigestRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "digest", base, byID))
+	}
+
+	_ = json.NewEncoder(w).Encode(views)
+}
+
+// handleSetNudgeSettings accepts one rule's override. Set reset=true to
+// remove the override and fall back to the hardcoded default.
+func (h *Handler) handleSetNudgeSettings(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		RuleID  string          `json:"rule_id"`
+		Enabled bool            `json:"enabled"`
+		Params  json.RawMessage `json:"params,omitempty"`
+		Reset   bool            `json:"reset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.RuleID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rule_id is required"})
+		return
+	}
+
+	if body.Reset {
+		if err := h.store.DeleteNudgeRuleConfig(r.Context(), userID, body.RuleID); err != nil {
+			h.writeErr(w, err)
+			return
+		}
+	} else if err := h.store.SetNudgeRuleConfig(r.Context(), userID, body.RuleID, body.Enabled, body.Params); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID string) {

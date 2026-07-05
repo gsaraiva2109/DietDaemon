@@ -71,6 +71,41 @@ export function Button({ variant = 'primary', className = '', ...rest }: BtnProp
   )
 }
 
+// Toggle, an accessible on/off switch (role="switch"). No native <input
+// type="checkbox"> equivalent looks like a switch, so this is a small custom
+// control rather than a dependency.
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  disabled?: boolean
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-50 ${
+        checked ? 'border-transparent bg-primary' : 'border-line bg-surface-2'
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-soft transition-transform ${
+          checked ? 'translate-x-[20px]' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  )
+}
+
 export function EmptyState({
   title,
   hint,

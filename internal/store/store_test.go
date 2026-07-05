@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -579,6 +580,63 @@ func TestNudgeDedupe(t *testing.T) {
 	done, _ = s.WasNudged(ctx(), "u1", "2026-06-17", "rule-2")
 	if done {
 		t.Error("different rule should not be nudged")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Nudge rule config (per-user overrides)
+// ---------------------------------------------------------------------------
+
+func TestNudgeRuleConfigUpsertAndDelete(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	// No overrides yet.
+	cfgs, err := s.GetNudgeRuleConfig(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetNudgeRuleConfig (empty): %v", err)
+	}
+	if len(cfgs) != 0 {
+		t.Errorf("expected no overrides, got %d", len(cfgs))
+	}
+
+	// Set one.
+	params := json.RawMessage(`{"MinFraction":0.5}`)
+	if err := s.SetNudgeRuleConfig(ctx(), "u1", "protein-evening", false, params); err != nil {
+		t.Fatalf("SetNudgeRuleConfig: %v", err)
+	}
+	cfgs, err = s.GetNudgeRuleConfig(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetNudgeRuleConfig: %v", err)
+	}
+	if len(cfgs) != 1 || cfgs[0].RuleID != "protein-evening" || cfgs[0].Enabled {
+		t.Fatalf("unexpected config after set: %+v", cfgs)
+	}
+	if string(cfgs[0].Params) != string(params) {
+		t.Errorf("params = %s, want %s", cfgs[0].Params, params)
+	}
+
+	// Upsert: same rule, flip enabled, change params.
+	if err := s.SetNudgeRuleConfig(ctx(), "u1", "protein-evening", true, json.RawMessage(`{"MinFraction":0.9}`)); err != nil {
+		t.Fatalf("SetNudgeRuleConfig (update): %v", err)
+	}
+	cfgs, _ = s.GetNudgeRuleConfig(ctx(), "u1")
+	if len(cfgs) != 1 || !cfgs[0].Enabled {
+		t.Fatalf("expected upsert to update in place, got %+v", cfgs)
+	}
+
+	// Reset to default: delete the override row.
+	if err := s.DeleteNudgeRuleConfig(ctx(), "u1", "protein-evening"); err != nil {
+		t.Fatalf("DeleteNudgeRuleConfig: %v", err)
+	}
+	cfgs, _ = s.GetNudgeRuleConfig(ctx(), "u1")
+	if len(cfgs) != 0 {
+		t.Errorf("expected no overrides after delete, got %d", len(cfgs))
+	}
+
+	// Deleting again (nothing to delete) must not error.
+	if err := s.DeleteNudgeRuleConfig(ctx(), "u1", "protein-evening"); err != nil {
+		t.Errorf("DeleteNudgeRuleConfig (no-op): %v", err)
 	}
 }
 

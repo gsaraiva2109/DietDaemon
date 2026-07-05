@@ -30,9 +30,11 @@ type Store struct {
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
 var (
-	_ ports.Store          = (*Store)(nil)
-	_ scheduler.Store      = (*Store)(nil)
-	_ scheduler.NudgeStore = (*Store)(nil)
+	_ ports.Store               = (*Store)(nil)
+	_ scheduler.Store           = (*Store)(nil)
+	_ scheduler.NudgeStore      = (*Store)(nil)
+	_ scheduler.RuleConfigStore = (*Store)(nil)
+	_ scheduler.DigestStore     = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and
@@ -1148,6 +1150,70 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 	`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, localDate, ruleID, utcNow())
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// Nudge rule config (per-user overrides)
+// ---------------------------------------------------------------------------
+
+// GetNudgeRuleConfig returns every rule override a user has stored. Rules with
+// no row here run with their hardcoded defaults. Satisfies
+// scheduler.RuleConfigStore.
+func (s *Store) GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	const q = `SELECT user_id, rule_id, enabled, params_json FROM nudge_rule_config WHERE user_id = ?`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query nudge rule config: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.NudgeRuleConfig
+	for rows.Next() {
+		var c types.NudgeRuleConfig
+		var enabled int
+		var params string
+		if err := rows.Scan(&c.UserID, &c.RuleID, &enabled, &params); err != nil {
+			return nil, fmt.Errorf("store: scan nudge rule config: %w", err)
+		}
+		c.Enabled = enabled != 0
+		c.Params = json.RawMessage(params)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetNudgeRuleConfig upserts a per-user override for one rule.
+func (s *Store) SetNudgeRuleConfig(ctx context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error {
+	if len(params) == 0 {
+		params = json.RawMessage("{}")
+	}
+	const q = `
+		INSERT INTO nudge_rule_config (user_id, rule_id, enabled, params_json)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, rule_id) DO UPDATE SET
+			enabled     = excluded.enabled,
+			params_json = excluded.params_json
+	`
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, ruleID, enabledInt, string(params))
+	if err != nil {
+		return fmt.Errorf("store: set nudge rule config: %w", err)
+	}
+	return nil
+}
+
+// DeleteNudgeRuleConfig resets a rule to its hardcoded default by removing the
+// override row. No error if nothing existed.
+func (s *Store) DeleteNudgeRuleConfig(ctx context.Context, userID, ruleID string) error {
+	const q = `DELETE FROM nudge_rule_config WHERE user_id = ? AND rule_id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, ruleID)
+	if err != nil {
+		return fmt.Errorf("store: delete nudge rule config: %w", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

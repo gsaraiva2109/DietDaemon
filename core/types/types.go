@@ -5,7 +5,10 @@
 // backends be swapped behind interfaces.
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MessageKind enumerates the payload kinds an inbound message may carry.
 type MessageKind string
@@ -209,6 +212,17 @@ type PendingMeal struct {
 type DailyTargets struct {
 	UserID  string
 	Targets Macros
+}
+
+// NudgeRuleConfig is a per-user override of a nudge rule's default behavior:
+// enable/disable it, or tune a subset of its fields via Params (unmarshaled
+// into a copy of the rule's own struct, so unspecified fields keep their
+// hardcoded defaults). RuleID matches a Rule/HealthRule/DigestRule ID.
+type NudgeRuleConfig struct {
+	UserID  string          `json:"user_id"`
+	RuleID  string          `json:"rule_id"`
+	Enabled bool            `json:"enabled"`
+	Params  json.RawMessage `json:"params,omitempty"`
 }
 
 // DailyRollup is the materialized sum of a user's macros for one local calendar

@@ -1,6 +1,10 @@
 package scheduler
 
-import "github.com/gsaraiva2109/dietdaemon/core/types"
+import (
+	"time"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
+)
 
 // Macro selects which nutrient a rule watches.
 type Macro string
@@ -128,5 +132,26 @@ func DefaultHealthRules() []HealthRule {
 			Domain:  "fasting",
 			Message: "⏰ Your fasting window is almost complete! Get ready to break your fast with /fast end",
 		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Weekly digest
+// ---------------------------------------------------------------------------
+
+// DigestRule fires a periodic summary notification on a given weekday, once
+// the local hour reaches CheckHour. Deduped via the same nudge_log mechanism
+// as Rule/HealthRule, but keyed by ISO year-week instead of local date so it
+// fires at most once per week.
+type DigestRule struct {
+	ID        string // stable identifier, used for dedupe
+	CheckHour int    // local hour (0-23) the rule becomes eligible
+	Weekday   time.Weekday
+}
+
+// DefaultDigestRules returns the built-in weekly digest: Sunday morning.
+func DefaultDigestRules() []DigestRule {
+	return []DigestRule{
+		{ID: "weekly-digest", CheckHour: 9, Weekday: time.Sunday},
 	}
 }
