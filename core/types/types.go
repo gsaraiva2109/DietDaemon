@@ -249,6 +249,17 @@ type FoodAlias struct {
 	Normalized string `json:"normalized"`
 }
 
+// PendingAlias is an alias candidate produced by an embedding near-miss,
+// awaiting user confirmation before promotion into food_aliases.
+type PendingAlias struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Phrase     string    `json:"phrase"`
+	FoodID     string    `json:"food_id"`
+	MatchScore float64   `json:"match_score"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // ---------------------------------------------------------------------------
 // Meal templates
 // ---------------------------------------------------------------------------

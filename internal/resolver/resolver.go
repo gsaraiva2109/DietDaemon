@@ -27,6 +27,17 @@ type FoodStore interface {
 	GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
 	UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error
 	RecordFoodQuery(ctx context.Context, userID, foodID string) error
+	// AddPendingAlias queues an embedding near-miss for user confirmation
+	// instead of writing it straight into the personal food library.
+	AddPendingAlias(ctx context.Context, userID, phrase, foodID string, matchScore float64) error
+}
+
+// PrecedenceStore resolves a user's preferred order of external nutrition
+// sources. Implementations return an empty slice (not an error) when the user
+// has no customized order; the resolver falls back to the startup-configured
+// default order in that case.
+type PrecedenceStore interface {
+	GetSourcePrecedence(ctx context.Context, userID string) ([]string, error)
 }
 
 // Source resolves a parsed item against an external nutrition database. It
@@ -56,22 +67,33 @@ type Resolver struct {
 	store          FoodStore
 	matcher        Matcher  // nil when Tier 0
 	embed          Embedder // nil when Tier 0, called on external write-back
-	sources        []Source
-	aliasThreshold float64 // min similarity for alias write-back (default 0.92)
+	precedence     PrecedenceStore
+	sourcesByName  map[string]Source
+	defaultOrder   []string // startup-configured NUTRITION_SOURCE order, keyed by Name()
+	aliasThreshold float64  // min similarity for alias write-back (default 0.92)
 }
 
-// New builds a resolver. Sources are queried in the given order, only after the
-// local food library and (when configured) the embedding matcher miss. matcher
-// and embedder may be nil for Tier 0 behaviour.
-func New(store FoodStore, matcher Matcher, embed Embedder, aliasThreshold float64, sources ...Source) *Resolver {
+// New builds a resolver. Sources are queried in the given order by default;
+// a user with a customized precedence (via precedence.GetSourcePrecedence)
+// gets their own order instead. matcher and embedder may be nil for Tier 0
+// behaviour.
+func New(store FoodStore, matcher Matcher, embed Embedder, aliasThreshold float64, precedence PrecedenceStore, sources ...Source) *Resolver {
 	if aliasThreshold <= 0 {
 		aliasThreshold = 0.92
+	}
+	sourcesByName := make(map[string]Source, len(sources))
+	defaultOrder := make([]string, 0, len(sources))
+	for _, src := range sources {
+		sourcesByName[src.Name()] = src
+		defaultOrder = append(defaultOrder, src.Name())
 	}
 	return &Resolver{
 		store:          store,
 		matcher:        matcher,
 		embed:          embed,
-		sources:        sources,
+		precedence:     precedence,
+		sourcesByName:  sourcesByName,
+		defaultOrder:   defaultOrder,
 		aliasThreshold: aliasThreshold,
 	}
 }
@@ -111,10 +133,10 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 		match, err := r.matcher.Match(ctx, userID, item.RawPhrase)
 		if err == nil {
 			_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
-			// Write the new phrasing as an alias when the match is strong so the
-			// next identical phrasing hits the fast exact path.
+			// Queue the new phrasing for user confirmation when the match is
+			// strong, rather than writing it straight into the library.
 			if match.MatchScore >= r.aliasThreshold {
-				_ = r.store.UpsertFood(ctx, userID, match, []string{item.RawPhrase})
+				_ = r.store.AddPendingAlias(ctx, userID, item.RawPhrase, match.FoodID, match.MatchScore)
 			}
 			return finalize(item, match)
 		} else if !errors.Is(err, types.ErrNoMatch) {
@@ -122,8 +144,19 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 		}
 	}
 
-	// 3. External sources, in configured order. First match wins.
-	for _, src := range r.sources {
+	// 3. External sources, in the user's precedence order (falling back to the
+	// startup-configured default). First match wins.
+	order := r.defaultOrder
+	if r.precedence != nil {
+		if o, err := r.precedence.GetSourcePrecedence(ctx, userID); err == nil && len(o) > 0 {
+			order = o
+		}
+	}
+	for _, name := range order {
+		src, ok := r.sourcesByName[name]
+		if !ok {
+			continue // unknown source name: skip
+		}
 		match, err := src.Resolve(ctx, item)
 		if err != nil { // ErrNoMatch or transient: skip to the next source.
 			continue

@@ -645,3 +645,153 @@ func TestFastingLifecycle(t *testing.T) {
 		t.Errorf("unexpected history: %+v", hist)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Pending aliases
+// ---------------------------------------------------------------------------
+
+func TestPendingAliasRoundTrip(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	frango := types.FoodMatch{
+		FoodID: "frango", Name: "Frango Grelhado", Source: "taco",
+		Per100g: types.Macros{Calories: 165, Protein: 31},
+	}
+	arroz := types.FoodMatch{
+		FoodID: "arroz", Name: "Arroz Branco", Source: "taco",
+		Per100g: types.Macros{Calories: 130, Protein: 2.7},
+	}
+	if err := s.UpsertFood(ctx(), "u1", frango, nil); err != nil {
+		t.Fatalf("UpsertFood frango: %v", err)
+	}
+	if err := s.UpsertFood(ctx(), "u1", arroz, nil); err != nil {
+		t.Fatalf("UpsertFood arroz: %v", err)
+	}
+
+	if err := s.AddPendingAlias(ctx(), "u1", "frango grelhado", "frango", 0.95); err != nil {
+		t.Fatalf("AddPendingAlias: %v", err)
+	}
+
+	list, err := s.ListPendingAliases(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("ListPendingAliases: %v", err)
+	}
+	if len(list) != 1 || list[0].Phrase != "frango grelhado" || list[0].FoodID != "frango" || list[0].MatchScore != 0.95 {
+		t.Fatalf("unexpected pending list: %+v", list)
+	}
+
+	// A different user must not see it.
+	mustUser(t, s, types.User{ID: "u2", CreatedAt: time.Now().UTC()})
+	otherList, err := s.ListPendingAliases(ctx(), "u2")
+	if err != nil {
+		t.Fatalf("ListPendingAliases u2: %v", err)
+	}
+	if len(otherList) != 0 {
+		t.Errorf("u2 should have no pending aliases, got %+v", otherList)
+	}
+
+	// Confirming as the wrong user fails.
+	if err := s.ConfirmPendingAlias(ctx(), "u2", list[0].ID); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("ConfirmPendingAlias wrong user: expected ErrNotFound, got %v", err)
+	}
+
+	// Confirm promotes it into food_aliases and removes the pending row.
+	if err := s.ConfirmPendingAlias(ctx(), "u1", list[0].ID); err != nil {
+		t.Fatalf("ConfirmPendingAlias: %v", err)
+	}
+	match, err := s.LookupFood(ctx(), "u1", "frango grelhado")
+	if err != nil {
+		t.Fatalf("LookupFood after confirm: %v", err)
+	}
+	if match.FoodID != "frango" {
+		t.Errorf("expected frango, got %s", match.FoodID)
+	}
+	list, err = s.ListPendingAliases(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("ListPendingAliases after confirm: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("pending row should be gone after confirm, got %+v", list)
+	}
+
+	// Confirming a gone/unknown ID → ErrNotFound.
+	if err := s.ConfirmPendingAlias(ctx(), "u1", "does-not-exist"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("ConfirmPendingAlias unknown id: expected ErrNotFound, got %v", err)
+	}
+
+	// Reject removes the row without promoting it.
+	if err := s.AddPendingAlias(ctx(), "u1", "arroz cozido", "arroz", 0.93); err != nil {
+		t.Fatalf("AddPendingAlias 2: %v", err)
+	}
+	list, err = s.ListPendingAliases(ctx(), "u1")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListPendingAliases before reject: %v %+v", err, list)
+	}
+	if err := s.RejectPendingAlias(ctx(), "u1", list[0].ID); err != nil {
+		t.Fatalf("RejectPendingAlias: %v", err)
+	}
+	if _, err := s.LookupFood(ctx(), "u1", "arroz cozido"); !errors.Is(err, types.ErrNoMatch) {
+		t.Errorf("rejected alias should not resolve, got err=%v", err)
+	}
+	if err := s.RejectPendingAlias(ctx(), "u1", "does-not-exist"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("RejectPendingAlias unknown id: expected ErrNotFound, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Source precedence
+// ---------------------------------------------------------------------------
+
+func TestSourcePrecedenceRoundTrip(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	// No customization yet → empty slice, not an error.
+	order, err := s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence (empty): %v", err)
+	}
+	if len(order) != 0 {
+		t.Errorf("expected empty precedence, got %v", order)
+	}
+
+	if err := s.SetSourcePrecedence(ctx(), "u1", []string{"usda", "off", "taco"}); err != nil {
+		t.Fatalf("SetSourcePrecedence: %v", err)
+	}
+	order, err = s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence: %v", err)
+	}
+	want := []string{"usda", "off", "taco"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+		}
+	}
+
+	// Setting again replaces the previous order entirely.
+	if err := s.SetSourcePrecedence(ctx(), "u1", []string{"off", "usda"}); err != nil {
+		t.Fatalf("SetSourcePrecedence replace: %v", err)
+	}
+	order, err = s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence after replace: %v", err)
+	}
+	want = []string{"off", "usda"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+		}
+	}
+}

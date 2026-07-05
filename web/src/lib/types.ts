@@ -74,6 +74,17 @@ export const MACRO_META: Record<MacroKey, MacroMeta> = {
   Fiber: { key: 'Fiber', label: 'Fiber', unit: 'g', colorVar: '--color-fiber' },
 }
 
+// External nutrition sources the resolver can query, in the backend's
+// startup-configured default order (see cmd/dietdaemon buildSources). The API
+// only ever returns the user's chosen order (or empty for "not customized"),
+// so the frontend needs this fixed universe to render the reorder list and to
+// seed it the first time a user opens the settings page.
+export const NUTRITION_SOURCES = ['openfoodfacts', 'taco'] as const
+export const SOURCE_LABELS: Record<string, string> = {
+  openfoodfacts: 'Open Food Facts',
+  taco: 'TACO (Brazilian food database)',
+}
+
 export interface WeeklyStats {
   days: DailyRollup[]
   avg: Macros // element-wise average of Consumed across logged days
@@ -99,6 +110,19 @@ export interface FoodAlias {
   food_id: string
   alias: string
   normalized: string
+}
+
+// PendingAlias is an embedding near-miss awaiting user confirmation before it
+// is promoted into a real food alias. food_name is enriched server-side so
+// the UI doesn't need a second lookup per row.
+export interface PendingAlias {
+  id: string
+  user_id: string
+  phrase: string
+  food_id: string
+  food_name: string
+  match_score: number
+  created_at: string
 }
 
 export interface FoodDetail {

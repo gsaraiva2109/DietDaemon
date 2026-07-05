@@ -46,6 +46,17 @@ type fakeMealStore struct {
 	addAliasErr    error
 	deleteAliasErr error
 
+	// Pending aliases.
+	pendingAliases         []types.PendingAlias
+	pendingAliasesErr      error
+	confirmPendingAliasErr error
+	rejectPendingAliasErr  error
+
+	// Nutrition source precedence.
+	precedence       []string
+	precedenceErr    error
+	setPrecedenceErr error
+
 	// Meal templates.
 	templates         []types.MealTemplate
 	templatesErr      error
@@ -201,6 +212,26 @@ func (s *fakeMealStore) AddFoodAlias(_ context.Context, _, _, _ string) error {
 }
 func (s *fakeMealStore) DeleteFoodAlias(_ context.Context, _, _, _ string) error {
 	return s.deleteAliasErr
+}
+
+// Pending aliases.
+func (s *fakeMealStore) ListPendingAliases(_ context.Context, _ string) ([]types.PendingAlias, error) {
+	return s.pendingAliases, s.pendingAliasesErr
+}
+func (s *fakeMealStore) ConfirmPendingAlias(_ context.Context, _, _ string) error {
+	return s.confirmPendingAliasErr
+}
+func (s *fakeMealStore) RejectPendingAlias(_ context.Context, _, _ string) error {
+	return s.rejectPendingAliasErr
+}
+
+// Nutrition source precedence.
+func (s *fakeMealStore) GetSourcePrecedence(_ context.Context, _ string) ([]string, error) {
+	return s.precedence, s.precedenceErr
+}
+func (s *fakeMealStore) SetSourcePrecedence(_ context.Context, _ string, order []string) error {
+	s.precedence = order
+	return s.setPrecedenceErr
 }
 
 // Meal templates.

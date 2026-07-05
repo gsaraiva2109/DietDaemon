@@ -4,7 +4,7 @@
 // this sample data instead of hitting the API.
 
 import { createContext, use, useState, type ReactNode } from 'react'
-import type { DailyRollup, Meal, Macros, FoodDetail, MealTemplate, WeightEntry, WeightTrend, BodyCompositionSummary, MeasurementEntry, UserProfile } from './types'
+import type { DailyRollup, Meal, Macros, FoodDetail, MealTemplate, WeightEntry, WeightTrend, BodyCompositionSummary, MeasurementEntry, UserProfile, PendingAlias } from './types'
 
 const KEY = 'dd.demo'
 
@@ -210,3 +210,22 @@ export const DEMO_PROFILE: UserProfile = {
   weekly_rate: 0.5, onboarded: true,
   created_at: hoursAgo(720), updated_at: hoursAgo(24),
 }
+
+// --- demo pending aliases ---------------------------------------------------
+
+export const DEMO_PENDING_ALIASES: PendingAlias[] = [
+  {
+    id: 'pa-1', user_id: 'demo', phrase: 'frango na chapa', food_id: 'demo-chicken',
+    food_name: 'Chicken breast, grilled', match_score: 0.94, created_at: hoursAgo(3),
+  },
+  {
+    id: 'pa-2', user_id: 'demo', phrase: 'arrozinho', food_id: 'demo-rice',
+    food_name: 'White rice, cooked', match_score: 0.92, created_at: hoursAgo(20),
+  },
+]
+
+// --- demo nutrition source precedence ---------------------------------------
+
+// Empty = not customized, same as a fresh backend user; the settings page
+// falls back to NUTRITION_SOURCES' default order.
+export const DEMO_PRECEDENCE: string[] = []
