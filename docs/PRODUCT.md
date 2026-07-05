@@ -6,7 +6,15 @@ product
 
 ## Users
 
-A single self-hosted user (the homelab owner) who is bulking and tracks daily macros. Primary context: a **desktop/homelab browser**, checked repeatedly through the day. Meals are mostly logged elsewhere (chat adapters, Telegram/Discord/Matrix); the web dashboard is where they **glance at progress and review/correct** what was logged. The job-to-be-done, in order: (1) "how much protein/calories do I still need today?", (2) review recent meals and fix a misparse, (3) check multi-day trends.
+Default deployment is a single self-hosted user (the homelab owner) who is bulking and tracks
+daily macros — that's the primary persona this doc describes. `MULTI_USER=true` (plus
+email/OIDC/passkey auth, invite/open/oidc-only registration) unlocks a second deployment mode:
+several accounts on one instance, each with fully separate meals, targets, and history. Multi-user
+reuses the same screens per-account; it's an auth/isolation concern, not a different product.
+Shared/household features (shared targets, shared food library) are not built and are tracked
+separately in `docs/ROADMAP.md`.
+
+Primary context: a **desktop/homelab browser**, checked repeatedly through the day. Meals are mostly logged elsewhere (chat adapters, Telegram/Discord/Matrix); the web dashboard is where they **glance at progress and review/correct** what was logged. The job-to-be-done, in order: (1) "how much protein/calories do I still need today?", (2) review recent meals and fix a misparse, (3) check multi-day trends.
 
 ## Product Purpose
 

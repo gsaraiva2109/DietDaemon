@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -134,10 +135,17 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 		if err != nil {
 			return e.reply(ctx, msg, fmt.Sprintf("Couldn't transcribe audio: %v. Try sending your meal as text.", err))
 		}
+		if transcript == "" {
+			slog.Warn("stt: whisper returned empty transcript", "locale", locale)
+			return e.reply(ctx, msg, "Couldn't understand the audio. Try speaking clearly or send your meal as text, e.g. \"200g chicken, 2 eggs\".")
+		}
 		msg.Text = transcript
 		msg.Kind = types.MessageText
-		if msg.Locale == "" && locale != "" {
-			msg.Locale = locale
+		if locale != "" {
+			slog.Debug("stt: detected locale", "locale", locale)
+			if msg.Locale == "" {
+				msg.Locale = locale
+			}
 		}
 	}
 

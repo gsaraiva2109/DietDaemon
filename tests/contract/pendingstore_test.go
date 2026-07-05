@@ -35,7 +35,7 @@ func pendingSQLite(t *testing.T) (ports.PendingStore, func()) {
 	f.Close()
 	os.Remove(path)
 
-	st, err := store.New(path)
+	st, err := store.New("sqlite", path, store.SQLiteDialect())
 	if err != nil {
 		t.Fatalf("New(%q): %v", path, err)
 	}

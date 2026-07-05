@@ -1,5 +1,5 @@
-// Package store implements ports.Store with SQLite via a pure-Go driver
-// (modernc.org/sqlite). It is CGO-free so the Dockerfile static build works.
+// Package store implements ports.Store. Supports SQLite (modernc.org/sqlite, pure
+// Go, CGO-free) and Postgres (lib/pq) via a Dialect abstraction.
 package store
 
 import (
@@ -21,9 +21,11 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/migrations"
 )
 
-// Store implements ports.Store backed by SQLite.
+// Store implements ports.Store backed by SQLite or Postgres.
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect Dialect
+	driver  string // "sqlite" or "postgres"
 }
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
@@ -33,41 +35,48 @@ var (
 	_ scheduler.NudgeStore = (*Store)(nil)
 )
 
-// New opens the SQLite database at dbPath, enables foreign keys and WAL mode,
-// runs migrations, and returns a ready Store.
-func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+// New opens a database, applies driver-specific setup, runs migrations, and
+// returns a ready Store.
+//
+// driver is "sqlite" or "postgres". dsn is the file path for SQLite or a
+// connection URL for Postgres (e.g. "postgres://user:pass@host/db?sslmode=disable").
+func New(driver, dsn string, dialect Dialect) (*Store, error) {
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open db: %w", err)
 	}
 
-	// SQLite is single-writer; a pool of 1 guarantees every PRAGMA and all
-	// subsequent queries share the same connection, avoiding SQLITE_CANTOPEN
-	// when a second connection races the EXCLUSIVE lock below.
-	db.SetMaxOpenConns(1)
+	switch driver {
+	case "sqlite":
+		// SQLite is single-writer; a pool of 1 guarantees every PRAGMA and all
+		// subsequent queries share the same connection, avoiding SQLITE_CANTOPEN
+		// when a second connection races the EXCLUSIVE lock below.
+		db.SetMaxOpenConns(1)
 
-	// EXCLUSIVE locking before WAL avoids shared-memory (-shm) entirely.
-	// SQLite keeps the wal-index in heap memory instead of mmap'ing a file.
-	// Required for Docker Swarm / some overlay filesystems where the VFS
-	// shared-memory primitives (xShmMap, xShmLock, etc.) don't work.
-	if _, err := db.Exec("PRAGMA locking_mode = EXCLUSIVE"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store: exclusive lock: %w", err)
+		// EXCLUSIVE locking before WAL avoids shared-memory (-shm) entirely.
+		// SQLite keeps the wal-index in heap memory instead of mmap'ing a file.
+		// Required for Docker Swarm / some overlay filesystems where the VFS
+		// shared-memory primitives (xShmMap, xShmLock, etc.) don't work.
+		if _, err := db.Exec("PRAGMA locking_mode = EXCLUSIVE"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: exclusive lock: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: enable WAL: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: enable foreign keys: %w", err)
+		}
+	case "postgres":
+		// Postgres manages its own connection pool; 25 is a sensible default
+		// for modest deployments. The operator can tune via PG* env vars or
+		// connection URL parameters.
+		db.SetMaxOpenConns(25)
 	}
 
-	// Enable WAL mode for concurrent reads and writes.
-	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store: enable WAL: %w", err)
-	}
-
-	// Enforce foreign keys at the connection level.
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store: enable foreign keys: %w", err)
-	}
-
-	s := &Store{db: db}
+	s := &Store{db: db, dialect: dialect, driver: driver}
 	if err := s.runMigrations(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
@@ -76,12 +85,18 @@ func New(dbPath string) (*Store, error) {
 	return s, nil
 }
 
+// rewrite applies dialect-specific placeholder conversion to a SQL query.
+// For SQLite this is a no-op; for Postgres it replaces ? with $1, $2, ...
+func (s *Store) rewrite(sql string) string {
+	return s.dialect.RewritePlaceholders(sql)
+}
+
 func (s *Store) runMigrations() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+	if _, err := s.db.Exec(s.rewrite(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (` + s.dialect.Now() + `))`)); err != nil {
 		return fmt.Errorf("init migration tracking: %w", err)
 	}
 
-	entries, err := migrations.FS.ReadDir(".")
+	entries, err := migrations.FS(s.driver).ReadDir(s.driver)
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
@@ -99,31 +114,31 @@ func (s *Store) runMigrations() error {
 			}
 
 			var already int
-			if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, entry.Name()).Scan(&already); err != nil {
+			if err := s.db.QueryRow(s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()).Scan(&already); err != nil {
 				return fmt.Errorf("check migration %s: %w", entry.Name(), err)
 			}
 			if already > 0 {
 				continue
 			}
 
-			content, err := migrations.FS.ReadFile(entry.Name())
+			content, err := migrations.FS(s.driver).ReadFile(s.driver + "/" + entry.Name())
 			if err != nil {
 				return fmt.Errorf("read %s: %w", entry.Name(), err)
 			}
-			if _, err := s.db.Exec(string(content)); err != nil {
+			if _, err := s.db.Exec(s.rewrite(string(content))); err != nil {
 				// Idempotency: databases that predate migration tracking may
 				// already have tables/columns/indexes from manual or older
 				// migration paths. Treat "already exists" errors as success
 				// so the migration is tracked and skipped on next start.
 				if isBenignMigrationErr(err) {
-					if _, recErr := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); recErr != nil {
+					if _, recErr := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); recErr != nil {
 						return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
 					}
 					continue
 				}
 				return fmt.Errorf("exec %s: %w", entry.Name(), err)
 			}
-			if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, entry.Name()); err != nil {
+			if _, err := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); err != nil {
 				return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 			}
 			applied++
@@ -148,6 +163,11 @@ func (s *Store) runMigrations() error {
 // "mark all as applied" bug). It removes the bogus tracking entries so
 // the next migration pass runs them for real.
 func (s *Store) healMissingColumns() int {
+	// healMissingColumns is a SQLite-only legacy fix. Postgres databases don't
+	// have the "mark all as applied" bug this addresses.
+	if s.driver != "sqlite" {
+		return 0
+	}
 	checks := []struct {
 		migration string
 		table     string
@@ -232,7 +252,7 @@ func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 	if u.EmailVerifiedAt != nil {
 		emailVerifiedAt = utcStr(*u.EmailVerifiedAt)
 	}
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		u.ID, nullStr(u.AccountID), nullStr(u.Email), emailVerifiedAt, u.Status, nullStr(u.DisplayName),
 		u.Timezone, utcStr(u.CreatedAt))
 	return err
@@ -241,7 +261,7 @@ func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
 	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users WHERE id = ?`
-	row := s.db.QueryRowContext(ctx, q, userID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return types.User{}, types.ErrNotFound
@@ -317,7 +337,7 @@ func scanUser(row *sql.Row) (types.User, error) {
 // UpsertUserTimezone updates the users.timezone column for a user.
 func (s *Store) UpsertUserTimezone(ctx context.Context, userID, timezone string) error {
 	const q = `UPDATE users SET timezone = ? WHERE id = ?`
-	_, err := s.db.ExecContext(ctx, q, timezone, userID)
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), timezone, userID)
 	return err
 }
 
@@ -325,10 +345,11 @@ func (s *Store) UpsertUserTimezone(ctx context.Context, userID, timezone string)
 // to an internal user_id. It is idempotent (INSERT OR IGNORE).
 func (s *Store) MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error {
 	const q = `
-		INSERT OR IGNORE INTO user_channels (channel, channel_user_id, user_id)
+		INSERT INTO user_channels (channel, channel_user_id, user_id)
 		VALUES (?, ?, ?)
+		ON CONFLICT DO NOTHING
 	`
-	_, err := s.db.ExecContext(ctx, q, channel, channelUserID, userID)
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), channel, channelUserID, userID)
 	return err
 }
 
@@ -337,7 +358,7 @@ func (s *Store) MapChannelUser(ctx context.Context, channel, channelUserID, user
 // exists.
 func (s *Store) GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error) {
 	const q = `SELECT user_id FROM user_channels WHERE channel = ? AND channel_user_id = ?`
-	row := s.db.QueryRowContext(ctx, q, channel, channelUserID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), channel, channelUserID)
 	var userID string
 	if err := row.Scan(&userID); err == sql.ErrNoRows {
 		return "", types.ErrNotFound
@@ -363,7 +384,7 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err = tx.ExecContext(ctx, mealQ,
+	_, err = tx.ExecContext(ctx, s.rewrite(mealQ),
 		m.ID, m.UserID, utcStr(m.At), m.RawText, m.Confidence, int(m.ParserTier), utcStr(m.CreatedAt),
 	)
 	if err != nil {
@@ -378,7 +399,7 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	for _, it := range m.Items {
-		_, err = tx.ExecContext(ctx, itemQ,
+		_, err = tx.ExecContext(ctx, s.rewrite(itemQ),
 			newID(), m.ID,
 			it.Parsed.RawPhrase, it.Parsed.Quantity, it.Parsed.Unit, it.Parsed.NormalizedGrams,
 			it.Match.FoodID, it.Match.Name, it.Match.Source, it.Match.MatchScore,
@@ -402,7 +423,7 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 		ORDER BY created_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, mealQ, userID, limit)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(mealQ), userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals: %w", err)
 	}
@@ -446,7 +467,7 @@ func (s *Store) GetMeal(ctx context.Context, mealID string) (types.Meal, error) 
 		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
 		FROM meals WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, mealID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), mealID)
 
 	var m types.Meal
 	var atUTC, ca string
@@ -480,7 +501,7 @@ func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate strin
 		WHERE user_id = ? AND date >= ? AND date <= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, startDate, endDate)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("store: query rollups: %w", err)
 	}
@@ -521,7 +542,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 	placeholders := make([]string, len(mealIDs))
 	args := make([]any, len(mealIDs))
 	for i, id := range mealIDs {
-		placeholders[i] = "?"
+		placeholders[i] = s.dialect.Placeholder(i + 1)
 		args[i] = id
 	}
 
@@ -535,7 +556,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 		ORDER BY meal_id, rowid
 	`, strings.Join(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: query items: %w", err)
 	}
@@ -590,7 +611,7 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 		ORDER BY fl.query_count DESC
 		LIMIT 1
 	`
-	row := s.db.QueryRowContext(ctx, q, userID, normalized)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, normalized)
 	var fm types.FoodMatch
 	err := row.Scan(&fm.FoodID, &fm.Name, &fm.Source,
 		&fm.Per100g.Calories, &fm.Per100g.Protein, &fm.Per100g.Carbs, &fm.Per100g.Fat, &fm.Per100g.Fiber,
@@ -615,7 +636,7 @@ func (s *Store) GetFood(ctx context.Context, userID, foodID string) (types.FoodM
 		FROM food_library
 		WHERE user_id = ? AND food_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, userID, foodID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, foodID)
 	var fm types.FoodMatch
 	err := row.Scan(&fm.FoodID, &fm.Name, &fm.Source,
 		&fm.Per100g.Calories, &fm.Per100g.Protein, &fm.Per100g.Carbs, &fm.Per100g.Fat, &fm.Per100g.Fiber,
@@ -651,7 +672,7 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 			fat_100g    = excluded.fat_100g,
 			fiber_100g  = excluded.fiber_100g
 	`
-	_, err = tx.ExecContext(ctx, foodQ,
+	_, err = tx.ExecContext(ctx, s.rewrite(foodQ),
 		match.FoodID, userID, match.Name, match.Source,
 		match.Per100g.Calories, match.Per100g.Protein, match.Per100g.Carbs, match.Per100g.Fat, match.Per100g.Fiber,
 	)
@@ -660,15 +681,16 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	}
 
 	const aliasQ = `
-		INSERT OR IGNORE INTO food_aliases (user_id, alias_normalized, food_id)
+		INSERT INTO food_aliases (user_id, alias_normalized, food_id)
 		VALUES (?, ?, ?)
+		ON CONFLICT DO NOTHING
 	`
 	for _, alias := range aliases {
 		normalized := normalize.Normalize(alias)
 		if normalized == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, aliasQ, userID, normalized, match.FoodID); err != nil {
+		if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, match.FoodID); err != nil {
 			return fmt.Errorf("store: insert alias: %w", err)
 		}
 	}
@@ -683,7 +705,7 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 		SET query_count = query_count + 1, last_used = ?
 		WHERE user_id = ? AND food_id = ?
 	`
-	_, err := s.db.ExecContext(ctx, q, utcNow(), userID, foodID)
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), utcNow(), userID, foodID)
 	return err
 }
 
@@ -701,7 +723,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	// Load the meal to get the at time for rollup lookup and the original items.
 	var atUTC string
 	const mealQ = `SELECT at_utc FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC); err != nil {
+	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC); err != nil {
 		if err == sql.ErrNoRows {
 			return types.ErrNotFound
 		}
@@ -718,7 +740,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		WHERE meal_id = ?
 		ORDER BY rowid
 	`
-	rows, err := tx.QueryContext(ctx, itemsQ, mealID)
+	rows, err := tx.QueryContext(ctx, s.rewrite(itemsQ), mealID)
 	if err != nil {
 		return fmt.Errorf("store: query items: %w", err)
 	}
@@ -768,7 +790,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 			kcal = ?, protein = ?, carbs = ?, fat = ?, fiber = ?
 		WHERE rowid = ?
 	`
-	_, err = tx.ExecContext(ctx, updateQ,
+	_, err = tx.ExecContext(ctx, s.rewrite(updateQ),
 		corrected.Parsed.NormalizedGrams,
 		corrected.Match.FoodID, corrected.Match.Name, corrected.Match.Source, corrected.Match.MatchScore,
 		corrected.Macros.Calories, corrected.Macros.Protein, corrected.Macros.Carbs, corrected.Macros.Fat, corrected.Macros.Fiber,
@@ -795,7 +817,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 			consumed_fat    = consumed_fat    - ? + ?,
 			consumed_fiber  = consumed_fiber  - ? + ?
 	`
-	_, err = tx.ExecContext(ctx, rollupQ,
+	_, err = tx.ExecContext(ctx, s.rewrite(rollupQ),
 		userID, localDate,
 		newTotal.Calories, newTotal.Protein, newTotal.Carbs, newTotal.Fat, newTotal.Fiber,
 		oldItemMacros.Calories, corrected.Macros.Calories,
@@ -822,7 +844,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 				fat_100g    = excluded.fat_100g,
 				fiber_100g  = excluded.fiber_100g
 		`
-		_, err = tx.ExecContext(ctx, foodQ,
+		_, err = tx.ExecContext(ctx, s.rewrite(foodQ),
 			corrected.Match.FoodID, userID, corrected.Match.Name, corrected.Match.Source,
 			corrected.Match.Per100g.Calories, corrected.Match.Per100g.Protein,
 			corrected.Match.Per100g.Carbs, corrected.Match.Per100g.Fat, corrected.Match.Per100g.Fiber,
@@ -846,7 +868,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC, &mealUser); err != nil {
+	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
 		if err == sql.ErrNoRows {
 			return types.ErrNotFound
 		}
@@ -863,7 +885,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 			 kcal, protein, carbs, fat, fiber)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	if _, err := tx.ExecContext(ctx, itemQ,
+	if _, err := tx.ExecContext(ctx, s.rewrite(itemQ),
 		newID(), mealID,
 		item.Parsed.RawPhrase, item.Parsed.Quantity, item.Parsed.Unit, item.Parsed.NormalizedGrams,
 		item.Match.FoodID, item.Match.Name, item.Match.Source, item.Match.MatchScore,
@@ -887,7 +909,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 			consumed_fiber   = consumed_fiber   + ?
 	`
 	m := item.Macros
-	if _, err := tx.ExecContext(ctx, rollupQ,
+	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQ),
 		userID, localDate,
 		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
 		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
@@ -909,7 +931,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 
 	var atUTC, mealUser string
 	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, mealQ, mealID).Scan(&atUTC, &mealUser); err != nil {
+	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
 		if err == sql.ErrNoRows {
 			return types.ErrNotFound
 		}
@@ -923,7 +945,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 		SELECT rowid, kcal, protein, carbs, fat, fiber
 		FROM resolved_items WHERE meal_id = ? ORDER BY rowid
 	`
-	rows, err := tx.QueryContext(ctx, itemsQ, mealID)
+	rows, err := tx.QueryContext(ctx, s.rewrite(itemsQ), mealID)
 	if err != nil {
 		return fmt.Errorf("store: query items: %w", err)
 	}
@@ -949,7 +971,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	}
 
 	target := items[itemIndex]
-	if _, err := tx.ExecContext(ctx, `DELETE FROM resolved_items WHERE rowid = ?`, target.rowid); err != nil {
+	if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM resolved_items WHERE rowid = ?`), target.rowid); err != nil {
 		return fmt.Errorf("store: delete item: %w", err)
 	}
 
@@ -964,7 +986,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 		WHERE user_id = ? AND date = ?
 	`
 	m := target.m
-	if _, err := tx.ExecContext(ctx, rollupQ,
+	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQ),
 		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber, userID, localDate,
 	); err != nil {
 		return fmt.Errorf("store: update rollup: %w", err)
@@ -980,7 +1002,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 // GetTargets returns the daily targets for a user, or types.ErrNotFound.
 func (s *Store) GetTargets(ctx context.Context, userID string) (types.DailyTargets, error) {
 	const q = `SELECT user_id, kcal, protein, carbs, fat, fiber FROM daily_targets WHERE user_id = ?`
-	row := s.db.QueryRowContext(ctx, q, userID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	dt, err := scanTargets(row)
 	if err == sql.ErrNoRows {
 		return types.DailyTargets{}, types.ErrNotFound
@@ -999,10 +1021,16 @@ func scanTargets(row *sql.Row) (types.DailyTargets, error) {
 // SetTargets inserts or replaces the daily targets row.
 func (s *Store) SetTargets(ctx context.Context, t types.DailyTargets) error {
 	const q = `
-		INSERT OR REPLACE INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber)
+		INSERT INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber)
 		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			kcal    = excluded.kcal,
+			protein = excluded.protein,
+			carbs   = excluded.carbs,
+			fat     = excluded.fat,
+			fiber   = excluded.fiber
 	`
-	_, err := s.db.ExecContext(ctx, q, t.UserID,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), t.UserID,
 		t.Targets.Calories, t.Targets.Protein, t.Targets.Carbs, t.Targets.Fat, t.Targets.Fiber,
 	)
 	return err
@@ -1025,7 +1053,7 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 			target_fat     = ?,
 			target_fiber   = ?
 	`
-	_, err := s.db.ExecContext(ctx, q, userID, localDate,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, localDate,
 		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
 		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
 	)
@@ -1045,7 +1073,7 @@ func (s *Store) GetRollup(ctx context.Context, userID, localDate string) (types.
 		FROM daily_rollups
 		WHERE user_id = ? AND date = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, userID, localDate)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, localDate)
 	r, err := scanRollup(row)
 	if err == sql.ErrNoRows {
 		return types.DailyRollup{}, types.ErrNotFound
@@ -1065,13 +1093,24 @@ func scanRollup(row *sql.Row) (types.DailyRollup, error) {
 // UpsertRollup inserts or replaces a daily rollup row.
 func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 	const q = `
-		INSERT OR REPLACE INTO daily_rollups
+		INSERT INTO daily_rollups
 			(user_id, date,
 			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
 			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			consumed_kcal    = excluded.consumed_kcal,
+			consumed_protein = excluded.consumed_protein,
+			consumed_carbs   = excluded.consumed_carbs,
+			consumed_fat     = excluded.consumed_fat,
+			consumed_fiber   = excluded.consumed_fiber,
+			target_kcal      = excluded.target_kcal,
+			target_protein   = excluded.target_protein,
+			target_carbs     = excluded.target_carbs,
+			target_fat       = excluded.target_fat,
+			target_fiber     = excluded.target_fiber
 	`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		r.UserID, r.Date,
 		r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
 		r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
@@ -1087,7 +1126,7 @@ func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 // localDate. Satisfies scheduler.NudgeStore.
 func (s *Store) WasNudged(ctx context.Context, userID, localDate, ruleID string) (bool, error) {
 	const q = `SELECT 1 FROM nudge_log WHERE user_id = ? AND local_date = ? AND rule_id = ?`
-	row := s.db.QueryRowContext(ctx, q, userID, localDate, ruleID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, localDate, ruleID)
 	var v int
 	err := row.Scan(&v)
 	if err == sql.ErrNoRows {
@@ -1103,10 +1142,11 @@ func (s *Store) WasNudged(ctx context.Context, userID, localDate, ruleID string)
 // (INSERT OR IGNORE). Satisfies scheduler.NudgeStore.
 func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string) error {
 	const q = `
-		INSERT OR IGNORE INTO nudge_log (user_id, local_date, rule_id, sent_at)
+		INSERT INTO nudge_log (user_id, local_date, rule_id, sent_at)
 		VALUES (?, ?, ?, ?)
+		ON CONFLICT DO NOTHING
 	`
-	_, err := s.db.ExecContext(ctx, q, userID, localDate, ruleID, utcNow())
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, localDate, ruleID, utcNow())
 	return err
 }
 
@@ -1172,7 +1212,7 @@ func newID() string {
 // types.ErrNotFound when no meals exist.
 func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, error) {
 	const q = `SELECT at_utc FROM meals WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`
-	row := s.db.QueryRowContext(ctx, q, userID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	var at string
 	if err := row.Scan(&at); err == sql.ErrNoRows {
 		return "", types.ErrNotFound
@@ -1199,7 +1239,7 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	q += ` ORDER BY last_used DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list foods: %w", err)
 	}
@@ -1207,13 +1247,25 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	return scanFoodDetails(rows)
 }
 
-// SearchFoods searches food_library by name and alias using FTS5 full-text search.
+// SearchFoods searches food_library by name and alias using full-text search.
 func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error) {
-	// Build FTS5 prefix query: each token gets a * suffix.
-	tokens := strings.Fields(query)
-	ftsQuery := strings.Join(tokens, "* ") + "*"
+	searchParam := s.dialect.SearchQuery(query)
 
-	const q = `
+	var q string
+	if s.driver == "postgres" {
+		q = `
+		SELECT fl.food_id, fl.user_id, fl.name, fl.source,
+		       fl.kcal_100g, fl.protein_100g, fl.carbs_100g, fl.fat_100g, fl.fiber_100g,
+		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
+		       fl.query_count, fl.last_used
+		FROM food_library fl
+		INNER JOIN food_search fs ON fs.food_id = fl.food_id AND fs.user_id = fl.user_id
+		WHERE fs.tsv @@ to_tsquery('simple', ?) AND fl.user_id = ?
+		ORDER BY fl.query_count DESC
+		LIMIT 20
+	`
+	} else {
+		q = `
 		SELECT fl.food_id, fl.user_id, fl.name, fl.source,
 		       fl.kcal_100g, fl.protein_100g, fl.carbs_100g, fl.fat_100g, fl.fiber_100g,
 		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
@@ -1224,7 +1276,8 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 		ORDER BY fl.query_count DESC
 		LIMIT 20
 	`
-	rows, err := s.db.QueryContext(ctx, q, ftsQuery, userID)
+	}
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), searchParam, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: search foods: %w", err)
 	}
@@ -1244,7 +1297,7 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 		ORDER BY query_count DESC, last_used DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: frequent foods: %w", err)
 	}
@@ -1262,7 +1315,7 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 		FROM food_library
 		WHERE user_id = ? AND food_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, foodQ, userID, foodID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(foodQ), userID, foodID)
 	fd, err := scanFoodDetail(row)
 	if err == sql.ErrNoRows {
 		return types.FoodDetail{}, types.ErrNotFound
@@ -1276,7 +1329,7 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 		SELECT food_id, alias_normalized FROM food_aliases
 		WHERE user_id = ? AND food_id = ?
 	`
-	arows, err := s.db.QueryContext(ctx, aliasQ, userID, foodID)
+	arows, err := s.db.QueryContext(ctx, s.rewrite(aliasQ), userID, foodID)
 	if err != nil {
 		return types.FoodDetail{}, fmt.Errorf("store: get food aliases: %w", err)
 	}
@@ -1294,8 +1347,8 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 // AddFoodAlias inserts a normalized alias for a food.
 func (s *Store) AddFoodAlias(ctx context.Context, userID, foodID, alias string) error {
 	normalized := normalize.Normalize(alias)
-	const q = `INSERT OR IGNORE INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, userID, normalized, foodID)
+	const q = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, normalized, foodID)
 	return err
 }
 
@@ -1304,7 +1357,7 @@ func (s *Store) AddFoodAlias(ctx context.Context, userID, foodID, alias string) 
 func (s *Store) DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error {
 	normalized := normalize.Normalize(alias)
 	const q = `DELETE FROM food_aliases WHERE user_id = ? AND food_id = ? AND alias_normalized = ?`
-	res, err := s.db.ExecContext(ctx, q, userID, foodID, normalized)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID, normalized)
 	if err != nil {
 		return fmt.Errorf("store: delete food alias: %w", err)
 	}
@@ -1368,7 +1421,7 @@ func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
 			items_json = excluded.items_json,
 			last_used  = excluded.last_used
 	`
-	_, err = s.db.ExecContext(ctx, q, t.ID, t.UserID, t.Name, string(itemsJSON), utcStr(t.CreatedAt), utcStr(t.LastUsed))
+	_, err = s.db.ExecContext(ctx, s.rewrite(q), t.ID, t.UserID, t.Name, string(itemsJSON), utcStr(t.CreatedAt), utcStr(t.LastUsed))
 	return err
 }
 
@@ -1379,7 +1432,7 @@ func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTe
 		FROM meal_templates WHERE user_id = ?
 		ORDER BY created_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: get templates: %w", err)
 	}
@@ -1393,7 +1446,7 @@ func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealT
 		SELECT id, user_id, name, items_json, created_at, last_used
 		FROM meal_templates WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, templateID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), templateID)
 	t, err := scanTemplate(row)
 	if err == sql.ErrNoRows {
 		return types.MealTemplate{}, types.ErrNotFound
@@ -1404,7 +1457,7 @@ func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealT
 // DeleteTemplate deletes a template by user + ID. Returns ErrNotFound if 0 rows.
 func (s *Store) DeleteTemplate(ctx context.Context, userID, templateID string) error {
 	const q = `DELETE FROM meal_templates WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, templateID, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), templateID, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete template: %w", err)
 	}
@@ -1418,7 +1471,7 @@ func (s *Store) DeleteTemplate(ctx context.Context, userID, templateID string) e
 // LogTemplateUse records a template usage event.
 func (s *Store) LogTemplateUse(ctx context.Context, tl types.TemplateLog) error {
 	const q = `INSERT INTO template_logs (id, user_id, template_id, logged_at) VALUES (?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, tl.ID, tl.UserID, tl.TemplateID, utcStr(tl.LoggedAt))
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), tl.ID, tl.UserID, tl.TemplateID, utcStr(tl.LoggedAt))
 	return err
 }
 
@@ -1466,13 +1519,14 @@ func scanTemplates(rows *sql.Rows) ([]types.MealTemplate, error) {
 
 // ListWeight returns weight entries for the last N days.
 func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error) {
+	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 	const q = `
 		SELECT id, user_id, date, weight_kg, note, created_at
 		FROM weight_log
-		WHERE user_id = ? AND date >= date('now', ? || ' days', 'localtime')
+		WHERE user_id = ? AND date >= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, fmt.Sprintf("-%d", days))
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("store: list weight: %w", err)
 	}
@@ -1490,14 +1544,14 @@ func (s *Store) LogWeight(ctx context.Context, w types.WeightEntry) error {
 			weight_kg = excluded.weight_kg,
 			note      = excluded.note
 	`
-	_, err := s.db.ExecContext(ctx, q, w.ID, w.UserID, w.Date, w.WeightKg, w.Note, utcStr(w.CreatedAt))
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), w.ID, w.UserID, w.Date, w.WeightKg, w.Note, utcStr(w.CreatedAt))
 	return err
 }
 
 // DeleteWeight deletes a weight entry by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeleteWeight(ctx context.Context, userID, entryID string) error {
 	const q = `DELETE FROM weight_log WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, entryID, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), entryID, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete weight: %w", err)
 	}
@@ -1561,7 +1615,7 @@ func (s *Store) StartFast(ctx context.Context, f types.Fast) error {
 		INSERT INTO fasts (id, user_id, start_at, end_at, target_hours, completed, created_at)
 		VALUES (?, ?, ?, NULL, ?, 0, ?)
 	`
-	_, err := s.db.ExecContext(ctx, q, f.ID, f.UserID, utcStr(f.StartAt), f.TargetHours, utcStr(f.CreatedAt))
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), f.ID, f.UserID, utcStr(f.StartAt), f.TargetHours, utcStr(f.CreatedAt))
 	if err != nil {
 		return fmt.Errorf("store: start fast: %w", err)
 	}
@@ -1578,7 +1632,7 @@ func (s *Store) GetActiveFast(ctx context.Context, userID string) (types.Fast, e
 		ORDER BY start_at DESC
 		LIMIT 1
 	`
-	return scanFast(s.db.QueryRowContext(ctx, q, userID))
+	return scanFast(s.db.QueryRowContext(ctx, s.rewrite(q), userID))
 }
 
 // EndFast closes a fasting window by id, marking its end time and completion.
@@ -1588,7 +1642,7 @@ func (s *Store) EndFast(ctx context.Context, userID, fastID string, endAt time.T
 		UPDATE fasts SET end_at = ?, completed = ?
 		WHERE id = ? AND user_id = ? AND end_at IS NULL
 	`
-	res, err := s.db.ExecContext(ctx, q, utcStr(endAt), boolToInt(completed), fastID, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(endAt), boolToInt(completed), fastID, userID)
 	if err != nil {
 		return types.Fast{}, fmt.Errorf("store: end fast: %w", err)
 	}
@@ -1599,7 +1653,7 @@ func (s *Store) EndFast(ctx context.Context, userID, fastID string, endAt time.T
 		SELECT id, user_id, start_at, end_at, target_hours, completed, created_at
 		FROM fasts WHERE id = ? AND user_id = ?
 	`
-	return scanFast(s.db.QueryRowContext(ctx, sel, fastID, userID))
+	return scanFast(s.db.QueryRowContext(ctx, s.rewrite(sel), fastID, userID))
 }
 
 // ListFasts returns the user's most recent fasting windows, newest first.
@@ -1611,7 +1665,7 @@ func (s *Store) ListFasts(ctx context.Context, userID string, limit int) ([]type
 		ORDER BY start_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list fasts: %w", err)
 	}
@@ -1668,14 +1722,15 @@ func boolToInt(b bool) int {
 
 // ListMeasurements returns measurement entries for the last N days.
 func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) ([]types.MeasurementEntry, error) {
+	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 	const q = `
 		SELECT id, user_id, date, waist_cm, hips_cm, chest_cm, left_arm_cm, right_arm_cm,
 		       left_thigh_cm, right_thigh_cm, note, created_at
 		FROM measurement_log
-		WHERE user_id = ? AND date >= date('now', ? || ' days', 'localtime')
+		WHERE user_id = ? AND date >= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, fmt.Sprintf("-%d", days))
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("store: list measurements: %w", err)
 	}
@@ -1701,7 +1756,7 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 			right_thigh_cm = excluded.right_thigh_cm,
 			note           = excluded.note
 	`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		m.ID, m.UserID, m.Date,
 		m.WaistCm, m.HipsCm, m.ChestCm,
 		m.LeftArmCm, m.RightArmCm, m.LeftThighCm, m.RightThighCm,
@@ -1713,7 +1768,7 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 // DeleteMeasurement deletes a measurement entry by user + ID. Returns ErrNotFound.
 func (s *Store) DeleteMeasurement(ctx context.Context, userID, entryID string) error {
 	const q = `DELETE FROM measurement_log WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, entryID, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), entryID, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete measurement: %w", err)
 	}
@@ -1749,7 +1804,7 @@ func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.P
 		FROM progress_photos WHERE user_id = ?
 		ORDER BY date DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list photo metadata: %w", err)
 	}
@@ -1774,7 +1829,7 @@ func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.Progres
 		SELECT id, user_id, date, view, mime_type, data, created_at
 		FROM progress_photos WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, photoID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), photoID)
 	var p types.ProgressPhoto
 	var ca string
 	if err := row.Scan(&p.ID, &p.UserID, &p.Date, &p.View, &p.MimeType, &p.Data, &ca); err == sql.ErrNoRows {
@@ -1792,14 +1847,14 @@ func (s *Store) UploadPhoto(ctx context.Context, p types.ProgressPhoto) error {
 		INSERT INTO progress_photos (id, user_id, date, view, mime_type, data, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := s.db.ExecContext(ctx, q, p.ID, p.UserID, p.Date, p.View, p.MimeType, p.Data, utcStr(p.CreatedAt))
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), p.ID, p.UserID, p.Date, p.View, p.MimeType, p.Data, utcStr(p.CreatedAt))
 	return err
 }
 
 // DeletePhoto deletes a progress photo by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeletePhoto(ctx context.Context, userID, photoID string) error {
 	const q = `DELETE FROM progress_photos WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, photoID, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), photoID, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete photo: %w", err)
 	}
@@ -1818,7 +1873,7 @@ func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate 
 		WHERE user_id = ? AND date(at_utc) >= ? AND date(at_utc) <= ?
 		ORDER BY at_utc ASC
 	`
-	rows, err := s.db.QueryContext(ctx, mealQ, userID, startDate, endDate)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(mealQ), userID, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
 	}
@@ -1863,7 +1918,7 @@ func (s *Store) GetProfile(ctx context.Context, userID string) (types.UserProfil
 		       target_weight_kg, weekly_rate, onboarded, created_at, updated_at
 		FROM user_profiles WHERE user_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, userID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	var p types.UserProfile
 	var bd, ca, ua string
 	var onboarded int
@@ -1903,7 +1958,7 @@ func (s *Store) UpsertProfile(ctx context.Context, p types.UserProfile) error {
 			onboarded        = excluded.onboarded,
 			updated_at       = excluded.updated_at
 	`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		p.UserID, p.HeightCm, p.BirthDate, p.Gender, p.ActivityLevel, p.Goal,
 		p.TargetWeightKg, p.WeeklyRate, onboarded,
 		utcStr(p.CreatedAt), utcStr(p.UpdatedAt),
@@ -1957,7 +2012,7 @@ func (s *Store) LookupLinkingCodeAny(ctx context.Context, code string) (types.Li
 // ConsumeLinkingCode marks a linking code as used.
 func (s *Store) ConsumeLinkingCode(ctx context.Context, code string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE linking_codes SET used_at = datetime('now') WHERE code = ? AND used_at IS NULL`,
+		s.rewrite(`UPDATE linking_codes SET used_at = `+s.dialect.Now()+` WHERE code = ? AND used_at IS NULL`),
 		code,
 	)
 	return err
@@ -1973,7 +2028,7 @@ func (s *Store) LogWater(ctx context.Context, w types.WaterLog) error {
 		INSERT INTO water_logs (id, user_id, amount_ml, logged_at, note, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`
-	_, err := s.db.ExecContext(ctx, q, w.ID, w.UserID, w.AmountML, w.LoggedAt, nullStr(w.Note), utcNow())
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), w.ID, w.UserID, w.AmountML, w.LoggedAt, nullStr(w.Note), utcNow())
 	if err != nil {
 		return fmt.Errorf("store: log water: %w", err)
 	}
@@ -1989,7 +2044,7 @@ func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]
 		WHERE user_id = ? AND date(logged_at) = ?
 		ORDER BY logged_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, localDate)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, localDate)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: get water today: %w", err)
 	}
@@ -2011,7 +2066,7 @@ func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]
 // DeleteWater deletes a water log entry by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeleteWater(ctx context.Context, userID, id string) error {
 	const q = `DELETE FROM water_logs WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, id, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete water: %w", err)
 	}
@@ -2038,7 +2093,7 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err = tx.ExecContext(ctx, workoutQ,
+	_, err = tx.ExecContext(ctx, s.rewrite(workoutQ),
 		w.ID, w.UserID, w.Name, w.DurationMin, w.Intensity,
 		w.CaloriesBurned, nullStr(w.Note), w.LoggedAt, utcNow(),
 	)
@@ -2055,7 +2110,7 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 		if exID == "" {
 			exID = newID()
 		}
-		_, err = tx.ExecContext(ctx, exerciseQ,
+		_, err = tx.ExecContext(ctx, s.rewrite(exerciseQ),
 			exID, w.ID, e.Name, e.Sets, e.Reps, e.WeightKg, nullStr(e.Note),
 		)
 		if err != nil {
@@ -2073,7 +2128,7 @@ func (s *Store) GetWorkout(ctx context.Context, id string) (types.Workout, error
 		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
 		FROM workouts WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, q, id)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), id)
 	var w types.Workout
 	if err := row.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
 		if err == sql.ErrNoRows {
@@ -2099,7 +2154,7 @@ func (s *Store) ListWorkouts(ctx context.Context, userID string, limit int) ([]t
 		ORDER BY logged_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list workouts: %w", err)
 	}
@@ -2120,7 +2175,7 @@ func (s *Store) ListWorkouts(ctx context.Context, userID string, limit int) ([]t
 // Returns ErrNotFound if absent.
 func (s *Store) DeleteWorkout(ctx context.Context, userID, id string) error {
 	const q = `DELETE FROM workouts WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, id, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete workout: %w", err)
 	}
@@ -2138,7 +2193,7 @@ func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]t
 		WHERE workout_id = ?
 		ORDER BY rowid
 	`
-	rows, err := s.db.QueryContext(ctx, q, workoutID)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), workoutID)
 	if err != nil {
 		return nil, fmt.Errorf("store: query exercises: %w", err)
 	}
@@ -2165,7 +2220,7 @@ func (s *Store) LogSleep(ctx context.Context, sl types.SleepLog) error {
 		INSERT INTO sleep_logs (id, user_id, sleep_at, wake_at, quality, note, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		sl.ID, sl.UserID, sl.SleepAt, sl.WakeAt, sl.Quality, nullStr(sl.Note), utcNow(),
 	)
 	if err != nil {
@@ -2184,7 +2239,7 @@ func (s *Store) GetActiveSleep(ctx context.Context, userID string) (*types.Sleep
 		ORDER BY sleep_at DESC
 		LIMIT 1
 	`
-	row := s.db.QueryRowContext(ctx, q, userID)
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	var sl types.SleepLog
 	var wakeAt sql.NullString
 	if err := row.Scan(&sl.ID, &sl.UserID, &sl.SleepAt, &wakeAt, &sl.Quality, &sl.Note); err != nil {
@@ -2206,7 +2261,7 @@ func (s *Store) EndSleep(ctx context.Context, userID, id, wakeAt, quality string
 		UPDATE sleep_logs SET wake_at = ?, quality = ?
 		WHERE id = ? AND user_id = ? AND wake_at IS NULL
 	`
-	res, err := s.db.ExecContext(ctx, q, wakeAt, quality, id, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), wakeAt, quality, id, userID)
 	if err != nil {
 		return fmt.Errorf("store: end sleep: %w", err)
 	}
@@ -2226,7 +2281,7 @@ func (s *Store) ListSleep(ctx context.Context, userID string, limit int) ([]type
 		ORDER BY sleep_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, q, userID, limit)
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list sleep: %w", err)
 	}
@@ -2250,7 +2305,7 @@ func (s *Store) ListSleep(ctx context.Context, userID string, limit int) ([]type
 // DeleteSleep deletes a sleep log by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeleteSleep(ctx context.Context, userID, id string) error {
 	const q = `DELETE FROM sleep_logs WHERE id = ? AND user_id = ?`
-	res, err := s.db.ExecContext(ctx, q, id, userID)
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete sleep: %w", err)
 	}
