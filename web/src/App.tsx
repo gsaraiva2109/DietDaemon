@@ -45,6 +45,7 @@ const PendingAliases = lazy(() =>
 const SourcePrecedence = lazy(() =>
   import('@/routes/SourcePrecedence').then(m => ({ default: m.SourcePrecedence })),
 )
+const NudgeSettings = lazy(() => import('@/routes/NudgeSettings').then(m => ({ default: m.NudgeSettings })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
 const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals })))
@@ -120,6 +121,7 @@ function AppRoutes() {
           <Route path="/settings/aliases" element={<Aliases />} />
           <Route path="/settings/aliases/pending" element={<PendingAliases />} />
           <Route path="/settings/precedence" element={<SourcePrecedence />} />
+          <Route path="/settings/nudges" element={<NudgeSettings />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/body" element={<Body />} />

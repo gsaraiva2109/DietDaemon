@@ -19,6 +19,7 @@ import {
   LinkIcon,
   CheckIcon,
   SparkleIcon,
+  ClockIcon,
 } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
@@ -136,6 +137,7 @@ export function Settings() {
           label="Nutrition source order"
           hint="Choose which source is tried first"
         />
+        <RowLink to="/settings/nudges" Icon={ClockIcon} label="Nudges" hint="Macro, health & digest reminders" />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"

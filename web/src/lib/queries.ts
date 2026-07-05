@@ -35,6 +35,8 @@ import type {
   Macros,
   Meal,
   MeasurementEntry,
+  NudgeRuleUpdate,
+  NudgeRuleView,
   ResolvedItem,
   SleepQuality,
   UserProfile,
@@ -175,6 +177,33 @@ export function useSetTargets() {
       qc.invalidateQueries({ queryKey: ['targets'] })
       qc.invalidateQueries({ queryKey: ['rollup'] })
     },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Nudge settings
+// ---------------------------------------------------------------------------
+
+export function useNudgeRules(): UseQueryResult<NudgeRuleView[]> {
+  return useQuery({
+    queryKey: ['nudges'],
+    queryFn: () => api.nudges.get(),
+  })
+}
+
+export function useSetNudgeRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (update: NudgeRuleUpdate) => api.nudges.set(update),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nudges'] }),
+  })
+}
+
+export function useResetNudgeRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ruleID: string) => api.nudges.reset(ruleID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nudges'] }),
   })
 }
 
