@@ -122,6 +122,15 @@ type MealStore interface {
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
 
+	// Pending aliases (embedding near-misses awaiting confirmation).
+	ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error)
+	ConfirmPendingAlias(ctx context.Context, userID, id string) error
+	RejectPendingAlias(ctx context.Context, userID, id string) error
+
+	// Per-user nutrition source precedence.
+	GetSourcePrecedence(ctx context.Context, userID string) ([]string, error)
+	SetSourcePrecedence(ctx context.Context, userID string, order []string) error
+
 	// Meal templates.
 	SaveTemplate(ctx context.Context, t types.MealTemplate) error
 	GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error)
@@ -286,6 +295,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
+
+	// Pending aliases.
+	mux.HandleFunc("GET /api/v1/aliases/pending", h.wrap(h.handleListPendingAliases))
+	mux.HandleFunc("POST /api/v1/aliases/pending/{id}/confirm", h.wrap(h.handleConfirmPendingAlias))
+	mux.HandleFunc("DELETE /api/v1/aliases/pending/{id}", h.wrap(h.handleRejectPendingAlias))
+
+	// Nutrition source precedence.
+	mux.HandleFunc("GET /api/v1/settings/precedence", h.wrap(h.handleGetPrecedence))
+	mux.HandleFunc("PUT /api/v1/settings/precedence", h.wrap(h.handleSetPrecedence))
 
 	// Meal templates.
 	mux.HandleFunc("GET /api/v1/templates", h.wrap(h.handleListTemplates))
@@ -799,6 +817,76 @@ func (h *Handler) handleDeleteAlias(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pendingAliasView adds the matched food's display name to a pending alias so
+// the UI can render "phrase -> food name" without a second round-trip per row.
+type pendingAliasView struct {
+	types.PendingAlias
+	FoodName string `json:"food_name"`
+}
+
+func (h *Handler) handleListPendingAliases(w http.ResponseWriter, r *http.Request, userID string) {
+	pending, err := h.store.ListPendingAliases(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	views := make([]pendingAliasView, 0, len(pending))
+	for _, pa := range pending {
+		view := pendingAliasView{PendingAlias: pa, FoodName: pa.FoodID}
+		if fd, err := h.store.GetFoodDetail(r.Context(), userID, pa.FoodID); err == nil {
+			view.FoodName = fd.Name
+		}
+		views = append(views, view)
+	}
+	_ = json.NewEncoder(w).Encode(views)
+}
+
+func (h *Handler) handleConfirmPendingAlias(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.ConfirmPendingAlias(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "confirmed"})
+}
+
+func (h *Handler) handleRejectPendingAlias(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.RejectPendingAlias(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleGetPrecedence(w http.ResponseWriter, r *http.Request, userID string) {
+	order, err := h.store.GetSourcePrecedence(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if order == nil {
+		order = []string{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string][]string{"order": order})
+}
+
+func (h *Handler) handleSetPrecedence(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "order field is required"})
+		return
+	}
+	if err := h.store.SetSourcePrecedence(r.Context(), userID, body.Order); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
 // ---------------------------------------------------------------------------

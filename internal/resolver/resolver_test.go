@@ -7,13 +7,20 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
-// fakeStore is an in-memory FoodStore that tracks calls for assertions.
+// fakeStore is an in-memory FoodStore + PrecedenceStore that tracks calls for
+// assertions. The same fake satisfies both narrow interfaces, mirroring how
+// *store.Store does it for real.
 type fakeStore struct {
 	lib       map[string]types.FoodMatch // phrase -> match
 	upserts   []types.FoodMatch
 	aliases   [][]string
 	recorded  []string // foodIDs passed to RecordFoodQuery
 	upsertErr error
+
+	pendingAliases []types.PendingAlias // AddPendingAlias calls
+
+	precedence    []string // GetSourcePrecedence result
+	precedenceErr error
 }
 
 func (f *fakeStore) LookupFood(_ context.Context, _, phrase string) (types.FoodMatch, error) {
@@ -41,6 +48,20 @@ func (f *fakeStore) UpsertFood(_ context.Context, _ string, match types.FoodMatc
 func (f *fakeStore) RecordFoodQuery(_ context.Context, _, foodID string) error {
 	f.recorded = append(f.recorded, foodID)
 	return nil
+}
+
+func (f *fakeStore) AddPendingAlias(_ context.Context, userID, phrase, foodID string, matchScore float64) error {
+	f.pendingAliases = append(f.pendingAliases, types.PendingAlias{
+		UserID: userID, Phrase: phrase, FoodID: foodID, MatchScore: matchScore,
+	})
+	return nil
+}
+
+func (f *fakeStore) GetSourcePrecedence(_ context.Context, _ string) ([]string, error) {
+	if f.precedenceErr != nil {
+		return nil, f.precedenceErr
+	}
+	return f.precedence, nil
 }
 
 // fakeSource matches a single phrase, otherwise ErrNoMatch.
@@ -96,7 +117,7 @@ func chicken() types.FoodMatch {
 func TestLocalFirstHit(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"frango": chicken()}}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, nil, 0.92, src)
+	r := New(st, nil, nil, 0.92, st, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 200}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -119,7 +140,7 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	miss := &fakeSource{name: "taco", phr: "nope"}
 	hit := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, nil, 0.92, miss, hit) // order matters: miss first
+	r := New(st, nil, nil, 0.92, st, miss, hit) // order matters: miss first
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -140,7 +161,7 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 
 func TestUnresolvedAndCountBased(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"ovo": chicken()}}
-	r := New(st, nil, nil, 0.92) // no external sources
+	r := New(st, nil, nil, 0.92, st) // no external sources
 
 	items := []types.ParsedItem{
 		{RawPhrase: "ovo", NormalizedGrams: 0},          // matched food, unknown portion
@@ -168,7 +189,7 @@ func TestMatcherHit(t *testing.T) {
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.85},
 	}}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, m, nil, 0.92, src)
+	r := New(st, m, nil, 0.92, st, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -190,7 +211,7 @@ func TestMatcherMissFallsThroughToExternal(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	m := &fakeMatcher{match: map[string]types.FoodMatch{}} // matches nothing
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, m, nil, 0.92, src)
+	r := New(st, m, nil, 0.92, st, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	res, need := r.Resolve(context.Background(), "u1", items)
@@ -215,7 +236,7 @@ func TestMatcherStrongMatchWritesAlias(t *testing.T) {
 		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.95},
 	}}
-	r := New(st, m, nil, 0.92)
+	r := New(st, m, nil, 0.92, st)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, need := r.Resolve(context.Background(), "u1", items)
@@ -223,12 +244,17 @@ func TestMatcherStrongMatchWritesAlias(t *testing.T) {
 	if need != 0 {
 		t.Fatalf("need=%d, want 0", need)
 	}
-	// Score >= 0.92 → alias write-back.
-	if len(st.upserts) != 1 {
-		t.Fatalf("expected 1 upsert for alias write-back, got %d", len(st.upserts))
+	// Score >= 0.92 → queued for confirmation, never written straight into the
+	// library.
+	if len(st.upserts) != 0 {
+		t.Errorf("expected no direct upsert for a near-miss, got %d", len(st.upserts))
 	}
-	if len(st.aliases) != 1 || len(st.aliases[0]) != 1 || st.aliases[0][0] != "frango" {
-		t.Errorf("aliases = %v, want [[frango]]", st.aliases)
+	if len(st.pendingAliases) != 1 {
+		t.Fatalf("expected 1 pending alias, got %d", len(st.pendingAliases))
+	}
+	pa := st.pendingAliases[0]
+	if pa.Phrase != "frango" || pa.FoodID != "off:1" || pa.MatchScore != 0.95 {
+		t.Errorf("pending alias = %+v, want phrase=frango foodID=off:1 score=0.95", pa)
 	}
 }
 
@@ -238,14 +264,17 @@ func TestMatcherWeakMatchNoAlias(t *testing.T) {
 		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.85},
 	}}
-	r := New(st, m, nil, 0.92)
+	r := New(st, m, nil, 0.92, st)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, _ = r.Resolve(context.Background(), "u1", items)
 
-	// Score < 0.92 → no alias write-back.
+	// Score < 0.92 → no pending alias, no upsert either.
 	if len(st.upserts) != 0 {
 		t.Errorf("expected no upsert for weak match, got %d", len(st.upserts))
+	}
+	if len(st.pendingAliases) != 0 {
+		t.Errorf("expected no pending alias for weak match, got %d", len(st.pendingAliases))
 	}
 }
 
@@ -253,7 +282,7 @@ func TestEmbeddingOnWrite(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	emb := &fakeEmbedder{}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	r := New(st, nil, emb, 0.92, src)
+	r := New(st, nil, emb, 0.92, st, src)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
 	_, need := r.Resolve(context.Background(), "u1", items)
@@ -290,7 +319,7 @@ func TestProfileOffRegression(t *testing.T) {
 	stOff := &fakeStore{lib: map[string]types.FoodMatch{}}
 	embOff := &fakeEmbedder{}
 	srcOff := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	rOff := New(stOff, nil, nil, 0.92, srcOff)
+	rOff := New(stOff, nil, nil, 0.92, stOff, srcOff)
 	resOff, needOff := rOff.Resolve(context.Background(), "u1", items)
 
 	if needOff != 0 {
@@ -311,7 +340,7 @@ func TestProfileOffRegression(t *testing.T) {
 	m := spyMatch()
 	stOn := &fakeStore{lib: map[string]types.FoodMatch{}}
 	srcOn := &fakeSource{name: "off", phr: "frango", match: chicken()}
-	rOn := New(stOn, m, &fakeEmbedder{}, 0.92, srcOn)
+	rOn := New(stOn, m, &fakeEmbedder{}, 0.92, stOn, srcOn)
 	resOn, _ := rOn.Resolve(context.Background(), "u1", items)
 
 	if m.calls != 1 {
@@ -328,7 +357,7 @@ func TestProfileOffRegression(t *testing.T) {
 func TestNoEmbedderOnLocalHit(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{"frango": chicken()}}
 	emb := &fakeEmbedder{}
-	r := New(st, nil, emb, 0.92)
+	r := New(st, nil, emb, 0.92, st)
 
 	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 200}}
 	_, _ = r.Resolve(context.Background(), "u1", items)
@@ -336,5 +365,65 @@ func TestNoEmbedderOnLocalHit(t *testing.T) {
 	// Embed not called because it was a local hit, not external.
 	if len(emb.embeds) != 0 {
 		t.Errorf("embed called %d times on local hit, want 0", len(emb.embeds))
+	}
+}
+
+// --- Precedence tests ---
+
+func TestPrecedenceOrderDeterminesWinner(t *testing.T) {
+	// Both sources match the same phrase; whichever comes first in the user's
+	// precedence order should win.
+	first := &fakeSource{name: "taco", phr: "frango", match: types.FoodMatch{FoodID: "taco:1", Name: "frango taco"}}
+	second := &fakeSource{name: "off", phr: "frango", match: chicken()}
+
+	st := &fakeStore{lib: map[string]types.FoodMatch{}, precedence: []string{"off", "taco"}}
+	r := New(st, nil, nil, 0.92, st, first, second) // default order: taco, off
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0", need)
+	}
+	// User's precedence puts "off" first, so it should win despite "taco" being
+	// registered first (the default order).
+	if res[0].Match.FoodID != "off:1" {
+		t.Errorf("resolved via %q, want off:1 (per-user precedence should override default order)", res[0].Match.FoodID)
+	}
+	if first.calls != 0 {
+		t.Errorf("taco (lower precedence) called %d times, want 0", first.calls)
+	}
+	if second.calls != 1 {
+		t.Errorf("off (higher precedence) called %d times, want 1", second.calls)
+	}
+}
+
+func TestPrecedenceFallsBackToDefaultOnEmpty(t *testing.T) {
+	first := &fakeSource{name: "taco", phr: "frango", match: types.FoodMatch{FoodID: "taco:1", Name: "frango taco"}}
+	second := &fakeSource{name: "off", phr: "frango", match: chicken()}
+
+	st := &fakeStore{lib: map[string]types.FoodMatch{}} // no customized precedence
+	r := New(st, nil, nil, 0.92, st, first, second)     // default order: taco, off
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, _ := r.Resolve(context.Background(), "u1", items)
+
+	if res[0].Match.FoodID != "taco:1" {
+		t.Errorf("resolved via %q, want taco:1 (fall back to default order)", res[0].Match.FoodID)
+	}
+}
+
+func TestPrecedenceFallsBackToDefaultOnError(t *testing.T) {
+	first := &fakeSource{name: "taco", phr: "frango", match: types.FoodMatch{FoodID: "taco:1", Name: "frango taco"}}
+	second := &fakeSource{name: "off", phr: "frango", match: chicken()}
+
+	st := &fakeStore{lib: map[string]types.FoodMatch{}, precedenceErr: types.ErrNotFound}
+	r := New(st, nil, nil, 0.92, st, first, second) // default order: taco, off
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, _ := r.Resolve(context.Background(), "u1", items)
+
+	if res[0].Match.FoodID != "taco:1" {
+		t.Errorf("resolved via %q, want taco:1 (fall back to default order on error)", res[0].Match.FoodID)
 	}
 }

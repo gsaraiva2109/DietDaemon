@@ -132,7 +132,7 @@ func run() error {
 		slog.Info("parser tier 0 (deterministic, no model)")
 	}
 
-	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, sources...)
+	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, st, sources...)
 	pend := pendingstore.New(st.DB(), pendingTTL)
 
 	var transcriber pipeline.Transcriber

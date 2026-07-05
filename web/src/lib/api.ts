@@ -26,6 +26,7 @@ import type {
   MeasurementEntry,
   NewApiKey,
   Passkey,
+  PendingAlias,
   ProgressPhoto,
   ProvidersResponse,
   RecoveryCodesResponse,
@@ -385,6 +386,29 @@ export const api = {
         `/foods/${encodeURIComponent(foodID)}/aliases/${encodeURIComponent(alias)}`,
         { method: 'DELETE' },
       ),
+  },
+
+  // --- Pending Aliases --------------------------------------------
+  aliases: {
+    pending: {
+      list: () => request<PendingAlias[]>('/aliases/pending'),
+      confirm: (id: string) =>
+        request<{ status: string }>(`/aliases/pending/${encodeURIComponent(id)}/confirm`, {
+          method: 'POST',
+        }),
+      reject: (id: string) =>
+        request<void>(`/aliases/pending/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+  },
+
+  // --- Nutrition Source Precedence ----------------------------------
+  precedence: {
+    get: () => request<{ order: string[] }>('/settings/precedence'),
+    set: (order: string[]) =>
+      request<{ status: string }>('/settings/precedence', {
+        method: 'PUT',
+        body: JSON.stringify({ order }),
+      }),
   },
 
   // --- Meal Templates -------------------------------------------

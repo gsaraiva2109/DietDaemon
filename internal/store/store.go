@@ -1368,6 +1368,141 @@ func (s *Store) DeleteFoodAlias(ctx context.Context, userID, foodID, alias strin
 	return nil
 }
 
+// AddPendingAlias queues an embedding-matched phrase for user confirmation
+// instead of writing it straight into food_aliases.
+func (s *Store) AddPendingAlias(ctx context.Context, userID, phrase, foodID string, matchScore float64) error {
+	const q = `
+		INSERT INTO pending_aliases (id, user_id, phrase, food_id, match_score, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), newID(), userID, phrase, foodID, matchScore, utcStr(time.Now()))
+	if err != nil {
+		return fmt.Errorf("store: add pending alias: %w", err)
+	}
+	return nil
+}
+
+// ListPendingAliases returns every alias candidate awaiting confirmation for a user.
+func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error) {
+	const q = `
+		SELECT id, user_id, phrase, food_id, match_score, created_at
+		FROM pending_aliases
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list pending aliases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.PendingAlias
+	for rows.Next() {
+		var pa types.PendingAlias
+		var ca string
+		if err := rows.Scan(&pa.ID, &pa.UserID, &pa.Phrase, &pa.FoodID, &pa.MatchScore, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan pending alias: %w", err)
+		}
+		pa.CreatedAt = parseUTC(ca)
+		out = append(out, pa)
+	}
+	return out, rows.Err()
+}
+
+// ConfirmPendingAlias promotes a pending alias into food_aliases and removes
+// the pending row, in one transaction. Returns types.ErrNotFound if the
+// pending row doesn't exist or doesn't belong to userID.
+func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const selectQ = `SELECT phrase, food_id FROM pending_aliases WHERE id = ? AND user_id = ?`
+	var phrase, foodID string
+	if err := tx.QueryRowContext(ctx, s.rewrite(selectQ), id, userID).Scan(&phrase, &foodID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.ErrNotFound
+		}
+		return fmt.Errorf("store: load pending alias: %w", err)
+	}
+
+	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	normalized := normalize.Normalize(phrase)
+	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, foodID); err != nil {
+		return fmt.Errorf("store: insert alias: %w", err)
+	}
+
+	const deleteQ = `DELETE FROM pending_aliases WHERE id = ? AND user_id = ?`
+	if _, err := tx.ExecContext(ctx, s.rewrite(deleteQ), id, userID); err != nil {
+		return fmt.Errorf("store: delete pending alias: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RejectPendingAlias discards a pending alias without promoting it. Returns
+// types.ErrNotFound if no row matched.
+func (s *Store) RejectPendingAlias(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM pending_aliases WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID)
+	if err != nil {
+		return fmt.Errorf("store: reject pending alias: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// GetSourcePrecedence returns a user's customized nutrition-source order, or
+// an empty slice (not an error) if they have none — the resolver falls back
+// to its startup-configured default order in that case.
+func (s *Store) GetSourcePrecedence(ctx context.Context, userID string) ([]string, error) {
+	const q = `SELECT source FROM source_precedence WHERE user_id = ? ORDER BY rank ASC`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: get source precedence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []string{}
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, fmt.Errorf("store: scan source precedence: %w", err)
+		}
+		out = append(out, source)
+	}
+	return out, rows.Err()
+}
+
+// SetSourcePrecedence replaces a user's nutrition-source order with the given
+// list, ranked by position.
+func (s *Store) SetSourcePrecedence(ctx context.Context, userID string, order []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const deleteQ = `DELETE FROM source_precedence WHERE user_id = ?`
+	if _, err := tx.ExecContext(ctx, s.rewrite(deleteQ), userID); err != nil {
+		return fmt.Errorf("store: clear source precedence: %w", err)
+	}
+
+	const insertQ = `INSERT INTO source_precedence (user_id, source, rank) VALUES (?, ?, ?)`
+	for i, source := range order {
+		if _, err := tx.ExecContext(ctx, s.rewrite(insertQ), userID, source, i); err != nil {
+			return fmt.Errorf("store: insert source precedence: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 func scanFoodDetail(row *sql.Row) (types.FoodDetail, error) {
 	var fd types.FoodDetail
 	var lastUsed string

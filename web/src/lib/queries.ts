@@ -26,6 +26,8 @@ import {
   demoBodySummary,
   DEMO_MEASUREMENTS,
   DEMO_PROFILE,
+  DEMO_PENDING_ALIASES,
+  DEMO_PRECEDENCE,
 } from './demo'
 import type {
   DailyRollup,
@@ -233,6 +235,57 @@ export function useDeleteAlias(foodID: string) {
   return useMutation({
     mutationFn: (alias: string) => api.foods.deleteAlias(foodID, alias),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Pending Aliases
+// ---------------------------------------------------------------------------
+
+export function usePendingAliases() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['aliases', 'pending', demo],
+    queryFn: () => (demo ? DEMO_PENDING_ALIASES : api.aliases.pending.list()),
+  })
+}
+
+export function useConfirmPendingAlias() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.aliases.pending.confirm(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['aliases', 'pending'] })
+      qc.invalidateQueries({ queryKey: ['foods'] })
+    },
+  })
+}
+
+export function useRejectPendingAlias() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.aliases.pending.reject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['aliases', 'pending'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Nutrition Source Precedence
+// ---------------------------------------------------------------------------
+
+export function usePrecedence() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['precedence', demo],
+    queryFn: () => (demo ? { order: DEMO_PRECEDENCE } : api.precedence.get()),
+  })
+}
+
+export function useSetPrecedence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (order: string[]) => api.precedence.set(order),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['precedence'] }),
   })
 }
 

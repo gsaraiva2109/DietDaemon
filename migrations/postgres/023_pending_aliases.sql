@@ -10,3 +10,5 @@ CREATE TABLE IF NOT EXISTS pending_aliases (
     match_score REAL NOT NULL,      -- embedding similarity score
     created_at  TEXT NOT NULL DEFAULT (NOW())
 );
+
+CREATE INDEX IF NOT EXISTS idx_pending_aliases_user ON pending_aliases(user_id);
