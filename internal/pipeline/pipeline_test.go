@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -362,4 +363,174 @@ func TestRollupAccumulates(t *testing.T) {
 	if got := st.rollups["2026-06-17"].Consumed.Calories; got != 300 {
 		t.Errorf("accumulated calories = %v, want 300", got)
 	}
+}
+
+// --- STT (speech-to-text) tests ---
+
+type fakeTranscriber struct {
+	text   string
+	locale string
+	err    error
+}
+
+func (f fakeTranscriber) Transcribe(context.Context, []byte) (string, string, error) {
+	return f.text, f.locale, f.err
+}
+
+func TestSTTNilTranscriberRejectsAudio(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{}, fakeResolver{},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil, // transcriber = nil
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(rp.sent) != 1 {
+		t.Fatalf("expected 1 reply, got %d", len(rp.sent))
+	}
+	if !strings.Contains(rp.last(), "STT is disabled") {
+		t.Errorf("expected STT disabled message, got %q", rp.last())
+	}
+	if len(st.meals) > 0 {
+		t.Errorf("no meal should be logged when audio is rejected, got %d", len(st.meals))
+	}
+}
+
+func TestSTTTranscribeSuccess(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	tc := fakeTranscriber{text: "200g chicken", locale: "en"}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 1 {
+		t.Fatalf("expected 1 meal saved, got %d", len(st.meals))
+	}
+	if got := st.meals[0].Total().Calories; got != 330 {
+		t.Errorf("meal calories = %v, want 330", got)
+	}
+	if !strings.Contains(rp.last(), "330 kcal") {
+		t.Errorf("expected macro summary in reply, got %q", rp.last())
+	}
+}
+
+func TestSTTTranscribeEmptyReturnsSpecificMessage(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	tc := fakeTranscriber{text: "", locale: ""} // whisper returned empty, no error
+	e := New(
+		fakeParser{}, fakeResolver{},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-silent-audio"),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(rp.sent) != 1 {
+		t.Fatalf("expected 1 reply, got %d", len(rp.sent))
+	}
+	if !strings.Contains(rp.last(), "Couldn't understand the audio") {
+		t.Errorf("expected empty-transcript message, got %q", rp.last())
+	}
+	if len(st.meals) > 0 {
+		t.Errorf("no meal should be logged for empty transcript, got %d", len(st.meals))
+	}
+}
+
+func TestSTTTranscribeError(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	tc := fakeTranscriber{err: fmt.Errorf("connection refused")}
+	e := New(
+		fakeParser{}, fakeResolver{},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if !strings.Contains(rp.last(), "Couldn't transcribe audio") {
+		t.Errorf("expected transcribe error message, got %q", rp.last())
+	}
+	if len(st.meals) > 0 {
+		t.Errorf("no meal should be logged on transcribe error, got %d", len(st.meals))
+	}
+}
+
+func TestSTTLocalePropagation(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	tc := fakeTranscriber{text: "200g frango", locale: "pt"}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "frango"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("frango", types.Macros{Calories: 200})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+		// msg.Locale is empty — should be filled by whisper.
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 1 {
+		t.Fatalf("expected 1 meal saved, got %d", len(st.meals))
+	}
+}
+
+func TestSTTLocalePreservesExisting(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	tc := fakeTranscriber{text: "200g poulet", locale: "fr"}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "poulet"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("poulet", types.Macros{Calories: 250})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		Locale:      "de", // already set by messaging adapter
+		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	// msg.Locale should stay "de", not be overwritten by whisper's "fr".
 }

@@ -18,6 +18,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
 		"MULTI_USER", "API_AUTH_TOKEN",
+		"DB_DRIVER", "DATABASE_URL",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
@@ -133,5 +134,65 @@ func TestAuthAndMultiUser(t *testing.T) {
 	}
 	if c.APIAuthToken != "secure123" {
 		t.Errorf("APIAuthToken = %q, want secure123", c.APIAuthToken)
+	}
+}
+
+func TestDefaultDBDriverIsSQLite(t *testing.T) {
+	setEnv(t, validBase())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.DBDriver != "sqlite" {
+		t.Errorf("DBDriver = %q, want \"sqlite\"", c.DBDriver)
+	}
+}
+
+func TestPostgresDriverRequiresDatabaseURL(t *testing.T) {
+	env := validBase()
+	env["DB_DRIVER"] = "postgres"
+	env["DATABASE_URL"] = ""
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("expected DATABASE_URL error, got %v", err)
+	}
+}
+
+func TestPostgresDriverValid(t *testing.T) {
+	env := validBase()
+	env["DB_DRIVER"] = "postgres"
+	env["DATABASE_URL"] = "postgres://localhost/mydb"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.DBDriver != "postgres" {
+		t.Errorf("DBDriver = %q, want \"postgres\"", c.DBDriver)
+	}
+	if c.DatabaseURL != "postgres://localhost/mydb" {
+		t.Errorf("DatabaseURL = %q, want \"postgres://localhost/mydb\"", c.DatabaseURL)
+	}
+}
+
+func TestInvalidDBDriverFails(t *testing.T) {
+	env := validBase()
+	env["DB_DRIVER"] = "mysql"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DB_DRIVER") {
+		t.Fatalf("expected DB_DRIVER error, got %v", err)
+	}
+}
+
+func TestSQLiteDriverDoesNotRequireDatabaseURL(t *testing.T) {
+	env := validBase()
+	env["DB_DRIVER"] = "sqlite"
+	env["DATABASE_URL"] = ""
+	setEnv(t, env)
+	_, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 }

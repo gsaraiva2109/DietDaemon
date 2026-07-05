@@ -78,7 +78,15 @@ func run() error {
 		"timezone", cfg.Location.String(),
 	)
 
-	st, err := store.New(cfg.DBPath)
+	dialect, err := store.NewDialect(cfg.DBDriver)
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	dsn := cfg.DBPath
+	if cfg.DBDriver == "postgres" {
+		dsn = cfg.DatabaseURL
+	}
+	st, err := store.New(cfg.DBDriver, dsn, dialect)
 	if err != nil {
 		return err
 	}

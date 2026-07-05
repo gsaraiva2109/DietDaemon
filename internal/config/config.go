@@ -361,8 +361,15 @@ func (c *Config) validate(tierErr error) error {
 	}
 
 	// Core auth settings.
-	if c.DBDriver != "sqlite" {
-		add("DB_DRIVER=%q not supported yet; only \"sqlite\"", c.DBDriver)
+	switch c.DBDriver {
+	case "sqlite":
+		// DB_PATH already validated above.
+	case "postgres":
+		if c.DatabaseURL == "" {
+			add("DATABASE_URL is required when DB_DRIVER=postgres")
+		}
+	default:
+		add("DB_DRIVER must be \"sqlite\" or \"postgres\", got %q", c.DBDriver)
 	}
 	validModes := map[string]bool{"invite": true, "open": true, "oidc-only": true}
 	if !validModes[c.RegistrationMode] {
