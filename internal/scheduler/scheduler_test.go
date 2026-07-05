@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -132,16 +133,19 @@ type fakeHealthStore struct {
 	fastsErr    error
 }
 
-func (f *fakeHealthStore) GetWaterToday(_ context.Context, _, _ string) (int, error) {
-	return f.waterToday, f.waterErr
+func (f *fakeHealthStore) GetWaterToday(_ context.Context, _, _ string) ([]types.WaterLog, int, error) {
+	return nil, f.waterToday, f.waterErr
 }
 
 func (f *fakeHealthStore) ListWorkouts(_ context.Context, _ string, _ int) ([]types.Workout, error) {
 	return f.workouts, f.workoutsErr
 }
 
-func (f *fakeHealthStore) GetActiveSleep(_ context.Context, _ string) (types.SleepLog, error) {
-	return f.activeSleep, f.sleepErr
+func (f *fakeHealthStore) GetActiveSleep(_ context.Context, _ string) (*types.SleepLog, error) {
+	if f.sleepErr != nil {
+		return nil, f.sleepErr
+	}
+	return &f.activeSleep, nil
 }
 
 func (f *fakeHealthStore) GetActiveFast(_ context.Context, _ string) (types.Fast, error) {
@@ -451,6 +455,200 @@ func TestHealthRuleDedupe(t *testing.T) {
 }
 
 // --- Health rule when no macro targets ---
+
+// --- Rule config (per-user overrides) tests ---
+
+type fakeRuleConfigStore struct {
+	configs map[string][]types.NudgeRuleConfig // userID -> overrides
+}
+
+func (f *fakeRuleConfigStore) GetNudgeRuleConfig(_ context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	return f.configs[userID], nil
+}
+
+func TestRuleConfigDisableSkipsRule(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}}, // 100/180=0.55 < 0.8, would fire
+	}
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: "protein-evening", Enabled: false}},
+	}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithRuleConfig(rcs))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("disabled override should skip rule entirely, sent %d", len(nt.sent))
+	}
+}
+
+func TestRuleConfigParamOverrideChangesFiring(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}}, // 100/180=0.55
+	}
+	// Lower MinFraction to 0.5: 0.55 >= 0.5 now counts as "on track", so the
+	// rule that would otherwise fire (default MinFraction 0.8) must not.
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: "protein-evening", Enabled: true, Params: json.RawMessage(`{"MinFraction":0.5}`)}},
+	}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithRuleConfig(rcs))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("param override lowering MinFraction to already-met should suppress the nudge, sent %d", len(nt.sent))
+	}
+}
+
+func TestRuleConfigMissingOverrideRunsDefault(t *testing.T) {
+	// Backward compatibility: a RuleConfigStore configured but with no row for
+	// this user/rule must behave identically to no RuleConfigStore at all.
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithRuleConfig(rcs))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 1 {
+		t.Errorf("no override row should run the rule with hardcoded defaults, sent %d", len(nt.sent))
+	}
+}
+
+// --- Weekly digest tests ---
+
+type fakeDigestStore struct {
+	rollups []types.DailyRollup
+	weights []types.WeightEntry
+}
+
+func (f *fakeDigestStore) GetRollups(_ context.Context, _, _, _ string) ([]types.DailyRollup, error) {
+	return f.rollups, nil
+}
+func (f *fakeDigestStore) ListWeight(_ context.Context, _ string, _ int) ([]types.WeightEntry, error) {
+	return f.weights, nil
+}
+
+func TestWeeklyDigestFiresOnceThenDedupesSameISOWeek(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{
+		rollups: []types.DailyRollup{{Consumed: types.Macros{Calories: 2000, Protein: 150}, Targets: types.Macros{Calories: 2200}}},
+		weights: []types.WeightEntry{{WeightKg: 80}, {WeightKg: 79.5}},
+	}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	// 2026-06-21 is a Sunday.
+	sunday9am := time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), sunday9am)
+	if len(nt.sent) != 1 {
+		t.Fatalf("digest sent = %d, want 1", len(nt.sent))
+	}
+
+	// A later tick the same day, and one on the following Sunday's date but
+	// still checked before that ISO week actually starts, must both dedupe.
+	s.tick(context.Background(), sunday9am.Add(2*time.Hour))
+	if len(nt.sent) != 1 {
+		t.Errorf("digest should dedupe within the same ISO week, sent %d", len(nt.sent))
+	}
+
+	nextSunday := sunday9am.AddDate(0, 0, 7)
+	s.tick(context.Background(), nextSunday)
+	if len(nt.sent) != 2 {
+		t.Errorf("digest should fire again the following ISO week, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyDigestSkipsBeforeCheckHourOrWrongWeekday(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	// Sunday but before CheckHour (9).
+	s.tick(context.Background(), time.Date(2026, 6, 21, 8, 0, 0, 0, time.UTC))
+	// Monday at the check hour.
+	s.tick(context.Background(), time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("digest should not fire before CheckHour or on the wrong weekday, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyDigestDisabledOverrideSkips(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{}
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: "weekly-digest", Enabled: false}},
+	}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()), WithRuleConfig(rcs))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("disabled digest override should skip it, sent %d", len(nt.sent))
+	}
+}
+
+// --- Production wiring test ---
+//
+// fakeFullStore satisfies every scheduler collaborator interface in one
+// value, mirroring how *store.Store satisfies Store, NudgeStore, HealthStore,
+// RuleConfigStore, and DigestStore simultaneously. This test calls New with
+// the exact option shape used in cmd/dietdaemon/main.go, so a regression that
+// breaks that construction call (the historical bug: health rules never
+// wired, or an interface mismatch that fails to compile) is caught here
+// rather than only in isolated fakes.
+type fakeFullStore struct {
+	*fakeStore
+	*fakeNudges
+	*fakeHealthStore
+	*fakeRuleConfigStore
+	*fakeDigestStore
+}
+
+func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
+	full := &fakeFullStore{
+		fakeStore: &fakeStore{
+			users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+			targets: map[string]types.Macros{},
+			rollups: map[string]types.Macros{},
+		},
+		fakeNudges:          newFakeNudges(),
+		fakeHealthStore:     &fakeHealthStore{waterToday: 0}, // below every water threshold
+		fakeRuleConfigStore: &fakeRuleConfigStore{},
+		fakeDigestStore:     &fakeDigestStore{},
+	}
+	nt := &fakeNotifier{}
+
+	// Same call shape as cmd/dietdaemon/main.go's scheduler.New(...).
+	sched := New(full, full, nt, DefaultRules(), time.UTC, time.Minute,
+		WithHealthRules(full, DefaultHealthRules()),
+		WithRuleConfig(full),
+		WithDigestRules(full, DefaultDigestRules()),
+	)
+
+	afternoon := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
+	sched.tick(context.Background(), afternoon)
+
+	hr := DefaultHealthRules()
+	found := false
+	for _, n := range nt.sent {
+		if n.Body == hr[0].Message { // water-afternoon
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("health rules did not fire through the production scheduler.New(...) construction path")
+	}
+}
 
 func TestHealthRulesFireWithoutMacroTargets(t *testing.T) {
 	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}

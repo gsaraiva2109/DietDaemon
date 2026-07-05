@@ -9,7 +9,18 @@ import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill, Spinner } from '@/components/ui'
 import { ExportModal } from '@/components/ExportModal'
-import { ChevronRight, FoodsIcon, GoalIcon, DownloadIcon, BodyIcon, SettingsIcon, LinkIcon } from '@/components/icons'
+import {
+  ChevronRight,
+  FoodsIcon,
+  GoalIcon,
+  DownloadIcon,
+  BodyIcon,
+  SettingsIcon,
+  LinkIcon,
+  CheckIcon,
+  SparkleIcon,
+  ClockIcon,
+} from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
@@ -114,6 +125,20 @@ export function Settings() {
         <RowLink to="/settings/link-bot" Icon={LinkIcon} label="Link Bot" hint="Connect Telegram, Discord, or Matrix" />
         <RowLink to="/goals" Icon={GoalIcon} label="Body profile & goals" hint="TDEE, targets, onboarding" />
         <RowLink to="/settings/aliases" Icon={FoodsIcon} label="Food aliases" hint="Manage learned names" />
+        <RowLink
+          to="/settings/aliases/pending"
+          Icon={CheckIcon}
+          label="Pending aliases"
+          hint="Confirm or reject near-miss matches"
+        />
+        <RowLink
+          to="/settings/precedence"
+          Icon={SparkleIcon}
+          label="Nutrition source order"
+          hint="Choose which source is tried first"
+        />
+        <RowLink to="/settings/nudges" Icon={ClockIcon} label="Nudges" hint="Macro, health & digest reminders" />
+        <RowLink to="/settings/backup" Icon={ClockIcon} label="Backup" hint="Scheduled export to local disk or S3" />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"

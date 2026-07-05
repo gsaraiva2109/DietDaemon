@@ -53,6 +53,9 @@ func (s *stubStore) UpsertFood(_ context.Context, _ string, _ types.FoodMatch, _
 func (s *stubStore) RecordFoodQuery(_ context.Context, _, _ string) error {
 	return nil
 }
+func (s *stubStore) AddPendingAlias(_ context.Context, _, _, _ string, _ float64) error {
+	return nil
+}
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()

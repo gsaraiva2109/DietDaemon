@@ -127,7 +127,7 @@ func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler 
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil)
+	}, nil, nil)
 }
 
 func TestEmailVerifySuccess(t *testing.T) {

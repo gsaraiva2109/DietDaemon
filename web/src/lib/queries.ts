@@ -26,13 +26,18 @@ import {
   demoBodySummary,
   DEMO_MEASUREMENTS,
   DEMO_PROFILE,
+  DEMO_PENDING_ALIASES,
+  DEMO_PRECEDENCE,
 } from './demo'
 import type {
+  BackupConfig,
   DailyRollup,
   FoodDetail,
   Macros,
   Meal,
   MeasurementEntry,
+  NudgeRuleUpdate,
+  NudgeRuleView,
   ResolvedItem,
   SleepQuality,
   UserProfile,
@@ -177,6 +182,33 @@ export function useSetTargets() {
 }
 
 // ---------------------------------------------------------------------------
+// Nudge settings
+// ---------------------------------------------------------------------------
+
+export function useNudgeRules(): UseQueryResult<NudgeRuleView[]> {
+  return useQuery({
+    queryKey: ['nudges'],
+    queryFn: () => api.nudges.get(),
+  })
+}
+
+export function useSetNudgeRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (update: NudgeRuleUpdate) => api.nudges.set(update),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nudges'] }),
+  })
+}
+
+export function useResetNudgeRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ruleID: string) => api.nudges.reset(ruleID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['nudges'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Food Discovery
 // ---------------------------------------------------------------------------
 
@@ -237,6 +269,57 @@ export function useDeleteAlias(foodID: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Pending Aliases
+// ---------------------------------------------------------------------------
+
+export function usePendingAliases() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['aliases', 'pending', demo],
+    queryFn: () => (demo ? DEMO_PENDING_ALIASES : api.aliases.pending.list()),
+  })
+}
+
+export function useConfirmPendingAlias() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.aliases.pending.confirm(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['aliases', 'pending'] })
+      qc.invalidateQueries({ queryKey: ['foods'] })
+    },
+  })
+}
+
+export function useRejectPendingAlias() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.aliases.pending.reject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['aliases', 'pending'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Nutrition Source Precedence
+// ---------------------------------------------------------------------------
+
+export function usePrecedence() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['precedence', demo],
+    queryFn: () => (demo ? { order: DEMO_PRECEDENCE } : api.precedence.get()),
+  })
+}
+
+export function useSetPrecedence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (order: string[]) => api.precedence.set(order),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['precedence'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Meal Templates
 // ---------------------------------------------------------------------------
 
@@ -253,6 +336,15 @@ export function useCreateTemplate() {
   return useMutation({
     mutationFn: ({ name, items }: { name: string; items: ResolvedItem[] }) =>
       api.templates.create(name, items),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+export function useComposeTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, items }: { name: string; items: { food_id: string; grams: number }[] }) =>
+      api.templates.compose(name, items),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   })
 }
@@ -679,6 +771,30 @@ export function useDeletePasskey() {
   return useMutation({
     mutationFn: (id: string) => api.auth.passkeys.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled backup
+// ---------------------------------------------------------------------------
+
+export function useBackupConfig() {
+  return useQuery({ queryKey: ['backup', 'config'], queryFn: () => api.backup.get() })
+}
+
+export function useSetBackupConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (cfg: BackupConfig) => api.backup.set(cfg),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup', 'config'] }),
+  })
+}
+
+export function useRunBackupNow() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.backup.runNow(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup', 'config'] }),
   })
 }
 

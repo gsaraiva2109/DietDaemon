@@ -16,6 +16,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup"
 	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/migrations"
@@ -30,9 +31,12 @@ type Store struct {
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
 var (
-	_ ports.Store          = (*Store)(nil)
-	_ scheduler.Store      = (*Store)(nil)
-	_ scheduler.NudgeStore = (*Store)(nil)
+	_ ports.Store               = (*Store)(nil)
+	_ scheduler.Store           = (*Store)(nil)
+	_ scheduler.NudgeStore      = (*Store)(nil)
+	_ scheduler.RuleConfigStore = (*Store)(nil)
+	_ scheduler.DigestStore     = (*Store)(nil)
+	_ backup.Store              = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and
@@ -721,13 +725,16 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	defer func() { _ = tx.Rollback() }()
 
 	// Load the meal to get the at time for rollup lookup and the original items.
-	var atUTC string
-	const mealQ = `SELECT at_utc FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC); err != nil {
+	var atUTC, mealUser string
+	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
 		if err == sql.ErrNoRows {
 			return types.ErrNotFound
 		}
 		return fmt.Errorf("store: get meal: %w", err)
+	}
+	if mealUser != userID {
+		return types.ErrNotFound
 	}
 	mealAt := parseUTC(atUTC)
 
@@ -1061,6 +1068,76 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 }
 
 // ---------------------------------------------------------------------------
+// Backup / scheduled export
+// ---------------------------------------------------------------------------
+
+// GetBackupConfig returns a user's backup settings, or types.ErrNotFound when
+// none has been configured (callers treat "not found" as "disabled").
+func (s *Store) GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error) {
+	const q = `
+		SELECT user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs, last_run_at
+		FROM backup_config WHERE user_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
+
+	var cfg types.BackupConfig
+	var enabled int
+	var localSubdir, s3Bucket, s3Prefix, s3Region, s3Endpoint, lastRunAt sql.NullString
+	err := row.Scan(&cfg.UserID, &enabled, &cfg.Destination, &localSubdir,
+		&s3Bucket, &s3Prefix, &s3Region, &s3Endpoint, &cfg.IntervalHrs, &lastRunAt,
+	)
+	if err == sql.ErrNoRows {
+		return types.BackupConfig{}, types.ErrNotFound
+	}
+	if err != nil {
+		return types.BackupConfig{}, fmt.Errorf("store: get backup config: %w", err)
+	}
+	cfg.Enabled = enabled != 0
+	cfg.LocalSubdir = localSubdir.String
+	cfg.S3Bucket = s3Bucket.String
+	cfg.S3Prefix = s3Prefix.String
+	cfg.S3Region = s3Region.String
+	cfg.S3Endpoint = s3Endpoint.String
+	if lastRunAt.Valid && lastRunAt.String != "" {
+		cfg.LastRunAt = parseUTC(lastRunAt.String)
+	}
+	return cfg, nil
+}
+
+// SetBackupConfig inserts or replaces a user's backup settings.
+func (s *Store) SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error {
+	enabled := 0
+	if cfg.Enabled {
+		enabled = 1
+	}
+	const q = `
+		INSERT INTO backup_config
+			(user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			enabled      = excluded.enabled,
+			destination  = excluded.destination,
+			local_subdir = excluded.local_subdir,
+			s3_bucket    = excluded.s3_bucket,
+			s3_prefix    = excluded.s3_prefix,
+			s3_region    = excluded.s3_region,
+			s3_endpoint  = excluded.s3_endpoint,
+			interval_hrs = excluded.interval_hrs
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), cfg.UserID, enabled, cfg.Destination,
+		cfg.LocalSubdir, cfg.S3Bucket, cfg.S3Prefix, cfg.S3Region, cfg.S3Endpoint, cfg.IntervalHrs,
+	)
+	return err
+}
+
+// SetBackupLastRun records when a user's backup last completed.
+func (s *Store) SetBackupLastRun(ctx context.Context, userID string, t time.Time) error {
+	const q = `UPDATE backup_config SET last_run_at = ? WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(t), userID)
+	return err
+}
+
+// ---------------------------------------------------------------------------
 // Rollups
 // ---------------------------------------------------------------------------
 
@@ -1148,6 +1225,70 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 	`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, localDate, ruleID, utcNow())
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// Nudge rule config (per-user overrides)
+// ---------------------------------------------------------------------------
+
+// GetNudgeRuleConfig returns every rule override a user has stored. Rules with
+// no row here run with their hardcoded defaults. Satisfies
+// scheduler.RuleConfigStore.
+func (s *Store) GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	const q = `SELECT user_id, rule_id, enabled, params_json FROM nudge_rule_config WHERE user_id = ?`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query nudge rule config: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.NudgeRuleConfig
+	for rows.Next() {
+		var c types.NudgeRuleConfig
+		var enabled int
+		var params string
+		if err := rows.Scan(&c.UserID, &c.RuleID, &enabled, &params); err != nil {
+			return nil, fmt.Errorf("store: scan nudge rule config: %w", err)
+		}
+		c.Enabled = enabled != 0
+		c.Params = json.RawMessage(params)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetNudgeRuleConfig upserts a per-user override for one rule.
+func (s *Store) SetNudgeRuleConfig(ctx context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error {
+	if len(params) == 0 {
+		params = json.RawMessage("{}")
+	}
+	const q = `
+		INSERT INTO nudge_rule_config (user_id, rule_id, enabled, params_json)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, rule_id) DO UPDATE SET
+			enabled     = excluded.enabled,
+			params_json = excluded.params_json
+	`
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, ruleID, enabledInt, string(params))
+	if err != nil {
+		return fmt.Errorf("store: set nudge rule config: %w", err)
+	}
+	return nil
+}
+
+// DeleteNudgeRuleConfig resets a rule to its hardcoded default by removing the
+// override row. No error if nothing existed.
+func (s *Store) DeleteNudgeRuleConfig(ctx context.Context, userID, ruleID string) error {
+	const q = `DELETE FROM nudge_rule_config WHERE user_id = ? AND rule_id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, ruleID)
+	if err != nil {
+		return fmt.Errorf("store: delete nudge rule config: %w", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,6 +1507,141 @@ func (s *Store) DeleteFoodAlias(ctx context.Context, userID, foodID, alias strin
 		return types.ErrNotFound
 	}
 	return nil
+}
+
+// AddPendingAlias queues an embedding-matched phrase for user confirmation
+// instead of writing it straight into food_aliases.
+func (s *Store) AddPendingAlias(ctx context.Context, userID, phrase, foodID string, matchScore float64) error {
+	const q = `
+		INSERT INTO pending_aliases (id, user_id, phrase, food_id, match_score, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), newID(), userID, phrase, foodID, matchScore, utcStr(time.Now()))
+	if err != nil {
+		return fmt.Errorf("store: add pending alias: %w", err)
+	}
+	return nil
+}
+
+// ListPendingAliases returns every alias candidate awaiting confirmation for a user.
+func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error) {
+	const q = `
+		SELECT id, user_id, phrase, food_id, match_score, created_at
+		FROM pending_aliases
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list pending aliases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.PendingAlias
+	for rows.Next() {
+		var pa types.PendingAlias
+		var ca string
+		if err := rows.Scan(&pa.ID, &pa.UserID, &pa.Phrase, &pa.FoodID, &pa.MatchScore, &ca); err != nil {
+			return nil, fmt.Errorf("store: scan pending alias: %w", err)
+		}
+		pa.CreatedAt = parseUTC(ca)
+		out = append(out, pa)
+	}
+	return out, rows.Err()
+}
+
+// ConfirmPendingAlias promotes a pending alias into food_aliases and removes
+// the pending row, in one transaction. Returns types.ErrNotFound if the
+// pending row doesn't exist or doesn't belong to userID.
+func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const selectQ = `SELECT phrase, food_id FROM pending_aliases WHERE id = ? AND user_id = ?`
+	var phrase, foodID string
+	if err := tx.QueryRowContext(ctx, s.rewrite(selectQ), id, userID).Scan(&phrase, &foodID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.ErrNotFound
+		}
+		return fmt.Errorf("store: load pending alias: %w", err)
+	}
+
+	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	normalized := normalize.Normalize(phrase)
+	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, foodID); err != nil {
+		return fmt.Errorf("store: insert alias: %w", err)
+	}
+
+	const deleteQ = `DELETE FROM pending_aliases WHERE id = ? AND user_id = ?`
+	if _, err := tx.ExecContext(ctx, s.rewrite(deleteQ), id, userID); err != nil {
+		return fmt.Errorf("store: delete pending alias: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RejectPendingAlias discards a pending alias without promoting it. Returns
+// types.ErrNotFound if no row matched.
+func (s *Store) RejectPendingAlias(ctx context.Context, userID, id string) error {
+	const q = `DELETE FROM pending_aliases WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID)
+	if err != nil {
+		return fmt.Errorf("store: reject pending alias: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// GetSourcePrecedence returns a user's customized nutrition-source order, or
+// an empty slice (not an error) if they have none — the resolver falls back
+// to its startup-configured default order in that case.
+func (s *Store) GetSourcePrecedence(ctx context.Context, userID string) ([]string, error) {
+	const q = `SELECT source FROM source_precedence WHERE user_id = ? ORDER BY rank ASC`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: get source precedence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []string{}
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, fmt.Errorf("store: scan source precedence: %w", err)
+		}
+		out = append(out, source)
+	}
+	return out, rows.Err()
+}
+
+// SetSourcePrecedence replaces a user's nutrition-source order with the given
+// list, ranked by position.
+func (s *Store) SetSourcePrecedence(ctx context.Context, userID string, order []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const deleteQ = `DELETE FROM source_precedence WHERE user_id = ?`
+	if _, err := tx.ExecContext(ctx, s.rewrite(deleteQ), userID); err != nil {
+		return fmt.Errorf("store: clear source precedence: %w", err)
+	}
+
+	const insertQ = `INSERT INTO source_precedence (user_id, source, rank) VALUES (?, ?, ?)`
+	for i, source := range order {
+		if _, err := tx.ExecContext(ctx, s.rewrite(insertQ), userID, source, i); err != nil {
+			return fmt.Errorf("store: insert source precedence: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func scanFoodDetail(row *sql.Row) (types.FoodDetail, error) {

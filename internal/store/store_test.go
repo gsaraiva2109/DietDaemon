@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -187,6 +188,77 @@ func TestSaveAndRecentMeals(t *testing.T) {
 			gi.Match.Per100g.Calories > want.Match.Per100g.Calories+0.01 {
 			t.Errorf("item %d per100g kcal: got %f, want %f", i, gi.Match.Per100g.Calories, want.Match.Per100g.Calories)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CorrectMealItem ownership check
+// ---------------------------------------------------------------------------
+
+// TestCorrectMealItemOwnership verifies that CorrectMealItem refuses to touch
+// a meal belonging to a different user, mirroring AddMealItem/DeleteMealItem's
+// ownership check. Regression test for a bug where any authenticated user
+// could correct another user's meal by guessing/observing its mealID.
+func TestCorrectMealItemOwnership(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "userA", CreatedAt: time.Now().UTC()})
+	mustUser(t, s, types.User{ID: "userB", CreatedAt: time.Now().UTC()})
+
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	meal := types.Meal{
+		ID:         "meal-a1",
+		UserID:     "userA",
+		At:         now,
+		RawText:    "200g frango",
+		Confidence: 0.95,
+		ParserTier: types.TierDeterministic,
+		CreatedAt:  now,
+		Items: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "frango", Quantity: 200, Unit: "g", NormalizedGrams: 200},
+				Match: types.FoodMatch{
+					FoodID: "frango-grelhado", Name: "Frango Grelhado", Source: "taco", MatchScore: 1.0,
+					Per100g: types.Macros{Calories: 165, Protein: 31, Carbs: 0, Fat: 3.6, Fiber: 0},
+				},
+				Macros: types.Macros{Calories: 330, Protein: 62, Carbs: 0, Fat: 7.2, Fiber: 0},
+			},
+		},
+	}
+	if err := s.SaveMeal(ctx(), meal); err != nil {
+		t.Fatalf("SaveMeal: %v", err)
+	}
+
+	corrected := types.ResolvedItem{
+		Parsed: types.ParsedItem{RawPhrase: "frango grelhado extra", Quantity: 150, Unit: "g", NormalizedGrams: 150},
+		Match: types.FoodMatch{
+			FoodID: "frango-grelhado", Name: "Frango Grelhado", Source: "taco", MatchScore: 1.0,
+			Per100g: types.Macros{Calories: 165, Protein: 31, Carbs: 0, Fat: 3.6, Fiber: 0},
+		},
+		Macros: types.Macros{Calories: 247.5, Protein: 46.5, Carbs: 0, Fat: 5.4, Fiber: 0},
+	}
+
+	// userB attempts to correct userA's meal.
+	err := s.CorrectMealItem(ctx(), "userB", meal.ID, 0, corrected)
+	if err != types.ErrNotFound {
+		t.Fatalf("expected ErrNotFound for cross-user correction, got %v", err)
+	}
+
+	// Meal must be unchanged.
+	got, err := s.GetMeal(ctx(), meal.ID)
+	if err != nil {
+		t.Fatalf("GetMeal: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Macros != meal.Items[0].Macros {
+		t.Fatalf("meal item was modified by cross-user correction: got %+v", got.Items)
+	}
+
+	// Rollup must be unchanged (no row should exist, since SaveMeal doesn't
+	// write rollups directly and CorrectMealItem must not have run).
+	localDate := now.Format("2006-01-02")
+	if _, err := s.GetRollup(ctx(), "userA", localDate); err != types.ErrNotFound {
+		t.Fatalf("expected no rollup row for userA (CorrectMealItem must not have touched it), got err=%v", err)
 	}
 }
 
@@ -583,6 +655,65 @@ func TestNudgeDedupe(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Nudge rule config (per-user overrides)
+// ---------------------------------------------------------------------------
+
+func TestNudgeRuleConfigUpsertAndDelete(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	// No overrides yet.
+	cfgs, err := s.GetNudgeRuleConfig(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetNudgeRuleConfig (empty): %v", err)
+	}
+	if len(cfgs) != 0 {
+		t.Errorf("expected no overrides, got %d", len(cfgs))
+	}
+
+	// Set one.
+	params := json.RawMessage(`{"MinFraction":0.5}`)
+	if err := s.SetNudgeRuleConfig(ctx(), "u1", "protein-evening", false, params); err != nil {
+		t.Fatalf("SetNudgeRuleConfig: %v", err)
+	}
+	cfgs, err = s.GetNudgeRuleConfig(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetNudgeRuleConfig: %v", err)
+	}
+	if len(cfgs) != 1 || cfgs[0].RuleID != "protein-evening" || cfgs[0].Enabled {
+		t.Fatalf("unexpected config after set: %+v", cfgs)
+	}
+	if string(cfgs[0].Params) != string(params) {
+		t.Errorf("params = %s, want %s", cfgs[0].Params, params)
+	}
+
+	// Upsert: same rule, flip enabled, change params.
+	if err := s.SetNudgeRuleConfig(ctx(), "u1", "protein-evening", true, json.RawMessage(`{"MinFraction":0.9}`)); err != nil {
+		t.Fatalf("SetNudgeRuleConfig (update): %v", err)
+	}
+	cfgs, _ = s.GetNudgeRuleConfig(ctx(), "u1")
+	if len(cfgs) != 1 || !cfgs[0].Enabled {
+		t.Fatalf("expected upsert to update in place, got %+v", cfgs)
+	}
+
+	// Reset to default: delete the override row.
+	if err := s.DeleteNudgeRuleConfig(ctx(), "u1", "protein-evening"); err != nil {
+		t.Fatalf("DeleteNudgeRuleConfig: %v", err)
+	}
+	cfgs, _ = s.GetNudgeRuleConfig(ctx(), "u1")
+	if len(cfgs) != 0 {
+		t.Errorf("expected no overrides after delete, got %d", len(cfgs))
+	}
+
+	// Deleting again (nothing to delete) must not error.
+	if err := s.DeleteNudgeRuleConfig(ctx(), "u1", "protein-evening"); err != nil {
+		t.Errorf("DeleteNudgeRuleConfig (no-op): %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Fasting
 // ---------------------------------------------------------------------------
 
@@ -643,5 +774,155 @@ func TestFastingLifecycle(t *testing.T) {
 	}
 	if len(hist) != 1 || hist[0].ID != "fast-1" {
 		t.Errorf("unexpected history: %+v", hist)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pending aliases
+// ---------------------------------------------------------------------------
+
+func TestPendingAliasRoundTrip(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	frango := types.FoodMatch{
+		FoodID: "frango", Name: "Frango Grelhado", Source: "taco",
+		Per100g: types.Macros{Calories: 165, Protein: 31},
+	}
+	arroz := types.FoodMatch{
+		FoodID: "arroz", Name: "Arroz Branco", Source: "taco",
+		Per100g: types.Macros{Calories: 130, Protein: 2.7},
+	}
+	if err := s.UpsertFood(ctx(), "u1", frango, nil); err != nil {
+		t.Fatalf("UpsertFood frango: %v", err)
+	}
+	if err := s.UpsertFood(ctx(), "u1", arroz, nil); err != nil {
+		t.Fatalf("UpsertFood arroz: %v", err)
+	}
+
+	if err := s.AddPendingAlias(ctx(), "u1", "frango grelhado", "frango", 0.95); err != nil {
+		t.Fatalf("AddPendingAlias: %v", err)
+	}
+
+	list, err := s.ListPendingAliases(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("ListPendingAliases: %v", err)
+	}
+	if len(list) != 1 || list[0].Phrase != "frango grelhado" || list[0].FoodID != "frango" || list[0].MatchScore != 0.95 {
+		t.Fatalf("unexpected pending list: %+v", list)
+	}
+
+	// A different user must not see it.
+	mustUser(t, s, types.User{ID: "u2", CreatedAt: time.Now().UTC()})
+	otherList, err := s.ListPendingAliases(ctx(), "u2")
+	if err != nil {
+		t.Fatalf("ListPendingAliases u2: %v", err)
+	}
+	if len(otherList) != 0 {
+		t.Errorf("u2 should have no pending aliases, got %+v", otherList)
+	}
+
+	// Confirming as the wrong user fails.
+	if err := s.ConfirmPendingAlias(ctx(), "u2", list[0].ID); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("ConfirmPendingAlias wrong user: expected ErrNotFound, got %v", err)
+	}
+
+	// Confirm promotes it into food_aliases and removes the pending row.
+	if err := s.ConfirmPendingAlias(ctx(), "u1", list[0].ID); err != nil {
+		t.Fatalf("ConfirmPendingAlias: %v", err)
+	}
+	match, err := s.LookupFood(ctx(), "u1", "frango grelhado")
+	if err != nil {
+		t.Fatalf("LookupFood after confirm: %v", err)
+	}
+	if match.FoodID != "frango" {
+		t.Errorf("expected frango, got %s", match.FoodID)
+	}
+	list, err = s.ListPendingAliases(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("ListPendingAliases after confirm: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("pending row should be gone after confirm, got %+v", list)
+	}
+
+	// Confirming a gone/unknown ID → ErrNotFound.
+	if err := s.ConfirmPendingAlias(ctx(), "u1", "does-not-exist"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("ConfirmPendingAlias unknown id: expected ErrNotFound, got %v", err)
+	}
+
+	// Reject removes the row without promoting it.
+	if err := s.AddPendingAlias(ctx(), "u1", "arroz cozido", "arroz", 0.93); err != nil {
+		t.Fatalf("AddPendingAlias 2: %v", err)
+	}
+	list, err = s.ListPendingAliases(ctx(), "u1")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListPendingAliases before reject: %v %+v", err, list)
+	}
+	if err := s.RejectPendingAlias(ctx(), "u1", list[0].ID); err != nil {
+		t.Fatalf("RejectPendingAlias: %v", err)
+	}
+	if _, err := s.LookupFood(ctx(), "u1", "arroz cozido"); !errors.Is(err, types.ErrNoMatch) {
+		t.Errorf("rejected alias should not resolve, got err=%v", err)
+	}
+	if err := s.RejectPendingAlias(ctx(), "u1", "does-not-exist"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("RejectPendingAlias unknown id: expected ErrNotFound, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Source precedence
+// ---------------------------------------------------------------------------
+
+func TestSourcePrecedenceRoundTrip(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	// No customization yet → empty slice, not an error.
+	order, err := s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence (empty): %v", err)
+	}
+	if len(order) != 0 {
+		t.Errorf("expected empty precedence, got %v", order)
+	}
+
+	if err := s.SetSourcePrecedence(ctx(), "u1", []string{"usda", "off", "taco"}); err != nil {
+		t.Fatalf("SetSourcePrecedence: %v", err)
+	}
+	order, err = s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence: %v", err)
+	}
+	want := []string{"usda", "off", "taco"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+		}
+	}
+
+	// Setting again replaces the previous order entirely.
+	if err := s.SetSourcePrecedence(ctx(), "u1", []string{"off", "usda"}); err != nil {
+		t.Fatalf("SetSourcePrecedence replace: %v", err)
+	}
+	order, err = s.GetSourcePrecedence(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetSourcePrecedence after replace: %v", err)
+	}
+	want = []string{"off", "usda"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+		}
 	}
 }

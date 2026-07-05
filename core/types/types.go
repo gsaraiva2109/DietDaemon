@@ -5,7 +5,10 @@
 // backends be swapped behind interfaces.
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MessageKind enumerates the payload kinds an inbound message may carry.
 type MessageKind string
@@ -269,6 +272,41 @@ type TemplateLog struct {
 	UserID     string    `json:"user_id"`
 	TemplateID string    `json:"template_id"`
 	LoggedAt   time.Time `json:"logged_at"`
+}
+
+// PendingAlias is an embedding-matched alias awaiting user confirmation before
+// it is written into the personal food library.
+type PendingAlias struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Phrase     string    `json:"phrase"`
+	FoodID     string    `json:"food_id"`
+	MatchScore float64   `json:"match_score"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// NudgeRuleConfig is a per-user override for one macro/health/digest nudge
+// rule. Params holds the rule-specific shape as raw JSON since Rule,
+// HealthRule, and DigestRule have disjoint fields.
+type NudgeRuleConfig struct {
+	UserID  string          `json:"user_id"`
+	RuleID  string          `json:"rule_id"`
+	Enabled bool            `json:"enabled"`
+	Params  json.RawMessage `json:"params"`
+}
+
+// BackupConfig is a per-user scheduled backup/export setting, local disk or S3.
+type BackupConfig struct {
+	UserID      string
+	Enabled     bool
+	Destination string // "local" | "s3"
+	LocalSubdir string
+	S3Bucket    string
+	S3Prefix    string
+	S3Region    string
+	S3Endpoint  string
+	IntervalHrs int
+	LastRunAt   time.Time
 }
 
 // ---------------------------------------------------------------------------

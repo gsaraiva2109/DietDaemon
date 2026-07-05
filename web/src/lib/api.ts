@@ -13,6 +13,7 @@ import type {
 } from '@simplewebauthn/browser'
 import type {
   ApiKey,
+  BackupConfig,
   BodyCompositionSummary,
   DailyRollup,
   Fast,
@@ -25,7 +26,10 @@ import type {
   MealTemplate,
   MeasurementEntry,
   NewApiKey,
+  NudgeRuleUpdate,
+  NudgeRuleView,
   Passkey,
+  PendingAlias,
   ProgressPhoto,
   ProvidersResponse,
   RecoveryCodesResponse,
@@ -387,12 +391,40 @@ export const api = {
       ),
   },
 
+  // --- Pending Aliases --------------------------------------------
+  aliases: {
+    pending: {
+      list: () => request<PendingAlias[]>('/aliases/pending'),
+      confirm: (id: string) =>
+        request<{ status: string }>(`/aliases/pending/${encodeURIComponent(id)}/confirm`, {
+          method: 'POST',
+        }),
+      reject: (id: string) =>
+        request<void>(`/aliases/pending/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+  },
+
+  // --- Nutrition Source Precedence ----------------------------------
+  precedence: {
+    get: () => request<{ order: string[] }>('/settings/precedence'),
+    set: (order: string[]) =>
+      request<{ status: string }>('/settings/precedence', {
+        method: 'PUT',
+        body: JSON.stringify({ order }),
+      }),
+  },
+
   // --- Meal Templates -------------------------------------------
   templates: {
     list: () => request<MealTemplate[]>('/templates'),
     get: (id: string) => request<MealTemplate>(`/templates/${encodeURIComponent(id)}`),
     create: (name: string, items: ResolvedItem[]) =>
       request<MealTemplate>('/templates', {
+        method: 'POST',
+        body: JSON.stringify({ name, items }),
+      }),
+    compose: (name: string, items: { food_id: string; grams: number }[]) =>
+      request<MealTemplate>('/templates/compose', {
         method: 'POST',
         body: JSON.stringify({ name, items }),
       }),
@@ -521,6 +553,23 @@ export const api = {
     ),
   goalSuggestions: () => request<GoalSuggestion>('/goals/suggestions'),
 
+  // --- Nudge settings ---------------------------------------------
+  nudges: {
+    get: () => request<NudgeRuleView[]>('/settings/nudges'),
+    // Save an enabled flag and/or param overrides for one rule.
+    set: (update: NudgeRuleUpdate) =>
+      request<{ status: string }>('/settings/nudges', {
+        method: 'PUT',
+        body: JSON.stringify(update),
+      }),
+    // Remove the override so the rule falls back to its hardcoded default.
+    reset: (ruleID: string) =>
+      request<{ status: string }>('/settings/nudges', {
+        method: 'PUT',
+        body: JSON.stringify({ rule_id: ruleID, enabled: true, reset: true }),
+      }),
+  },
+
   // --- Export ---------------------------------------------------
   // Returns a Blob; callers trigger a download. format is "csv" | "json".
   export: {
@@ -528,6 +577,14 @@ export const api = {
       blobRequest(`/export/meals?format=${format}&start=${start}&end=${end}`),
     rollups: (format: string, start: string, end: string) =>
       blobRequest(`/export/rollups?format=${format}&start=${start}&end=${end}`),
+  },
+
+  // --- Scheduled backup ------------------------------------------
+  backup: {
+    get: () => request<BackupConfig>('/settings/backup'),
+    set: (cfg: BackupConfig) =>
+      request<BackupConfig>('/settings/backup', { method: 'PUT', body: JSON.stringify(cfg) }),
+    runNow: () => request<{ status: string }>('/settings/backup/run', { method: 'POST' }),
   },
 }
 

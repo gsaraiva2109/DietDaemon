@@ -7,6 +7,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,16 +43,19 @@ type Notifier interface {
 // exist. Define it here so the scheduler compiles independently of the
 // store implementation schedule.
 type HealthStore interface {
-	// GetWaterToday returns the total millilitres logged for the given local
-	// date, or 0 and nil if none found.
-	GetWaterToday(ctx context.Context, userID, localDate string) (totalML int, err error)
+	// GetWaterToday returns the day's water logs and their total millilitres.
+	// Matches *store.Store's real signature, which every other caller
+	// (handler.go) already relies on.
+	GetWaterToday(ctx context.Context, userID, localDate string) (logs []types.WaterLog, totalML int, err error)
 
 	// ListWorkouts returns the most recent workouts, newest first.
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error)
 
 	// GetActiveSleep returns the user's in-progress sleep (wake_at IS NULL), or
-	// types.ErrNotFound if none is active.
-	GetActiveSleep(ctx context.Context, userID string) (types.SleepLog, error)
+	// types.ErrNotFound if none is active. Matches *store.Store's real
+	// signature (pointer return), which every other caller in this codebase
+	// (handler.go, commands/sleep.go) already relies on.
+	GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error)
 
 	// GetActiveFast returns the user's in-progress fast (end_at IS NULL), or
 	// types.ErrNotFound if none is active.
@@ -59,6 +63,21 @@ type HealthStore interface {
 
 	// ListFasts returns the user's most recent fasting windows, newest first.
 	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
+}
+
+// RuleConfigStore provides per-user overrides of nudge rules (enable/disable,
+// tune a rule's fields). The concrete *store.Store satisfies it once
+// GetNudgeRuleConfig is added.
+type RuleConfigStore interface {
+	GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error)
+}
+
+// DigestStore provides the read side for composing the weekly digest
+// notification. The concrete *store.Store already satisfies this via its
+// existing GetRollups and ListWeight methods.
+type DigestStore interface {
+	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
+	ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error)
 }
 
 // Option configures a Scheduler. Used with the variadic New constructor.
@@ -72,6 +91,9 @@ type Scheduler struct {
 	rules       []Rule
 	healthStore HealthStore
 	healthRules []HealthRule
+	ruleConfig  RuleConfigStore
+	digestStore DigestStore
+	digestRules []DigestRule
 	defaultLoc  *time.Location
 	interval    time.Duration
 
@@ -115,6 +137,23 @@ func WithHealthRules(hs HealthStore, healthRules []HealthRule) Option {
 	}
 }
 
+// WithRuleConfig attaches a per-user rule override source. When not passed,
+// every rule runs with its hardcoded defaults (fully backward compatible).
+func WithRuleConfig(rcs RuleConfigStore) Option {
+	return func(s *Scheduler) {
+		s.ruleConfig = rcs
+	}
+}
+
+// WithDigestRules attaches the weekly digest rules and their data source to
+// the scheduler. When nil is passed for digestRules no digest is evaluated.
+func WithDigestRules(ds DigestStore, digestRules []DigestRule) Option {
+	return func(s *Scheduler) {
+		s.digestStore = ds
+		s.digestRules = digestRules
+	}
+}
+
 // Run ticks until ctx is cancelled, evaluating immediately on start.
 func (s *Scheduler) Run(ctx context.Context) {
 	t := time.NewTicker(s.interval)
@@ -149,6 +188,23 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	local := now.In(s.locFor(user))
 	date := local.Format("2006-01-02")
 
+	// Fetch this user's rule overrides once per tick (not once per rule) to
+	// avoid N queries. Missing store or no rows: overrides stays nil, and
+	// resolveRule treats every rule as un-overridden — fully backward
+	// compatible with hardcoded defaults.
+	var overrides map[string]types.NudgeRuleConfig
+	if s.ruleConfig != nil {
+		cfgs, err := s.ruleConfig.GetNudgeRuleConfig(ctx, user.ID)
+		if err != nil {
+			s.log.Error("scheduler: get rule config", "user", user.ID, "err", err)
+		} else {
+			overrides = make(map[string]types.NudgeRuleConfig, len(cfgs))
+			for _, c := range cfgs {
+				overrides[c.RuleID] = c
+			}
+		}
+	}
+
 	// Macro rules (require targets).
 	targets, err := s.store.GetTargets(ctx, user.ID)
 	if err == nil {
@@ -157,7 +213,11 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 			rollup = types.DailyRollup{} // no meals logged yet today
 		}
 
-		for _, r := range s.rules {
+		for _, base := range s.rules {
+			r, enabled := resolveRule(base, base.ID, overrides)
+			if !enabled {
+				continue
+			}
 			if local.Hour() < r.AfterHour {
 				continue
 			}
@@ -197,20 +257,52 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 
 	// Health rules (independent of macro targets).
 	if s.healthStore != nil {
-		s.evalHealthRules(ctx, now, user)
+		s.evalHealthRules(ctx, now, user, overrides)
 	}
+
+	// Weekly digest (independent of macro targets and health data).
+	if s.digestStore != nil {
+		s.evalDigestRules(ctx, now, user, overrides)
+	}
+}
+
+// resolveRule applies a user's override (if any) to a copy of the base rule.
+// The second return value is false when the rule should be skipped entirely
+// (an explicit disable); otherwise it's true and the returned rule carries
+// any tuned fields from the override's Params on top of the base rule's
+// defaults. A nil overrides map or no matching entry returns base unchanged.
+func resolveRule[T any](base T, ruleID string, overrides map[string]types.NudgeRuleConfig) (T, bool) {
+	c, found := overrides[ruleID]
+	if !found {
+		return base, true
+	}
+	if !c.Enabled {
+		return base, false
+	}
+	if len(c.Params) > 0 {
+		// Unmarshal into a copy of the existing rule (not a zero value) so
+		// fields absent from Params keep the base rule's defaults.
+		if err := json.Unmarshal(c.Params, &base); err != nil {
+			return base, true // malformed override: fall back to defaults
+		}
+	}
+	return base, true
 }
 
 // evalHealthRules evaluates every health rule for one user at the given
 // instant. It uses the same nudge_log table for deduplication, keyed by
 // (user_id, local_date, rule_id), so health rule IDs like "water-afternoon"
 // coexist safely with macro rule IDs.
-func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user types.User) {
+func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
 	date := local.Format("2006-01-02")
 	hour := local.Hour()
 
-	for _, r := range s.healthRules {
+	for _, base := range s.healthRules {
+		r, enabled := resolveRule(base, base.ID, overrides)
+		if !enabled {
+			continue
+		}
 		// Hour gate: CheckHour = 0 means always check (e.g. fast-ending).
 		if r.CheckHour > 0 && hour < r.CheckHour {
 			continue
@@ -229,7 +321,7 @@ func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user typ
 		triggered := false
 		switch r.Domain {
 		case "water":
-			totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
+			_, totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
 			if err != nil {
 				s.log.Error("scheduler: get water", "rule", r.ID, "err", err)
 				continue
@@ -300,6 +392,105 @@ func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user typ
 			s.log.Error("scheduler: health mark-nudged", "rule", r.ID, "err", err)
 		}
 	}
+}
+
+// evalDigestRules evaluates the weekly digest rule(s) for one user. Dedupe
+// uses the same nudge_log table as macro/health rules, but keyed by ISO
+// year-week (e.g. "2026-W27") instead of a daily date, so the unconstrained
+// TEXT local_date column naturally dedupes per week with no schema change and
+// no format collision with daily "YYYY-MM-DD" keys.
+func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	local := now.In(s.locFor(user))
+
+	for _, base := range s.digestRules {
+		r, enabled := resolveRule(base, base.ID, overrides)
+		if !enabled {
+			continue
+		}
+		if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
+			continue
+		}
+
+		year, week := local.ISOWeek()
+		weekKey := fmt.Sprintf("%d-W%02d", year, week)
+
+		done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
+		if err != nil {
+			s.log.Error("scheduler: digest was-nudged", "rule", r.ID, "err", err)
+			continue
+		}
+		if done {
+			continue
+		}
+
+		body, err := s.buildDigestBody(ctx, user, local)
+		if err != nil {
+			s.log.Error("scheduler: build digest", "rule", r.ID, "err", err)
+			continue
+		}
+
+		n := types.Notification{
+			UserID:   user.ID,
+			Title:    "DietDaemon Weekly Digest",
+			Body:     body,
+			Priority: types.PriorityDefault,
+		}
+		if err := s.notifier.Notify(ctx, n); err != nil {
+			s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
+			continue // not marked: retry next tick
+		}
+		if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
+			s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
+		}
+	}
+}
+
+// buildDigestBody composes a short readable summary of the last 7 days:
+// average calories/protein, average adherence to target, and weight change.
+func (s *Scheduler) buildDigestBody(ctx context.Context, user types.User, local time.Time) (string, error) {
+	end := local.Format("2006-01-02")
+	start := local.AddDate(0, 0, -6).Format("2006-01-02")
+
+	rollups, err := s.digestStore.GetRollups(ctx, user.ID, start, end)
+	if err != nil {
+		return "", fmt.Errorf("get rollups: %w", err)
+	}
+
+	var days int
+	var sumCal, sumProtein, sumAdherence float64
+	for _, r := range rollups {
+		days++
+		sumCal += r.Consumed.Calories
+		sumProtein += r.Consumed.Protein
+		if r.Targets.Calories > 0 {
+			sumAdherence += r.Consumed.Calories / r.Targets.Calories
+		}
+	}
+
+	var avgCal, avgProtein, avgAdherencePct float64
+	if days > 0 {
+		avgCal = sumCal / float64(days)
+		avgProtein = sumProtein / float64(days)
+		avgAdherencePct = (sumAdherence / float64(days)) * 100
+	}
+
+	weightNote := "no weigh-ins logged"
+	if weights, err := s.digestStore.ListWeight(ctx, user.ID, 7); err == nil {
+		switch len(weights) {
+		case 0:
+			// keep default
+		case 1:
+			weightNote = fmt.Sprintf("weight %.1f kg (single entry)", weights[0].WeightKg)
+		default:
+			delta := weights[len(weights)-1].WeightKg - weights[0].WeightKg
+			weightNote = fmt.Sprintf("weight %+.1f kg", delta)
+		}
+	}
+
+	return fmt.Sprintf(
+		"Weekly digest: avg %.0f kcal/%.0f g protein (%.0f%% of target), %s.",
+		avgCal, avgProtein, avgAdherencePct, weightNote,
+	), nil
 }
 
 // parseLoggedAt attempts to parse a timestamp string stored in a WaterLog,

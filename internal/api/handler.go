@@ -14,15 +14,16 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
+	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 )
 
 // AuthStore is the subset of store methods the auth endpoints need.
@@ -110,6 +111,15 @@ type MealStore interface {
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
 
+	// Nudge rule config (per-user overrides of scheduler rules).
+	GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error)
+	SetNudgeRuleConfig(ctx context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error
+	DeleteNudgeRuleConfig(ctx context.Context, userID, ruleID string) error
+
+	// Scheduled backup settings.
+	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
+	SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error
+
 	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	UpsertUser(ctx context.Context, u types.User) error
@@ -119,8 +129,18 @@ type MealStore interface {
 	SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
+	GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
+
+	// Pending aliases (embedding near-misses awaiting confirmation).
+	ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error)
+	ConfirmPendingAlias(ctx context.Context, userID, id string) error
+	RejectPendingAlias(ctx context.Context, userID, id string) error
+
+	// Per-user nutrition source precedence.
+	GetSourcePrecedence(ctx context.Context, userID string) ([]string, error)
+	SetSourcePrecedence(ctx context.Context, userID string, order []string) error
 
 	// Meal templates.
 	SaveTemplate(ctx context.Context, t types.MealTemplate) error
@@ -224,13 +244,24 @@ type Handler struct {
 
 	// Rate limiter for login/register endpoints.
 	ipLimiter *auth.IPRateLimiter
+
+	// Scheduled backup manual trigger. Nil when backups aren't wired up.
+	backupRunner BackupRunner
+}
+
+// BackupRunner triggers an immediate backup for one user, sharing the same
+// export logic the scheduled ticker uses. Satisfied by *backup.Runner.
+type BackupRunner interface {
+	RunOnce(ctx context.Context, userID string) error
 }
 
 // New returns a ready API Handler. The store and authStore are typically the
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
-// interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn) *Handler {
+// interfaces (they are satisfied by *store.Store). backupRunner may be nil if
+// scheduled backups aren't configured; the manual "run now" endpoint then
+// returns 503.
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -259,6 +290,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		registrationMode: cfg.RegistrationMode,
 		cookieSecure:     cfg.CookieSecure,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
+		backupRunner:     backupRunner,
 	}
 }
 
@@ -275,6 +307,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/meals/log", h.wrap(h.handleLogMeal))
 	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
 	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
+	mux.HandleFunc("GET /api/v1/settings/nudges", h.wrap(h.handleGetNudgeSettings))
+	mux.HandleFunc("PUT /api/v1/settings/nudges", h.wrap(h.handleSetNudgeSettings))
 
 	// Meals — latest.
 	mux.HandleFunc("GET /api/v1/meals/latest", h.wrap(h.handleMealsLatest))
@@ -287,9 +321,19 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
 
+	// Pending aliases.
+	mux.HandleFunc("GET /api/v1/aliases/pending", h.wrap(h.handleListPendingAliases))
+	mux.HandleFunc("POST /api/v1/aliases/pending/{id}/confirm", h.wrap(h.handleConfirmPendingAlias))
+	mux.HandleFunc("DELETE /api/v1/aliases/pending/{id}", h.wrap(h.handleRejectPendingAlias))
+
+	// Nutrition source precedence.
+	mux.HandleFunc("GET /api/v1/settings/precedence", h.wrap(h.handleGetPrecedence))
+	mux.HandleFunc("PUT /api/v1/settings/precedence", h.wrap(h.handleSetPrecedence))
+
 	// Meal templates.
 	mux.HandleFunc("GET /api/v1/templates", h.wrap(h.handleListTemplates))
 	mux.HandleFunc("POST /api/v1/templates", h.wrap(h.handleCreateTemplate))
+	mux.HandleFunc("POST /api/v1/templates/compose", h.wrap(h.handleComposeTemplate))
 	mux.HandleFunc("GET /api/v1/templates/{id}", h.wrap(h.handleGetTemplate))
 	mux.HandleFunc("DELETE /api/v1/templates/{id}", h.wrap(h.handleDeleteTemplate))
 	mux.HandleFunc("POST /api/v1/templates/{id}/log", h.wrap(h.handleLogTemplate))
@@ -348,6 +392,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Data export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
+
+	// Scheduled backup settings.
+	mux.HandleFunc("GET /api/v1/settings/backup", h.wrap(h.handleGetBackupConfig))
+	mux.HandleFunc("PUT /api/v1/settings/backup", h.wrap(h.handleSetBackupConfig))
+	mux.HandleFunc("POST /api/v1/settings/backup/run", h.wrap(h.handleRunBackupNow))
 
 	// Auth endpoints.
 	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublic(h.handleRegister))
@@ -654,6 +703,91 @@ func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userI
 	_ = json.NewEncoder(w).Encode(dt)
 }
 
+// nudgeRuleView is the effective (default merged with the user's override)
+// state of one nudge rule, as returned by GET /settings/nudges.
+type nudgeRuleView struct {
+	RuleID  string          `json:"rule_id"`
+	Kind    string          `json:"kind"` // "macro", "health", or "digest"
+	Enabled bool            `json:"enabled"`
+	Rule    json.RawMessage `json:"rule"` // the rule's own fields, with any override applied
+}
+
+// buildNudgeRuleView merges a stored override onto a copy of the rule's
+// hardcoded default, mirroring scheduler.resolveRule's behavior so the UI
+// shows exactly what the scheduler will evaluate.
+func buildNudgeRuleView[T any](ruleID, kind string, base T, overrides map[string]types.NudgeRuleConfig) nudgeRuleView {
+	enabled := true
+	if c, ok := overrides[ruleID]; ok {
+		enabled = c.Enabled
+		if enabled && len(c.Params) > 0 {
+			_ = json.Unmarshal(c.Params, &base)
+		}
+	}
+	ruleJSON, _ := json.Marshal(base)
+	return nudgeRuleView{RuleID: ruleID, Kind: kind, Enabled: enabled, Rule: ruleJSON}
+}
+
+// handleGetNudgeSettings returns every built-in nudge rule (macro, health,
+// digest) merged with the user's stored overrides, so the UI always shows
+// the full rule set with each rule's effective enabled/params state.
+func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request, userID string) {
+	overrides, err := h.store.GetNudgeRuleConfig(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	byID := make(map[string]types.NudgeRuleConfig, len(overrides))
+	for _, c := range overrides {
+		byID[c.RuleID] = c
+	}
+
+	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules()))
+	for _, base := range scheduler.DefaultRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "macro", base, byID))
+	}
+	for _, base := range scheduler.DefaultHealthRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "health", base, byID))
+	}
+	for _, base := range scheduler.DefaultDigestRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "digest", base, byID))
+	}
+
+	_ = json.NewEncoder(w).Encode(views)
+}
+
+// handleSetNudgeSettings accepts one rule's override. Set reset=true to
+// remove the override and fall back to the hardcoded default.
+func (h *Handler) handleSetNudgeSettings(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		RuleID  string          `json:"rule_id"`
+		Enabled bool            `json:"enabled"`
+		Params  json.RawMessage `json:"params,omitempty"`
+		Reset   bool            `json:"reset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.RuleID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rule_id is required"})
+		return
+	}
+
+	if body.Reset {
+		if err := h.store.DeleteNudgeRuleConfig(r.Context(), userID, body.RuleID); err != nil {
+			h.writeErr(w, err)
+			return
+		}
+	} else if err := h.store.SetNudgeRuleConfig(r.Context(), userID, body.RuleID, body.Enabled, body.Params); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
 		Text string `json:"text"`
@@ -801,6 +935,76 @@ func (h *Handler) handleDeleteAlias(w http.ResponseWriter, r *http.Request, user
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pendingAliasView adds the matched food's display name to a pending alias so
+// the UI can render "phrase -> food name" without a second round-trip per row.
+type pendingAliasView struct {
+	types.PendingAlias
+	FoodName string `json:"food_name"`
+}
+
+func (h *Handler) handleListPendingAliases(w http.ResponseWriter, r *http.Request, userID string) {
+	pending, err := h.store.ListPendingAliases(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	views := make([]pendingAliasView, 0, len(pending))
+	for _, pa := range pending {
+		view := pendingAliasView{PendingAlias: pa, FoodName: pa.FoodID}
+		if fd, err := h.store.GetFoodDetail(r.Context(), userID, pa.FoodID); err == nil {
+			view.FoodName = fd.Name
+		}
+		views = append(views, view)
+	}
+	_ = json.NewEncoder(w).Encode(views)
+}
+
+func (h *Handler) handleConfirmPendingAlias(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.ConfirmPendingAlias(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "confirmed"})
+}
+
+func (h *Handler) handleRejectPendingAlias(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	if err := h.store.RejectPendingAlias(r.Context(), userID, id); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleGetPrecedence(w http.ResponseWriter, r *http.Request, userID string) {
+	order, err := h.store.GetSourcePrecedence(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if order == nil {
+		order = []string{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string][]string{"order": order})
+}
+
+func (h *Handler) handleSetPrecedence(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "order field is required"})
+		return
+	}
+	if err := h.store.SetSourcePrecedence(r.Context(), userID, body.Order); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
 // ---------------------------------------------------------------------------
 // Meal templates
 // ---------------------------------------------------------------------------
@@ -838,6 +1042,57 @@ func (h *Handler) handleCreateTemplate(w http.ResponseWriter, r *http.Request, u
 		UserID:    userID,
 		Name:      body.Name,
 		Items:     body.Items,
+		CreatedAt: now,
+		LastUsed:  now,
+	}
+	if err := h.store.SaveTemplate(r.Context(), t); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(t)
+}
+
+func (h *Handler) handleComposeTemplate(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Name  string `json:"name"`
+		Items []struct {
+			FoodID string  `json:"food_id"`
+			Grams  float64 `json:"grams"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if body.Name == "" || len(body.Items) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name and items are required"})
+		return
+	}
+
+	items := make([]types.ResolvedItem, 0, len(body.Items))
+	for _, it := range body.Items {
+		food, err := h.store.GetFood(r.Context(), userID, it.FoodID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown food_id: " + it.FoodID})
+			return
+		}
+		items = append(items, types.ResolvedItem{
+			Parsed: types.ParsedItem{RawPhrase: food.Name, NormalizedGrams: it.Grams},
+			Match:  food,
+			Macros: food.Per100g.Scale(it.Grams / 100.0),
+		})
+	}
+
+	now := time.Now().UTC()
+	t := types.MealTemplate{
+		ID:        newHandlerID(),
+		UserID:    userID,
+		Name:      body.Name,
+		Items:     items,
 		CreatedAt: now,
 		LastUsed:  now,
 	}
@@ -1771,7 +2026,9 @@ func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, user
 
 	switch format {
 	case "csv":
-		h.writeMealsCSV(w, meals)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
+		_ = exportfmt.WriteMealsCSV(w, meals)
 	default:
 		// JSON (default).
 		w.Header().Set("Content-Disposition", "attachment; filename=meals.json")
@@ -1801,7 +2058,9 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 
 	switch format {
 	case "csv":
-		h.writeRollupsCSV(w, rollups)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
+		_ = exportfmt.WriteRollupsCSV(w, rollups)
 	default:
 		w.Header().Set("Content-Disposition", "attachment; filename=rollups.json")
 		if rollups == nil {
@@ -1811,31 +2070,60 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 	}
 }
 
-func (h *Handler) writeMealsCSV(w http.ResponseWriter, meals []types.Meal) {
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
-	_, _ = fmt.Fprintln(w, "id,date,raw_text,kcal,protein,carbs,fat,fiber")
-	for _, m := range meals {
-		total := m.Total()
-		escaped := strings.ReplaceAll(m.RawText, `"`, `""`)
-		_, _ = fmt.Fprintf(w, "%s,%s,\"%s\",%.0f,%.1f,%.1f,%.1f,%.1f\n",
-			m.ID, m.At.Format("2006-01-02"), escaped,
-			total.Calories, total.Protein, total.Carbs, total.Fat, total.Fiber,
-		)
+// ---------------------------------------------------------------------------
+// Scheduled backup settings
+// ---------------------------------------------------------------------------
+
+const defaultBackupIntervalHrs = 24
+
+func (h *Handler) handleGetBackupConfig(w http.ResponseWriter, r *http.Request, userID string) {
+	cfg, err := h.store.GetBackupConfig(r.Context(), userID)
+	if errors.Is(err, types.ErrNotFound) {
+		// No config yet: report sensible defaults, disabled.
+		cfg = types.BackupConfig{UserID: userID, Destination: "local", IntervalHrs: defaultBackupIntervalHrs}
+	} else if err != nil {
+		h.writeErr(w, err)
+		return
 	}
+	_ = json.NewEncoder(w).Encode(cfg)
 }
 
-func (h *Handler) writeRollupsCSV(w http.ResponseWriter, rollups []types.DailyRollup) {
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
-	_, _ = fmt.Fprintln(w, "date,consumed_kcal,consumed_protein,consumed_carbs,consumed_fat,consumed_fiber,target_kcal,target_protein,target_carbs,target_fat,target_fiber")
-	for _, r := range rollups {
-		_, _ = fmt.Fprintf(w, "%s,%.0f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.1f\n",
-			r.Date,
-			r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
-			r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
-		)
+func (h *Handler) handleSetBackupConfig(w http.ResponseWriter, r *http.Request, userID string) {
+	var body types.BackupConfig
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
 	}
+	body.UserID = userID
+	if body.Destination == "" {
+		body.Destination = "local"
+	}
+	if body.IntervalHrs <= 0 {
+		body.IntervalHrs = defaultBackupIntervalHrs
+	}
+	if err := h.store.SetBackupConfig(r.Context(), body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// handleRunBackupNow triggers an immediate backup for the authenticated user,
+// reusing the same export logic the scheduled ticker uses (backup.Runner.RunOnce).
+func (h *Handler) handleRunBackupNow(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.backupRunner == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backup is not enabled on this server"})
+		return
+	}
+	if err := h.backupRunner.RunOnce(r.Context(), userID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // ---------------------------------------------------------------------------
