@@ -10,10 +10,10 @@ opt-in via an Ollama sidecar.
 
 ## Light by default
 
-| Mode | Parser | RAM (idle) | Requirements |
-|---|---|---|---|
-| Default (Tier 0) | Deterministic tokenizer + unit dictionary | ~15 to 25 MB | None |
-| AI (Tier 1 to 2) | Embeddings or LLM via Ollama sidecar | +Ollama | GPU optional |
+| Mode             | Parser                                    | RAM (idle)   | Requirements |
+|------------------|-------------------------------------------|--------------|--------------|
+| Default (Tier 0) | Deterministic tokenizer + unit dictionary | ~15 to 25 MB | None         |
+| AI (Tier 1 to 2) | Embeddings or LLM via Ollama sidecar      | +Ollama      | GPU optional |
 
 Core boots fully headless (API only). The dashboard is behind a feature flag.
 
@@ -53,16 +53,16 @@ docker compose --profile ai up -d
 All behaviour is driven by environment variables. See `.env.example` for every option.
 Key knobs:
 
-| Variable | Description |
-|---|---|
-| `MESSAGING_ADAPTER` | `telegram`, `discord`, `matrix` |
-| `PARSER_TIER` | `0` (deterministic), `1` (embeddings), `2` (LLM) |
-| `NUTRITION_SOURCE` | Comma-separated: `openfoodfacts,taco,usda` |
-| `MODEL_ADAPTER` | `ollama`, backing model for Tier 1 to 2 |
-| `ENABLE_STT` | `true`, enables speech-to-text for audio messages |
-| `WHISPER_URL` | Whisper.cpp HTTP server URL |
-| `NOTIFIER` | `ntfy`, `gotify` |
-| `DEFAULT_TIMEZONE` | IANA timezone for daily rollup boundaries |
+| Variable            | Description                                       |
+|---------------------|---------------------------------------------------|
+| `MESSAGING_ADAPTER` | `telegram`, `discord`, `matrix`                   |
+| `PARSER_TIER`       | `0` (deterministic), `1` (embeddings), `2` (LLM)  |
+| `NUTRITION_SOURCE`  | Comma-separated: `openfoodfacts,taco,usda`        |
+| `MODEL_ADAPTER`     | `ollama`, backing model for Tier 1 to 2           |
+| `ENABLE_STT`        | `true`, enables speech-to-text for audio messages |
+| `WHISPER_URL`       | Whisper.cpp HTTP server URL                       |
+| `NOTIFIER`          | `ntfy`, `gotify`                                  |
+| `DEFAULT_TIMEZONE`  | IANA timezone for daily rollup boundaries         |
 
 ## Architecture
 
@@ -80,8 +80,6 @@ formats, core never imports a provider SDK.
                               [STT (opt)] → Whisper
                               [Dashboard (opt)]
 ```
-
-Full architecture and implementation plan in [`BLUEPRINT.md`](BLUEPRINT.md).
 
 ## License
 

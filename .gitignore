@@ -35,6 +35,7 @@ dietdaemon
 .context/
 .context.xml
 BLUEPRINT.md
+graphify-out/cache
 
 # Logs & cache
 .logs/
