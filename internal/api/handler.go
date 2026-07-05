@@ -14,13 +14,13 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
@@ -109,6 +109,10 @@ type MealStore interface {
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
+
+	// Scheduled backup settings.
+	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
+	SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error
 
 	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
@@ -224,13 +228,24 @@ type Handler struct {
 
 	// Rate limiter for login/register endpoints.
 	ipLimiter *auth.IPRateLimiter
+
+	// Scheduled backup manual trigger. Nil when backups aren't wired up.
+	backupRunner BackupRunner
+}
+
+// BackupRunner triggers an immediate backup for one user, sharing the same
+// export logic the scheduled ticker uses. Satisfied by *backup.Runner.
+type BackupRunner interface {
+	RunOnce(ctx context.Context, userID string) error
 }
 
 // New returns a ready API Handler. The store and authStore are typically the
 // same concrete *store.Store, passed through two interfaces. sessions and
 // loginAttempts are the same concrete store, cast to the auth package
-// interfaces (they are satisfied by *store.Store).
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn) *Handler {
+// interfaces (they are satisfied by *store.Store). backupRunner may be nil if
+// scheduled backups aren't configured; the manual "run now" endpoint then
+// returns 503.
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -259,6 +274,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		registrationMode: cfg.RegistrationMode,
 		cookieSecure:     cfg.CookieSecure,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
+		backupRunner:     backupRunner,
 	}
 }
 
@@ -348,6 +364,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Data export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
+
+	// Scheduled backup settings.
+	mux.HandleFunc("GET /api/v1/settings/backup", h.wrap(h.handleGetBackupConfig))
+	mux.HandleFunc("PUT /api/v1/settings/backup", h.wrap(h.handleSetBackupConfig))
+	mux.HandleFunc("POST /api/v1/settings/backup/run", h.wrap(h.handleRunBackupNow))
 
 	// Auth endpoints.
 	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublic(h.handleRegister))
@@ -1771,7 +1792,9 @@ func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, user
 
 	switch format {
 	case "csv":
-		h.writeMealsCSV(w, meals)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
+		_ = exportfmt.WriteMealsCSV(w, meals)
 	default:
 		// JSON (default).
 		w.Header().Set("Content-Disposition", "attachment; filename=meals.json")
@@ -1801,7 +1824,9 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 
 	switch format {
 	case "csv":
-		h.writeRollupsCSV(w, rollups)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
+		_ = exportfmt.WriteRollupsCSV(w, rollups)
 	default:
 		w.Header().Set("Content-Disposition", "attachment; filename=rollups.json")
 		if rollups == nil {
@@ -1811,31 +1836,60 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 	}
 }
 
-func (h *Handler) writeMealsCSV(w http.ResponseWriter, meals []types.Meal) {
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
-	_, _ = fmt.Fprintln(w, "id,date,raw_text,kcal,protein,carbs,fat,fiber")
-	for _, m := range meals {
-		total := m.Total()
-		escaped := strings.ReplaceAll(m.RawText, `"`, `""`)
-		_, _ = fmt.Fprintf(w, "%s,%s,\"%s\",%.0f,%.1f,%.1f,%.1f,%.1f\n",
-			m.ID, m.At.Format("2006-01-02"), escaped,
-			total.Calories, total.Protein, total.Carbs, total.Fat, total.Fiber,
-		)
+// ---------------------------------------------------------------------------
+// Scheduled backup settings
+// ---------------------------------------------------------------------------
+
+const defaultBackupIntervalHrs = 24
+
+func (h *Handler) handleGetBackupConfig(w http.ResponseWriter, r *http.Request, userID string) {
+	cfg, err := h.store.GetBackupConfig(r.Context(), userID)
+	if errors.Is(err, types.ErrNotFound) {
+		// No config yet: report sensible defaults, disabled.
+		cfg = types.BackupConfig{UserID: userID, Destination: "local", IntervalHrs: defaultBackupIntervalHrs}
+	} else if err != nil {
+		h.writeErr(w, err)
+		return
 	}
+	_ = json.NewEncoder(w).Encode(cfg)
 }
 
-func (h *Handler) writeRollupsCSV(w http.ResponseWriter, rollups []types.DailyRollup) {
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
-	_, _ = fmt.Fprintln(w, "date,consumed_kcal,consumed_protein,consumed_carbs,consumed_fat,consumed_fiber,target_kcal,target_protein,target_carbs,target_fat,target_fiber")
-	for _, r := range rollups {
-		_, _ = fmt.Fprintf(w, "%s,%.0f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.1f\n",
-			r.Date,
-			r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
-			r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
-		)
+func (h *Handler) handleSetBackupConfig(w http.ResponseWriter, r *http.Request, userID string) {
+	var body types.BackupConfig
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
 	}
+	body.UserID = userID
+	if body.Destination == "" {
+		body.Destination = "local"
+	}
+	if body.IntervalHrs <= 0 {
+		body.IntervalHrs = defaultBackupIntervalHrs
+	}
+	if err := h.store.SetBackupConfig(r.Context(), body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// handleRunBackupNow triggers an immediate backup for the authenticated user,
+// reusing the same export logic the scheduled ticker uses (backup.Runner.RunOnce).
+func (h *Handler) handleRunBackupNow(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.backupRunner == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backup is not enabled on this server"})
+		return
+	}
+	if err := h.backupRunner.RunOnce(r.Context(), userID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // ---------------------------------------------------------------------------

@@ -220,6 +220,24 @@ type DailyRollup struct {
 	Targets  Macros
 }
 
+// BackupConfig is a user's scheduled backup/export settings: whether it's
+// enabled, the destination (local disk or S3), destination-specific fields,
+// and how often it runs. Credentials are never stored here — S3 access uses
+// the ambient AWS credential chain; only bucket/prefix/region/endpoint are
+// per-user.
+type BackupConfig struct {
+	UserID      string
+	Enabled     bool
+	Destination string // "local" | "s3"
+	LocalSubdir string
+	S3Bucket    string
+	S3Prefix    string
+	S3Region    string
+	S3Endpoint  string
+	IntervalHrs int
+	LastRunAt   time.Time
+}
+
 // ---------------------------------------------------------------------------
 // Food library types
 // ---------------------------------------------------------------------------

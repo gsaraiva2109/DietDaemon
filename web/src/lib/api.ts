@@ -13,6 +13,7 @@ import type {
 } from '@simplewebauthn/browser'
 import type {
   ApiKey,
+  BackupConfig,
   BodyCompositionSummary,
   DailyRollup,
   Fast,
@@ -528,6 +529,14 @@ export const api = {
       blobRequest(`/export/meals?format=${format}&start=${start}&end=${end}`),
     rollups: (format: string, start: string, end: string) =>
       blobRequest(`/export/rollups?format=${format}&start=${start}&end=${end}`),
+  },
+
+  // --- Scheduled backup ------------------------------------------
+  backup: {
+    get: () => request<BackupConfig>('/settings/backup'),
+    set: (cfg: BackupConfig) =>
+      request<BackupConfig>('/settings/backup', { method: 'PUT', body: JSON.stringify(cfg) }),
+    runNow: () => request<{ status: string }>('/settings/backup/run', { method: 'POST' }),
   },
 }
 

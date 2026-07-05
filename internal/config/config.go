@@ -76,6 +76,10 @@ type Config struct {
 	EnableSTT           bool
 	WhisperURL          string
 
+	// --- Scheduled backup/export ---
+	BackupLocalDir      string        // base dir for the "local" destination; empty disables it
+	BackupCheckInterval time.Duration // how often the backup runner checks for due users
+
 	MultiUser    bool
 	APIAuthToken string
 
@@ -189,6 +193,8 @@ func Load() (*Config, error) {
 		EnableDashboard:         getBool("ENABLE_DASHBOARD", false),
 		EnableSTT:               getBool("ENABLE_STT", false),
 		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
+		BackupLocalDir:          getStr("BACKUP_LOCAL_DIR", ""),
+		BackupCheckInterval:     getDuration("BACKUP_CHECK_INTERVAL", time.Hour),
 		MultiUser:               getBool("MULTI_USER", false),
 		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
 		DBDriver:                getStr("DB_DRIVER", "sqlite"),

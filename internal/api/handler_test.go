@@ -18,21 +18,22 @@ import (
 // --- fakes ---
 
 type fakeMealStore struct {
-	meals       map[string]types.Meal
-	recentMeals []types.Meal
-	rollup      types.DailyRollup
-	rollups     []types.DailyRollup
-	user        types.User
-	correctErr  error
-	getMealErr  error
-	rollupErr   error
-	rollupsErr  error
-	recentErr   error
-	getUserErr  error
-	targets     types.DailyTargets
-	targetsErr  error
-	addErr      error
-	deleteErr   error
+	meals        map[string]types.Meal
+	recentMeals  []types.Meal
+	rollup       types.DailyRollup
+	rollups      []types.DailyRollup
+	user         types.User
+	correctErr   error
+	getMealErr   error
+	rollupErr    error
+	rollupsErr   error
+	recentErr    error
+	getUserErr   error
+	targets      types.DailyTargets
+	targetsErr   error
+	addErr       error
+	deleteErr    error
+	backupConfig types.BackupConfig
 
 	// Latest meal.
 	latestMealTime    string
@@ -168,6 +169,16 @@ func (s *fakeMealStore) SetTargets(_ context.Context, t types.DailyTargets) erro
 }
 func (s *fakeMealStore) UpdateRollupTargets(_ context.Context, _, _ string, t types.Macros) error {
 	s.rollup.Targets = t
+	return nil
+}
+func (s *fakeMealStore) GetBackupConfig(_ context.Context, userID string) (types.BackupConfig, error) {
+	if s.backupConfig.UserID == "" {
+		return types.BackupConfig{}, types.ErrNotFound
+	}
+	return s.backupConfig, nil
+}
+func (s *fakeMealStore) SetBackupConfig(_ context.Context, cfg types.BackupConfig) error {
+	s.backupConfig = cfg
 	return nil
 }
 func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error) {
@@ -598,7 +609,7 @@ func newHandler(store MealStore, logger MealLogger) *Handler {
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil)
+	}, nil, nil)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -1552,6 +1563,13 @@ func TestExportMealsCSV(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/csv") {
 		t.Errorf("expected text/csv, got %s", ct)
 	}
+	// Exact byte body: proves the internal/exportfmt extraction changed nothing
+	// about the REST endpoint's on-the-wire CSV output.
+	const wantMeals = "id,date,raw_text,kcal,protein,carbs,fat,fiber\n" +
+		"m1,0001-01-01,\"200g chicken\",330,62.0,0.0,0.0,0.0\n"
+	if got := rec.Body.String(); got != wantMeals {
+		t.Errorf("csv body mismatch:\ngot:  %q\nwant: %q", got, wantMeals)
+	}
 }
 
 func TestExportRollupsJSON(t *testing.T) {
@@ -1580,6 +1598,13 @@ func TestExportRollupsCSV(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/csv") {
 		t.Errorf("expected text/csv, got %s", ct)
+	}
+	// Exact byte body: proves the internal/exportfmt extraction changed nothing
+	// about the REST endpoint's on-the-wire CSV output.
+	const wantRollups = "date,consumed_kcal,consumed_protein,consumed_carbs,consumed_fat,consumed_fiber,target_kcal,target_protein,target_carbs,target_fat,target_fiber\n" +
+		"2026-06-17,2100,0.0,0.0,0.0,0.0,0,0.0,0.0,0.0,0.0\n"
+	if got := rec.Body.String(); got != wantRollups {
+		t.Errorf("csv body mismatch:\ngot:  %q\nwant: %q", got, wantRollups)
 	}
 }
 
