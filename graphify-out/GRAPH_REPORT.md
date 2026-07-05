@@ -1,98 +1,101 @@
-# Graph Report - .  (2026-07-05)
+# Graph Report - DietDaemon  (2026-07-05)
 
 ## Corpus Check
-- 0 files · ~99,999 words
+- 255 files · ~165,239 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1978 nodes · 3536 edges · 71 communities detected
-- Extraction: 78% EXTRACTED · 22% INFERRED · 0% AMBIGUOUS · INFERRED: 788 edges (avg confidence: 0.8)
+- 2126 nodes · 3826 edges · 74 communities detected
+- Extraction: 78% EXTRACTED · 22% INFERRED · 0% AMBIGUOUS · INFERRED: 858 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- [[_COMMUNITY_Data Store Layer|Data Store Layer]]
-- [[_COMMUNITY_Data Store Layer|Data Store Layer]]
-- [[_COMMUNITY_Food Parser (Deterministic & LLM)|Food Parser (Deterministic & LLM)]]
-- [[_COMMUNITY_API Handlers & HTTP Layer|API Handlers & HTTP Layer]]
-- [[_COMMUNITY_Bot Commands|Bot Commands]]
-- [[_COMMUNITY_React Components & Hooks|React Components & Hooks]]
-- [[_COMMUNITY_Data Store Layer|Data Store Layer]]
-- [[_COMMUNITY_Fasting Commands|Fasting Commands]]
-- [[_COMMUNITY_Email & MFA Auth Flow|Email & MFA Auth Flow]]
-- [[_COMMUNITY_Scheduler & Notifications|Scheduler & Notifications]]
-- [[_COMMUNITY_API Test Infrastructure|API Test Infrastructure]]
-- [[_COMMUNITY_Email & MFA Auth Flow|Email & MFA Auth Flow]]
-- [[_COMMUNITY_Core Domain Types|Core Domain Types]]
-- [[_COMMUNITY_UI Icons|UI Icons]]
-- [[_COMMUNITY_Food Parser (Deterministic & LLM)|Food Parser (Deterministic & LLM)]]
-- [[_COMMUNITY_Store Module|Store Module]]
-- [[_COMMUNITY_Parse Pipeline Engine|Parse Pipeline Engine]]
-- [[_COMMUNITY_i18n & Localization|i18n & Localization]]
-- [[_COMMUNITY_Mailer Adapters|Mailer Adapters]]
-- [[_COMMUNITY_Discord Messaging Adapter|Discord Messaging Adapter]]
-- [[_COMMUNITY_React Components & Hooks|React Components & Hooks]]
-- [[_COMMUNITY_React Components & Hooks|React Components & Hooks]]
-- [[_COMMUNITY_Telegram Messaging Adapter|Telegram Messaging Adapter]]
-- [[_COMMUNITY_Design System & Brand Docs|Design System & Brand Docs]]
-- [[_COMMUNITY_Web Frontend Entry|Web Frontend Entry]]
-- [[_COMMUNITY_Matrix Messaging Adapter|Matrix Messaging Adapter]]
-- [[_COMMUNITY_React Route Pages|React Route Pages]]
-- [[_COMMUNITY_OIDC Provider Integration|OIDC Provider Integration]]
-- [[_COMMUNITY_Frontend Library Utilities|Frontend Library Utilities]]
-- [[_COMMUNITY_Auth Primitives (TOTPWebAuthnRecovery)|Auth Primitives (TOTP/WebAuthn/Recovery)]]
-- [[_COMMUNITY_Food Resolver|Food Resolver]]
-- [[_COMMUNITY_Core Domain Types|Core Domain Types]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_Ollama Model Adapter|Ollama Model Adapter]]
-- [[_COMMUNITY_Open Food Facts Adapter|Open Food Facts Adapter]]
-- [[_COMMUNITY_USDA Nutrition Adapter|USDA Nutrition Adapter]]
-- [[_COMMUNITY_React Route Pages|React Route Pages]]
-- [[_COMMUNITY_Pending Store (Durable Queue)|Pending Store (Durable Queue)]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_Frontend Library Utilities|Frontend Library Utilities]]
-- [[_COMMUNITY_Ntfy Notifier Adapter|Ntfy Notifier Adapter]]
-- [[_COMMUNITY_Design System & Brand Docs|Design System & Brand Docs]]
-- [[_COMMUNITY_Auth Primitives (TOTPWebAuthnRecovery)|Auth Primitives (TOTP/WebAuthn/Recovery)]]
-- [[_COMMUNITY_Embedding Matcher|Embedding Matcher]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_Whisper STT Adapter|Whisper STT Adapter]]
-- [[_COMMUNITY_USDA Nutrition Adapter|USDA Nutrition Adapter]]
-- [[_COMMUNITY_React Route Pages|React Route Pages]]
-- [[_COMMUNITY_In-Memory Message Queue|In-Memory Message Queue]]
-- [[_COMMUNITY_In-Memory Message Queue|In-Memory Message Queue]]
-- [[_COMMUNITY_UI Icons|UI Icons]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React Route Pages|React Route Pages]]
-- [[_COMMUNITY_React Route Pages|React Route Pages]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_React UI Components|React UI Components]]
-- [[_COMMUNITY_Frontend Library Utilities|Frontend Library Utilities]]
-- [[_COMMUNITY_Internal Module|Internal Module]]
-- [[_COMMUNITY_Internal Module|Internal Module]]
-- [[_COMMUNITY_Internal Module|Internal Module]]
-- [[_COMMUNITY_Internal Module|Internal Module]]
-- [[_COMMUNITY_Internal Module|Internal Module]]
-- [[_COMMUNITY_Community 127|Community 127]]
-- [[_COMMUNITY_Community 128|Community 128]]
+- [[_COMMUNITY_Community 0|Community 0]]
+- [[_COMMUNITY_Community 1|Community 1]]
+- [[_COMMUNITY_Community 2|Community 2]]
+- [[_COMMUNITY_Community 3|Community 3]]
+- [[_COMMUNITY_Community 4|Community 4]]
+- [[_COMMUNITY_Community 5|Community 5]]
+- [[_COMMUNITY_Community 6|Community 6]]
+- [[_COMMUNITY_Community 7|Community 7]]
+- [[_COMMUNITY_Community 8|Community 8]]
+- [[_COMMUNITY_Community 9|Community 9]]
+- [[_COMMUNITY_Community 10|Community 10]]
+- [[_COMMUNITY_Community 11|Community 11]]
+- [[_COMMUNITY_Community 12|Community 12]]
+- [[_COMMUNITY_Community 13|Community 13]]
+- [[_COMMUNITY_Community 14|Community 14]]
+- [[_COMMUNITY_Community 15|Community 15]]
+- [[_COMMUNITY_Community 16|Community 16]]
+- [[_COMMUNITY_Community 17|Community 17]]
+- [[_COMMUNITY_Community 18|Community 18]]
+- [[_COMMUNITY_Community 19|Community 19]]
+- [[_COMMUNITY_Community 20|Community 20]]
+- [[_COMMUNITY_Community 21|Community 21]]
+- [[_COMMUNITY_Community 22|Community 22]]
+- [[_COMMUNITY_Community 23|Community 23]]
+- [[_COMMUNITY_Community 24|Community 24]]
+- [[_COMMUNITY_Community 25|Community 25]]
+- [[_COMMUNITY_Community 26|Community 26]]
+- [[_COMMUNITY_Community 27|Community 27]]
+- [[_COMMUNITY_Community 28|Community 28]]
+- [[_COMMUNITY_Community 29|Community 29]]
+- [[_COMMUNITY_Community 30|Community 30]]
+- [[_COMMUNITY_Community 31|Community 31]]
+- [[_COMMUNITY_Community 32|Community 32]]
+- [[_COMMUNITY_Community 33|Community 33]]
+- [[_COMMUNITY_Community 34|Community 34]]
+- [[_COMMUNITY_Community 35|Community 35]]
+- [[_COMMUNITY_Community 36|Community 36]]
+- [[_COMMUNITY_Community 37|Community 37]]
+- [[_COMMUNITY_Community 38|Community 38]]
+- [[_COMMUNITY_Community 39|Community 39]]
+- [[_COMMUNITY_Community 42|Community 42]]
+- [[_COMMUNITY_Community 43|Community 43]]
+- [[_COMMUNITY_Community 44|Community 44]]
+- [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 46|Community 46]]
+- [[_COMMUNITY_Community 48|Community 48]]
+- [[_COMMUNITY_Community 49|Community 49]]
+- [[_COMMUNITY_Community 50|Community 50]]
+- [[_COMMUNITY_Community 51|Community 51]]
+- [[_COMMUNITY_Community 52|Community 52]]
+- [[_COMMUNITY_Community 53|Community 53]]
+- [[_COMMUNITY_Community 54|Community 54]]
+- [[_COMMUNITY_Community 55|Community 55]]
+- [[_COMMUNITY_Community 56|Community 56]]
+- [[_COMMUNITY_Community 58|Community 58]]
+- [[_COMMUNITY_Community 59|Community 59]]
+- [[_COMMUNITY_Community 60|Community 60]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 81|Community 81]]
+- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 107|Community 107]]
 - [[_COMMUNITY_Community 129|Community 129]]
 - [[_COMMUNITY_Community 130|Community 130]]
+- [[_COMMUNITY_Community 131|Community 131]]
+- [[_COMMUNITY_Community 132|Community 132]]
+- [[_COMMUNITY_Community 133|Community 133]]
+- [[_COMMUNITY_Community 134|Community 134]]
+- [[_COMMUNITY_Community 135|Community 135]]
+- [[_COMMUNITY_Community 136|Community 136]]
+- [[_COMMUNITY_Community 137|Community 137]]
+- [[_COMMUNITY_Community 138|Community 138]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `Store` - 137 edges
-2. `New()` - 128 edges
-3. `Handler` - 116 edges
+1. `Store` - 149 edges
+2. `New()` - 146 edges
+3. `Handler` - 125 edges
 4. `now()` - 102 edges
-5. `doRequest()` - 77 edges
-6. `newHandler()` - 75 edges
-7. `newFakeMealStore()` - 73 edges
-8. `fakeMealStore` - 60 edges
+5. `doRequest()` - 80 edges
+6. `newHandler()` - 78 edges
+7. `newFakeMealStore()` - 76 edges
+8. `fakeMealStore` - 71 edges
 9. `fakeAuthStore` - 59 edges
-10. `contains()` - 37 edges
+10. `run()` - 41 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `run()` --calls--> `NewCancelCommand()`  [INFERRED]
@@ -113,353 +116,369 @@
 
 ## Communities
 
-### Community 0 - "Data Store Layer"
+### Community 0 - "Community 0"
 Cohesion: 0.02
-Nodes (57): AuthConfig, AuthStore, Handler, clientIP(), isSixDigit(), readSessionCookie(), bearerToken(), calculateTDEE() (+49 more)
+Nodes (54): AuthConfig, AuthStore, BackupRunner, Handler, clientIP(), isSixDigit(), readSessionCookie(), bearerToken() (+46 more)
 
-### Community 1 - "Data Store Layer"
-Cohesion: 0.03
-Nodes (32): NewWebAuthnHandle(), parseTier(), Normalize(), TestNormalize(), unaccent(), Memory[T], scanRow, Store (+24 more)
-
-### Community 2 - "Food Parser (Deterministic & LLM)"
-Cohesion: 0.03
-Nodes (122): contains(), pendingInMemory(), pendingSQLite(), pendingStoreFactory, eq(), TestConjunctionSeparators(), TestParsePortugueseAndEnglishMatch(), TestQuantitylessAndEmpty() (+114 more)
-
-### Community 3 - "API Handlers & HTTP Layer"
+### Community 1 - "Community 1"
 Cohesion: 0.02
-Nodes (41): ProtectedRoute(), UtilityBar(), VerifyEmailBanner(), AuthProvider(), useAuth(), demoRange(), fd(), hoursAgo() (+33 more)
+Nodes (34): NewWebAuthnHandle(), parseTier(), FS(), Normalize(), TestNormalize(), unaccent(), Memory[T], scanRow (+26 more)
 
-### Community 4 - "Bot Commands"
-Cohesion: 0.1
-Nodes (77): fakeMealLogger, decodeJSON(), doRequest(), newFakeMealStore(), newHandler(), TestAddAlias(), TestAddAliasMissing(), TestAddMealItem() (+69 more)
+### Community 2 - "Community 2"
+Cohesion: 0.03
+Nodes (135): Stat(), open(), pendingInMemory(), pendingSQLite(), pendingStoreFactory, eq(), TestConjunctionSeparators(), TestParsePortugueseAndEnglishMatch() (+127 more)
 
-### Community 5 - "React Components & Hooks"
+### Community 3 - "Community 3"
+Cohesion: 0.02
+Nodes (43): ProtectedRoute(), UtilityBar(), VerifyEmailBanner(), AuthProvider(), useAuth(), demoRange(), fd(), hoursAgo() (+35 more)
+
+### Community 4 - "Community 4"
 Cohesion: 0.05
-Nodes (34): MealStore, NewProfileCommand(), ProfileCommand, ProfileStore, NewTargetCommand(), parseTargetArgs(), TargetCommand, close() (+26 more)
+Nodes (59): buildNudgeRuleView(), DigestRule, DigestStore, fakeDigestStore, fakeFullStore, fakeHealthStore, fakeNotifier, fakeNudges (+51 more)
 
-### Community 6 - "Data Store Layer"
+### Community 5 - "Community 5"
+Cohesion: 0.1
+Nodes (80): fakeMealLogger, decodeJSON(), doRequest(), newFakeMealStore(), newHandler(), TestAddAlias(), TestAddAliasMissing(), TestAddMealItem() (+72 more)
+
+### Community 6 - "Community 6"
+Cohesion: 0.06
+Nodes (51): NewCorrectCommand(), TestCorrectCommand_BadGramsFormat(), TestCorrectCommand_HappyPath(), TestCorrectCommand_NoRecentMeal(), fakeCmd, fakeCorrectResolver, fakeCorrectStore, NewHelpCommand() (+43 more)
+
+### Community 7 - "Community 7"
 Cohesion: 0.04
-Nodes (62): DietDaemon, Open Food Facts, TACO (Brazilian Food Composition Table), Color System (OKLCH, Sage/Amber), Macro Color Hues, Macro Ring UI Component, Motion System (Framer Motion, Spring/Tick), DietDaemon Container Service (+54 more)
+Nodes (35): CorrectCommand, CorrectResolver, CorrectStore, MealStore, NewProfileCommand(), ProfileCommand, ProfileStore, NewTargetCommand() (+27 more)
 
-### Community 7 - "Fasting Commands"
-Cohesion: 0.07
-Nodes (41): fakeHealthStore, fakeNotifier, fakeNudges, fakeStore, HealthRule, HealthStore, Macro, Notifier (+33 more)
-
-### Community 8 - "Email & MFA Auth Flow"
+### Community 8 - "Community 8"
 Cohesion: 0.03
 Nodes (1): fakeMealStore
 
-### Community 9 - "Scheduler & Notifications"
+### Community 9 - "Community 9"
 Cohesion: 0.04
 Nodes (1): fakeAuthStore
 
-### Community 10 - "API Test Infrastructure"
+### Community 10 - "Community 10"
+Cohesion: 0.08
+Nodes (44): AppleIcon(), Auth0Icon(), AuthentikIcon(), base(), BodyIcon(), brand(), CameraIcon(), CheckIcon() (+36 more)
+
+### Community 11 - "Community 11"
 Cohesion: 0.04
-Nodes (42): APIKey, AuditEvent, BodyCompositionSummary, DailyRollup, DailyTargets, Fast, FoodAlias, FoodDetail (+34 more)
+Nodes (45): APIKey, AuditEvent, BackupConfig, BodyCompositionSummary, DailyRollup, DailyTargets, Fast, FoodAlias (+37 more)
 
-### Community 11 - "Email & MFA Auth Flow"
-Cohesion: 0.09
-Nodes (43): AppleIcon(), Auth0Icon(), AuthentikIcon(), base(), BodyIcon(), brand(), CameraIcon(), CheckIcon() (+35 more)
+### Community 12 - "Community 12"
+Cohesion: 0.05
+Nodes (47): DietDaemon, Open Food Facts, TACO (Brazilian Food Composition Table), DietDaemon Container Service, Ollama Sidecar Service, DietDaemon Spoon Favicon, DietDaemon Web App Entry Point, Optional Dashboard (+39 more)
 
-### Community 12 - "Core Domain Types"
+### Community 13 - "Community 13"
 Cohesion: 0.06
 Nodes (21): formatDurationShort(), NewFastCommand(), FastCommand, FastStore, calcSleepHours(), computeSleepDuration(), formatDuration(), NewSleepCommand() (+13 more)
 
-### Community 13 - "UI Icons"
-Cohesion: 0.12
-Nodes (30): Stat(), Config, decodeKey(), getBool(), getDuration(), getFloat(), getInt(), getStr() (+22 more)
+### Community 14 - "Community 14"
+Cohesion: 0.15
+Nodes (36): postgresDB(), TestPostgresDualDriverSmoke(), TestPostgresMealLifecycle(), TestPostgresSearchFoods(), TestPostgresUserRoundTrip(), TestGetUserByOIDCIdentity(), TestLinkOIDCIdentityUniqueness(), TestListDeleteOIDCIdentities() (+28 more)
 
-### Community 14 - "Food Parser (Deterministic & LLM)"
-Cohesion: 0.08
-Nodes (12): emailTestAuthStore, emailToken, fakeMailer, buildEmailHandler(), newEmailTestAuthStore(), TestEmailVerifyExpiredToken(), TestEmailVerifyInvalidToken(), TestEmailVerifyPurposeMismatch() (+4 more)
-
-### Community 15 - "Store Module"
+### Community 15 - "Community 15"
 Cohesion: 0.09
 Nodes (21): fakeSessionRepo, Session, CreateSession(), RotateSession(), cfg(), newFakeSessionRepo(), TestCreateSession(), TestCreateSessionRemember() (+13 more)
 
-### Community 16 - "Parse Pipeline Engine"
-Cohesion: 0.11
-Nodes (16): fakeCmd, NewHelpCommand(), buildTestBundle(), mustRegister(), TestHelpCommand_Detail(), TestHelpCommand_FallbackLocale(), TestHelpCommand_HTMLEscape(), TestHelpCommand_ListAll() (+8 more)
+### Community 16 - "Community 16"
+Cohesion: 0.08
+Nodes (12): emailTestAuthStore, emailToken, fakeMailer, buildEmailHandler(), newEmailTestAuthStore(), TestEmailVerifyExpiredToken(), TestEmailVerifyInvalidToken(), TestEmailVerifyPurposeMismatch() (+4 more)
 
-### Community 17 - "i18n & Localization"
-Cohesion: 0.16
-Nodes (32): postgresDB(), TestPostgresDualDriverSmoke(), TestPostgresMealLifecycle(), TestPostgresSearchFoods(), TestPostgresUserRoundTrip(), TestGetUserByOIDCIdentity(), TestLinkOIDCIdentityUniqueness(), TestListDeleteOIDCIdentities() (+24 more)
-
-### Community 18 - "Mailer Adapters"
+### Community 17 - "Community 17"
 Cohesion: 0.09
 Nodes (20): Parser, consumeUnit(), parseNumber(), parseSegment(), refineColher(), stripConnector(), llmItem, llmResponse (+12 more)
 
-### Community 19 - "Discord Messaging Adapter"
+### Community 18 - "Community 18"
 Cohesion: 0.1
 Nodes (17): Dialect, NewDialect(), SQLiteDialect(), TestColumnExists(), TestNewDialectInvalid(), TestNow(), TestPlaceholder(), TestPostgresRewritePlaceholders() (+9 more)
 
-### Community 20 - "React Components & Hooks"
+### Community 19 - "Community 19"
 Cohesion: 0.14
 Nodes (19): entry, cosineSimilarity(), packF32LE(), sortByScore(), openTestDB(), requireNoErr(), TestCacheInvalidation(), TestCosineSimilarity() (+11 more)
 
-### Community 21 - "React Components & Hooks"
+### Community 20 - "Community 20"
 Cohesion: 0.08
 Nodes (16): Config, Mailer, New(), smtpPortOrDefault(), TestNew(), TestNoneMailerSend(), TestTemplatesNotEmpty(), Message (+8 more)
 
-### Community 22 - "Telegram Messaging Adapter"
+### Community 21 - "Community 21"
 Cohesion: 0.12
 Nodes (16): actionRow, Adapter, buttonComponent, dialWebSocket(), mustMarshal(), readGatewayPayload(), readWSFrame(), writeGatewayFrame() (+8 more)
 
-### Community 23 - "Design System & Brand Docs"
+### Community 22 - "Community 22"
 Cohesion: 0.12
 Nodes (14): download(), copyPng(), dataUrlToBlob(), downloadPng(), render(), ApiError, blobRequest(), handleUnauthorized() (+6 more)
 
-### Community 24 - "Web Frontend Entry"
+### Community 23 - "Community 23"
 Cohesion: 0.12
 Nodes (8): onSubmit(), onAdd(), isMfaChallenge(), isWebAuthnCancel(), loginWithPasskey(), registerPasskey(), signInWithPasskey(), usePasskey()
 
-### Community 25 - "Matrix Messaging Adapter"
+### Community 24 - "Community 24"
 Cohesion: 0.12
 Nodes (11): Adapter, callbackQuery, getUpdatesResponse, sendMessageRequest, sendMessageResponse, tgChat, tgInlineKeyboardButton, tgInlineKeyboardMarkup (+3 more)
 
-### Community 26 - "React Route Pages"
+### Community 25 - "Community 25"
 Cohesion: 0.15
 Nodes (10): isLockedOut(), issueMagic(), issueResetToken(), issueVerifyToken(), parseCookies(), recordFailure(), seed(), sessionFor() (+2 more)
 
-### Community 27 - "OIDC Provider Integration"
+### Community 26 - "Community 26"
 Cohesion: 0.18
 Nodes (13): MFAChallengeRepo, GenerateSecret(), contains(), TestGenerateSecret(), TestGenerateSecretEmptyAccount(), TestGenerateSecretEmptyIssuer(), TestValidateCode(), TestValidateCodeEmptySecret() (+5 more)
 
-### Community 28 - "Frontend Library Utilities"
+### Community 27 - "Community 27"
 Cohesion: 0.16
 Nodes (9): Adapter, joinedRoom, callbackDataByIndex(), New(), newPendingMarkupStore(), matrixMessageContent, pendingMarkupStore, syncResponse (+1 more)
 
-### Community 29 - "Auth Primitives (TOTP/WebAuthn/Recovery)"
+### Community 28 - "Community 28"
 Cohesion: 0.18
 Nodes (7): IDTokenClaims, initResult, Provider, BuildRegistry(), TestBuildRegistry(), TestBuildRegistryCustomScopes(), ProviderConfig
 
-### Community 30 - "Food Resolver"
+### Community 29 - "Community 29"
+Cohesion: 0.18
+Nodes (8): newFakeStore(), TestRunFor_MissingDestinationErrors(), TestRunOnce_IgnoresIntervalGate(), TestTick_RunsWhenIntervalElapsed(), TestTick_SkipsDisabledOrUnconfigured(), TestTick_SkipsWhenNotYetDue(), fakeDest, fakeStore
+
+### Community 30 - "Community 30"
+Cohesion: 0.21
+Nodes (5): Destination, Runner, Store, WriteMealsCSV(), WriteRollupsCSV()
+
+### Community 31 - "Community 31"
 Cohesion: 0.27
 Nodes (8): cryptoRand5Digits(), GenerateRecoveryCodes(), TestGenerateRecoveryCodesCount(), TestGenerateRecoveryCodesFormat(), TestGenerateRecoveryCodesHashRoundtrip(), TestGenerateRecoveryCodesInvalidCount(), TestGenerateRecoveryCodesUniqueness(), RecoveryCodeRepo
 
-### Community 31 - "Core Domain Types"
+### Community 32 - "Community 32"
+Cohesion: 0.22
+Nodes (7): Embedder, FoodStore, Matcher, PrecedenceStore, Resolver, finalize(), Source
+
+### Community 33 - "Community 33"
 Cohesion: 0.2
 Nodes (1): fakeStore
 
-### Community 32 - "React UI Components"
-Cohesion: 0.24
-Nodes (6): Embedder, FoodStore, Matcher, Resolver, finalize(), Source
-
-### Community 33 - "Ollama Model Adapter"
+### Community 34 - "Community 34"
 Cohesion: 0.2
 Nodes (9): Command, MessagingAdapter, ModelAdapter, Notifier, NutritionSource, Parser, PendingStore, Store (+1 more)
 
-### Community 34 - "Open Food Facts Adapter"
+### Community 35 - "Community 35"
 Cohesion: 0.22
 Nodes (5): macrosSum(), NewTemplateCommand(), TemplateCommand, TemplateMealLogger, TemplateStore
 
-### Community 35 - "USDA Nutrition Adapter"
+### Community 36 - "Community 36"
 Cohesion: 0.22
 Nodes (5): Adapter, embedRequest, embedResponse, generateRequest, generateResponse
 
-### Community 36 - "React Route Pages"
+### Community 37 - "Community 37"
 Cohesion: 0.25
 Nodes (4): nutriments, product, searchResponse, Source
 
-### Community 37 - "Pending Store (Durable Queue)"
+### Community 38 - "Community 38"
 Cohesion: 0.25
 Nodes (5): food, foodNutrient, searchResponse, Source, extractMacros()
 
-### Community 39 - "React UI Components"
+### Community 39 - "Community 39"
+Cohesion: 0.28
+Nodes (9): Color System (OKLCH, Sage/Amber), Macro Color Hues, Macro Ring UI Component, Motion System (Framer Motion, Spring/Tick), Accessibility & Inclusion, Brand Personality, Design Principles, Alias Review UI (+1 more)
+
+### Community 42 - "Community 42"
 Cohesion: 0.36
 Nodes (1): Store
 
-### Community 40 - "React UI Components"
+### Community 43 - "Community 43"
 Cohesion: 0.25
 Nodes (4): NewStatusCommand(), pct(), StatusCommand, StatusStore
 
-### Community 41 - "Frontend Library Utilities"
+### Community 44 - "Community 44"
 Cohesion: 0.25
 Nodes (3): NewFoodCommand(), FoodCommand, FoodStore
 
-### Community 42 - "Ntfy Notifier Adapter"
+### Community 45 - "Community 45"
 Cohesion: 0.25
 Nodes (3): NewCancelCommand(), CancelCommand, PendingStore
 
-### Community 43 - "Design System & Brand Docs"
+### Community 46 - "Community 46"
 Cohesion: 0.29
 Nodes (4): priorityInt(), TestPriorityMapping(), message, Notifier
 
-### Community 46 - "Auth Primitives (TOTP/WebAuthn/Recovery)"
+### Community 48 - "Community 48"
 Cohesion: 0.38
 Nodes (4): dayFraction(), insights(), trend(), weeklyStats()
 
-### Community 47 - "Embedding Matcher"
+### Community 49 - "Community 49"
 Cohesion: 0.29
 Nodes (2): NewStartCommand(), StartCommand
 
-### Community 48 - "React UI Components"
+### Community 50 - "Community 50"
 Cohesion: 0.29
 Nodes (2): NewTimezoneCommand(), TimezoneCommand
 
-### Community 49 - "Whisper STT Adapter"
+### Community 51 - "Community 51"
 Cohesion: 0.29
 Nodes (3): NewWorkoutCommand(), WorkoutCommand, WorkoutStore
 
-### Community 50 - "USDA Nutrition Adapter"
+### Community 52 - "Community 52"
 Cohesion: 0.29
 Nodes (3): NewWeightCommand(), WeightCommand, WeightStore
 
-### Community 51 - "React Route Pages"
+### Community 53 - "Community 53"
 Cohesion: 0.29
 Nodes (3): NewWaterCommand(), WaterCommand, WaterStore
 
-### Community 52 - "In-Memory Message Queue"
+### Community 54 - "Community 54"
 Cohesion: 0.29
 Nodes (3): NewLinkCommand(), LinkCodeStore, LinkCommand
 
-### Community 53 - "In-Memory Message Queue"
+### Community 55 - "Community 55"
+Cohesion: 0.29
+Nodes (1): fakeStore
+
+### Community 56 - "Community 56"
 Cohesion: 0.33
 Nodes (3): Notifier, priorityString(), TestPriorityMapping()
 
-### Community 55 - "UI Icons"
+### Community 58 - "Community 58"
 Cohesion: 0.33
 Nodes (1): WebAuthnUser
 
-### Community 56 - "React UI Components"
+### Community 59 - "Community 59"
 Cohesion: 0.33
 Nodes (1): Matcher
 
-### Community 58 - "React UI Components"
-Cohesion: 0.4
-Nodes (1): fakeStore
-
-### Community 59 - "React UI Components"
-Cohesion: 0.4
+### Community 60 - "Community 60"
+Cohesion: 0.33
 Nodes (1): stubStore
 
-### Community 60 - "React UI Components"
+### Community 63 - "Community 63"
 Cohesion: 0.4
 Nodes (2): inferenceResponse, Provider
 
-### Community 62 - "React Route Pages"
+### Community 65 - "Community 65"
 Cohesion: 0.5
 Nodes (5): MULTI_USER (Product Deployment Mode), Users, Auth, MULTI_USER, Family/Household Multi-user Sharing
 
-### Community 64 - "React Route Pages"
+### Community 68 - "Community 68"
 Cohesion: 0.5
 Nodes (2): Memory, Queue
 
-### Community 76 - "React UI Components"
+### Community 70 - "Community 70"
+Cohesion: 0.5
+Nodes (1): Dest
+
+### Community 81 - "Community 81"
 Cohesion: 1.0
 Nodes (2): dayKey(), relativeDayLabel()
 
-### Community 77 - "React UI Components"
+### Community 82 - "Community 82"
 Cohesion: 0.67
 Nodes (1): notifierFactory
 
-### Community 78 - "React UI Components"
-Cohesion: 0.67
-Nodes (3): Health Platform Import/Export, weight.go, workout.go
-
-### Community 79 - "Frontend Library Utilities"
-Cohesion: 0.67
-Nodes (1): Configurable Nudge Rules
-
-### Community 102 - "Internal Module"
+### Community 107 - "Community 107"
 Cohesion: 1.0
 Nodes (2): STT Error Behaviour, STT Troubleshooting
 
-### Community 103 - "Internal Module"
-Cohesion: 1.0
-Nodes (2): Recipe / Multi-ingredient Composition, internal/commands/template.go
-
-### Community 104 - "Internal Module"
-Cohesion: 1.0
-Nodes (2): internal/scheduler/rules.go, Weekly/Monthly Digest Notification
-
-### Community 105 - "Internal Module"
-Cohesion: 1.0
-Nodes (2): ExportModal.tsx, Scheduled Data Export/Backup
-
-### Community 106 - "Internal Module"
-Cohesion: 1.0
-Nodes (1): Precedence UI
-
-### Community 127 - "Community 127"
+### Community 129 - "Community 129"
 Cohesion: 1.0
 Nodes (1): Typography (Plus Jakarta Sans)
 
-### Community 128 - "Community 128"
+### Community 130 - "Community 130"
 Cohesion: 1.0
 Nodes (1): Anti-references
 
-### Community 129 - "Community 129"
+### Community 131 - "Community 131"
+Cohesion: 1.0
+Nodes (1): Recipe / Multi-ingredient Composition
+
+### Community 132 - "Community 132"
+Cohesion: 1.0
+Nodes (1): Weekly/Monthly Digest Notification
+
+### Community 133 - "Community 133"
+Cohesion: 1.0
+Nodes (1): Health Platform Import/Export
+
+### Community 134 - "Community 134"
+Cohesion: 1.0
+Nodes (1): Configurable Nudge Rules
+
+### Community 135 - "Community 135"
+Cohesion: 1.0
+Nodes (1): Scheduled Data Export/Backup
+
+### Community 136 - "Community 136"
+Cohesion: 1.0
+Nodes (1): Precedence UI
+
+### Community 137 - "Community 137"
 Cohesion: 1.0
 Nodes (1): Group 2 — Food Logging & Resolution
 
-### Community 130 - "Community 130"
+### Community 138 - "Community 138"
 Cohesion: 1.0
 Nodes (1): Group 3 — Scheduler & Data Ops
 
 ## Knowledge Gaps
-- **196 isolated node(s):** `phraseEntry`, `RecoveryCodeRepo`, `TOTPRepo`, `MFAChallengeRepo`, `LoginAttemptRepo` (+191 more)
+- **208 isolated node(s):** `phraseEntry`, `RecoveryCodeRepo`, `TOTPRepo`, `MFAChallengeRepo`, `LoginAttemptRepo` (+203 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Email & MFA Auth Flow`** (60 nodes): `fakeMealStore`, `.AddFoodAlias()`, `.AddMealItem()`, `.ConsumeLinkingCode()`, `.CorrectMealItem()`, `.CreateLinkingCode()`, `.DeleteFoodAlias()`, `.DeleteMealItem()`, `.DeleteMeasurement()`, `.DeletePhoto()`, `.DeleteSleep()`, `.DeleteTemplate()`, `.DeleteWater()`, `.DeleteWeight()`, `.DeleteWorkout()`, `.EndFast()`, `.EndSleep()`, `.FrequentFoods()`, `.GetActiveFast()`, `.GetActiveSleep()`, `.GetFoodDetail()`, `.GetMeal()`, `.GetMealsInRange()`, `.GetPhotoData()`, `.GetProfile()`, `.GetRollup()`, `.GetRollups()`, `.GetTargets()`, `.GetTemplate()`, `.GetTemplates()`, `.GetUser()`, `.GetWaterToday()`, `.GetWorkout()`, `.LatestMealTime()`, `.ListFasts()`, `.ListFoods()`, `.ListMeasurements()`, `.ListPhotoMetadata()`, `.ListSleep()`, `.ListWeight()`, `.ListWorkouts()`, `.LogMeasurement()`, `.LogSleep()`, `.LogTemplateUse()`, `.LogWater()`, `.LogWeight()`, `.LogWorkout()`, `.LookupLinkingCode()`, `.LookupLinkingCodeAny()`, `.RecentMeals()`, `.SaveMeal()`, `.SaveTemplate()`, `.SearchFoods()`, `.SetTargets()`, `.StartFast()`, `.UpdateRollupTargets()`, `.UploadPhoto()`, `.UpsertProfile()`, `.UpsertUser()`, `.WeightTrend()`
+- **Thin community `Community 8`** (70 nodes): `fakeMealStore`, `.AddFoodAlias()`, `.AddMealItem()`, `.ConfirmPendingAlias()`, `.ConsumeLinkingCode()`, `.CorrectMealItem()`, `.CreateLinkingCode()`, `.DeleteFoodAlias()`, `.DeleteMealItem()`, `.DeleteMeasurement()`, `.DeletePhoto()`, `.DeleteSleep()`, `.DeleteTemplate()`, `.DeleteWater()`, `.DeleteWeight()`, `.DeleteWorkout()`, `.EndFast()`, `.EndSleep()`, `.FrequentFoods()`, `.GetActiveFast()`, `.GetActiveSleep()`, `.GetBackupConfig()`, `.GetFood()`, `.GetFoodDetail()`, `.GetMeal()`, `.GetMealsInRange()`, `.GetNudgeRuleConfig()`, `.GetPhotoData()`, `.GetProfile()`, `.GetRollup()`, `.GetRollups()`, `.GetSourcePrecedence()`, `.GetTargets()`, `.GetTemplate()`, `.GetTemplates()`, `.GetUser()`, `.GetWaterToday()`, `.GetWorkout()`, `.LatestMealTime()`, `.ListFasts()`, `.ListFoods()`, `.ListMeasurements()`, `.ListPendingAliases()`, `.ListPhotoMetadata()`, `.ListSleep()`, `.ListWeight()`, `.ListWorkouts()`, `.LogMeasurement()`, `.LogSleep()`, `.LogTemplateUse()`, `.LogWater()`, `.LogWeight()`, `.LogWorkout()`, `.LookupLinkingCode()`, `.LookupLinkingCodeAny()`, `.RecentMeals()`, `.RejectPendingAlias()`, `.SaveMeal()`, `.SaveTemplate()`, `.SearchFoods()`, `.SetBackupConfig()`, `.SetNudgeRuleConfig()`, `.SetSourcePrecedence()`, `.SetTargets()`, `.StartFast()`, `.UpdateRollupTargets()`, `.UploadPhoto()`, `.UpsertProfile()`, `.UpsertUser()`, `.WeightTrend()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Scheduler & Notifications`** (55 nodes): `fakeAuthStore`, `.ConfirmTOTP()`, `.ConsumeEmailToken()`, `.ConsumeOIDCState()`, `.ConsumeRecoveryCode()`, `.ConsumeWebAuthnSession()`, `.CountUsers()`, `.CreateEmailToken()`, `.CreateMFAChallenge()`, `.CreateOIDCState()`, `.CreateSession()`, `.CreateWebAuthnCredential()`, `.CreateWebAuthnSession()`, `.DeleteEmailTokensByUserAndPurpose()`, `.DeleteMagicCode()`, `.DeleteMFAChallenge()`, `.DeleteMFAEmailCode()`, `.DeleteOIDCIdentity()`, `.DeleteOIDCState()`, `.DeleteSession()`, `.DeleteTOTP()`, `.DeleteUserSessions()`, `.DeleteWebAuthnCredential()`, `.GetMagicCode()`, `.GetMFAChallenge()`, `.GetMFAEmailCode()`, `.GetOrCreateWebAuthnHandle()`, `.GetPasswordHash()`, `.GetSession()`, `.GetTOTPSecret()`, `.GetUserByAPIKey()`, `.GetUserByEmail()`, `.GetUserByOIDCIdentity()`, `.GetUserByWebAuthnHandle()`, `.GetWebAuthnCredentialsRaw()`, `.HasConfirmedTOTP()`, `.IncrementMagicCodeAttempts()`, `.IncrementMFAEmailCodeAttempts()`, `.LinkOIDCIdentity()`, `.ListAPIKeys()`, `.ListOIDCIdentities()`, `.ListWebAuthnCredentials()`, `.MarkEmailVerified()`, `.RecentFailedAttempts()`, `.RenameWebAuthnCredential()`, `.ReplaceRecoveryCodes()`, `.RevokeAPIKey()`, `.SetPasswordHash()`, `.TouchSession()`, `.UpdateUserEmail()`, `.UpdateWebAuthnCredentialOnAuth()`, `.UpsertMagicCode()`, `.UpsertMFAEmailCode()`, `.UpsertTOTPSecret()`, `.WriteAuditEvent()`
+- **Thin community `Community 9`** (55 nodes): `fakeAuthStore`, `.ConfirmTOTP()`, `.ConsumeEmailToken()`, `.ConsumeOIDCState()`, `.ConsumeRecoveryCode()`, `.ConsumeWebAuthnSession()`, `.CountUsers()`, `.CreateEmailToken()`, `.CreateMFAChallenge()`, `.CreateOIDCState()`, `.CreateSession()`, `.CreateWebAuthnCredential()`, `.CreateWebAuthnSession()`, `.DeleteEmailTokensByUserAndPurpose()`, `.DeleteMagicCode()`, `.DeleteMFAChallenge()`, `.DeleteMFAEmailCode()`, `.DeleteOIDCIdentity()`, `.DeleteOIDCState()`, `.DeleteSession()`, `.DeleteTOTP()`, `.DeleteUserSessions()`, `.DeleteWebAuthnCredential()`, `.GetMagicCode()`, `.GetMFAChallenge()`, `.GetMFAEmailCode()`, `.GetOrCreateWebAuthnHandle()`, `.GetPasswordHash()`, `.GetSession()`, `.GetTOTPSecret()`, `.GetUserByAPIKey()`, `.GetUserByEmail()`, `.GetUserByOIDCIdentity()`, `.GetUserByWebAuthnHandle()`, `.GetWebAuthnCredentialsRaw()`, `.HasConfirmedTOTP()`, `.IncrementMagicCodeAttempts()`, `.IncrementMFAEmailCodeAttempts()`, `.LinkOIDCIdentity()`, `.ListAPIKeys()`, `.ListOIDCIdentities()`, `.ListWebAuthnCredentials()`, `.MarkEmailVerified()`, `.RecentFailedAttempts()`, `.RenameWebAuthnCredential()`, `.ReplaceRecoveryCodes()`, `.RevokeAPIKey()`, `.SetPasswordHash()`, `.TouchSession()`, `.UpdateUserEmail()`, `.UpdateWebAuthnCredentialOnAuth()`, `.UpsertMagicCode()`, `.UpsertMFAEmailCode()`, `.UpsertTOTPSecret()`, `.WriteAuditEvent()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Core Domain Types`** (10 nodes): `fakeStore`, `.GetRollup()`, `.GetTargets()`, `.GetUser()`, `.GetUserIDByChannel()`, `.MapChannelUser()`, `.SaveMeal()`, `.SetTargets()`, `.UpsertRollup()`, `.UpsertUser()`
+- **Thin community `Community 33`** (10 nodes): `fakeStore`, `.GetRollup()`, `.GetTargets()`, `.GetUser()`, `.GetUserIDByChannel()`, `.MapChannelUser()`, `.SaveMeal()`, `.SetTargets()`, `.UpsertRollup()`, `.UpsertUser()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (8 nodes): `pendingstore.go`, `New()`, `Store`, `.Delete()`, `.deleteRow()`, `.expired()`, `.Get()`, `.Save()`
+- **Thin community `Community 42`** (8 nodes): `pendingstore.go`, `New()`, `Store`, `.Delete()`, `.deleteRow()`, `.expired()`, `.Get()`, `.Save()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Embedding Matcher`** (7 nodes): `NewStartCommand()`, `StartCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `start.go`
+- **Thin community `Community 49`** (7 nodes): `NewStartCommand()`, `StartCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `start.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (7 nodes): `NewTimezoneCommand()`, `TimezoneCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `timezone.go`
+- **Thin community `Community 50`** (7 nodes): `NewTimezoneCommand()`, `TimezoneCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `timezone.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `UI Icons`** (6 nodes): `WebAuthnUser`, `.WebAuthnCredentials()`, `.WebAuthnDisplayName()`, `.WebAuthnIcon()`, `.WebAuthnID()`, `.WebAuthnName()`
+- **Thin community `Community 55`** (7 nodes): `fakeStore`, `.AddPendingAlias()`, `.GetFood()`, `.GetSourcePrecedence()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (6 nodes): `New()`, `Matcher`, `.EmbedFood()`, `.Match()`, `.SetThreshold()`, `embedding.go`
+- **Thin community `Community 58`** (6 nodes): `WebAuthnUser`, `.WebAuthnCredentials()`, `.WebAuthnDisplayName()`, `.WebAuthnIcon()`, `.WebAuthnID()`, `.WebAuthnName()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (5 nodes): `fakeStore`, `.GetFood()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
+- **Thin community `Community 59`** (6 nodes): `New()`, `Matcher`, `.EmbedFood()`, `.Match()`, `.SetThreshold()`, `embedding.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (5 nodes): `stubStore`, `.GetFood()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
+- **Thin community `Community 60`** (6 nodes): `stubStore`, `.AddPendingAlias()`, `.GetFood()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (5 nodes): `whisper.go`, `inferenceResponse`, `Provider`, `.Transcribe()`, `New()`
+- **Thin community `Community 63`** (5 nodes): `whisper.go`, `inferenceResponse`, `Provider`, `.Transcribe()`, `New()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React Route Pages`** (4 nodes): `queue.go`, `Memory`, `Queue`, `NewMemory()`
+- **Thin community `Community 68`** (4 nodes): `queue.go`, `Memory`, `Queue`, `NewMemory()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (3 nodes): `dayKey()`, `relativeDayLabel()`, `History.tsx`
+- **Thin community `Community 70`** (4 nodes): `s3dest.go`, `Dest`, `.Write()`, `New()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React UI Components`** (3 nodes): `TestNotifierContract()`, `notifierFactory`, `notifier_test.go`
+- **Thin community `Community 81`** (3 nodes): `dayKey()`, `relativeDayLabel()`, `History.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Frontend Library Utilities`** (3 nodes): `Configurable Nudge Rules`, `scheduler.DefaultHealthRules()`, `scheduler.DefaultRules()`
+- **Thin community `Community 82`** (3 nodes): `TestNotifierContract()`, `notifierFactory`, `notifier_test.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Internal Module`** (2 nodes): `STT Error Behaviour`, `STT Troubleshooting`
+- **Thin community `Community 107`** (2 nodes): `STT Error Behaviour`, `STT Troubleshooting`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Internal Module`** (2 nodes): `Recipe / Multi-ingredient Composition`, `internal/commands/template.go`
+- **Thin community `Community 129`** (1 nodes): `Typography (Plus Jakarta Sans)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Internal Module`** (2 nodes): `internal/scheduler/rules.go`, `Weekly/Monthly Digest Notification`
+- **Thin community `Community 130`** (1 nodes): `Anti-references`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Internal Module`** (2 nodes): `ExportModal.tsx`, `Scheduled Data Export/Backup`
+- **Thin community `Community 131`** (1 nodes): `Recipe / Multi-ingredient Composition`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Internal Module`** (2 nodes): `Precedence UI`, `resolver.New()`
+- **Thin community `Community 132`** (1 nodes): `Weekly/Monthly Digest Notification`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 127`** (1 nodes): `Typography (Plus Jakarta Sans)`
+- **Thin community `Community 133`** (1 nodes): `Health Platform Import/Export`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 128`** (1 nodes): `Anti-references`
+- **Thin community `Community 134`** (1 nodes): `Configurable Nudge Rules`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 129`** (1 nodes): `Group 2 — Food Logging & Resolution`
+- **Thin community `Community 135`** (1 nodes): `Scheduled Data Export/Backup`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 130`** (1 nodes): `Group 3 — Scheduler & Data Ops`
+- **Thin community `Community 136`** (1 nodes): `Precedence UI`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 137`** (1 nodes): `Group 2 — Food Logging & Resolution`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 138`** (1 nodes): `Group 3 — Scheduler & Data Ops`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `New()` connect `Food Parser (Deterministic & LLM)` to `Data Store Layer`, `Bot Commands`, `React Components & Hooks`, `Fasting Commands`, `Scheduler & Notifications`, `Food Parser (Deterministic & LLM)`, `Parse Pipeline Engine`, `i18n & Localization`, `Discord Messaging Adapter`, `React Components & Hooks`, `React Components & Hooks`?**
-  _High betweenness centrality (0.190) - this node is a cross-community bridge._
-- **Why does `now()` connect `Data Store Layer` to `Data Store Layer`, `Food Parser (Deterministic & LLM)`, `Store Module`, `i18n & Localization`, `Telegram Messaging Adapter`, `Matrix Messaging Adapter`, `React Route Pages`, `Frontend Library Utilities`?**
-  _High betweenness centrality (0.107) - this node is a cross-community bridge._
-- **Why does `run()` connect `Food Parser (Deterministic & LLM)` to `Data Store Layer`, `Open Food Facts Adapter`, `React Components & Hooks`, `Fasting Commands`, `React UI Components`, `Frontend Library Utilities`, `Ntfy Notifier Adapter`, `Core Domain Types`, `UI Icons`, `Embedding Matcher`, `Parse Pipeline Engine`, `React UI Components`, `USDA Nutrition Adapter`, `Discord Messaging Adapter`, `In-Memory Message Queue`, `React Route Pages`, `Whisper STT Adapter`, `Auth Primitives (TOTP/WebAuthn/Recovery)`?**
-  _High betweenness centrality (0.103) - this node is a cross-community bridge._
-- **Are the 123 inferred relationships involving `New()` (e.g. with `run()` and `buildModelAndIndex()`) actually correct?**
-  _`New()` has 123 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `New()` connect `Community 2` to `Community 0`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 9`, `Community 14`, `Community 16`, `Community 18`, `Community 19`, `Community 20`, `Community 29`?**
+  _High betweenness centrality (0.230) - this node is a cross-community bridge._
+- **Why does `run()` connect `Community 2` to `Community 0`, `Community 35`, `Community 4`, `Community 6`, `Community 7`, `Community 43`, `Community 44`, `Community 45`, `Community 13`, `Community 49`, `Community 18`, `Community 50`, `Community 52`, `Community 53`, `Community 54`, `Community 51`, `Community 28`?**
+  _High betweenness centrality (0.127) - this node is a cross-community bridge._
+- **Why does `now()` connect `Community 0` to `Community 1`, `Community 2`, `Community 13`, `Community 14`, `Community 15`, `Community 16`, `Community 21`, `Community 24`, `Community 25`, `Community 27`?**
+  _High betweenness centrality (0.085) - this node is a cross-community bridge._
+- **Are the 141 inferred relationships involving `New()` (e.g. with `run()` and `buildModelAndIndex()`) actually correct?**
+  _`New()` has 141 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 2 inferred relationships involving `Handler` (e.g. with `run()` and `TestHandlerServesSPA()`) actually correct?**
   _`Handler` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 98 inferred relationships involving `now()` (e.g. with `TestCreateSession()` and `TestValidateSessionExpiredAbsolute()`) actually correct?**
