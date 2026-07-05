@@ -29,6 +29,9 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup/localdisk"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup/s3dest"
 	"github.com/gsaraiva2109/dietdaemon/internal/commands"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
@@ -227,6 +230,29 @@ func run() error {
 		slog.Info("scheduler running", "interval", nudgeInterval.String())
 	}
 
+	// Scheduled backup/export: an independent background loop (separate from
+	// the nudge scheduler above). The "local" destination only exists when an
+	// operator sets BACKUP_LOCAL_DIR; "s3" uses the ambient AWS credential
+	// chain and per-user bucket/prefix/region/endpoint, so it's always wired
+	// up (whether any user actually picks it is a per-user setting).
+	var localDst backup.Destination
+	if cfg.BackupLocalDir != "" {
+		ld, err := localdisk.New(cfg.BackupLocalDir)
+		if err != nil {
+			return fmt.Errorf("backup: local destination: %w", err)
+		}
+		localDst = ld
+	}
+	var s3Dst backup.Destination
+	if sd, err := s3dest.New(ctx); err != nil {
+		slog.Warn("backup: s3 destination unavailable", "err", err)
+	} else {
+		s3Dst = sd
+	}
+	backupRunner := backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval)
+	go backupRunner.Run(ctx)
+	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
+
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
 		authCfg := api.AuthConfig{
@@ -272,7 +298,7 @@ func run() error {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

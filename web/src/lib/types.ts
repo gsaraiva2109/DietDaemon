@@ -54,6 +54,21 @@ export interface DailyRollup {
   Targets: Macros
 }
 
+// BackupConfig is a user's scheduled backup/export settings. LastRunAt is
+// Go's zero time ("0001-01-01T00:00:00Z") when it has never run.
+export interface BackupConfig {
+  UserID: string
+  Enabled: boolean
+  Destination: 'local' | 's3'
+  LocalSubdir: string
+  S3Bucket: string
+  S3Prefix: string
+  S3Region: string
+  S3Endpoint: string
+  IntervalHrs: number
+  LastRunAt: string
+}
+
 // The five macros we render, in display order. Keyed to DESIGN.md macro hues.
 export const MACRO_KEYS = ['Calories', 'Protein', 'Carbs', 'Fat', 'Fiber'] as const
 export type MacroKey = (typeof MACRO_KEYS)[number]

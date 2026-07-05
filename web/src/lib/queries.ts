@@ -30,6 +30,7 @@ import {
   DEMO_PRECEDENCE,
 } from './demo'
 import type {
+  BackupConfig,
   DailyRollup,
   FoodDetail,
   Macros,
@@ -770,6 +771,30 @@ export function useDeletePasskey() {
   return useMutation({
     mutationFn: (id: string) => api.auth.passkeys.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'passkeys'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled backup
+// ---------------------------------------------------------------------------
+
+export function useBackupConfig() {
+  return useQuery({ queryKey: ['backup', 'config'], queryFn: () => api.backup.get() })
+}
+
+export function useSetBackupConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (cfg: BackupConfig) => api.backup.set(cfg),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup', 'config'] }),
+  })
+}
+
+export function useRunBackupNow() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.backup.runNow(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup', 'config'] }),
   })
 }
 

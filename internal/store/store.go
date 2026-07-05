@@ -16,6 +16,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup"
 	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/migrations"
@@ -35,6 +36,7 @@ var (
 	_ scheduler.NudgeStore      = (*Store)(nil)
 	_ scheduler.RuleConfigStore = (*Store)(nil)
 	_ scheduler.DigestStore     = (*Store)(nil)
+	_ backup.Store              = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and
@@ -1062,6 +1064,76 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
 		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
 	)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Backup / scheduled export
+// ---------------------------------------------------------------------------
+
+// GetBackupConfig returns a user's backup settings, or types.ErrNotFound when
+// none has been configured (callers treat "not found" as "disabled").
+func (s *Store) GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error) {
+	const q = `
+		SELECT user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs, last_run_at
+		FROM backup_config WHERE user_id = ?
+	`
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
+
+	var cfg types.BackupConfig
+	var enabled int
+	var localSubdir, s3Bucket, s3Prefix, s3Region, s3Endpoint, lastRunAt sql.NullString
+	err := row.Scan(&cfg.UserID, &enabled, &cfg.Destination, &localSubdir,
+		&s3Bucket, &s3Prefix, &s3Region, &s3Endpoint, &cfg.IntervalHrs, &lastRunAt,
+	)
+	if err == sql.ErrNoRows {
+		return types.BackupConfig{}, types.ErrNotFound
+	}
+	if err != nil {
+		return types.BackupConfig{}, fmt.Errorf("store: get backup config: %w", err)
+	}
+	cfg.Enabled = enabled != 0
+	cfg.LocalSubdir = localSubdir.String
+	cfg.S3Bucket = s3Bucket.String
+	cfg.S3Prefix = s3Prefix.String
+	cfg.S3Region = s3Region.String
+	cfg.S3Endpoint = s3Endpoint.String
+	if lastRunAt.Valid && lastRunAt.String != "" {
+		cfg.LastRunAt = parseUTC(lastRunAt.String)
+	}
+	return cfg, nil
+}
+
+// SetBackupConfig inserts or replaces a user's backup settings.
+func (s *Store) SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error {
+	enabled := 0
+	if cfg.Enabled {
+		enabled = 1
+	}
+	const q = `
+		INSERT INTO backup_config
+			(user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			enabled      = excluded.enabled,
+			destination  = excluded.destination,
+			local_subdir = excluded.local_subdir,
+			s3_bucket    = excluded.s3_bucket,
+			s3_prefix    = excluded.s3_prefix,
+			s3_region    = excluded.s3_region,
+			s3_endpoint  = excluded.s3_endpoint,
+			interval_hrs = excluded.interval_hrs
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), cfg.UserID, enabled, cfg.Destination,
+		cfg.LocalSubdir, cfg.S3Bucket, cfg.S3Prefix, cfg.S3Region, cfg.S3Endpoint, cfg.IntervalHrs,
+	)
+	return err
+}
+
+// SetBackupLastRun records when a user's backup last completed.
+func (s *Store) SetBackupLastRun(ctx context.Context, userID string, t time.Time) error {
+	const q = `UPDATE backup_config SET last_run_at = ? WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(t), userID)
 	return err
 }
 

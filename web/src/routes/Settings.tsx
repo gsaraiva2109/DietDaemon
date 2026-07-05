@@ -138,6 +138,7 @@ export function Settings() {
           hint="Choose which source is tried first"
         />
         <RowLink to="/settings/nudges" Icon={ClockIcon} label="Nudges" hint="Macro, health & digest reminders" />
+        <RowLink to="/settings/backup" Icon={ClockIcon} label="Backup" hint="Scheduled export to local disk or S3" />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"

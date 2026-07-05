@@ -297,16 +297,16 @@ type NudgeRuleConfig struct {
 
 // BackupConfig is a per-user scheduled backup/export setting, local disk or S3.
 type BackupConfig struct {
-	UserID      string    `json:"user_id"`
-	Enabled     bool      `json:"enabled"`
-	Destination string    `json:"destination"` // "local" | "s3"
-	LocalSubdir string    `json:"local_subdir"`
-	S3Bucket    string    `json:"s3_bucket"`
-	S3Prefix    string    `json:"s3_prefix"`
-	S3Region    string    `json:"s3_region"`
-	S3Endpoint  string    `json:"s3_endpoint"`
-	IntervalHrs int       `json:"interval_hrs"`
-	LastRunAt   time.Time `json:"last_run_at"`
+	UserID      string
+	Enabled     bool
+	Destination string // "local" | "s3"
+	LocalSubdir string
+	S3Bucket    string
+	S3Prefix    string
+	S3Region    string
+	S3Endpoint  string
+	IntervalHrs int
+	LastRunAt   time.Time
 }
 
 // ---------------------------------------------------------------------------
