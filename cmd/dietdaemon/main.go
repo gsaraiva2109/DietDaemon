@@ -199,6 +199,10 @@ func run() error {
 		return fmt.Errorf("register template command: %w", err)
 	}
 
+	if err := cmdRegistry.Register(commands.NewCorrectCommand(st, res)); err != nil {
+		return fmt.Errorf("register correct command: %w", err)
+	}
+
 	var notifier ports.Notifier
 	if cfg.EnableNotifications {
 		notifier, err = buildNotifier(cfg)

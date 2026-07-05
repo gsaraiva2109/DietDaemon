@@ -40,6 +40,7 @@
   "cmd.template.logged": "Template \"{{.Name}}\" registrado: {{.Kcal}} kcal | P {{.Protein}}g · C {{.Carbs}}g · G {{.Fat}}g",
   "cmd.template.not_found": "Template não encontrado: {{.Name}}",
   "cmd.food.usage": "Uso: /food <busca> — pesquisa sua biblioteca de alimentos\n/food recent — mostra alimentos frequentes",
+  "cmd.correct.usage": "Uso: /correct <índiceDoItem> <gramas>g <frase> — corrige um item da refeição mais recente\nExemplo: /correct 0 150g peito de frango grelhado",
   "cmd.food.no_results": "Nenhum alimento encontrado para \"{{.Query}}\".",
   "cmd.food.recent": "🕐 Frequentes:",
   "cmd.food.detail": "{{.Name}}\n{{.Kcal}} kcal | P {{.Protein}}g · C {{.Carbs}}g · G {{.Fat}}g por 100g{{if .Brand}}\nMarca: {{.Brand}}{{end}}{{if .Category}}\nCategoria: {{.Category}}{{end}}",

@@ -40,6 +40,7 @@
   "cmd.template.logged": "Logged template \"{{.Name}}\": {{.Kcal}} kcal | P {{.Protein}}g · C {{.Carbs}}g · F {{.Fat}}g",
   "cmd.template.not_found": "Template not found: {{.Name}}",
   "cmd.food.usage": "Usage: /food <query> — search your food library\n/food recent — show frequently used foods",
+  "cmd.correct.usage": "Usage: /correct <itemIndex> <grams>g <phrase> — fix an item on your most recent meal\nExample: /correct 0 150g grilled chicken breast",
   "cmd.food.no_results": "No foods found for \"{{.Query}}\".",
   "cmd.food.recent": "🕐 Frequently used:",
   "cmd.food.detail": "{{.Name}}\n{{.Kcal}} kcal | P {{.Protein}}g · C {{.Carbs}}g · F {{.Fat}}g per 100g{{if .Brand}}\nBrand: {{.Brand}}{{end}}{{if .Category}}\nCategory: {{.Category}}{{end}}",
