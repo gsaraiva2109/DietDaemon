@@ -4,7 +4,7 @@
 // a drag-and-drop dependency. A settings sub-page, mirrors Settings.tsx's
 // local-draft-then-save pattern for targets.
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useDemo } from '@/lib/demo'
@@ -25,9 +25,13 @@ export function SourcePrecedence() {
 
   // Drop the local draft whenever the server value moves underneath us (after
   // a successful save, or a demo-mode toggle), so "dirty" reflects reality.
-  useEffect(() => {
+  // Adjusted during render (React's documented pattern) rather than an
+  // effect, since setting state synchronously in an effect double-renders.
+  const [prevData, setPrevData] = useState(data)
+  if (data !== prevData) {
+    setPrevData(data)
     setDraft(null)
-  }, [data])
+  }
 
   function move(index: number, dir: -1 | 1) {
     const j = index + dir

@@ -2,7 +2,7 @@
 // or S3), set the interval, and a manual "run now" trigger. A settings
 // sub-page, same shape as Aliases.tsx / Security.tsx (back link + PageHeader).
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useBackupConfig, useSetBackupConfig, useRunBackupNow } from '@/lib/queries'
@@ -43,9 +43,13 @@ export function BackupSettings() {
   const values = draft ?? server
 
   // Reset the draft whenever fresh server data lands (e.g. after a save).
-  useEffect(() => {
-    if (query.data) setDraft(null)
-  }, [query.data])
+  // Adjusting state during render (React's documented pattern) instead of an
+  // effect, since setting state synchronously in an effect double-renders.
+  const [prevData, setPrevData] = useState(query.data)
+  if (query.data && query.data !== prevData) {
+    setPrevData(query.data)
+    setDraft(null)
+  }
 
   function set<K extends keyof BackupConfig>(key: K, value: BackupConfig[K]) {
     setDraft({ ...values, [key]: value })
