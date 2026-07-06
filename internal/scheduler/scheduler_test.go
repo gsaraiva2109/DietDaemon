@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -525,8 +527,10 @@ func TestRuleConfigMissingOverrideRunsDefault(t *testing.T) {
 // --- Weekly digest tests ---
 
 type fakeDigestStore struct {
-	rollups []types.DailyRollup
-	weights []types.WeightEntry
+	rollups     []types.DailyRollup
+	weights     []types.WeightEntry
+	waterTotals []types.WaterDayTotal
+	workouts    []types.Workout
 }
 
 func (f *fakeDigestStore) GetRollups(_ context.Context, _, _, _ string) ([]types.DailyRollup, error) {
@@ -534,6 +538,12 @@ func (f *fakeDigestStore) GetRollups(_ context.Context, _, _, _ string) ([]types
 }
 func (f *fakeDigestStore) ListWeight(_ context.Context, _ string, _ int) ([]types.WeightEntry, error) {
 	return f.weights, nil
+}
+func (f *fakeDigestStore) GetWaterDailyTotals(_ context.Context, _, _, _ string) ([]types.WaterDayTotal, error) {
+	return f.waterTotals, nil
+}
+func (f *fakeDigestStore) ListWorkoutsInRange(_ context.Context, _, _, _ string) ([]types.Workout, error) {
+	return f.workouts, nil
 }
 
 func TestWeeklyDigestFiresOnceThenDedupesSameISOWeek(t *testing.T) {
@@ -596,6 +606,118 @@ func TestWeeklyDigestDisabledOverrideSkips(t *testing.T) {
 	}
 }
 
+func TestWeeklyDigestMentionsMissedWaterDay(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{
+		rollups: []types.DailyRollup{
+			{Date: "2026-06-15", Consumed: types.Macros{Calories: 2000, Protein: 150}, Targets: types.Macros{Calories: 2200}},
+			{Date: "2026-06-16", Consumed: types.Macros{Calories: 1800, Protein: 120}, Targets: types.Macros{Calories: 2200}},
+		},
+		weights: []types.WeightEntry{{WeightKg: 80}, {WeightKg: 79.5}},
+		waterTotals: []types.WaterDayTotal{
+			{Date: "2026-06-15", TotalML: 1500}, // under 2000ml
+			{Date: "2026-06-16", TotalML: 2500}, // fine
+		},
+	}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 1 {
+		t.Fatalf("digest sent = %d, want 1", len(nt.sent))
+	}
+	if !strings.Contains(nt.sent[0].Body, "under 2000ml") {
+		t.Errorf("digest body should mention missed-water day, got: %q", nt.sent[0].Body)
+	}
+}
+
+// --- Chat delivery tests ---
+
+type fakeChatRouteStore struct {
+	routes map[string]string // userID -> channel; "" meta always {"chat_id": userID+"-chat"}
+}
+
+func (f *fakeChatRouteStore) GetChatRoute(_ context.Context, userID string) (string, map[string]string, error) {
+	channel, ok := f.routes[userID]
+	if !ok {
+		return "", nil, types.ErrNotFound
+	}
+	return channel, map[string]string{"chat_id": userID + "-chat"}, nil
+}
+
+type fakeChatSender struct {
+	sent    []types.Reply
+	sendErr error
+}
+
+func (f *fakeChatSender) Send(_ context.Context, reply types.Reply) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, reply)
+	return nil
+}
+
+func TestDeliverPrefersChatWhenRouteExists(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nt := &fakeNotifier{}
+	routes := &fakeChatRouteStore{routes: map[string]string{"u1": "telegram"}}
+	sender := &fakeChatSender{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithChatSender(routes, sender))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("chat sends = %d, want 1", len(sender.sent))
+	}
+	if len(nt.sent) != 0 {
+		t.Errorf("notifier should not be used when chat delivery succeeds, sent %d", len(nt.sent))
+	}
+}
+
+func TestDeliverFallsBackToNotifierWhenNoRoute(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nt := &fakeNotifier{}
+	routes := &fakeChatRouteStore{routes: map[string]string{}} // no route for u1
+	sender := &fakeChatSender{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithChatSender(routes, sender))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 1 {
+		t.Errorf("notifier sends = %d, want 1 (fallback)", len(nt.sent))
+	}
+	if len(sender.sent) != 0 {
+		t.Errorf("chat sender should not be used without a route, sent %d", len(sender.sent))
+	}
+}
+
+func TestDeliverFallsBackToNotifierOnChatSendError(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nt := &fakeNotifier{}
+	routes := &fakeChatRouteStore{routes: map[string]string{"u1": "telegram"}}
+	sender := &fakeChatSender{sendErr: errors.New("boom")}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithChatSender(routes, sender))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 1 {
+		t.Errorf("notifier sends = %d, want 1 (fallback on chat error)", len(nt.sent))
+	}
+}
+
 // --- Production wiring test ---
 //
 // fakeFullStore satisfies every scheduler collaborator interface in one
@@ -611,6 +733,7 @@ type fakeFullStore struct {
 	*fakeHealthStore
 	*fakeRuleConfigStore
 	*fakeDigestStore
+	*fakeChatRouteStore
 }
 
 func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
@@ -624,14 +747,17 @@ func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
 		fakeHealthStore:     &fakeHealthStore{waterToday: 0}, // below every water threshold
 		fakeRuleConfigStore: &fakeRuleConfigStore{},
 		fakeDigestStore:     &fakeDigestStore{},
+		fakeChatRouteStore:  &fakeChatRouteStore{routes: map[string]string{}}, // no route: falls back to notifier
 	}
 	nt := &fakeNotifier{}
+	sender := &fakeChatSender{}
 
 	// Same call shape as cmd/dietdaemon/main.go's scheduler.New(...).
 	sched := New(full, full, nt, DefaultRules(), time.UTC, time.Minute,
 		WithHealthRules(full, DefaultHealthRules()),
 		WithRuleConfig(full),
 		WithDigestRules(full, DefaultDigestRules()),
+		WithChatSender(full, sender),
 	)
 
 	afternoon := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
@@ -647,6 +773,118 @@ func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("health rules did not fire through the production scheduler.New(...) construction path")
+	}
+}
+
+// --- Phase 7: quick-action buttons ---
+
+type fakeSentNudgeStore struct {
+	recorded []types.SentNudge
+}
+
+func (f *fakeSentNudgeStore) RecordSentNudge(_ context.Context, n types.SentNudge) error {
+	f.recorded = append(f.recorded, n)
+	return nil
+}
+
+func TestWaterRuleQuickActionInMarkup(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 100}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 0}},
+	}
+	hs := &fakeHealthStore{waterToday: 0} // below 500ml threshold
+	nd := newFakeNudges()
+	nt := &fakeNotifier{}
+	routes := &fakeChatRouteStore{routes: map[string]string{"u1": "telegram"}}
+	sender := &fakeChatSender{}
+	sns := &fakeSentNudgeStore{}
+
+	hr := DefaultHealthRules()
+	s := New(st, nd, nt, nil, time.UTC, time.Minute,
+		WithHealthRules(hs, hr),
+		WithChatSender(routes, sender),
+		WithSentNudges(sns),
+	)
+
+	afternoon := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), afternoon)
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("chat sends = %d, want 1", len(sender.sent))
+	}
+	markup := sender.sent[0].Markup
+	if markup == nil {
+		t.Fatal("expected markup on chat reply")
+	}
+	if len(markup.InlineKeyboard) != 1 {
+		t.Fatalf("inline keyboard rows = %d, want 1", len(markup.InlineKeyboard))
+	}
+	buttons := markup.InlineKeyboard[0]
+
+	// Water rule should get water quick action + Undo button.
+	hasWater := false
+	hasUndo := false
+	for _, btn := range buttons {
+		if btn.Text == "Log 500ml water" && btn.CallbackData == "/water 500" {
+			hasWater = true
+		}
+		if strings.Contains(btn.CallbackData, "/nudge undo ") {
+			hasUndo = true
+		}
+	}
+	if !hasWater {
+		t.Error("expected water quick-action button in markup")
+	}
+	if !hasUndo {
+		t.Error("expected Undo button in markup")
+	}
+}
+
+func TestMacroRuleUndoOnlyMarkup(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}}, // behind on protein
+	}
+	nd := newFakeNudges()
+	nt := &fakeNotifier{}
+	routes := &fakeChatRouteStore{routes: map[string]string{"u1": "telegram"}}
+	sender := &fakeChatSender{}
+	sns := &fakeSentNudgeStore{}
+
+	s := New(st, nd, nt, proteinRule(), time.UTC, time.Minute,
+		WithChatSender(routes, sender),
+		WithSentNudges(sns),
+	)
+
+	evening := time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), evening)
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("chat sends = %d, want 1", len(sender.sent))
+	}
+	markup := sender.sent[0].Markup
+	if markup == nil {
+		t.Fatal("expected markup on chat reply")
+	}
+	if len(markup.InlineKeyboard) != 1 {
+		t.Fatalf("inline keyboard rows = %d, want 1", len(markup.InlineKeyboard))
+	}
+	buttons := markup.InlineKeyboard[0]
+
+	// Macro rule should get Undo button only — no default quick action.
+	hasUndo := false
+	for _, btn := range buttons {
+		if strings.Contains(btn.CallbackData, "/nudge undo ") {
+			hasUndo = true
+		}
+		if btn.Text == "Log 500ml water" {
+			t.Error("macro rule should NOT get water quick-action button")
+		}
+	}
+	if !hasUndo {
+		t.Error("expected Undo button in macro-rule markup")
 	}
 }
 

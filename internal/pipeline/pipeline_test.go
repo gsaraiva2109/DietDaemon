@@ -95,6 +95,9 @@ func (s *fakeStore) MapChannelUser(_ context.Context, channel, channelUserID, us
 	s.channels[channel+":"+channelUserID] = userID
 	return nil
 }
+func (s *fakeStore) UpsertChatRoute(_ context.Context, _, _ string, _ map[string]string) error {
+	return nil
+}
 
 type fakeReplier struct{ sent []types.Reply }
 

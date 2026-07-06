@@ -19,6 +19,7 @@ import (
 	gowa "github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/adherence"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
@@ -307,6 +308,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/meals/log", h.wrap(h.handleLogMeal))
 	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
 	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
+	mux.HandleFunc("GET /api/v1/budget/weekly", h.wrap(h.handleGetBudgetWeekly))
 	mux.HandleFunc("GET /api/v1/settings/nudges", h.wrap(h.handleGetNudgeSettings))
 	mux.HandleFunc("PUT /api/v1/settings/nudges", h.wrap(h.handleSetNudgeSettings))
 
@@ -446,6 +448,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/finish", h.wrapPublic(h.handleMFAPasskeyFinish))
 	mux.HandleFunc("POST /api/v1/auth/mfa/email/send", h.wrapPublic(h.handleMFAEmailSend))
 	mux.HandleFunc("POST /api/v1/auth/mfa/email/verify", h.wrapPublic(h.handleMFAEmailVerify))
+
+	// Adherence streak.
+	mux.HandleFunc("GET /api/v1/streak", h.wrap(h.handleStreak))
 
 	// Bot account linking.
 	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))
@@ -727,6 +732,18 @@ func buildNudgeRuleView[T any](ruleID, kind string, base T, overrides map[string
 	return nudgeRuleView{RuleID: ruleID, Kind: kind, Enabled: enabled, Rule: ruleJSON}
 }
 
+// buildNudgeRuleViewWeeklyBudget is a sibling of buildNudgeRuleView for the
+// weekly-budget rule kind. Unlike macro/health/digest rules, the weekly budget
+// is OFF by default (enabled=false) until the user explicitly opts in.
+func buildNudgeRuleViewWeeklyBudget(ruleID, kind string, base scheduler.WeeklyBudgetRule, overrides map[string]types.NudgeRuleConfig) nudgeRuleView {
+	enabled := false
+	if c, ok := overrides[ruleID]; ok {
+		enabled = c.Enabled
+	}
+	ruleJSON, _ := json.Marshal(base)
+	return nudgeRuleView{RuleID: ruleID, Kind: kind, Enabled: enabled, Rule: ruleJSON}
+}
+
 // handleGetNudgeSettings returns every built-in nudge rule (macro, health,
 // digest) merged with the user's stored overrides, so the UI always shows
 // the full rule set with each rule's effective enabled/params state.
@@ -741,7 +758,7 @@ func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request,
 		byID[c.RuleID] = c
 	}
 
-	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules()))
+	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules())+len(scheduler.DefaultWeeklyBudgetRules()))
 	for _, base := range scheduler.DefaultRules() {
 		views = append(views, buildNudgeRuleView(base.ID, "macro", base, byID))
 	}
@@ -750,6 +767,9 @@ func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request,
 	}
 	for _, base := range scheduler.DefaultDigestRules() {
 		views = append(views, buildNudgeRuleView(base.ID, "digest", base, byID))
+	}
+	for _, base := range scheduler.DefaultWeeklyBudgetRules() {
+		views = append(views, buildNudgeRuleViewWeeklyBudget(base.ID, "weekly-budget", base, byID))
 	}
 
 	_ = json.NewEncoder(w).Encode(views)
@@ -786,6 +806,64 @@ func (h *Handler) handleSetNudgeSettings(w http.ResponseWriter, r *http.Request,
 	}
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleGetBudgetWeekly returns the plain daily target and effective weekly
+// rolling target for calories and protein, computed from the current week's
+// consumption data. GET /api/v1/budget/weekly
+func (h *Handler) handleGetBudgetWeekly(w http.ResponseWriter, r *http.Request, userID string) {
+	now := time.Now().In(h.loc)
+	today := now.Format("2006-01-02")
+
+	// Compute calendar week (Monday-Sunday) bounds.
+	weekday := now.Weekday()
+	daysFromMonday := int(weekday) - int(time.Monday)
+	if weekday == time.Sunday {
+		daysFromMonday = 6
+	}
+	monday := now.AddDate(0, 0, -daysFromMonday)
+	sunday := monday.AddDate(0, 0, 6)
+	daysRemaining := 7 - daysFromMonday
+
+	rollups, err := h.store.GetRollups(r.Context(), userID, monday.Format("2006-01-02"), sunday.Format("2006-01-02"))
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	targets, err := h.store.GetTargets(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	// Sum consumed macros from prior days (dates strictly before today).
+	var consumedCal, consumedProtein float64
+	for _, r := range rollups {
+		if r.Date >= today {
+			continue
+		}
+		consumedCal += r.Consumed.Calories
+		consumedProtein += r.Consumed.Protein
+	}
+
+	resp := map[string]map[string]float64{}
+
+	if targets.Targets.Calories > 0 {
+		effective := scheduler.EffectiveWeeklyTarget(targets.Targets.Calories, consumedCal, daysRemaining, 0.70, 1.30)
+		resp["calories"] = map[string]float64{"plain": targets.Targets.Calories, "effective": effective}
+	} else {
+		resp["calories"] = map[string]float64{"plain": 0, "effective": 0}
+	}
+
+	if targets.Targets.Protein > 0 {
+		effective := scheduler.EffectiveWeeklyTarget(targets.Targets.Protein, consumedProtein, daysRemaining, 0.70, 1.30)
+		resp["protein"] = map[string]float64{"plain": targets.Targets.Protein, "effective": effective}
+	} else {
+		resp["protein"] = map[string]float64{"plain": 0, "effective": 0}
+	}
+
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID string) {
@@ -2124,6 +2202,23 @@ func (h *Handler) handleRunBackupNow(w http.ResponseWriter, r *http.Request, use
 	}
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleStreak returns the user's current adherence streak (consecutive days
+// within 90-110% of their calorie target, looking back 180 days).
+// GET /api/v1/streak
+func (h *Handler) handleStreak(w http.ResponseWriter, r *http.Request, userID string) {
+	end := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	start := time.Now().AddDate(0, 0, -180).Format("2006-01-02")
+
+	rollups, err := h.store.GetRollups(r.Context(), userID, start, end)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	days := adherence.Streak(rollups, 0.90, 1.10)
+	_ = json.NewEncoder(w).Encode(map[string]int{"current_days": days})
 }
 
 // ---------------------------------------------------------------------------

@@ -161,8 +161,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if h.emailProvider == "" || h.emailProvider == "none" {
 		// No mailer configured or explicitly "none" — auto-verify.
 		_ = h.authStore.MarkEmailVerified(ctx, u.ID)
-		now := time.Now().UTC()
-		u.EmailVerifiedAt = &now
+		u.EmailVerifiedAt = new(time.Now().UTC())
 	} else {
 		token := auth.NewToken()
 		hashedID := auth.HashToken(token)

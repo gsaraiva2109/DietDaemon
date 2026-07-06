@@ -295,6 +295,15 @@ type NudgeRuleConfig struct {
 	Params  json.RawMessage `json:"params"`
 }
 
+// WeeklyBudgetConfig tunes the weekly rolling budget compensation for a
+// macro target. A zero value means "use sensible defaults" (no override,
+// floor 70%, ceiling 130%).
+type WeeklyBudgetConfig struct {
+	WeeklyTargetOverride float64 `json:"weekly_target_override,omitempty"` // 0 = derive from daily targets × 7
+	ClampFloorPct        float64 `json:"clamp_floor_pct,omitempty"`
+	ClampCeilPct         float64 `json:"clamp_ceil_pct,omitempty"`
+}
+
 // BackupConfig is a per-user scheduled backup/export setting, local disk or S3.
 type BackupConfig struct {
 	UserID      string
@@ -542,6 +551,25 @@ type SleepLog struct {
 	DurationHours float64 `json:"duration_hours,omitempty"`
 	Quality       string  `json:"quality"`
 	Note          string  `json:"note,omitempty"`
+}
+
+// WaterDayTotal is a single day's total water consumption, used by the weekly
+// digest and other reporting.
+type WaterDayTotal struct {
+	Date    string
+	TotalML int
+}
+
+// SentNudge records a delivered nudge for undo/edit support.
+type SentNudge struct {
+	ID         string
+	UserID     string
+	RuleID     string
+	SentAt     time.Time
+	Body       string
+	Snapshot   Macros
+	Status     string
+	ResolvedAt *time.Time
 }
 
 // RegistrationMode enumerates how new accounts may be created.

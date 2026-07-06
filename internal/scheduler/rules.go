@@ -25,10 +25,17 @@ type Rule struct {
 	Macro       Macro   // which macro to check
 	MinFraction float64 // fire when consumed/target < MinFraction
 	Message     string  // fmt template receiving (consumed, target)
+
+	QuickActions []types.InlineButton // optional inline buttons; nil = none
 }
 
 // DefaultRules nudges a bulking user in the evening when protein or calories
 // are lagging — the core pain point this project addresses (missed volume).
+//
+// Quick actions are deliberately omitted on macro rules: a "log usual
+// breakfast" button would require a named template that may not exist, and a
+// callback that 404s is worse than no button. Water rules in DefaultHealthRules
+// get quick actions because "log 500ml water" is safe for every user.
 func DefaultRules() []Rule {
 	return []Rule{
 		{
@@ -92,6 +99,8 @@ type HealthRule struct {
 	// (e.g. millilitres for water). The rule triggers when today's total is
 	// below this threshold. 0 means unused / check only for existence.
 	MinDailyAmount float64
+
+	QuickActions []types.InlineButton // optional inline buttons; nil = none
 }
 
 // DefaultHealthRules returns the built-in health domain nudging rules. They
@@ -106,6 +115,9 @@ func DefaultHealthRules() []HealthRule {
 			CheckHour:      16,
 			MinDailyAmount: 500,
 			Message:        "\U0001f4a7 Don't forget to hydrate! Log your water intake with /water",
+			QuickActions: []types.InlineButton{
+				{Text: "Log 500ml water", CallbackData: "/water 500"},
+			},
 		},
 		{
 			ID:             "water-evening",
@@ -113,6 +125,9 @@ func DefaultHealthRules() []HealthRule {
 			CheckHour:      20,
 			MinDailyAmount: 1600,
 			Message:        "\U0001f4a7 Still behind on water — squeeze in a glass before bed!",
+			QuickActions: []types.InlineButton{
+				{Text: "Log 500ml water", CallbackData: "/water 500"},
+			},
 		},
 		{
 			ID:         "workout-reminder",
@@ -153,5 +168,28 @@ type DigestRule struct {
 func DefaultDigestRules() []DigestRule {
 	return []DigestRule{
 		{ID: "weekly-digest", CheckHour: 9, Weekday: time.Sunday},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Weekly rolling budget compensation
+// ---------------------------------------------------------------------------
+
+// WeeklyBudgetRule fires a nudge when the rolling weekly effective target
+// differs materially from the plain daily target, self-correcting for
+// over-/under-eating earlier in the calendar week. Deduped via the same
+// nudge_log mechanism as Rule/HealthRule, keyed by local date.
+type WeeklyBudgetRule struct {
+	ID        string // stable identifier, used for dedupe
+	Macro     Macro  // which macro to adjust
+	CheckHour int    // local hour (0-23) the rule becomes eligible
+}
+
+// DefaultWeeklyBudgetRules returns the built-in weekly budget rules.
+// Unlike other rule kinds, these are OFF by default (opt-in per user).
+func DefaultWeeklyBudgetRules() []WeeklyBudgetRule {
+	return []WeeklyBudgetRule{
+		{ID: "weekly-budget-calories", Macro: MacroCalories, CheckHour: 9},
+		{ID: "weekly-budget-protein", Macro: MacroProtein, CheckHour: 9},
 	}
 }
