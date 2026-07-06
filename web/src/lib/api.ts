@@ -37,11 +37,13 @@ import type {
   SessionResponse,
   SleepLog,
   SleepQuality,
+  StreakResponse,
   TDEEResult,
   TotpEnrollResponse,
   UserProfile,
   WaterLog,
   WaterToday,
+  WeeklyBudgetResponse,
   WeightEntry,
   WeightTrend,
   Workout,
@@ -568,6 +570,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ rule_id: ruleID, enabled: true, reset: true }),
       }),
+  },
+
+  // --- Streak -----------------------------------------------------
+  streak: () => request<StreakResponse>('/streak'),
+
+  // --- Weekly rolling budget --------------------------------------
+  budget: {
+    weekly: () => request<WeeklyBudgetResponse>('/budget/weekly'),
   },
 
   // --- Export ---------------------------------------------------

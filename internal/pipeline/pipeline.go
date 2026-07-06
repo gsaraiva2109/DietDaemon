@@ -45,6 +45,9 @@ type MealStore interface {
 	// Channel mapping (multi-user).
 	GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error)
 	MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error
+	// UpsertChatRoute records where to reach this user proactively (e.g. for
+	// scheduled nudges), refreshed on every inbound message.
+	UpsertChatRoute(ctx context.Context, userID, channel string, meta map[string]string) error
 }
 
 // Replier sends an in-channel reply. Satisfied by any ports.MessagingAdapter.
@@ -112,6 +115,21 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 	}
 }
 
+// ParseAndResolve runs Stage A (parse) and Stage B (resolve) without persisting
+// anything. Used by callers that need resolved items before deciding whether to
+// save (e.g. template composition, where partial resolution means rejecting).
+func (e *Engine) ParseAndResolve(ctx context.Context, userID, text, locale string) ([]types.ResolvedItem, int, error) {
+	items, _, err := e.parser.Extract(ctx, text, locale)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pipeline: parse: %w", err)
+	}
+	if len(items) == 0 {
+		return nil, 0, nil
+	}
+	resolved, needsClarification := e.resolver.Resolve(ctx, userID, items)
+	return resolved, needsClarification, nil
+}
+
 // LogMeal directly persists a fully-resolved meal and updates the daily rollup,
 // bypassing parsing and resolution. Used by template logging and meal duplication.
 func (e *Engine) LogMeal(ctx context.Context, meal types.Meal) error {
@@ -170,6 +188,13 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 		_ = e.store.MapChannelUser(ctx, e.channelName, msg.UserID, userID)
 	}
 	msg.UserID = userID
+
+	// Refresh where this user can be reached proactively (e.g. scheduled
+	// nudges). Fire-and-forget, like other non-critical writes in this file —
+	// web-originated messages carry no ChannelMeta, so skip those.
+	if len(msg.ChannelMeta) > 0 {
+		_ = e.store.UpsertChatRoute(ctx, msg.UserID, e.channelName, msg.ChannelMeta)
+	}
 
 	// Ensure the user row exists (single-user today; keyed by user from day one).
 	if err := e.store.UpsertUser(ctx, types.User{ID: msg.UserID, Timezone: e.loc.String(), CreatedAt: e.now().UTC()}); err != nil {

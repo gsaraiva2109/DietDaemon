@@ -256,12 +256,10 @@ func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey,
 		}
 		k.CreatedAt = parseUTC(ca)
 		if lua != "" {
-			t := parseUTC(lua)
-			k.LastUsedAt = &t
+			k.LastUsedAt = new(parseUTC(lua))
 		}
 		if ra != "" {
-			t := parseUTC(ra)
-			k.RevokedAt = &t
+			k.RevokedAt = new(parseUTC(ra))
 		}
 		out = append(out, k)
 	}

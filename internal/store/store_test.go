@@ -655,6 +655,49 @@ func TestNudgeDedupe(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Chat routing (reverse user_id -> channel + delivery metadata)
+// ---------------------------------------------------------------------------
+
+func TestChatRouteUpsertThenGet(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1"})
+
+	if err := s.UpsertChatRoute(ctx(), "u1", "telegram", map[string]string{"chat_id": "123"}); err != nil {
+		t.Fatalf("UpsertChatRoute: %v", err)
+	}
+	channel, meta, err := s.GetChatRoute(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetChatRoute: %v", err)
+	}
+	if channel != "telegram" || meta["chat_id"] != "123" {
+		t.Errorf("got channel=%q meta=%v, want telegram/{chat_id:123}", channel, meta)
+	}
+
+	// Upsert again with different metadata: should overwrite, not duplicate.
+	if err := s.UpsertChatRoute(ctx(), "u1", "telegram", map[string]string{"chat_id": "456"}); err != nil {
+		t.Fatalf("UpsertChatRoute (update): %v", err)
+	}
+	_, meta, err = s.GetChatRoute(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("GetChatRoute (after update): %v", err)
+	}
+	if meta["chat_id"] != "456" {
+		t.Errorf("chat_id = %q, want 456 after overwrite", meta["chat_id"])
+	}
+}
+
+func TestChatRouteNotFound(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	_, _, err := s.GetChatRoute(ctx(), "nobody")
+	if !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("GetChatRoute for unknown user: err = %v, want ErrNotFound", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Nudge rule config (per-user overrides)
 // ---------------------------------------------------------------------------
 

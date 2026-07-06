@@ -31,12 +31,15 @@ type Store struct {
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
 var (
-	_ ports.Store               = (*Store)(nil)
-	_ scheduler.Store           = (*Store)(nil)
-	_ scheduler.NudgeStore      = (*Store)(nil)
-	_ scheduler.RuleConfigStore = (*Store)(nil)
-	_ scheduler.DigestStore     = (*Store)(nil)
-	_ backup.Store              = (*Store)(nil)
+	_ ports.Store                 = (*Store)(nil)
+	_ scheduler.Store             = (*Store)(nil)
+	_ scheduler.NudgeStore        = (*Store)(nil)
+	_ scheduler.RuleConfigStore   = (*Store)(nil)
+	_ scheduler.DigestStore       = (*Store)(nil)
+	_ scheduler.ChatRouteStore    = (*Store)(nil)
+	_ scheduler.SentNudgeStore    = (*Store)(nil)
+	_ scheduler.WeeklyBudgetStore = (*Store)(nil)
+	_ backup.Store                = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and
@@ -298,8 +301,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 		u.CreatedAt = parseUTC(ca)
 		u.WebAuthnHandle = wh.String
 		if eva.Valid {
-			t := parseUTC(eva.String)
-			u.EmailVerifiedAt = &t
+			u.EmailVerifiedAt = new(parseUTC(eva.String))
 		}
 		if !status.Valid {
 			u.Status = "active"
@@ -324,8 +326,7 @@ func scanUser(row *sql.Row) (types.User, error) {
 	u.CreatedAt = parseUTC(ca)
 	u.WebAuthnHandle = wh.String
 	if eva.Valid {
-		t := parseUTC(eva.String)
-		u.EmailVerifiedAt = &t
+		u.EmailVerifiedAt = new(parseUTC(eva.String))
 	}
 	if !status.Valid {
 		u.Status = "active"
@@ -370,6 +371,48 @@ func (s *Store) GetUserIDByChannel(ctx context.Context, channel, channelUserID s
 		return "", fmt.Errorf("store: get user by channel: %w", err)
 	}
 	return userID, nil
+}
+
+// UpsertChatRoute records the chat metadata needed to reach a user
+// proactively (e.g. from the scheduler), refreshed on every inbound message.
+// One row per (user, channel).
+func (s *Store) UpsertChatRoute(ctx context.Context, userID, channel string, meta map[string]string) error {
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("store: marshal chat route meta: %w", err)
+	}
+	const q = `
+		INSERT INTO chat_routes (user_id, channel, meta_json, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, channel) DO UPDATE SET
+			meta_json  = excluded.meta_json,
+			updated_at = excluded.updated_at
+	`
+	_, err = s.db.ExecContext(ctx, s.rewrite(q), userID, channel, string(metaJSON), utcNow())
+	if err != nil {
+		return fmt.Errorf("store: upsert chat route: %w", err)
+	}
+	return nil
+}
+
+// GetChatRoute returns the most recently seen channel + delivery metadata for
+// a user, so the scheduler can send a message through a MessagingAdapter
+// instead of only the plain-text Notifier. Returns types.ErrNotFound when the
+// user has never been seen on any channel.
+func (s *Store) GetChatRoute(ctx context.Context, userID string) (string, map[string]string, error) {
+	const q = `SELECT channel, meta_json FROM chat_routes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
+	var channel, metaJSON string
+	if err := row.Scan(&channel, &metaJSON); err == sql.ErrNoRows {
+		return "", nil, types.ErrNotFound
+	} else if err != nil {
+		return "", nil, fmt.Errorf("store: get chat route: %w", err)
+	}
+	var meta map[string]string
+	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+		return "", nil, fmt.Errorf("store: unmarshal chat route meta: %w", err)
+	}
+	return channel, meta, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,6 +1271,61 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 }
 
 // ---------------------------------------------------------------------------
+// Sent nudge tracking (undo / edit support)
+// ---------------------------------------------------------------------------
+
+// RecordSentNudge inserts a sent nudge row for later undo.
+func (s *Store) RecordSentNudge(ctx context.Context, n types.SentNudge) error {
+	snap, err := json.Marshal(n.Snapshot)
+	if err != nil {
+		return fmt.Errorf("store: marshal snapshot: %w", err)
+	}
+	const q = `
+		INSERT INTO sent_nudges (id, user_id, rule_id, sent_at, body, snapshot_json, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = s.db.ExecContext(ctx, s.rewrite(q), n.ID, n.UserID, n.RuleID, utcStr(n.SentAt), n.Body, string(snap), n.Status)
+	if err != nil {
+		return fmt.Errorf("store: record sent nudge: %w", err)
+	}
+	return nil
+}
+
+// GetSentNudge returns a sent nudge by id, or types.ErrNotFound.
+func (s *Store) GetSentNudge(ctx context.Context, id string) (types.SentNudge, error) {
+	const q = `SELECT id, user_id, rule_id, sent_at, body, snapshot_json, status, resolved_at FROM sent_nudges WHERE id = ?`
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), id)
+	var n types.SentNudge
+	var sa, snap string
+	var ra sql.NullString
+	if err := row.Scan(&n.ID, &n.UserID, &n.RuleID, &sa, &n.Body, &snap, &n.Status, &ra); err != nil {
+		if err == sql.ErrNoRows {
+			return types.SentNudge{}, types.ErrNotFound
+		}
+		return types.SentNudge{}, fmt.Errorf("store: get sent nudge: %w", err)
+	}
+	n.SentAt = parseUTC(sa)
+	if ra.Valid {
+		n.ResolvedAt = new(time.Time)
+		*n.ResolvedAt = parseUTC(ra.String)
+	}
+	if err := json.Unmarshal([]byte(snap), &n.Snapshot); err != nil {
+		return types.SentNudge{}, fmt.Errorf("store: unmarshal snapshot: %w", err)
+	}
+	return n, nil
+}
+
+// UpdateSentNudgeStatus marks a sent nudge with a terminal status and resolved_at.
+func (s *Store) UpdateSentNudgeStatus(ctx context.Context, id, status string) error {
+	const q = `UPDATE sent_nudges SET status = ?, resolved_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), status, utcNow(), id)
+	if err != nil {
+		return fmt.Errorf("store: update sent nudge status: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Nudge rule config (per-user overrides)
 // ---------------------------------------------------------------------------
 
@@ -1983,8 +2081,7 @@ func scanFastRow(row scanRow) (types.Fast, error) {
 	f.CreatedAt = parseUTC(createdStr)
 	f.Completed = completed != 0
 	if endStr.Valid && endStr.String != "" {
-		t := parseUTC(endStr.String)
-		f.EndAt = &t
+		f.EndAt = new(parseUTC(endStr.String))
 	}
 	return f, nil
 }
@@ -2339,6 +2436,33 @@ func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]
 	return logs, total, rows.Err()
 }
 
+// GetWaterDailyTotals returns per-day water totals between startDate and endDate
+// (inclusive, "YYYY-MM-DD" format). Days with no water logs are not returned.
+func (s *Store) GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error) {
+	const q = `
+		SELECT date(logged_at), SUM(amount_ml)
+		FROM water_logs
+		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
+		GROUP BY date(logged_at)
+		ORDER BY date(logged_at) ASC
+	`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("store: get water daily totals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.WaterDayTotal
+	for rows.Next() {
+		var wdt types.WaterDayTotal
+		if err := rows.Scan(&wdt.Date, &wdt.TotalML); err != nil {
+			return nil, fmt.Errorf("store: scan water daily total: %w", err)
+		}
+		out = append(out, wdt)
+	}
+	return out, rows.Err()
+}
+
 // DeleteWater deletes a water log entry by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeleteWater(ctx context.Context, userID, id string) error {
 	const q = `DELETE FROM water_logs WHERE id = ? AND user_id = ?`
@@ -2460,6 +2584,32 @@ func (s *Store) DeleteWorkout(ctx context.Context, userID, id string) error {
 		return types.ErrNotFound
 	}
 	return nil
+}
+
+// ListWorkoutsInRange returns every workout between startDate and endDate
+// (inclusive, "YYYY-MM-DD" format), ordered newest first, with no limit.
+func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error) {
+	const q = `
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		FROM workouts
+		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
+		ORDER BY logged_at DESC
+	`
+	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("store: list workouts in range: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.Workout
+	for rows.Next() {
+		var w types.Workout
+		if err := rows.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
+			return nil, fmt.Errorf("store: scan workout: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]types.WorkoutExercise, error) {

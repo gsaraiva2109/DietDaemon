@@ -269,8 +269,7 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 		if err != nil {
 			return fmt.Errorf("telegram: marshal inline keyboard: %w", err)
 		}
-		rm := json.RawMessage(kbJSON)
-		body.ReplyMarkup = &rm
+		body.ReplyMarkup = new(json.RawMessage(kbJSON))
 		log.Printf("telegram: sent inline keyboard with %d row(s)", len(reply.Markup.InlineKeyboard))
 	}
 

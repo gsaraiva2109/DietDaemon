@@ -7,10 +7,13 @@ package scheduler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -74,10 +77,38 @@ type RuleConfigStore interface {
 
 // DigestStore provides the read side for composing the weekly digest
 // notification. The concrete *store.Store already satisfies this via its
-// existing GetRollups and ListWeight methods.
+// existing GetRollups, ListWeight, GetWaterDailyTotals, and
+// ListWorkoutsInRange methods.
 type DigestStore interface {
 	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
 	ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error)
+	GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error)
+	ListWorkoutsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
+}
+
+// ChatRouteStore resolves the chat metadata needed to reach a user
+// proactively. The concrete *store.Store satisfies it once GetChatRoute is
+// added.
+type ChatRouteStore interface {
+	GetChatRoute(ctx context.Context, userID string) (channel string, meta map[string]string, err error)
+}
+
+// ChatSender delivers a Reply to a chat conversation. Satisfied by any
+// ports.MessagingAdapter.
+type ChatSender interface {
+	Send(ctx context.Context, reply types.Reply) error
+}
+
+// WeeklyBudgetStore provides the read side for weekly rolling budget
+// compensation. The concrete *store.Store already satisfies this via its
+// existing GetRollups method.
+type WeeklyBudgetStore interface {
+	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
+}
+
+// SentNudgeStore records delivered nudges so they can be undone later.
+type SentNudgeStore interface {
+	RecordSentNudge(ctx context.Context, n types.SentNudge) error
 }
 
 // Option configures a Scheduler. Used with the variadic New constructor.
@@ -85,17 +116,22 @@ type Option func(*Scheduler)
 
 // Scheduler evaluates rules on a fixed interval.
 type Scheduler struct {
-	store       Store
-	nudges      NudgeStore
-	notifier    Notifier
-	rules       []Rule
-	healthStore HealthStore
-	healthRules []HealthRule
-	ruleConfig  RuleConfigStore
-	digestStore DigestStore
-	digestRules []DigestRule
-	defaultLoc  *time.Location
-	interval    time.Duration
+	store             Store
+	nudges            NudgeStore
+	notifier          Notifier
+	rules             []Rule
+	healthStore       HealthStore
+	healthRules       []HealthRule
+	ruleConfig        RuleConfigStore
+	digestStore       DigestStore
+	digestRules       []DigestRule
+	chatRoutes        ChatRouteStore
+	chatSender        ChatSender
+	weeklyBudgetStore WeeklyBudgetStore
+	weeklyBudgetRules []WeeklyBudgetRule
+	sentNudges        SentNudgeStore
+	defaultLoc        *time.Location
+	interval          time.Duration
 
 	now func() time.Time
 	log *slog.Logger
@@ -154,7 +190,61 @@ func WithDigestRules(ds DigestStore, digestRules []DigestRule) Option {
 	}
 }
 
-// Run ticks until ctx is cancelled, evaluating immediately on start.
+// WithChatSender attaches a chat-routing store and a MessagingAdapter so
+// nudges can be delivered as chat messages instead of only plain text via
+// Notifier — this is the prerequisite for buttons/undo on nudges (later
+// features build on top of this). When not passed, or when no chat route is
+// known yet for a given user, delivery falls back to Notifier unchanged, so
+// this is fully backward compatible.
+func WithChatSender(routes ChatRouteStore, sender ChatSender) Option {
+	return func(s *Scheduler) {
+		s.chatRoutes = routes
+		s.chatSender = sender
+	}
+}
+
+// WithSentNudges attaches a SentNudgeStore so the scheduler records every
+// delivered nudge and attaches an Undo button to chat-delivered messages.
+// When not passed, no sent-nudge rows are written and no undo button appears.
+func WithSentNudges(sns SentNudgeStore) Option {
+	return func(s *Scheduler) {
+		s.sentNudges = sns
+	}
+}
+
+// WithWeeklyBudgetRules attaches weekly rolling budget rules and their data
+// source to the scheduler. When not passed, no weekly budget nudges are
+// evaluated. Unlike macro/health/digest rules, weekly budget rules are OFF
+// by default — the user must opt in via nudge rule config.
+func WithWeeklyBudgetRules(wbs WeeklyBudgetStore, budgetRules []WeeklyBudgetRule) Option {
+	return func(s *Scheduler) {
+		s.weeklyBudgetStore = wbs
+		s.weeklyBudgetRules = budgetRules
+	}
+}
+
+// EffectiveWeeklyTarget computes the rolling effective daily target for a
+// macro, self-correcting for over-/under-eating earlier in the calendar week.
+//
+//	weeklyTarget = plainDaily * 7
+//	effective = (weeklyTarget - consumedPriorDays) / daysRemaining
+//
+// The result is clamped to [floorPct*plainDaily, ceilPct*plainDaily].
+// daysRemaining includes today (1-7). Monday: consumedPriorDays=0,
+// daysRemaining=7 → effective=plainDaily.
+func EffectiveWeeklyTarget(plainDaily, consumedPriorDays float64, daysRemaining int, floorPct, ceilPct float64) float64 {
+	weeklyTarget := plainDaily * 7
+	effective := (weeklyTarget - consumedPriorDays) / float64(daysRemaining)
+	floor := floorPct * plainDaily
+	ceil := ceilPct * plainDaily
+	if effective < floor {
+		return floor
+	}
+	if effective > ceil {
+		return ceil
+	}
+	return effective
+}
 func (s *Scheduler) Run(ctx context.Context) {
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
@@ -245,7 +335,7 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 				Body:     fmt.Sprintf(r.Message, consumed, target),
 				Priority: types.PriorityHigh,
 			}
-			if err := s.notifier.Notify(ctx, n); err != nil {
+			if err := s.deliver(ctx, user, r.ID, n, &rollup.Consumed, r.QuickActions); err != nil {
 				s.log.Error("scheduler: notify", "rule", r.ID, "err", err)
 				continue // not marked: retry next tick
 			}
@@ -263,6 +353,11 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	// Weekly digest (independent of macro targets and health data).
 	if s.digestStore != nil {
 		s.evalDigestRules(ctx, now, user, overrides)
+	}
+
+	// Weekly rolling budget (self-correcting targets).
+	if s.weeklyBudgetStore != nil {
+		s.evalWeeklyBudgetRules(ctx, now, user, overrides)
 	}
 }
 
@@ -287,6 +382,60 @@ func resolveRule[T any](base T, ruleID string, overrides map[string]types.NudgeR
 		}
 	}
 	return base, true
+}
+
+// deliver sends a nudge, preferring an interactive chat message over the
+// notifier when a chat route is known for the user. Falls back to the
+// plain-text Notifier when no chat route is configured/known yet, or when the
+// chat send itself fails — so ntfy/gotify remain a fully functional delivery
+// path with zero adapter-side changes.
+//
+// When snapshot is non-nil and a SentNudgeStore is configured, a sent_nudges
+// row is recorded and an Undo button is attached to the chat reply.
+func (s *Scheduler) deliver(ctx context.Context, user types.User, ruleID string, n types.Notification, snapshot *types.Macros, quickActions []types.InlineButton) error {
+	var nudgeID string
+	if snapshot != nil && s.sentNudges != nil {
+		var b [16]byte
+		_, _ = rand.Read(b[:])
+		nudgeID = hex.EncodeToString(b[:])
+		sn := types.SentNudge{
+			ID:       nudgeID,
+			UserID:   user.ID,
+			RuleID:   ruleID,
+			SentAt:   time.Now(),
+			Body:     n.Body,
+			Snapshot: *snapshot,
+			Status:   "sent",
+		}
+		if err := s.sentNudges.RecordSentNudge(ctx, sn); err != nil {
+			s.log.Error("scheduler: record sent nudge", "rule", ruleID, "err", err)
+		}
+	}
+
+	if s.chatSender != nil && s.chatRoutes != nil && (snapshot != nil || len(quickActions) > 0) {
+		if _, meta, err := s.chatRoutes.GetChatRoute(ctx, user.ID); err == nil {
+			reply := types.Reply{UserID: user.ID, Text: n.Body, ChannelMeta: meta}
+			var row []types.InlineButton
+			if nudgeID != "" {
+				row = append(row, types.InlineButton{Text: "Not anymore, undo", CallbackData: "/nudge undo " + nudgeID})
+			}
+			row = append(row, quickActions...)
+			if len(row) > 0 {
+				reply.Markup = &types.ReplyMarkup{
+					InlineKeyboard: [][]types.InlineButton{row},
+				}
+			}
+			sendErr := s.chatSender.Send(ctx, reply)
+			if sendErr == nil {
+				return nil
+			}
+			s.log.Warn("scheduler: chat send failed, falling back to notifier", "rule", ruleID, "err", sendErr)
+		}
+	}
+	if s.notifier == nil {
+		return fmt.Errorf("scheduler: no delivery channel configured for user %s", user.ID)
+	}
+	return s.notifier.Notify(ctx, n)
 }
 
 // evalHealthRules evaluates every health rule for one user at the given
@@ -384,7 +533,11 @@ func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user typ
 			Body:     r.Message,
 			Priority: types.PriorityHigh,
 		}
-		if err := s.notifier.Notify(ctx, n); err != nil {
+		var healthSnap *types.Macros
+		if len(r.QuickActions) > 0 {
+			healthSnap = &types.Macros{}
+		}
+		if err := s.deliver(ctx, user, r.ID, n, healthSnap, r.QuickActions); err != nil {
 			s.log.Error("scheduler: health notify", "rule", r.ID, "err", err)
 			continue // not marked: retry next tick
 		}
@@ -435,7 +588,7 @@ func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user typ
 			Body:     body,
 			Priority: types.PriorityDefault,
 		}
-		if err := s.notifier.Notify(ctx, n); err != nil {
+		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
 			s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
 			continue // not marked: retry next tick
 		}
@@ -445,8 +598,139 @@ func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user typ
 	}
 }
 
+// evalWeeklyBudgetRules evaluates the weekly rolling budget rules for one
+// user. Unlike macro/health/digest rules, these are OFF by default (opt-in).
+// Dedupe uses the same nudge_log table, keyed by local date.
+func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	local := now.In(s.locFor(user))
+	date := local.Format("2006-01-02")
+
+	for _, base := range s.weeklyBudgetRules {
+		r := base
+
+		// Opt-in gate: this feature is OFF by default.
+		cfg, ok := overrides[r.ID]
+		if !ok || !cfg.Enabled {
+			continue
+		}
+
+		// Decode WeeklyBudgetConfig from params.
+		var budgetCfg types.WeeklyBudgetConfig
+		if len(cfg.Params) > 0 {
+			if err := json.Unmarshal(cfg.Params, &budgetCfg); err != nil {
+				s.log.Error("scheduler: unmarshal weekly budget config", "rule", r.ID, "err", err)
+				continue
+			}
+		}
+
+		// Apply defaults for clamp values.
+		floorPct := budgetCfg.ClampFloorPct
+		if floorPct == 0 {
+			floorPct = 0.70
+		}
+		ceilPct := budgetCfg.ClampCeilPct
+		if ceilPct == 0 {
+			ceilPct = 1.30
+		}
+
+		// Hour gate.
+		if local.Hour() < r.CheckHour {
+			continue
+		}
+
+		// Dedupe against nudge_log.
+		done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+		if err != nil {
+			s.log.Error("scheduler: weekly budget was-nudged", "rule", r.ID, "err", err)
+			continue
+		}
+		if done {
+			continue
+		}
+
+		// Compute calendar week (Monday-Sunday) bounds.
+		weekday := local.Weekday()
+		daysFromMonday := int(weekday) - int(time.Monday)
+		if weekday == time.Sunday {
+			daysFromMonday = 6
+		}
+		monday := local.AddDate(0, 0, -daysFromMonday)
+		sunday := monday.AddDate(0, 0, 6)
+		daysRemaining := 7 - daysFromMonday
+
+		// Get rollups for the current week.
+		rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format("2006-01-02"), sunday.Format("2006-01-02"))
+		if err != nil {
+			s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
+			continue
+		}
+
+		// Sum consumed prior days (dates strictly before today).
+		var consumedPriorDays float64
+		for _, roll := range rollups {
+			if roll.Date >= date {
+				continue
+			}
+			consumedPriorDays += macroValue(roll.Consumed, r.Macro)
+		}
+
+		// Get daily target for this macro.
+		targets, err := s.store.GetTargets(ctx, user.ID)
+		if err != nil {
+			s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
+			continue
+		}
+		plainDaily := macroValue(targets.Targets, r.Macro)
+		if plainDaily <= 0 {
+			continue // no target for this macro
+		}
+
+		// Apply weekly target override if configured.
+		if budgetCfg.WeeklyTargetOverride > 0 {
+			plainDaily = budgetCfg.WeeklyTargetOverride
+		}
+
+		// Compute effective target.
+		effective := EffectiveWeeklyTarget(plainDaily, consumedPriorDays, daysRemaining, floorPct, ceilPct)
+
+		// Check if delta is negligible (< 3% of daily target).
+		delta := effective - plainDaily
+		if math.Abs(delta) < plainDaily*0.03 {
+			_ = s.nudges.MarkNudged(ctx, user.ID, date, r.ID)
+			continue
+		}
+
+		// Build notification message.
+		unit := "kcal"
+		if r.Macro == MacroProtein {
+			unit = "g"
+		}
+		var body string
+		if delta > 0 {
+			body = fmt.Sprintf("Catch up today, +%.0f%s", delta, unit)
+		} else {
+			body = fmt.Sprintf("Ease up today, -%.0f%s", -delta, unit)
+		}
+
+		n := types.Notification{
+			UserID:   user.ID,
+			Title:    "DietDaemon",
+			Body:     body,
+			Priority: types.PriorityHigh,
+		}
+		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+			s.log.Error("scheduler: weekly budget notify", "rule", r.ID, "err", err)
+			continue
+		}
+		if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+			s.log.Error("scheduler: weekly budget mark-nudged", "rule", r.ID, "err", err)
+		}
+	}
+}
+
 // buildDigestBody composes a short readable summary of the last 7 days:
-// average calories/protein, average adherence to target, and weight change.
+// average calories/protein, average adherence to target, weight change,
+// water intake, and workouts.
 func (s *Scheduler) buildDigestBody(ctx context.Context, user types.User, local time.Time) (string, error) {
 	end := local.Format("2006-01-02")
 	start := local.AddDate(0, 0, -6).Format("2006-01-02")
@@ -487,10 +771,27 @@ func (s *Scheduler) buildDigestBody(ctx context.Context, user types.User, local 
 		}
 	}
 
-	return fmt.Sprintf(
+	body := fmt.Sprintf(
 		"Weekly digest: avg %.0f kcal/%.0f g protein (%.0f%% of target), %s.",
 		avgCal, avgProtein, avgAdherencePct, weightNote,
-	), nil
+	)
+
+	waterDaysUnder := 0
+	if waterTotals, err := s.digestStore.GetWaterDailyTotals(ctx, user.ID, start, end); err == nil {
+		for _, wt := range waterTotals {
+			// ponytail: hardcoded 2000ml goal; should become a per-user setting
+			if wt.TotalML < 2000 {
+				waterDaysUnder++
+			}
+		}
+		body += fmt.Sprintf(" %d/%d days under 2000ml water.", waterDaysUnder, 7)
+	}
+
+	if workouts, err := s.digestStore.ListWorkoutsInRange(ctx, user.ID, start, end); err == nil {
+		body += fmt.Sprintf(" %d workouts logged.", len(workouts))
+	}
+
+	return body, nil
 }
 
 // parseLoggedAt attempts to parse a timestamp string stored in a WaterLog,

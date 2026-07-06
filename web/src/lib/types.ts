@@ -425,7 +425,7 @@ export interface Passkey {
 // Nudge rules
 // ---------------------------------------------------------------------------
 
-export type NudgeRuleKind = 'macro' | 'health' | 'digest'
+export type NudgeRuleKind = 'macro' | 'health' | 'digest' | 'weekly-budget'
 
 // Rule is a JSON blob of the underlying Go rule struct's own fields (Rule,
 // HealthRule, or DigestRule — shape depends on `kind`), so field names are
@@ -442,4 +442,22 @@ export interface NudgeRuleUpdate {
   enabled: boolean
   params?: Record<string, unknown>
   reset?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Streak & weekly budget (backend Phase 2 + Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface StreakResponse {
+  current_days: number
+}
+
+export interface WeeklyBudgetView {
+  plain: number
+  effective: number
+}
+
+export interface WeeklyBudgetResponse {
+  calories: WeeklyBudgetView
+  protein: WeeklyBudgetView
 }

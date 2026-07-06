@@ -195,10 +195,13 @@ func run() error {
 	if err := cmdRegistry.Register(commands.NewFastCommand(st)); err != nil {
 		return fmt.Errorf("register fast command: %w", err)
 	}
+	if err := cmdRegistry.Register(commands.NewNudgeCommand(st)); err != nil {
+		return fmt.Errorf("register nudge command: %w", err)
+	}
 
 	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
 
-	if err := cmdRegistry.Register(commands.NewTemplateCommand(st, engine)); err != nil {
+	if err := cmdRegistry.Register(commands.NewTemplateCommand(st, engine, engine)); err != nil {
 		return fmt.Errorf("register template command: %w", err)
 	}
 
@@ -219,16 +222,20 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Nudge scheduler: only meaningful when a notifier is configured.
-	if notifier != nil {
-		sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval,
-			scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()),
-			scheduler.WithRuleConfig(st),
-			scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
-		)
-		go sched.Run(ctx)
-		slog.Info("scheduler running", "interval", nudgeInterval.String())
-	}
+	// Nudge scheduler: delivers through chat (Telegram/Discord/Matrix) whenever
+	// a route is known for the user, falling back to the notifier (ntfy/gotify)
+	// when it isn't or when EnableNotifications is false, notifier is nil and
+	// deliver() surfaces the "no delivery channel" error instead of nudging.
+	sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval,
+		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()),
+		scheduler.WithRuleConfig(st),
+		scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
+		scheduler.WithChatSender(st, msg),
+		scheduler.WithSentNudges(st),
+		scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()),
+	)
+	go sched.Run(ctx)
+	slog.Info("scheduler running", "interval", nudgeInterval.String())
 
 	// Scheduled backup/export: an independent background loop (separate from
 	// the nudge scheduler above). The "local" destination only exists when an
