@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { useToday, useMeals, useRange, useBodySummary } from '@/lib/queries'
+import { useToday, useMeals, useRange, useBodySummary, useStreak, useWeeklyBudget } from '@/lib/queries'
 import { MACRO_META, type Macros, type MacroKey } from '@/lib/types'
 import { MacroRing } from '@/components/MacroRing'
 import { MacroDonut } from '@/components/MacroDonut'
@@ -24,7 +24,7 @@ import { Card, Eyebrow, EmptyState, Pill, Spinner, Button } from '@/components/u
 import { FlameIcon, BodyIcon, ShareIcon } from '@/components/icons'
 import { cssVar, formatNumber, round } from '@/lib/format'
 import { stagger, fadeUp } from '@/lib/motion'
-import { greeting, insights, streak } from '@/lib/insights'
+import { greeting, insights } from '@/lib/insights'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 const SATELLITES: MacroKey[] = ['Protein', 'Carbs', 'Fat', 'Fiber']
@@ -40,6 +40,8 @@ export function Dashboard() {
   const meals = useMeals(6)
   const week = useRange(isoDaysAgo(6), isoDaysAgo(0))
   const body = useBodySummary()
+  const streakQuery = useStreak()
+  const budget = useWeeklyBudget()
   const [view, setView] = useState<'day' | 'week'>('day')
   const [sharing, setSharing] = useState(false)
 
@@ -47,7 +49,13 @@ export function Dashboard() {
   const targets = today.data?.Targets ?? ZERO
   const tips = useMemo(() => insights(today.data ?? null), [today.data])
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
-  const dayStreak = useMemo(() => streak(week.data ?? []), [week.data])
+  const dayStreak = streakQuery.data?.current_days ?? 0
+
+  // Weekly budget: show effective target when it differs from plain target.
+  const budgetDelta = budget.data
+    ? budget.data.calories.effective - budget.data.calories.plain
+    : 0
+  const budgetActive = Math.abs(budgetDelta) >= 1
 
   const todayLabel = new Date().toLocaleDateString(undefined, {
     weekday: 'long',
@@ -135,9 +143,34 @@ export function Dashboard() {
                     <FlameIcon width={28} height={28} />
                   </span>
                   <span className="text-4xl font-extrabold text-ink tnum">{dayStreak}</span>
-                  <span className="mb-1 self-end text-sm text-muted">days logged</span>
+                  <span className="mb-1 self-end text-sm text-muted">days on target</span>
                 </div>
               </Card>
+              {budgetActive && budget.data && (
+                <Card className="p-5">
+                  <Eyebrow>Weekly budget</Eyebrow>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-sm text-muted">Calories</span>
+                      <span className="text-sm font-semibold text-ink tnum">
+                        {formatNumber(round(budget.data.calories.effective, 0))}
+                      </span>
+                    </div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xs text-muted">vs plain</span>
+                      <span className={`text-xs font-medium tnum ${budgetDelta > 0 ? 'text-accent' : 'text-primary'}`}>
+                        {budgetDelta > 0 ? '+' : ''}{formatNumber(round(budgetDelta, 0))} kcal
+                      </span>
+                    </div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-sm text-muted">Protein</span>
+                      <span className="text-sm font-semibold text-ink tnum">
+                        {formatNumber(round(budget.data.protein.effective, 0))}g
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              )}
               <WeightMiniCard body={body.data} />
               <Card className="flex flex-1 flex-col p-5">
                 <Eyebrow>Last 7 days · calories</Eyebrow>

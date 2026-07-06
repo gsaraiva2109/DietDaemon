@@ -798,6 +798,33 @@ export function useRunBackupNow() {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Streak (backend Phase 2 — 180-day adherence streak)
+// ---------------------------------------------------------------------------
+
+export function useStreak() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['streak', demo],
+    queryFn: () => (demo ? { current_days: 7 } : api.streak()),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Weekly rolling budget (backend Phase 4 — self-correcting targets)
+// ---------------------------------------------------------------------------
+
+export function useWeeklyBudget() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['budget', 'weekly', demo],
+    queryFn: () =>
+      demo
+        ? { calories: { plain: 2200, effective: 2200 }, protein: { plain: 180, effective: 180 } }
+        : api.budget.weekly(),
+  })
+}
+
 export function useGoalSuggestions() {
   const { demo } = useDemo()
   return useQuery({
