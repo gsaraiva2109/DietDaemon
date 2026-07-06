@@ -776,7 +776,7 @@ func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
 	}
 }
 
-// --- Phase 7: quick-action buttons ---
+// --- Quick-action buttons ---
 
 type fakeSentNudgeStore struct {
 	recorded []types.SentNudge

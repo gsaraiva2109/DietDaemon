@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.62.4
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/go-webauthn/webauthn v0.17.4
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
 	github.com/pquerna/otp v1.5.0
 	github.com/resendlabs/resend-go v1.7.0
