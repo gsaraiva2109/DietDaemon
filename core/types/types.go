@@ -16,7 +16,6 @@ type MessageKind string
 const (
 	MessageText  MessageKind = "text"
 	MessageAudio MessageKind = "audio"
-	MessageImage MessageKind = "image"
 )
 
 // ParserTier identifies which parsing strategy produced a result. It doubles
@@ -498,11 +497,11 @@ type WebAuthnCredential struct {
 // LinkingCode is a one-time code for linking a chat platform account to a
 // dashboard user. Codes expire after 10 minutes.
 type LinkingCode struct {
-	Code      string `json:"code"`
-	UserID    string `json:"user_id"`
-	Platform  string `json:"platform"`
-	ExpiresAt string `json:"expires_at"` // UTC datetime string "2006-01-02 15:04:05"
-	UsedAt    string `json:"used_at"`    // empty if not yet used
+	Code      string `json:"code" db:"code"`
+	UserID    string `json:"user_id" db:"user_id"`
+	Platform  string `json:"platform" db:"platform"`
+	ExpiresAt string `json:"expires_at" db:"expires_at"` // UTC datetime string "2006-01-02 15:04:05"
+	UsedAt    string `json:"used_at" db:"used_at"`       // empty if not yet used
 }
 
 // ---------------------------------------------------------------------------
@@ -511,53 +510,53 @@ type LinkingCode struct {
 
 // WaterLog tracks water consumption entries.
 type WaterLog struct {
-	ID       string `json:"id"`
-	UserID   string `json:"user_id"`
-	AmountML int    `json:"amount_ml"`
-	LoggedAt string `json:"logged_at"`
-	Note     string `json:"note,omitempty"`
+	ID       string `json:"id" db:"id"`
+	UserID   string `json:"user_id" db:"user_id"`
+	AmountML int    `json:"amount_ml" db:"amount_ml"`
+	LoggedAt string `json:"logged_at" db:"logged_at"`
+	Note     string `json:"note,omitempty" db:"note"`
 }
 
 // Workout tracks an exercise session.
 type Workout struct {
-	ID             string            `json:"id"`
-	UserID         string            `json:"user_id"`
-	Name           string            `json:"name"`
-	DurationMin    int               `json:"duration_min"`
-	Intensity      string            `json:"intensity"`
-	CaloriesBurned *int              `json:"calories_burned,omitempty"`
-	Note           string            `json:"note,omitempty"`
-	LoggedAt       string            `json:"logged_at"`
-	Exercises      []WorkoutExercise `json:"exercises,omitempty"`
+	ID             string            `json:"id" db:"id"`
+	UserID         string            `json:"user_id" db:"user_id"`
+	Name           string            `json:"name" db:"name"`
+	DurationMin    int               `json:"duration_min" db:"duration_min"`
+	Intensity      string            `json:"intensity" db:"intensity"`
+	CaloriesBurned *int              `json:"calories_burned,omitempty" db:"calories_burned"`
+	Note           string            `json:"note,omitempty" db:"note"`
+	LoggedAt       string            `json:"logged_at" db:"logged_at"`
+	Exercises      []WorkoutExercise `json:"exercises,omitempty" db:"-"`
 }
 
 // WorkoutExercise is an individual exercise within a workout.
 type WorkoutExercise struct {
-	ID        string   `json:"id,omitempty"`
-	WorkoutID string   `json:"workout_id,omitempty"`
-	Name      string   `json:"name"`
-	Sets      *int     `json:"sets,omitempty"`
-	Reps      *int     `json:"reps,omitempty"`
-	WeightKg  *float64 `json:"weight_kg,omitempty"`
-	Note      string   `json:"note,omitempty"`
+	ID        string   `json:"id,omitempty" db:"id"`
+	WorkoutID string   `json:"workout_id,omitempty" db:"workout_id"`
+	Name      string   `json:"name" db:"name"`
+	Sets      *int     `json:"sets,omitempty" db:"sets"`
+	Reps      *int     `json:"reps,omitempty" db:"reps"`
+	WeightKg  *float64 `json:"weight_kg,omitempty" db:"weight_kg"`
+	Note      string   `json:"note,omitempty" db:"note"`
 }
 
 // SleepLog tracks sleep sessions.
 type SleepLog struct {
-	ID            string  `json:"id"`
-	UserID        string  `json:"user_id"`
-	SleepAt       string  `json:"sleep_at"`
-	WakeAt        *string `json:"wake_at,omitempty"`
-	DurationHours float64 `json:"duration_hours,omitempty"`
-	Quality       string  `json:"quality"`
-	Note          string  `json:"note,omitempty"`
+	ID            string  `json:"id" db:"id"`
+	UserID        string  `json:"user_id" db:"user_id"`
+	SleepAt       string  `json:"sleep_at" db:"sleep_at"`
+	WakeAt        *string `json:"wake_at,omitempty" db:"wake_at"`
+	DurationHours float64 `json:"duration_hours,omitempty" db:"-"`
+	Quality       string  `json:"quality" db:"quality"`
+	Note          string  `json:"note,omitempty" db:"note"`
 }
 
 // WaterDayTotal is a single day's total water consumption, used by the weekly
 // digest and other reporting.
 type WaterDayTotal struct {
-	Date    string
-	TotalML int
+	Date    string `db:"date"`
+	TotalML int    `db:"total_ml"`
 }
 
 // SentNudge records a delivered nudge for undo/edit support.

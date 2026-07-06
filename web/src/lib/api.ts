@@ -487,7 +487,7 @@ export const api = {
         request<void>(`/body/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
     summary: () => request<BodyCompositionSummary>('/body/summary'),
-    // --- Phase 4 health domains (backend pending; 404 → empty in queries) ---
+    // --- Health domains (backend pending; 404 → empty in queries) ---
     water: {
       today: () => request<WaterToday>('/body/water'),
       log: (amountMl: number, note?: string) =>
@@ -508,7 +508,7 @@ export const api = {
     },
   },
 
-  // --- Fasting (Phase 4d; live backend) -------------------------
+  // --- Fasting -------------------------
   fasting: {
     // GET active fast; 404 when none in progress (treat as "no active fast").
     active: () => request<Fast>('/fasting/active'),

@@ -46,7 +46,7 @@ import type {
 
 const POLL_MS = 30_000
 
-// Reads for Phase-4 domains whose backend may not exist yet: a 404 (route not
+// Reads for domains whose backend may not exist yet: a 404 (route not
 // registered) is "no data", not an error. Mirrors useToday's fallback.
 async function emptyOn404<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   try {
@@ -475,7 +475,7 @@ export function useBodySummary() {
 }
 
 // ---------------------------------------------------------------------------
-// Health tracking, water / workout / sleep (Phase 4 backends; 404 → empty)
+// Health tracking, water / workout / sleep (404 → empty)
 // ---------------------------------------------------------------------------
 
 export function useWaterToday() {
@@ -799,7 +799,7 @@ export function useRunBackupNow() {
 }
 
 // ---------------------------------------------------------------------------
-// Streak (backend Phase 2 — 180-day adherence streak)
+// Streak (backend 180-day adherence streak)
 // ---------------------------------------------------------------------------
 
 export function useStreak() {
@@ -811,7 +811,7 @@ export function useStreak() {
 }
 
 // ---------------------------------------------------------------------------
-// Weekly rolling budget (backend Phase 4 — self-correcting targets)
+// Weekly rolling budget (backend self-correcting targets)
 // ---------------------------------------------------------------------------
 
 export function useWeeklyBudget() {

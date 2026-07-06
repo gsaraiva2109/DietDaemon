@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
@@ -24,7 +25,7 @@ import (
 
 // Store implements ports.Store backed by SQLite or Postgres.
 type Store struct {
-	db      *sql.DB
+	db      *sqlx.DB
 	dialect Dialect
 	driver  string // "sqlite" or "postgres"
 }
@@ -83,7 +84,7 @@ func New(driver, dsn string, dialect Dialect) (*Store, error) {
 		db.SetMaxOpenConns(25)
 	}
 
-	s := &Store{db: db, dialect: dialect, driver: driver}
+	s := &Store{db: sqlx.NewDb(db, driver), dialect: dialect, driver: driver}
 	if err := s.runMigrations(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
@@ -121,7 +122,7 @@ func (s *Store) runMigrations() error {
 			}
 
 			var already int
-			if err := s.db.QueryRow(s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()).Scan(&already); err != nil {
+			if err := s.db.Get(&already, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()); err != nil {
 				return fmt.Errorf("check migration %s: %w", entry.Name(), err)
 			}
 			if already > 0 {
@@ -194,7 +195,7 @@ func (s *Store) healMissingColumns() int {
 	healed := 0
 	for _, c := range checks {
 		var tracked int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, c.migration).Scan(&tracked); err != nil {
+		if err := s.db.Get(&tracked, `SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, c.migration); err != nil {
 			continue
 		}
 		if tracked == 0 {
@@ -202,7 +203,7 @@ func (s *Store) healMissingColumns() int {
 		}
 		// Check if the column/table actually exists.
 		var exists int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&exists); err != nil {
+		if err := s.db.Get(&exists, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column); err != nil {
 			// Table might not exist either — that's also a sign of missing migration.
 			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
 			healed++
@@ -235,7 +236,7 @@ func isBenignMigrationErr(err error) bool {
 
 // DB returns the underlying *sql.DB so that callers (e.g. the embedding index)
 // can operate on the same database connection without opening a second one.
-func (s *Store) DB() *sql.DB { return s.db }
+func (s *Store) DB() *sql.DB { return s.db.DB }
 
 // Close closes the database connection.
 func (s *Store) Close() error {
@@ -252,86 +253,102 @@ func (s *Store) Close() error {
 func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 	const q = `
 		INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :account_id, :email, :email_verified_at, :status, :display_name, :timezone, :created_at)
 		ON CONFLICT(id) DO UPDATE SET timezone = excluded.timezone
 	`
 	var emailVerifiedAt any
 	if u.EmailVerifiedAt != nil {
 		emailVerifiedAt = utcStr(*u.EmailVerifiedAt)
 	}
-	_, err := s.db.ExecContext(ctx, s.rewrite(q),
-		u.ID, nullStr(u.AccountID), nullStr(u.Email), emailVerifiedAt, u.Status, nullStr(u.DisplayName),
-		u.Timezone, utcStr(u.CreatedAt))
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id":                u.ID,
+		"account_id":        nullStr(u.AccountID),
+		"email":             nullStr(u.Email),
+		"email_verified_at": emailVerifiedAt,
+		"status":            u.Status,
+		"display_name":      nullStr(u.DisplayName),
+		"timezone":          u.Timezone,
+		"created_at":        utcStr(u.CreatedAt),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind upsert user: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
 	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users WHERE id = ?`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
-	u, err := scanUser(row)
-	if err == sql.ErrNoRows {
-		return types.User{}, types.ErrNotFound
+	var row userRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.User{}, types.ErrNotFound
+		}
+		return types.User{}, err
 	}
-	return u, err
+	return row.toUser(), nil
 }
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
 	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users ORDER BY id`
-	rows, err := s.db.QueryContext(ctx, q)
-	if err != nil {
+	var rows []userRow
+	if err := s.db.SelectContext(ctx, &rows, q); err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
 	var users []types.User
-	for rows.Next() {
-		var u types.User
-		var ca string
-		var eva sql.NullString
-		var accountID, email, displayName, status, wh sql.NullString
-		if err := rows.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca, &wh); err != nil {
-			return nil, fmt.Errorf("store: scan user: %w", err)
-		}
-		u.AccountID = accountID.String
-		u.Email = email.String
-		u.DisplayName = displayName.String
-		u.Status = status.String
-		u.CreatedAt = parseUTC(ca)
-		u.WebAuthnHandle = wh.String
-		if eva.Valid {
-			u.EmailVerifiedAt = new(parseUTC(eva.String))
-		}
-		if !status.Valid {
-			u.Status = "active"
-		}
-		users = append(users, u)
+	for _, r := range rows {
+		users = append(users, r.toUser())
 	}
-	return users, rows.Err()
+	return users, nil
 }
 
-func scanUser(row *sql.Row) (types.User, error) {
-	var u types.User
-	var ca string
-	var eva sql.NullString
-	var accountID, email, displayName, status, wh sql.NullString
-	if err := row.Scan(&u.ID, &accountID, &email, &eva, &status, &displayName, &u.Timezone, &ca, &wh); err != nil {
-		return types.User{}, err
+// userRow is the flat DB shape of the users table; the public types.User
+// nests EmailVerifiedAt as *time.Time and applies a default status, neither
+// of which maps 1:1 onto a column.
+type userRow struct {
+	ID              string         `db:"id"`
+	AccountID       sql.NullString `db:"account_id"`
+	Email           sql.NullString `db:"email"`
+	EmailVerifiedAt sql.NullString `db:"email_verified_at"`
+	Status          sql.NullString `db:"status"`
+	DisplayName     sql.NullString `db:"display_name"`
+	Timezone        string         `db:"timezone"`
+	CreatedAt       string         `db:"created_at"`
+	WebAuthnHandle  sql.NullString `db:"webauthn_handle"`
+}
+
+func (r userRow) toUser() types.User {
+	u := types.User{
+		ID:             r.ID,
+		AccountID:      r.AccountID.String,
+		Email:          r.Email.String,
+		DisplayName:    r.DisplayName.String,
+		Status:         r.Status.String,
+		Timezone:       r.Timezone,
+		CreatedAt:      parseUTC(r.CreatedAt),
+		WebAuthnHandle: r.WebAuthnHandle.String,
 	}
-	u.AccountID = accountID.String
-	u.Email = email.String
-	u.DisplayName = displayName.String
-	u.Status = status.String
-	u.CreatedAt = parseUTC(ca)
-	u.WebAuthnHandle = wh.String
-	if eva.Valid {
-		u.EmailVerifiedAt = new(parseUTC(eva.String))
+	if r.EmailVerifiedAt.Valid {
+		u.EmailVerifiedAt = new(parseUTC(r.EmailVerifiedAt.String))
 	}
-	if !status.Valid {
+	if !r.Status.Valid {
 		u.Status = "active"
 	}
-	return u, nil
+	return u
+}
+
+// scanUser scans a single *sql.Row with the same column order as userRow.
+// Kept for store_auth.go call sites (CreateUserWithPassword, GetUserByEmail,
+// GetUserByAPIKey, GetSession-adjacent lookups) that build the row via a
+// custom SELECT elsewhere in that file.
+func scanUser(row *sql.Row) (types.User, error) {
+	var r userRow
+	if err := row.Scan(&r.ID, &r.AccountID, &r.Email, &r.EmailVerifiedAt, &r.Status, &r.DisplayName, &r.Timezone, &r.CreatedAt, &r.WebAuthnHandle); err != nil {
+		return types.User{}, err
+	}
+	return r.toUser(), nil
 }
 
 // ValidateToken looks up a Bearer token in the api_tokens table and returns the
@@ -363,11 +380,11 @@ func (s *Store) MapChannelUser(ctx context.Context, channel, channelUserID, user
 // exists.
 func (s *Store) GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error) {
 	const q = `SELECT user_id FROM user_channels WHERE channel = ? AND channel_user_id = ?`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), channel, channelUserID)
 	var userID string
-	if err := row.Scan(&userID); err == sql.ErrNoRows {
-		return "", types.ErrNotFound
-	} else if err != nil {
+	if err := s.db.GetContext(ctx, &userID, s.rewrite(q), channel, channelUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", types.ErrNotFound
+		}
 		return "", fmt.Errorf("store: get user by channel: %w", err)
 	}
 	return userID, nil
@@ -401,18 +418,21 @@ func (s *Store) UpsertChatRoute(ctx context.Context, userID, channel string, met
 // user has never been seen on any channel.
 func (s *Store) GetChatRoute(ctx context.Context, userID string) (string, map[string]string, error) {
 	const q = `SELECT channel, meta_json FROM chat_routes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
-	var channel, metaJSON string
-	if err := row.Scan(&channel, &metaJSON); err == sql.ErrNoRows {
-		return "", nil, types.ErrNotFound
-	} else if err != nil {
+	var row struct {
+		Channel  string `db:"channel"`
+		MetaJSON string `db:"meta_json"`
+	}
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, types.ErrNotFound
+		}
 		return "", nil, fmt.Errorf("store: get chat route: %w", err)
 	}
 	var meta map[string]string
-	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+	if err := json.Unmarshal([]byte(row.MetaJSON), &meta); err != nil {
 		return "", nil, fmt.Errorf("store: unmarshal chat route meta: %w", err)
 	}
-	return channel, meta, nil
+	return row.Channel, meta, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +441,7 @@ func (s *Store) GetChatRoute(ctx context.Context, userID string) (string, map[st
 
 // SaveMeal inserts a meal and all its resolved items inside a transaction.
 func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
@@ -429,12 +449,21 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 
 	const mealQ = `
 		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :at_utc, :raw_text, :confidence, :parser_tier, :created_at)
 	`
-	_, err = tx.ExecContext(ctx, s.rewrite(mealQ),
-		m.ID, m.UserID, utcStr(m.At), m.RawText, m.Confidence, int(m.ParserTier), utcStr(m.CreatedAt),
-	)
+	mealQuery, mealArgs, err := sqlx.Named(mealQ, map[string]any{
+		"id":          m.ID,
+		"user_id":     m.UserID,
+		"at_utc":      utcStr(m.At),
+		"raw_text":    m.RawText,
+		"confidence":  m.Confidence,
+		"parser_tier": int(m.ParserTier),
+		"created_at":  utcStr(m.CreatedAt),
+	})
 	if err != nil {
+		return fmt.Errorf("store: bind meal: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, s.rewrite(mealQuery), mealArgs...); err != nil {
 		return fmt.Errorf("store: insert meal: %w", err)
 	}
 
@@ -443,21 +472,43 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 			(id, meal_id, raw_phrase, quantity, unit, normalized_grams,
 			 food_id, food_name, source, match_score,
 			 kcal, protein, carbs, fat, fiber)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :meal_id, :raw_phrase, :quantity, :unit, :normalized_grams,
+			:food_id, :food_name, :source, :match_score,
+			:kcal, :protein, :carbs, :fat, :fiber)
 	`
 	for _, it := range m.Items {
-		_, err = tx.ExecContext(ctx, s.rewrite(itemQ),
-			newID(), m.ID,
-			it.Parsed.RawPhrase, it.Parsed.Quantity, it.Parsed.Unit, it.Parsed.NormalizedGrams,
-			it.Match.FoodID, it.Match.Name, it.Match.Source, it.Match.MatchScore,
-			it.Macros.Calories, it.Macros.Protein, it.Macros.Carbs, it.Macros.Fat, it.Macros.Fiber,
-		)
+		itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), m.ID, it))
 		if err != nil {
+			return fmt.Errorf("store: bind resolved_item: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, s.rewrite(itemQuery), itemArgs...); err != nil {
 			return fmt.Errorf("store: insert resolved_item: %w", err)
 		}
 	}
 
 	return tx.Commit()
+}
+
+// resolvedItemNamedArgs builds the named-parameter map shared by every insert
+// of a resolved_items row (SaveMeal, AddMealItem).
+func resolvedItemNamedArgs(id, mealID string, it types.ResolvedItem) map[string]any {
+	return map[string]any{
+		"id":               id,
+		"meal_id":          mealID,
+		"raw_phrase":       it.Parsed.RawPhrase,
+		"quantity":         it.Parsed.Quantity,
+		"unit":             it.Parsed.Unit,
+		"normalized_grams": it.Parsed.NormalizedGrams,
+		"food_id":          it.Match.FoodID,
+		"food_name":        it.Match.Name,
+		"source":           it.Match.Source,
+		"match_score":      it.Match.MatchScore,
+		"kcal":             it.Macros.Calories,
+		"protein":          it.Macros.Protein,
+		"carbs":            it.Macros.Carbs,
+		"fat":              it.Macros.Fat,
+		"fiber":            it.Macros.Fiber,
+	}
 }
 
 // RecentMeals returns the most recent meals for a user, each with its resolved
@@ -470,24 +521,17 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 		ORDER BY created_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(mealQ), userID, limit)
-	if err != nil {
+	var rows []mealRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(mealQ), userID, limit); err != nil {
 		return nil, fmt.Errorf("store: query meals: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string
-	for rows.Next() {
-		m, err := scanMeal(rows)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan meal: %w", err)
-		}
+	for _, r := range rows {
+		m := r.toMeal()
 		meals = append(meals, m)
 		mealIDs = append(mealIDs, m.ID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: meals rows: %w", err)
 	}
 
 	if len(meals) == 0 {
@@ -514,20 +558,14 @@ func (s *Store) GetMeal(ctx context.Context, mealID string) (types.Meal, error) 
 		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
 		FROM meals WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), mealID)
-
-	var m types.Meal
-	var atUTC, ca string
-	var tier int
-	if err := row.Scan(&m.ID, &m.UserID, &atUTC, &m.RawText, &m.Confidence, &tier, &ca); err != nil {
-		if err == sql.ErrNoRows {
+	var row mealRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), mealID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return types.Meal{}, types.ErrNotFound
 		}
 		return types.Meal{}, fmt.Errorf("store: get meal: %w", err)
 	}
-	m.At = parseUTC(atUTC)
-	m.ParserTier = types.ParserTier(tier)
-	m.CreatedAt = parseUTC(ca)
+	m := row.toMeal()
 
 	itemsByMeal, err := s.loadItems(ctx, []string{m.ID})
 	if err != nil {
@@ -548,37 +586,106 @@ func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate strin
 		WHERE user_id = ? AND date >= ? AND date <= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
-	if err != nil {
+	var rows []rollupRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: query rollups: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.DailyRollup
-	for rows.Next() {
-		var r types.DailyRollup
-		if err := rows.Scan(&r.UserID, &r.Date,
-			&r.Consumed.Calories, &r.Consumed.Protein, &r.Consumed.Carbs, &r.Consumed.Fat, &r.Consumed.Fiber,
-			&r.Targets.Calories, &r.Targets.Protein, &r.Targets.Carbs, &r.Targets.Fat, &r.Targets.Fiber,
-		); err != nil {
-			return nil, fmt.Errorf("store: scan rollup: %w", err)
-		}
-		out = append(out, r)
+	out := make([]types.DailyRollup, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.toRollup())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-func scanMeal(rows *sql.Rows) (types.Meal, error) {
-	var m types.Meal
-	var atUTC, ca string
-	var tier int
-	if err := rows.Scan(&m.ID, &m.UserID, &atUTC, &m.RawText, &m.Confidence, &tier, &ca); err != nil {
-		return types.Meal{}, err
+// mealRow is the flat DB shape of the meals table; types.Meal additionally
+// carries a non-column Items slice populated by loadItems.
+type mealRow struct {
+	ID         string  `db:"id"`
+	UserID     string  `db:"user_id"`
+	AtUTC      string  `db:"at_utc"`
+	RawText    string  `db:"raw_text"`
+	Confidence float64 `db:"confidence"`
+	ParserTier int     `db:"parser_tier"`
+	CreatedAt  string  `db:"created_at"`
+}
+
+func (r mealRow) toMeal() types.Meal {
+	return types.Meal{
+		ID:         r.ID,
+		UserID:     r.UserID,
+		At:         parseUTC(r.AtUTC),
+		RawText:    r.RawText,
+		Confidence: r.Confidence,
+		ParserTier: types.ParserTier(r.ParserTier),
+		CreatedAt:  parseUTC(r.CreatedAt),
 	}
-	m.At = parseUTC(atUTC)
-	m.ParserTier = types.ParserTier(tier)
-	m.CreatedAt = parseUTC(ca)
-	return m, nil
+}
+
+// rollupRow is the flat DB shape of daily_rollups; types.DailyRollup groups
+// the consumed/target columns into nested Macros structs.
+type rollupRow struct {
+	UserID          string  `db:"user_id"`
+	Date            string  `db:"date"`
+	ConsumedKcal    float64 `db:"consumed_kcal"`
+	ConsumedProtein float64 `db:"consumed_protein"`
+	ConsumedCarbs   float64 `db:"consumed_carbs"`
+	ConsumedFat     float64 `db:"consumed_fat"`
+	ConsumedFiber   float64 `db:"consumed_fiber"`
+	TargetKcal      float64 `db:"target_kcal"`
+	TargetProtein   float64 `db:"target_protein"`
+	TargetCarbs     float64 `db:"target_carbs"`
+	TargetFat       float64 `db:"target_fat"`
+	TargetFiber     float64 `db:"target_fiber"`
+}
+
+func (r rollupRow) toRollup() types.DailyRollup {
+	return types.DailyRollup{
+		UserID: r.UserID,
+		Date:   r.Date,
+		Consumed: types.Macros{
+			Calories: r.ConsumedKcal, Protein: r.ConsumedProtein, Carbs: r.ConsumedCarbs,
+			Fat: r.ConsumedFat, Fiber: r.ConsumedFiber,
+		},
+		Targets: types.Macros{
+			Calories: r.TargetKcal, Protein: r.TargetProtein, Carbs: r.TargetCarbs,
+			Fat: r.TargetFat, Fiber: r.TargetFiber,
+		},
+	}
+}
+
+// resolvedItemRow is the flat DB shape of resolved_items; types.ResolvedItem
+// groups these columns into nested Parsed/Match/Macros structs, and Per100g
+// is reconstructed rather than stored.
+type resolvedItemRow struct {
+	MealID          string  `db:"meal_id"`
+	RawPhrase       string  `db:"raw_phrase"`
+	Quantity        float64 `db:"quantity"`
+	Unit            string  `db:"unit"`
+	NormalizedGrams float64 `db:"normalized_grams"`
+	FoodID          string  `db:"food_id"`
+	FoodName        string  `db:"food_name"`
+	Source          string  `db:"source"`
+	MatchScore      float64 `db:"match_score"`
+	Kcal            float64 `db:"kcal"`
+	Protein         float64 `db:"protein"`
+	Carbs           float64 `db:"carbs"`
+	Fat             float64 `db:"fat"`
+	Fiber           float64 `db:"fiber"`
+}
+
+func (r resolvedItemRow) toResolvedItem() types.ResolvedItem {
+	macros := types.Macros{Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber}
+	return types.ResolvedItem{
+		Parsed: types.ParsedItem{
+			RawPhrase: r.RawPhrase, Quantity: r.Quantity, Unit: r.Unit, NormalizedGrams: r.NormalizedGrams,
+		},
+		Match: types.FoodMatch{
+			FoodID: r.FoodID, Name: r.FoodName, Source: r.Source, MatchScore: r.MatchScore,
+			// Reconstruct Per100g from the absolute macros and portion grams.
+			Per100g: macrosPer100g(macros, r.NormalizedGrams),
+		},
+		Macros: macros,
+	}
 }
 
 func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]types.ResolvedItem, error) {
@@ -603,31 +710,16 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 		ORDER BY meal_id, rowid
 	`, strings.Join(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), args...)
-	if err != nil {
+	var rows []resolvedItemRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
 		return nil, fmt.Errorf("store: query items: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	out := make(map[string][]types.ResolvedItem)
-	for rows.Next() {
-		var mealID string
-		var ri types.ResolvedItem
-		var parsedNMG float64 // normalized grams — needed to back-calc Per100g
-		err := rows.Scan(
-			&mealID, &ri.Parsed.RawPhrase, &ri.Parsed.Quantity, &ri.Parsed.Unit, &parsedNMG,
-			&ri.Match.FoodID, &ri.Match.Name, &ri.Match.Source, &ri.Match.MatchScore,
-			&ri.Macros.Calories, &ri.Macros.Protein, &ri.Macros.Carbs, &ri.Macros.Fat, &ri.Macros.Fiber,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan item: %w", err)
-		}
-		ri.Parsed.NormalizedGrams = parsedNMG
-		// Reconstruct Per100g from the absolute macros and portion grams.
-		ri.Match.Per100g = macrosPer100g(ri.Macros, parsedNMG)
-		out[mealID] = append(out[mealID], ri)
+	for _, r := range rows {
+		out[r.MealID] = append(out[r.MealID], r.toResolvedItem())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // macrosPer100g back-calculates per-100g macros from the absolute portion
@@ -658,17 +750,14 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 		ORDER BY fl.query_count DESC
 		LIMIT 1
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, normalized)
-	var fm types.FoodMatch
-	err := row.Scan(&fm.FoodID, &fm.Name, &fm.Source,
-		&fm.Per100g.Calories, &fm.Per100g.Protein, &fm.Per100g.Carbs, &fm.Per100g.Fat, &fm.Per100g.Fiber,
-	)
-	if err == sql.ErrNoRows {
-		return types.FoodMatch{}, types.ErrNoMatch
-	}
-	if err != nil {
+	var row foodMatchRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, normalized); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.FoodMatch{}, types.ErrNoMatch
+		}
 		return types.FoodMatch{}, fmt.Errorf("store: lookup food: %w", err)
 	}
+	fm := row.toFoodMatch()
 	// Exact alias match always scores 1.0.
 	fm.MatchScore = 1.0
 	return fm, nil
@@ -683,24 +772,44 @@ func (s *Store) GetFood(ctx context.Context, userID, foodID string) (types.FoodM
 		FROM food_library
 		WHERE user_id = ? AND food_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, foodID)
-	var fm types.FoodMatch
-	err := row.Scan(&fm.FoodID, &fm.Name, &fm.Source,
-		&fm.Per100g.Calories, &fm.Per100g.Protein, &fm.Per100g.Carbs, &fm.Per100g.Fat, &fm.Per100g.Fiber,
-	)
-	if err == sql.ErrNoRows {
-		return types.FoodMatch{}, types.ErrNoMatch
-	}
-	if err != nil {
+	var row foodMatchRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, foodID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.FoodMatch{}, types.ErrNoMatch
+		}
 		return types.FoodMatch{}, fmt.Errorf("store: get food: %w", err)
 	}
-	return fm, nil
+	return row.toFoodMatch(), nil
+}
+
+// foodMatchRow is the flat DB shape shared by LookupFood and GetFood;
+// types.FoodMatch nests the macro columns into Per100g.
+type foodMatchRow struct {
+	FoodID  string  `db:"food_id"`
+	Name    string  `db:"name"`
+	Source  string  `db:"source"`
+	Kcal    float64 `db:"kcal_100g"`
+	Protein float64 `db:"protein_100g"`
+	Carbs   float64 `db:"carbs_100g"`
+	Fat     float64 `db:"fat_100g"`
+	Fiber   float64 `db:"fiber_100g"`
+}
+
+func (r foodMatchRow) toFoodMatch() types.FoodMatch {
+	return types.FoodMatch{
+		FoodID: r.FoodID,
+		Name:   r.Name,
+		Source: r.Source,
+		Per100g: types.Macros{
+			Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber,
+		},
+	}
 }
 
 // UpsertFood inserts or replaces a food_library row and adds any new normalized
 // aliases, all within a single transaction.
 func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
@@ -709,7 +818,7 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	const foodQ = `
 		INSERT INTO food_library
 			(food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, query_count, last_used)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')
+		VALUES (:food_id, :user_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, 0, '')
 		ON CONFLICT(user_id, food_id) DO UPDATE SET
 			name        = excluded.name,
 			source      = excluded.source,
@@ -719,11 +828,11 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 			fat_100g    = excluded.fat_100g,
 			fiber_100g  = excluded.fiber_100g
 	`
-	_, err = tx.ExecContext(ctx, s.rewrite(foodQ),
-		match.FoodID, userID, match.Name, match.Source,
-		match.Per100g.Calories, match.Per100g.Protein, match.Per100g.Carbs, match.Per100g.Fat, match.Per100g.Fiber,
-	)
+	foodQuery, foodArgs, err := sqlx.Named(foodQ, foodLibraryNamedArgs(userID, match))
 	if err != nil {
+		return fmt.Errorf("store: bind upsert food: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(foodQuery), foodArgs...); err != nil {
 		return fmt.Errorf("store: upsert food: %w", err)
 	}
 
@@ -756,30 +865,65 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 	return err
 }
 
+// foodLibraryNamedArgs builds the named-parameter map shared by every upsert
+// of a food_library row (UpsertFood, CorrectMealItem's cache refresh).
+func foodLibraryNamedArgs(userID string, match types.FoodMatch) map[string]any {
+	return map[string]any{
+		"food_id":      match.FoodID,
+		"user_id":      userID,
+		"name":         match.Name,
+		"source":       match.Source,
+		"kcal_100g":    match.Per100g.Calories,
+		"protein_100g": match.Per100g.Protein,
+		"carbs_100g":   match.Per100g.Carbs,
+		"fat_100g":     match.Per100g.Fat,
+		"fiber_100g":   match.Per100g.Fiber,
+	}
+}
+
+// mealOwnerRow is the flat DB shape used to fetch a meal's timestamp while
+// checking that it belongs to the calling user.
+type mealOwnerRow struct {
+	AtUTC  string `db:"at_utc"`
+	UserID string `db:"user_id"`
+}
+
+// mealOwner loads mealID's at_utc/user_id within tx and confirms it belongs
+// to userID, returning types.ErrNotFound otherwise. Shared by CorrectMealItem,
+// AddMealItem, and DeleteMealItem, which all gate a rollup mutation on the
+// same ownership check.
+func (s *Store) mealOwner(ctx context.Context, tx *sqlx.Tx, mealID, userID string) (mealOwnerRow, error) {
+	const q = `SELECT at_utc, user_id FROM meals WHERE id = ?`
+	var row mealOwnerRow
+	if err := tx.GetContext(ctx, &row, s.rewrite(q), mealID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return mealOwnerRow{}, types.ErrNotFound
+		}
+		return mealOwnerRow{}, fmt.Errorf("store: get meal: %w", err)
+	}
+	if row.UserID != userID {
+		return mealOwnerRow{}, types.ErrNotFound
+	}
+	return row, nil
+}
+
 // CorrectMealItem updates one resolved item's macros for a meal, then
 // recalculates the daily rollup and refreshes the food_library cache so future
 // logs use the corrected values. itemIndex is the 0-based position of the item
 // within the meal's items (ordered by rowid).
 func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	// Load the meal to get the at time for rollup lookup and the original items.
-	var atUTC, mealUser string
-	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
-		if err == sql.ErrNoRows {
-			return types.ErrNotFound
-		}
-		return fmt.Errorf("store: get meal: %w", err)
+	meal, err := s.mealOwner(ctx, tx, mealID, userID)
+	if err != nil {
+		return err
 	}
-	if mealUser != userID {
-		return types.ErrNotFound
-	}
-	mealAt := parseUTC(atUTC)
+	mealAt := parseUTC(meal.AtUTC)
 
 	// Load items by rowid so we can find and update the target item.
 	const itemsQ = `
@@ -790,35 +934,20 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		WHERE meal_id = ?
 		ORDER BY rowid
 	`
-	rows, err := tx.QueryContext(ctx, s.rewrite(itemsQ), mealID)
-	if err != nil {
+	var itemRows []mealItemRow
+	if err := tx.SelectContext(ctx, &itemRows, s.rewrite(itemsQ), mealID); err != nil {
 		return fmt.Errorf("store: query items: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	type itemRow struct {
+	type item struct {
 		rowid int64
 		ri    types.ResolvedItem
 	}
-	var items []itemRow
+	items := make([]item, len(itemRows))
 	var oldTotal types.Macros
-	for rows.Next() {
-		var ir itemRow
-		var parsedNMG float64
-		if err := rows.Scan(&ir.rowid,
-			&ir.ri.Parsed.RawPhrase, &ir.ri.Parsed.Quantity, &ir.ri.Parsed.Unit, &parsedNMG,
-			&ir.ri.Match.FoodID, &ir.ri.Match.Name, &ir.ri.Match.Source, &ir.ri.Match.MatchScore,
-			&ir.ri.Macros.Calories, &ir.ri.Macros.Protein, &ir.ri.Macros.Carbs, &ir.ri.Macros.Fat, &ir.ri.Macros.Fiber,
-		); err != nil {
-			return fmt.Errorf("store: scan item: %w", err)
-		}
-		ir.ri.Parsed.NormalizedGrams = parsedNMG
-		ir.ri.Match.Per100g = macrosPer100g(ir.ri.Macros, parsedNMG)
-		items = append(items, ir)
-		oldTotal = oldTotal.Add(ir.ri.Macros)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("store: items rows: %w", err)
+	for i, r := range itemRows {
+		items[i] = item{rowid: r.Rowid, ri: r.resolvedItemRow.toResolvedItem()}
+		oldTotal = oldTotal.Add(items[i].ri.Macros)
 	}
 	if itemIndex < 0 || itemIndex >= len(items) {
 		return fmt.Errorf("store: item index %d out of range [0, %d)", itemIndex, len(items))
@@ -829,24 +958,35 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	items[itemIndex].ri = corrected
 
 	var newTotal types.Macros
-	for _, ir := range items {
-		newTotal = newTotal.Add(ir.ri.Macros)
+	for _, it := range items {
+		newTotal = newTotal.Add(it.ri.Macros)
 	}
 
 	// Update the resolved_items row.
 	const updateQ = `
 		UPDATE resolved_items SET
-			normalized_grams = ?, food_id = ?, food_name = ?, source = ?, match_score = ?,
-			kcal = ?, protein = ?, carbs = ?, fat = ?, fiber = ?
-		WHERE rowid = ?
+			normalized_grams = :normalized_grams, food_id = :food_id, food_name = :food_name,
+			source = :source, match_score = :match_score,
+			kcal = :kcal, protein = :protein, carbs = :carbs, fat = :fat, fiber = :fiber
+		WHERE rowid = :rowid
 	`
-	_, err = tx.ExecContext(ctx, s.rewrite(updateQ),
-		corrected.Parsed.NormalizedGrams,
-		corrected.Match.FoodID, corrected.Match.Name, corrected.Match.Source, corrected.Match.MatchScore,
-		corrected.Macros.Calories, corrected.Macros.Protein, corrected.Macros.Carbs, corrected.Macros.Fat, corrected.Macros.Fiber,
-		items[itemIndex].rowid,
-	)
+	updateQuery, updateArgs, err := sqlx.Named(updateQ, map[string]any{
+		"normalized_grams": corrected.Parsed.NormalizedGrams,
+		"food_id":          corrected.Match.FoodID,
+		"food_name":        corrected.Match.Name,
+		"source":           corrected.Match.Source,
+		"match_score":      corrected.Match.MatchScore,
+		"kcal":             corrected.Macros.Calories,
+		"protein":          corrected.Macros.Protein,
+		"carbs":            corrected.Macros.Carbs,
+		"fat":              corrected.Macros.Fat,
+		"fiber":            corrected.Macros.Fiber,
+		"rowid":            items[itemIndex].rowid,
+	})
 	if err != nil {
+		return fmt.Errorf("store: bind update item: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(updateQuery), updateArgs...); err != nil {
 		return fmt.Errorf("store: update item: %w", err)
 	}
 
@@ -857,26 +997,39 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 			(user_id, date,
 			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
 			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
-		VALUES (?, ?,
-		        ?, ?, ?, ?, ?,
+		VALUES (:user_id, :date,
+		        :new_total_kcal, :new_total_protein, :new_total_carbs, :new_total_fat, :new_total_fiber,
 		        0, 0, 0, 0, 0)
 		ON CONFLICT(user_id, date) DO UPDATE SET
-			consumed_kcal   = consumed_kcal   - ? + ?,
-			consumed_protein = consumed_protein - ? + ?,
-			consumed_carbs  = consumed_carbs  - ? + ?,
-			consumed_fat    = consumed_fat    - ? + ?,
-			consumed_fiber  = consumed_fiber  - ? + ?
+			consumed_kcal    = consumed_kcal    - :old_kcal    + :corrected_kcal,
+			consumed_protein = consumed_protein - :old_protein + :corrected_protein,
+			consumed_carbs   = consumed_carbs   - :old_carbs   + :corrected_carbs,
+			consumed_fat     = consumed_fat     - :old_fat     + :corrected_fat,
+			consumed_fiber   = consumed_fiber   - :old_fiber   + :corrected_fiber
 	`
-	_, err = tx.ExecContext(ctx, s.rewrite(rollupQ),
-		userID, localDate,
-		newTotal.Calories, newTotal.Protein, newTotal.Carbs, newTotal.Fat, newTotal.Fiber,
-		oldItemMacros.Calories, corrected.Macros.Calories,
-		oldItemMacros.Protein, corrected.Macros.Protein,
-		oldItemMacros.Carbs, corrected.Macros.Carbs,
-		oldItemMacros.Fat, corrected.Macros.Fat,
-		oldItemMacros.Fiber, corrected.Macros.Fiber,
-	)
+	rollupQuery, rollupArgs, err := sqlx.Named(rollupQ, map[string]any{
+		"user_id":           userID,
+		"date":              localDate,
+		"new_total_kcal":    newTotal.Calories,
+		"new_total_protein": newTotal.Protein,
+		"new_total_carbs":   newTotal.Carbs,
+		"new_total_fat":     newTotal.Fat,
+		"new_total_fiber":   newTotal.Fiber,
+		"old_kcal":          oldItemMacros.Calories,
+		"old_protein":       oldItemMacros.Protein,
+		"old_carbs":         oldItemMacros.Carbs,
+		"old_fat":           oldItemMacros.Fat,
+		"old_fiber":         oldItemMacros.Fiber,
+		"corrected_kcal":    corrected.Macros.Calories,
+		"corrected_protein": corrected.Macros.Protein,
+		"corrected_carbs":   corrected.Macros.Carbs,
+		"corrected_fat":     corrected.Macros.Fat,
+		"corrected_fiber":   corrected.Macros.Fiber,
+	})
 	if err != nil {
+		return fmt.Errorf("store: bind update rollup: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQuery), rollupArgs...); err != nil {
 		return fmt.Errorf("store: update rollup: %w", err)
 	}
 
@@ -886,7 +1039,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		const foodQ = `
 			INSERT INTO food_library
 				(food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, query_count, last_used)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')
+			VALUES (:food_id, :user_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, 0, '')
 			ON CONFLICT(user_id, food_id) DO UPDATE SET
 				kcal_100g   = excluded.kcal_100g,
 				protein_100g= excluded.protein_100g,
@@ -894,12 +1047,11 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 				fat_100g    = excluded.fat_100g,
 				fiber_100g  = excluded.fiber_100g
 		`
-		_, err = tx.ExecContext(ctx, s.rewrite(foodQ),
-			corrected.Match.FoodID, userID, corrected.Match.Name, corrected.Match.Source,
-			corrected.Match.Per100g.Calories, corrected.Match.Per100g.Protein,
-			corrected.Match.Per100g.Carbs, corrected.Match.Per100g.Fat, corrected.Match.Per100g.Fiber,
-		)
+		foodQuery, foodArgs, err := sqlx.Named(foodQ, foodLibraryNamedArgs(userID, corrected.Match))
 		if err != nil {
+			return fmt.Errorf("store: bind upsert food library: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, s.rewrite(foodQuery), foodArgs...); err != nil {
 			return fmt.Errorf("store: upsert food library: %w", err)
 		}
 	}
@@ -907,25 +1059,26 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	return tx.Commit()
 }
 
+// mealItemRow is resolvedItemRow plus the SQLite rowid, used where the
+// caller must locate and later update or delete a specific resolved_items
+// row (CorrectMealItem, DeleteMealItem).
+type mealItemRow struct {
+	Rowid int64 `db:"rowid"`
+	resolvedItemRow
+}
+
 // AddMealItem appends a resolved item to an existing meal and adds its macros
 // to that day's rollup. Mirrors CorrectMealItem's delta approach.
 func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item types.ResolvedItem) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var atUTC, mealUser string
-	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
-		if err == sql.ErrNoRows {
-			return types.ErrNotFound
-		}
-		return fmt.Errorf("store: get meal: %w", err)
-	}
-	if mealUser != userID {
-		return types.ErrNotFound
+	meal, err := s.mealOwner(ctx, tx, mealID, userID)
+	if err != nil {
+		return err
 	}
 
 	const itemQ = `
@@ -933,37 +1086,41 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 			(id, meal_id, raw_phrase, quantity, unit, normalized_grams,
 			 food_id, food_name, source, match_score,
 			 kcal, protein, carbs, fat, fiber)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :meal_id, :raw_phrase, :quantity, :unit, :normalized_grams,
+			:food_id, :food_name, :source, :match_score,
+			:kcal, :protein, :carbs, :fat, :fiber)
 	`
-	if _, err := tx.ExecContext(ctx, s.rewrite(itemQ),
-		newID(), mealID,
-		item.Parsed.RawPhrase, item.Parsed.Quantity, item.Parsed.Unit, item.Parsed.NormalizedGrams,
-		item.Match.FoodID, item.Match.Name, item.Match.Source, item.Match.MatchScore,
-		item.Macros.Calories, item.Macros.Protein, item.Macros.Carbs, item.Macros.Fat, item.Macros.Fiber,
-	); err != nil {
+	itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), mealID, item))
+	if err != nil {
+		return fmt.Errorf("store: bind resolved_item: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(itemQuery), itemArgs...); err != nil {
 		return fmt.Errorf("store: insert resolved_item: %w", err)
 	}
 
-	localDate := parseUTC(atUTC).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).Format("2006-01-02")
 	const rollupQ = `
 		INSERT INTO daily_rollups
 			(user_id, date,
 			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
 			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0)
+		VALUES (:user_id, :date, :kcal, :protein, :carbs, :fat, :fiber, 0, 0, 0, 0, 0)
 		ON CONFLICT(user_id, date) DO UPDATE SET
-			consumed_kcal    = consumed_kcal    + ?,
-			consumed_protein = consumed_protein + ?,
-			consumed_carbs   = consumed_carbs   + ?,
-			consumed_fat     = consumed_fat     + ?,
-			consumed_fiber   = consumed_fiber   + ?
+			consumed_kcal    = consumed_kcal    + :kcal,
+			consumed_protein = consumed_protein + :protein,
+			consumed_carbs   = consumed_carbs   + :carbs,
+			consumed_fat     = consumed_fat     + :fat,
+			consumed_fiber   = consumed_fiber   + :fiber
 	`
 	m := item.Macros
-	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQ),
-		userID, localDate,
-		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
-		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber,
-	); err != nil {
+	rollupQuery, rollupArgs, err := sqlx.Named(rollupQ, map[string]any{
+		"user_id": userID, "date": localDate,
+		"kcal": m.Calories, "protein": m.Protein, "carbs": m.Carbs, "fat": m.Fat, "fiber": m.Fiber,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind update rollup: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQuery), rollupArgs...); err != nil {
 		return fmt.Errorf("store: update rollup: %w", err)
 	}
 
@@ -973,59 +1130,35 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 // DeleteMealItem removes the item at itemIndex (zero-based, rowid order) from a
 // meal and subtracts its macros from that day's rollup.
 func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemIndex int) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var atUTC, mealUser string
-	const mealQ = `SELECT at_utc, user_id FROM meals WHERE id = ?`
-	if err := tx.QueryRowContext(ctx, s.rewrite(mealQ), mealID).Scan(&atUTC, &mealUser); err != nil {
-		if err == sql.ErrNoRows {
-			return types.ErrNotFound
-		}
-		return fmt.Errorf("store: get meal: %w", err)
-	}
-	if mealUser != userID {
-		return types.ErrNotFound
+	meal, err := s.mealOwner(ctx, tx, mealID, userID)
+	if err != nil {
+		return err
 	}
 
 	const itemsQ = `
 		SELECT rowid, kcal, protein, carbs, fat, fiber
 		FROM resolved_items WHERE meal_id = ? ORDER BY rowid
 	`
-	rows, err := tx.QueryContext(ctx, s.rewrite(itemsQ), mealID)
-	if err != nil {
+	var items []mealItemRow
+	if err := tx.SelectContext(ctx, &items, s.rewrite(itemsQ), mealID); err != nil {
 		return fmt.Errorf("store: query items: %w", err)
-	}
-	type row struct {
-		rowid int64
-		m     types.Macros
-	}
-	var items []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.rowid, &r.m.Calories, &r.m.Protein, &r.m.Carbs, &r.m.Fat, &r.m.Fiber); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("store: scan item: %w", err)
-		}
-		items = append(items, r)
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("store: items rows: %w", err)
 	}
 	if itemIndex < 0 || itemIndex >= len(items) {
 		return fmt.Errorf("store: item index %d out of range [0, %d): %w", itemIndex, len(items), types.ErrNotFound)
 	}
 
 	target := items[itemIndex]
-	if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM resolved_items WHERE rowid = ?`), target.rowid); err != nil {
+	if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM resolved_items WHERE rowid = ?`), target.Rowid); err != nil {
 		return fmt.Errorf("store: delete item: %w", err)
 	}
 
-	localDate := parseUTC(atUTC).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).Format("2006-01-02")
 	const rollupQ = `
 		UPDATE daily_rollups SET
 			consumed_kcal    = consumed_kcal    - ?,
@@ -1035,7 +1168,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 			consumed_fiber   = consumed_fiber   - ?
 		WHERE user_id = ? AND date = ?
 	`
-	m := target.m
+	m := types.Macros{Calories: target.Kcal, Protein: target.Protein, Carbs: target.Carbs, Fat: target.Fat, Fiber: target.Fiber}
 	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQ),
 		m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber, userID, localDate,
 	); err != nil {
@@ -1052,27 +1185,39 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 // GetTargets returns the daily targets for a user, or types.ErrNotFound.
 func (s *Store) GetTargets(ctx context.Context, userID string) (types.DailyTargets, error) {
 	const q = `SELECT user_id, kcal, protein, carbs, fat, fiber FROM daily_targets WHERE user_id = ?`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
-	dt, err := scanTargets(row)
-	if err == sql.ErrNoRows {
-		return types.DailyTargets{}, types.ErrNotFound
+	var row targetsRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.DailyTargets{}, types.ErrNotFound
+		}
+		return types.DailyTargets{}, err
 	}
-	return dt, err
+	return row.toTargets(), nil
 }
 
-func scanTargets(row *sql.Row) (types.DailyTargets, error) {
-	var dt types.DailyTargets
-	err := row.Scan(&dt.UserID,
-		&dt.Targets.Calories, &dt.Targets.Protein, &dt.Targets.Carbs, &dt.Targets.Fat, &dt.Targets.Fiber,
-	)
-	return dt, err
+// targetsRow is the flat DB shape of daily_targets; types.DailyTargets groups
+// the macro columns into a nested Macros struct.
+type targetsRow struct {
+	UserID  string  `db:"user_id"`
+	Kcal    float64 `db:"kcal"`
+	Protein float64 `db:"protein"`
+	Carbs   float64 `db:"carbs"`
+	Fat     float64 `db:"fat"`
+	Fiber   float64 `db:"fiber"`
+}
+
+func (r targetsRow) toTargets() types.DailyTargets {
+	return types.DailyTargets{
+		UserID:  r.UserID,
+		Targets: types.Macros{Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber},
+	}
 }
 
 // SetTargets inserts or replaces the daily targets row.
 func (s *Store) SetTargets(ctx context.Context, t types.DailyTargets) error {
 	const q = `
 		INSERT INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES (:user_id, :kcal, :protein, :carbs, :fat, :fiber)
 		ON CONFLICT(user_id) DO UPDATE SET
 			kcal    = excluded.kcal,
 			protein = excluded.protein,
@@ -1080,9 +1225,15 @@ func (s *Store) SetTargets(ctx context.Context, t types.DailyTargets) error {
 			fat     = excluded.fat,
 			fiber   = excluded.fiber
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), t.UserID,
-		t.Targets.Calories, t.Targets.Protein, t.Targets.Carbs, t.Targets.Fat, t.Targets.Fiber,
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"user_id": t.UserID,
+		"kcal":    t.Targets.Calories, "protein": t.Targets.Protein, "carbs": t.Targets.Carbs,
+		"fat": t.Targets.Fat, "fiber": t.Targets.Fiber,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind set targets: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -1095,18 +1246,22 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 			(user_id, date,
 			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
 			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
-		VALUES (?, ?, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?)
+		VALUES (:user_id, :date, 0, 0, 0, 0, 0, :kcal, :protein, :carbs, :fat, :fiber)
 		ON CONFLICT(user_id, date) DO UPDATE SET
-			target_kcal    = ?,
-			target_protein = ?,
-			target_carbs   = ?,
-			target_fat     = ?,
-			target_fiber   = ?
+			target_kcal    = :kcal,
+			target_protein = :protein,
+			target_carbs   = :carbs,
+			target_fat     = :fat,
+			target_fiber   = :fiber
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, localDate,
-		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
-		t.Calories, t.Protein, t.Carbs, t.Fat, t.Fiber,
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"user_id": userID, "date": localDate,
+		"kcal": t.Calories, "protein": t.Protein, "carbs": t.Carbs, "fat": t.Fat, "fiber": t.Fiber,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind update rollup targets: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -1121,30 +1276,48 @@ func (s *Store) GetBackupConfig(ctx context.Context, userID string) (types.Backu
 		SELECT user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs, last_run_at
 		FROM backup_config WHERE user_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
-
-	var cfg types.BackupConfig
-	var enabled int
-	var localSubdir, s3Bucket, s3Prefix, s3Region, s3Endpoint, lastRunAt sql.NullString
-	err := row.Scan(&cfg.UserID, &enabled, &cfg.Destination, &localSubdir,
-		&s3Bucket, &s3Prefix, &s3Region, &s3Endpoint, &cfg.IntervalHrs, &lastRunAt,
-	)
-	if err == sql.ErrNoRows {
-		return types.BackupConfig{}, types.ErrNotFound
-	}
-	if err != nil {
+	var row backupConfigRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.BackupConfig{}, types.ErrNotFound
+		}
 		return types.BackupConfig{}, fmt.Errorf("store: get backup config: %w", err)
 	}
-	cfg.Enabled = enabled != 0
-	cfg.LocalSubdir = localSubdir.String
-	cfg.S3Bucket = s3Bucket.String
-	cfg.S3Prefix = s3Prefix.String
-	cfg.S3Region = s3Region.String
-	cfg.S3Endpoint = s3Endpoint.String
-	if lastRunAt.Valid && lastRunAt.String != "" {
-		cfg.LastRunAt = parseUTC(lastRunAt.String)
+	return row.toBackupConfig(), nil
+}
+
+// backupConfigRow is the flat DB shape of backup_config; types.BackupConfig
+// stores Enabled as bool (DB: int) and LastRunAt as time.Time (DB: nullable
+// RFC3339 string).
+type backupConfigRow struct {
+	UserID      string         `db:"user_id"`
+	Enabled     int            `db:"enabled"`
+	Destination string         `db:"destination"`
+	LocalSubdir sql.NullString `db:"local_subdir"`
+	S3Bucket    sql.NullString `db:"s3_bucket"`
+	S3Prefix    sql.NullString `db:"s3_prefix"`
+	S3Region    sql.NullString `db:"s3_region"`
+	S3Endpoint  sql.NullString `db:"s3_endpoint"`
+	IntervalHrs int            `db:"interval_hrs"`
+	LastRunAt   sql.NullString `db:"last_run_at"`
+}
+
+func (r backupConfigRow) toBackupConfig() types.BackupConfig {
+	cfg := types.BackupConfig{
+		UserID:      r.UserID,
+		Enabled:     r.Enabled != 0,
+		Destination: r.Destination,
+		LocalSubdir: r.LocalSubdir.String,
+		S3Bucket:    r.S3Bucket.String,
+		S3Prefix:    r.S3Prefix.String,
+		S3Region:    r.S3Region.String,
+		S3Endpoint:  r.S3Endpoint.String,
+		IntervalHrs: r.IntervalHrs,
 	}
-	return cfg, nil
+	if r.LastRunAt.Valid && r.LastRunAt.String != "" {
+		cfg.LastRunAt = parseUTC(r.LastRunAt.String)
+	}
+	return cfg
 }
 
 // SetBackupConfig inserts or replaces a user's backup settings.
@@ -1156,7 +1329,7 @@ func (s *Store) SetBackupConfig(ctx context.Context, cfg types.BackupConfig) err
 	const q = `
 		INSERT INTO backup_config
 			(user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:user_id, :enabled, :destination, :local_subdir, :s3_bucket, :s3_prefix, :s3_region, :s3_endpoint, :interval_hrs)
 		ON CONFLICT(user_id) DO UPDATE SET
 			enabled      = excluded.enabled,
 			destination  = excluded.destination,
@@ -1167,9 +1340,15 @@ func (s *Store) SetBackupConfig(ctx context.Context, cfg types.BackupConfig) err
 			s3_endpoint  = excluded.s3_endpoint,
 			interval_hrs = excluded.interval_hrs
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), cfg.UserID, enabled, cfg.Destination,
-		cfg.LocalSubdir, cfg.S3Bucket, cfg.S3Prefix, cfg.S3Region, cfg.S3Endpoint, cfg.IntervalHrs,
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"user_id": cfg.UserID, "enabled": enabled, "destination": cfg.Destination,
+		"local_subdir": cfg.LocalSubdir, "s3_bucket": cfg.S3Bucket, "s3_prefix": cfg.S3Prefix,
+		"s3_region": cfg.S3Region, "s3_endpoint": cfg.S3Endpoint, "interval_hrs": cfg.IntervalHrs,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind set backup config: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -1193,21 +1372,14 @@ func (s *Store) GetRollup(ctx context.Context, userID, localDate string) (types.
 		FROM daily_rollups
 		WHERE user_id = ? AND date = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, localDate)
-	r, err := scanRollup(row)
-	if err == sql.ErrNoRows {
-		return types.DailyRollup{}, types.ErrNotFound
+	var row rollupRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, localDate); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.DailyRollup{}, types.ErrNotFound
+		}
+		return types.DailyRollup{}, err
 	}
-	return r, err
-}
-
-func scanRollup(row *sql.Row) (types.DailyRollup, error) {
-	var r types.DailyRollup
-	err := row.Scan(&r.UserID, &r.Date,
-		&r.Consumed.Calories, &r.Consumed.Protein, &r.Consumed.Carbs, &r.Consumed.Fat, &r.Consumed.Fiber,
-		&r.Targets.Calories, &r.Targets.Protein, &r.Targets.Carbs, &r.Targets.Fat, &r.Targets.Fiber,
-	)
-	return r, err
+	return row.toRollup(), nil
 }
 
 // UpsertRollup inserts or replaces a daily rollup row.
@@ -1217,7 +1389,9 @@ func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 			(user_id, date,
 			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
 			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:user_id, :date,
+		        :consumed_kcal, :consumed_protein, :consumed_carbs, :consumed_fat, :consumed_fiber,
+		        :target_kcal, :target_protein, :target_carbs, :target_fat, :target_fiber)
 		ON CONFLICT(user_id, date) DO UPDATE SET
 			consumed_kcal    = excluded.consumed_kcal,
 			consumed_protein = excluded.consumed_protein,
@@ -1230,11 +1404,17 @@ func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 			target_fat       = excluded.target_fat,
 			target_fiber     = excluded.target_fiber
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q),
-		r.UserID, r.Date,
-		r.Consumed.Calories, r.Consumed.Protein, r.Consumed.Carbs, r.Consumed.Fat, r.Consumed.Fiber,
-		r.Targets.Calories, r.Targets.Protein, r.Targets.Carbs, r.Targets.Fat, r.Targets.Fiber,
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"user_id": r.UserID, "date": r.Date,
+		"consumed_kcal": r.Consumed.Calories, "consumed_protein": r.Consumed.Protein,
+		"consumed_carbs": r.Consumed.Carbs, "consumed_fat": r.Consumed.Fat, "consumed_fiber": r.Consumed.Fiber,
+		"target_kcal": r.Targets.Calories, "target_protein": r.Targets.Protein,
+		"target_carbs": r.Targets.Carbs, "target_fat": r.Targets.Fat, "target_fiber": r.Targets.Fiber,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind upsert rollup: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -1246,10 +1426,9 @@ func (s *Store) UpsertRollup(ctx context.Context, r types.DailyRollup) error {
 // localDate. Satisfies scheduler.NudgeStore.
 func (s *Store) WasNudged(ctx context.Context, userID, localDate, ruleID string) (bool, error) {
 	const q = `SELECT 1 FROM nudge_log WHERE user_id = ? AND local_date = ? AND rule_id = ?`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID, localDate, ruleID)
 	var v int
-	err := row.Scan(&v)
-	if err == sql.ErrNoRows {
+	err := s.db.GetContext(ctx, &v, s.rewrite(q), userID, localDate, ruleID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -1282,34 +1461,54 @@ func (s *Store) RecordSentNudge(ctx context.Context, n types.SentNudge) error {
 	}
 	const q = `
 		INSERT INTO sent_nudges (id, user_id, rule_id, sent_at, body, snapshot_json, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :rule_id, :sent_at, :body, :snapshot_json, :status)
 	`
-	_, err = s.db.ExecContext(ctx, s.rewrite(q), n.ID, n.UserID, n.RuleID, utcStr(n.SentAt), n.Body, string(snap), n.Status)
-	if err != nil {
+	query, args, bindErr := sqlx.Named(q, map[string]any{
+		"id": n.ID, "user_id": n.UserID, "rule_id": n.RuleID, "sent_at": utcStr(n.SentAt),
+		"body": n.Body, "snapshot_json": string(snap), "status": n.Status,
+	})
+	if bindErr != nil {
+		return fmt.Errorf("store: bind record sent nudge: %w", bindErr)
+	}
+	if _, err = s.db.ExecContext(ctx, s.rewrite(query), args...); err != nil {
 		return fmt.Errorf("store: record sent nudge: %w", err)
 	}
 	return nil
 }
 
+// sentNudgeRow is the flat DB shape of sent_nudges; types.SentNudge nests
+// Snapshot as a decoded Macros (DB: JSON string) and ResolvedAt as *time.Time
+// (DB: nullable RFC3339 string).
+type sentNudgeRow struct {
+	ID           string         `db:"id"`
+	UserID       string         `db:"user_id"`
+	RuleID       string         `db:"rule_id"`
+	SentAt       string         `db:"sent_at"`
+	Body         string         `db:"body"`
+	SnapshotJSON string         `db:"snapshot_json"`
+	Status       string         `db:"status"`
+	ResolvedAt   sql.NullString `db:"resolved_at"`
+}
+
 // GetSentNudge returns a sent nudge by id, or types.ErrNotFound.
 func (s *Store) GetSentNudge(ctx context.Context, id string) (types.SentNudge, error) {
 	const q = `SELECT id, user_id, rule_id, sent_at, body, snapshot_json, status, resolved_at FROM sent_nudges WHERE id = ?`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), id)
-	var n types.SentNudge
-	var sa, snap string
-	var ra sql.NullString
-	if err := row.Scan(&n.ID, &n.UserID, &n.RuleID, &sa, &n.Body, &snap, &n.Status, &ra); err != nil {
-		if err == sql.ErrNoRows {
+	var row sentNudgeRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return types.SentNudge{}, types.ErrNotFound
 		}
 		return types.SentNudge{}, fmt.Errorf("store: get sent nudge: %w", err)
 	}
-	n.SentAt = parseUTC(sa)
-	if ra.Valid {
-		n.ResolvedAt = new(time.Time)
-		*n.ResolvedAt = parseUTC(ra.String)
+	n := types.SentNudge{
+		ID: row.ID, UserID: row.UserID, RuleID: row.RuleID,
+		SentAt: parseUTC(row.SentAt), Body: row.Body, Status: row.Status,
 	}
-	if err := json.Unmarshal([]byte(snap), &n.Snapshot); err != nil {
+	if row.ResolvedAt.Valid {
+		n.ResolvedAt = new(time.Time)
+		*n.ResolvedAt = parseUTC(row.ResolvedAt.String)
+	}
+	if err := json.Unmarshal([]byte(row.SnapshotJSON), &n.Snapshot); err != nil {
 		return types.SentNudge{}, fmt.Errorf("store: unmarshal snapshot: %w", err)
 	}
 	return n, nil
@@ -1334,25 +1533,27 @@ func (s *Store) UpdateSentNudgeStatus(ctx context.Context, id, status string) er
 // scheduler.RuleConfigStore.
 func (s *Store) GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error) {
 	const q = `SELECT user_id, rule_id, enabled, params_json FROM nudge_rule_config WHERE user_id = ?`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
-	if err != nil {
+	type ruleConfigRow struct {
+		UserID     string `db:"user_id"`
+		RuleID     string `db:"rule_id"`
+		Enabled    int    `db:"enabled"`
+		ParamsJSON string `db:"params_json"`
+	}
+	var rows []ruleConfigRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: query nudge rule config: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	var out []types.NudgeRuleConfig
-	for rows.Next() {
-		var c types.NudgeRuleConfig
-		var enabled int
-		var params string
-		if err := rows.Scan(&c.UserID, &c.RuleID, &enabled, &params); err != nil {
-			return nil, fmt.Errorf("store: scan nudge rule config: %w", err)
-		}
-		c.Enabled = enabled != 0
-		c.Params = json.RawMessage(params)
-		out = append(out, c)
+	for _, r := range rows {
+		out = append(out, types.NudgeRuleConfig{
+			UserID:  r.UserID,
+			RuleID:  r.RuleID,
+			Enabled: r.Enabled != 0,
+			Params:  json.RawMessage(r.ParamsJSON),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SetNudgeRuleConfig upserts a per-user override for one rule.
@@ -1451,11 +1652,11 @@ func newID() string {
 // types.ErrNotFound when no meals exist.
 func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, error) {
 	const q = `SELECT at_utc FROM meals WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	var at string
-	if err := row.Scan(&at); err == sql.ErrNoRows {
-		return "", types.ErrNotFound
-	} else if err != nil {
+	if err := s.db.GetContext(ctx, &at, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", types.ErrNotFound
+		}
 		return "", fmt.Errorf("store: latest meal time: %w", err)
 	}
 	return at, nil
@@ -1478,12 +1679,11 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	q += ` ORDER BY last_used DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), args...)
-	if err != nil {
+	var rows []foodDetailRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
 		return nil, fmt.Errorf("store: list foods: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanFoodDetails(rows)
+	return foodDetailRows(rows), nil
 }
 
 // SearchFoods searches food_library by name and alias using full-text search.
@@ -1498,8 +1698,9 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
 		       fl.query_count, fl.last_used
 		FROM food_library fl
-		INNER JOIN food_search fs ON fs.food_id = fl.food_id AND fs.user_id = fl.user_id
-		WHERE fs.tsv @@ to_tsquery('simple', ?) AND fl.user_id = ?
+		WHERE fl.user_id = ? AND fl.food_id IN (
+			SELECT fs.food_id FROM food_search fs WHERE fs.tsv @@ to_tsquery('simple', ?) AND fs.user_id = ?
+		)
 		ORDER BY fl.query_count DESC
 		LIMIT 20
 	`
@@ -1510,18 +1711,18 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
 		       fl.query_count, fl.last_used
 		FROM food_library fl
-		INNER JOIN food_search fs ON fs.food_id = fl.food_id AND fs.user_id = fl.user_id
-		WHERE food_search MATCH ? AND fl.user_id = ?
+		WHERE fl.user_id = ? AND fl.food_id IN (
+			SELECT fs.food_id FROM food_search fs WHERE food_search MATCH ? AND fs.user_id = ?
+		)
 		ORDER BY fl.query_count DESC
 		LIMIT 20
 	`
 	}
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), searchParam, userID)
-	if err != nil {
+	var rows []foodDetailRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, searchParam, userID); err != nil {
 		return nil, fmt.Errorf("store: search foods: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanFoodDetails(rows)
+	return foodDetailRows(rows), nil
 }
 
 // FrequentFoods returns the most frequently logged foods.
@@ -1536,12 +1737,11 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 		ORDER BY query_count DESC, last_used DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
-	if err != nil {
+	var rows []foodDetailRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, limit); err != nil {
 		return nil, fmt.Errorf("store: frequent foods: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanFoodDetails(rows)
+	return foodDetailRows(rows), nil
 }
 
 // GetFoodDetail returns a single food with its aliases.
@@ -1554,33 +1754,32 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 		FROM food_library
 		WHERE user_id = ? AND food_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(foodQ), userID, foodID)
-	fd, err := scanFoodDetail(row)
-	if err == sql.ErrNoRows {
-		return types.FoodDetail{}, types.ErrNotFound
-	}
-	if err != nil {
+	var row foodDetailRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(foodQ), userID, foodID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.FoodDetail{}, types.ErrNotFound
+		}
 		return types.FoodDetail{}, fmt.Errorf("store: get food detail: %w", err)
 	}
+	fd := row.toFoodDetail()
 
 	// Load aliases separately.
 	const aliasQ = `
 		SELECT food_id, alias_normalized FROM food_aliases
 		WHERE user_id = ? AND food_id = ?
 	`
-	arows, err := s.db.QueryContext(ctx, s.rewrite(aliasQ), userID, foodID)
-	if err != nil {
+	type aliasRow struct {
+		FoodID     string `db:"food_id"`
+		Normalized string `db:"alias_normalized"`
+	}
+	var aliases []aliasRow
+	if err := s.db.SelectContext(ctx, &aliases, s.rewrite(aliasQ), userID, foodID); err != nil {
 		return types.FoodDetail{}, fmt.Errorf("store: get food aliases: %w", err)
 	}
-	defer func() { _ = arows.Close() }()
-	for arows.Next() {
-		var a types.FoodAlias
-		if err := arows.Scan(&a.FoodID, &a.Normalized); err != nil {
-			return types.FoodDetail{}, fmt.Errorf("store: scan alias: %w", err)
-		}
-		fd.Aliases = append(fd.Aliases, a)
+	for _, a := range aliases {
+		fd.Aliases = append(fd.Aliases, types.FoodAlias{FoodID: a.FoodID, Normalized: a.Normalized})
 	}
-	return fd, arows.Err()
+	return fd, nil
 }
 
 // AddFoodAlias inserts a normalized alias for a food.
@@ -1629,38 +1828,45 @@ func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.
 		WHERE user_id = ?
 		ORDER BY created_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
-	if err != nil {
+	type pendingAliasRow struct {
+		ID         string  `db:"id"`
+		UserID     string  `db:"user_id"`
+		Phrase     string  `db:"phrase"`
+		FoodID     string  `db:"food_id"`
+		MatchScore float64 `db:"match_score"`
+		CreatedAt  string  `db:"created_at"`
+	}
+	var rows []pendingAliasRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: list pending aliases: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	var out []types.PendingAlias
-	for rows.Next() {
-		var pa types.PendingAlias
-		var ca string
-		if err := rows.Scan(&pa.ID, &pa.UserID, &pa.Phrase, &pa.FoodID, &pa.MatchScore, &ca); err != nil {
-			return nil, fmt.Errorf("store: scan pending alias: %w", err)
-		}
-		pa.CreatedAt = parseUTC(ca)
-		out = append(out, pa)
+	for _, r := range rows {
+		out = append(out, types.PendingAlias{
+			ID: r.ID, UserID: r.UserID, Phrase: r.Phrase, FoodID: r.FoodID,
+			MatchScore: r.MatchScore, CreatedAt: parseUTC(r.CreatedAt),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ConfirmPendingAlias promotes a pending alias into food_aliases and removes
 // the pending row, in one transaction. Returns types.ErrNotFound if the
 // pending row doesn't exist or doesn't belong to userID.
 func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	const selectQ = `SELECT phrase, food_id FROM pending_aliases WHERE id = ? AND user_id = ?`
-	var phrase, foodID string
-	if err := tx.QueryRowContext(ctx, s.rewrite(selectQ), id, userID).Scan(&phrase, &foodID); err != nil {
+	var pending struct {
+		Phrase string `db:"phrase"`
+		FoodID string `db:"food_id"`
+	}
+	if err := tx.GetContext(ctx, &pending, s.rewrite(selectQ), id, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.ErrNotFound
 		}
@@ -1668,8 +1874,8 @@ func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) erro
 	}
 
 	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
-	normalized := normalize.Normalize(phrase)
-	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, foodID); err != nil {
+	normalized := normalize.Normalize(pending.Phrase)
+	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, pending.FoodID); err != nil {
 		return fmt.Errorf("store: insert alias: %w", err)
 	}
 
@@ -1701,27 +1907,17 @@ func (s *Store) RejectPendingAlias(ctx context.Context, userID, id string) error
 // to its startup-configured default order in that case.
 func (s *Store) GetSourcePrecedence(ctx context.Context, userID string) ([]string, error) {
 	const q = `SELECT source FROM source_precedence WHERE user_id = ? ORDER BY rank ASC`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
-	if err != nil {
+	out := []string{}
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: get source precedence: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	out := []string{}
-	for rows.Next() {
-		var source string
-		if err := rows.Scan(&source); err != nil {
-			return nil, fmt.Errorf("store: scan source precedence: %w", err)
-		}
-		out = append(out, source)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SetSourcePrecedence replaces a user's nutrition-source order with the given
 // list, ranked by position.
 func (s *Store) SetSourcePrecedence(ctx context.Context, userID string, order []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
@@ -1742,39 +1938,56 @@ func (s *Store) SetSourcePrecedence(ctx context.Context, userID string, order []
 	return tx.Commit()
 }
 
-func scanFoodDetail(row *sql.Row) (types.FoodDetail, error) {
-	var fd types.FoodDetail
-	var lastUsed string
-	err := row.Scan(&fd.FoodID, &fd.UserID, &fd.Name, &fd.Source,
-		&fd.Per100g.Calories, &fd.Per100g.Protein, &fd.Per100g.Carbs, &fd.Per100g.Fat, &fd.Per100g.Fiber,
-		&fd.Category, &fd.Brand, &fd.Barcode, &fd.ImageURL, &fd.ServingSize, &fd.ServingUnit,
-		&fd.QueryCount, &lastUsed,
-	)
-	if err != nil {
-		return types.FoodDetail{}, err
-	}
-	fd.LastUsed = lastUsed
-	fd.Aliases = []types.FoodAlias{}
-	return fd, nil
+// foodDetailRow is the flat DB shape of food_library; types.FoodDetail nests
+// the macro columns into Per100g and carries a non-column Aliases slice
+// populated separately (GetFoodDetail).
+type foodDetailRow struct {
+	FoodID      string  `db:"food_id"`
+	UserID      string  `db:"user_id"`
+	Name        string  `db:"name"`
+	Source      string  `db:"source"`
+	Kcal        float64 `db:"kcal_100g"`
+	Protein     float64 `db:"protein_100g"`
+	Carbs       float64 `db:"carbs_100g"`
+	Fat         float64 `db:"fat_100g"`
+	Fiber       float64 `db:"fiber_100g"`
+	Category    string  `db:"category"`
+	Brand       string  `db:"brand"`
+	Barcode     string  `db:"barcode"`
+	ImageURL    string  `db:"image_url"`
+	ServingSize float64 `db:"serving_size"`
+	ServingUnit string  `db:"serving_unit"`
+	QueryCount  int     `db:"query_count"`
+	LastUsed    string  `db:"last_used"`
 }
 
-func scanFoodDetails(rows *sql.Rows) ([]types.FoodDetail, error) {
-	var out []types.FoodDetail
-	for rows.Next() {
-		var fd types.FoodDetail
-		var lastUsed string
-		if err := rows.Scan(&fd.FoodID, &fd.UserID, &fd.Name, &fd.Source,
-			&fd.Per100g.Calories, &fd.Per100g.Protein, &fd.Per100g.Carbs, &fd.Per100g.Fat, &fd.Per100g.Fiber,
-			&fd.Category, &fd.Brand, &fd.Barcode, &fd.ImageURL, &fd.ServingSize, &fd.ServingUnit,
-			&fd.QueryCount, &lastUsed,
-		); err != nil {
-			return nil, fmt.Errorf("store: scan food detail: %w", err)
-		}
-		fd.LastUsed = lastUsed
-		fd.Aliases = []types.FoodAlias{}
-		out = append(out, fd)
+func (r foodDetailRow) toFoodDetail() types.FoodDetail {
+	return types.FoodDetail{
+		FoodID: r.FoodID,
+		UserID: r.UserID,
+		Name:   r.Name,
+		Source: r.Source,
+		Per100g: types.Macros{
+			Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber,
+		},
+		Category:    r.Category,
+		Brand:       r.Brand,
+		Barcode:     r.Barcode,
+		ImageURL:    r.ImageURL,
+		ServingSize: r.ServingSize,
+		ServingUnit: r.ServingUnit,
+		QueryCount:  r.QueryCount,
+		LastUsed:    r.LastUsed,
+		Aliases:     []types.FoodAlias{},
 	}
-	return out, rows.Err()
+}
+
+func foodDetailRows(rows []foodDetailRow) []types.FoodDetail {
+	out := make([]types.FoodDetail, len(rows))
+	for i, r := range rows {
+		out[i] = r.toFoodDetail()
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -1789,13 +2002,20 @@ func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
 	}
 	const q = `
 		INSERT INTO meal_templates (id, user_id, name, items_json, created_at, last_used)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :name, :items_json, :created_at, :last_used)
 		ON CONFLICT(id) DO UPDATE SET
 			name       = excluded.name,
 			items_json = excluded.items_json,
 			last_used  = excluded.last_used
 	`
-	_, err = s.db.ExecContext(ctx, s.rewrite(q), t.ID, t.UserID, t.Name, string(itemsJSON), utcStr(t.CreatedAt), utcStr(t.LastUsed))
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id": t.ID, "user_id": t.UserID, "name": t.Name, "items_json": string(itemsJSON),
+		"created_at": utcStr(t.CreatedAt), "last_used": utcStr(t.LastUsed),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind save template: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -1806,12 +2026,19 @@ func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTe
 		FROM meal_templates WHERE user_id = ?
 		ORDER BY created_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
-	if err != nil {
+	var rows []templateRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: get templates: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanTemplates(rows)
+	out := make([]types.MealTemplate, 0, len(rows))
+	for _, r := range rows {
+		t, err := r.toTemplate()
+		if err != nil {
+			return nil, fmt.Errorf("store: unmarshal template items: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, nil
 }
 
 // GetTemplate returns a single template by ID.
@@ -1820,12 +2047,18 @@ func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealT
 		SELECT id, user_id, name, items_json, created_at, last_used
 		FROM meal_templates WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), templateID)
-	t, err := scanTemplate(row)
-	if err == sql.ErrNoRows {
-		return types.MealTemplate{}, types.ErrNotFound
+	var row templateRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), templateID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.MealTemplate{}, types.ErrNotFound
+		}
+		return types.MealTemplate{}, err
 	}
-	return t, err
+	t, err := row.toTemplate()
+	if err != nil {
+		return types.MealTemplate{}, fmt.Errorf("store: unmarshal template items: %w", err)
+	}
+	return t, nil
 }
 
 // DeleteTemplate deletes a template by user + ID. Returns ErrNotFound if 0 rows.
@@ -1849,42 +2082,29 @@ func (s *Store) LogTemplateUse(ctx context.Context, tl types.TemplateLog) error 
 	return err
 }
 
-func scanTemplate(row *sql.Row) (types.MealTemplate, error) {
-	var t types.MealTemplate
-	var itemsJSON, ca, lu string
-	if err := row.Scan(&t.ID, &t.UserID, &t.Name, &itemsJSON, &ca, &lu); err != nil {
+// templateRow is the flat DB shape of meal_templates; types.MealTemplate
+// decodes ItemsJSON into Items and parses the RFC3339 timestamp columns.
+type templateRow struct {
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	Name      string `db:"name"`
+	ItemsJSON string `db:"items_json"`
+	CreatedAt string `db:"created_at"`
+	LastUsed  string `db:"last_used"`
+}
+
+func (r templateRow) toTemplate() (types.MealTemplate, error) {
+	t := types.MealTemplate{
+		ID: r.ID, UserID: r.UserID, Name: r.Name,
+		CreatedAt: parseUTC(r.CreatedAt), LastUsed: parseUTC(r.LastUsed),
+	}
+	if err := json.Unmarshal([]byte(r.ItemsJSON), &t.Items); err != nil {
 		return types.MealTemplate{}, err
 	}
-	if err := json.Unmarshal([]byte(itemsJSON), &t.Items); err != nil {
-		return types.MealTemplate{}, fmt.Errorf("store: unmarshal template items: %w", err)
-	}
-	t.CreatedAt = parseUTC(ca)
-	t.LastUsed = parseUTC(lu)
 	if t.Items == nil {
 		t.Items = []types.ResolvedItem{}
 	}
 	return t, nil
-}
-
-func scanTemplates(rows *sql.Rows) ([]types.MealTemplate, error) {
-	var out []types.MealTemplate
-	for rows.Next() {
-		var t types.MealTemplate
-		var itemsJSON, ca, lu string
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &itemsJSON, &ca, &lu); err != nil {
-			return nil, fmt.Errorf("store: scan template: %w", err)
-		}
-		if err := json.Unmarshal([]byte(itemsJSON), &t.Items); err != nil {
-			return nil, fmt.Errorf("store: unmarshal template items: %w", err)
-		}
-		t.CreatedAt = parseUTC(ca)
-		t.LastUsed = parseUTC(lu)
-		if t.Items == nil {
-			t.Items = []types.ResolvedItem{}
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -1900,12 +2120,15 @@ func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]type
 		WHERE user_id = ? AND date >= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, cutoff)
-	if err != nil {
+	var rows []weightRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, cutoff); err != nil {
 		return nil, fmt.Errorf("store: list weight: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanWeightEntries(rows)
+	out := make([]types.WeightEntry, len(rows))
+	for i, r := range rows {
+		out[i] = r.toWeightEntry()
+	}
+	return out, nil
 }
 
 // LogWeight inserts or updates a weight entry.
@@ -1966,18 +2189,22 @@ func (s *Store) WeightTrend(ctx context.Context, userID string, days int) ([]typ
 	return trend, nil
 }
 
-func scanWeightEntries(rows *sql.Rows) ([]types.WeightEntry, error) {
-	var out []types.WeightEntry
-	for rows.Next() {
-		var w types.WeightEntry
-		var ca string
-		if err := rows.Scan(&w.ID, &w.UserID, &w.Date, &w.WeightKg, &w.Note, &ca); err != nil {
-			return nil, fmt.Errorf("store: scan weight: %w", err)
-		}
-		w.CreatedAt = parseUTC(ca)
-		out = append(out, w)
+// weightRow is the flat DB shape of weight_log; types.WeightEntry parses
+// CreatedAt from the stored RFC3339 string.
+type weightRow struct {
+	ID        string  `db:"id"`
+	UserID    string  `db:"user_id"`
+	Date      string  `db:"date"`
+	WeightKg  float64 `db:"weight_kg"`
+	Note      string  `db:"note"`
+	CreatedAt string  `db:"created_at"`
+}
+
+func (r weightRow) toWeightEntry() types.WeightEntry {
+	return types.WeightEntry{
+		ID: r.ID, UserID: r.UserID, Date: r.Date, WeightKg: r.WeightKg,
+		Note: r.Note, CreatedAt: parseUTC(r.CreatedAt),
 	}
-	return out, rows.Err()
 }
 
 // --- Fasting ---
@@ -2006,7 +2233,14 @@ func (s *Store) GetActiveFast(ctx context.Context, userID string) (types.Fast, e
 		ORDER BY start_at DESC
 		LIMIT 1
 	`
-	return scanFast(s.db.QueryRowContext(ctx, s.rewrite(q), userID))
+	var row fastRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.Fast{}, types.ErrNotFound
+		}
+		return types.Fast{}, err
+	}
+	return row.toFast(), nil
 }
 
 // EndFast closes a fasting window by id, marking its end time and completion.
@@ -2027,7 +2261,14 @@ func (s *Store) EndFast(ctx context.Context, userID, fastID string, endAt time.T
 		SELECT id, user_id, start_at, end_at, target_hours, completed, created_at
 		FROM fasts WHERE id = ? AND user_id = ?
 	`
-	return scanFast(s.db.QueryRowContext(ctx, s.rewrite(sel), fastID, userID))
+	var row fastRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(sel), fastID, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.Fast{}, types.ErrNotFound
+		}
+		return types.Fast{}, err
+	}
+	return row.toFast(), nil
 }
 
 // ListFasts returns the user's most recent fasting windows, newest first.
@@ -2039,51 +2280,38 @@ func (s *Store) ListFasts(ctx context.Context, userID string, limit int) ([]type
 		ORDER BY start_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
-	if err != nil {
+	var rows []fastRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, limit); err != nil {
 		return nil, fmt.Errorf("store: list fasts: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.Fast
-	for rows.Next() {
-		f, err := scanFastRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f)
+	out := make([]types.Fast, len(rows))
+	for i, r := range rows {
+		out[i] = r.toFast()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// scanRow is the minimal interface shared by *sql.Row and *sql.Rows.
-type scanRow interface {
-	Scan(dest ...any) error
+// fastRow is the flat DB shape of fasts; types.Fast nests EndAt as *time.Time
+// (DB: nullable RFC3339 string) and Completed as bool (DB: int).
+type fastRow struct {
+	ID          string         `db:"id"`
+	UserID      string         `db:"user_id"`
+	StartAt     string         `db:"start_at"`
+	EndAt       sql.NullString `db:"end_at"`
+	TargetHours float64        `db:"target_hours"`
+	Completed   int            `db:"completed"`
+	CreatedAt   string         `db:"created_at"`
 }
 
-func scanFast(row scanRow) (types.Fast, error) {
-	f, err := scanFastRow(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return types.Fast{}, types.ErrNotFound
+func (r fastRow) toFast() types.Fast {
+	f := types.Fast{
+		ID: r.ID, UserID: r.UserID, StartAt: parseUTC(r.StartAt),
+		TargetHours: r.TargetHours, Completed: r.Completed != 0, CreatedAt: parseUTC(r.CreatedAt),
 	}
-	return f, err
-}
-
-func scanFastRow(row scanRow) (types.Fast, error) {
-	var f types.Fast
-	var startStr, createdStr string
-	var endStr sql.NullString
-	var completed int
-	if err := row.Scan(&f.ID, &f.UserID, &startStr, &endStr, &f.TargetHours, &completed, &createdStr); err != nil {
-		return types.Fast{}, err
+	if r.EndAt.Valid && r.EndAt.String != "" {
+		f.EndAt = new(parseUTC(r.EndAt.String))
 	}
-	f.StartAt = parseUTC(startStr)
-	f.CreatedAt = parseUTC(createdStr)
-	f.Completed = completed != 0
-	if endStr.Valid && endStr.String != "" {
-		f.EndAt = new(parseUTC(endStr.String))
-	}
-	return f, nil
+	return f
 }
 
 func boolToInt(b bool) int {
@@ -2103,12 +2331,15 @@ func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) (
 		WHERE user_id = ? AND date >= ?
 		ORDER BY date ASC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, cutoff)
-	if err != nil {
+	var rows []measurementRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, cutoff); err != nil {
 		return nil, fmt.Errorf("store: list measurements: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMeasurementEntries(rows)
+	out := make([]types.MeasurementEntry, len(rows))
+	for i, r := range rows {
+		out[i] = r.toMeasurementEntry()
+	}
+	return out, nil
 }
 
 // LogMeasurement inserts or updates a measurement entry.
@@ -2117,7 +2348,8 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 		INSERT INTO measurement_log
 			(id, user_id, date, waist_cm, hips_cm, chest_cm, left_arm_cm, right_arm_cm,
 			 left_thigh_cm, right_thigh_cm, note, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :date, :waist_cm, :hips_cm, :chest_cm, :left_arm_cm, :right_arm_cm,
+			:left_thigh_cm, :right_thigh_cm, :note, :created_at)
 		ON CONFLICT(id) DO UPDATE SET
 			date           = excluded.date,
 			waist_cm       = excluded.waist_cm,
@@ -2129,12 +2361,17 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 			right_thigh_cm = excluded.right_thigh_cm,
 			note           = excluded.note
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q),
-		m.ID, m.UserID, m.Date,
-		m.WaistCm, m.HipsCm, m.ChestCm,
-		m.LeftArmCm, m.RightArmCm, m.LeftThighCm, m.RightThighCm,
-		m.Note, utcStr(m.CreatedAt),
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id": m.ID, "user_id": m.UserID, "date": m.Date,
+		"waist_cm": m.WaistCm, "hips_cm": m.HipsCm, "chest_cm": m.ChestCm,
+		"left_arm_cm": m.LeftArmCm, "right_arm_cm": m.RightArmCm,
+		"left_thigh_cm": m.LeftThighCm, "right_thigh_cm": m.RightThighCm,
+		"note": m.Note, "created_at": utcStr(m.CreatedAt),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind log measurement: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -2152,22 +2389,31 @@ func (s *Store) DeleteMeasurement(ctx context.Context, userID, entryID string) e
 	return nil
 }
 
-func scanMeasurementEntries(rows *sql.Rows) ([]types.MeasurementEntry, error) {
-	var out []types.MeasurementEntry
-	for rows.Next() {
-		var m types.MeasurementEntry
-		var ca string
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Date,
-			&m.WaistCm, &m.HipsCm, &m.ChestCm,
-			&m.LeftArmCm, &m.RightArmCm, &m.LeftThighCm, &m.RightThighCm,
-			&m.Note, &ca,
-		); err != nil {
-			return nil, fmt.Errorf("store: scan measurement: %w", err)
-		}
-		m.CreatedAt = parseUTC(ca)
-		out = append(out, m)
+// measurementRow is the flat DB shape of measurement_log; types.MeasurementEntry
+// parses CreatedAt from the stored RFC3339 string.
+type measurementRow struct {
+	ID           string  `db:"id"`
+	UserID       string  `db:"user_id"`
+	Date         string  `db:"date"`
+	WaistCm      float64 `db:"waist_cm"`
+	HipsCm       float64 `db:"hips_cm"`
+	ChestCm      float64 `db:"chest_cm"`
+	LeftArmCm    float64 `db:"left_arm_cm"`
+	RightArmCm   float64 `db:"right_arm_cm"`
+	LeftThighCm  float64 `db:"left_thigh_cm"`
+	RightThighCm float64 `db:"right_thigh_cm"`
+	Note         string  `db:"note"`
+	CreatedAt    string  `db:"created_at"`
+}
+
+func (r measurementRow) toMeasurementEntry() types.MeasurementEntry {
+	return types.MeasurementEntry{
+		ID: r.ID, UserID: r.UserID, Date: r.Date,
+		WaistCm: r.WaistCm, HipsCm: r.HipsCm, ChestCm: r.ChestCm,
+		LeftArmCm: r.LeftArmCm, RightArmCm: r.RightArmCm,
+		LeftThighCm: r.LeftThighCm, RightThighCm: r.RightThighCm,
+		Note: r.Note, CreatedAt: parseUTC(r.CreatedAt),
 	}
-	return out, rows.Err()
 }
 
 // ListPhotoMetadata returns progress photo records without the BLOB data.
@@ -2177,23 +2423,35 @@ func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.P
 		FROM progress_photos WHERE user_id = ?
 		ORDER BY date DESC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID)
-	if err != nil {
+	var rows []photoRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: list photo metadata: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.ProgressPhoto
-	for rows.Next() {
-		var p types.ProgressPhoto
-		var ca string
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Date, &p.View, &p.MimeType, &ca); err != nil {
-			return nil, fmt.Errorf("store: scan photo meta: %w", err)
-		}
-		p.CreatedAt = parseUTC(ca)
-		out = append(out, p)
+	out := make([]types.ProgressPhoto, len(rows))
+	for i, r := range rows {
+		out[i] = r.toProgressPhoto()
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// photoRow is the flat DB shape of progress_photos; types.ProgressPhoto parses
+// CreatedAt from the stored RFC3339 string. Data is left zero-value when the
+// query (ListPhotoMetadata) doesn't select the BLOB column.
+type photoRow struct {
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	Date      string `db:"date"`
+	View      string `db:"view"`
+	MimeType  string `db:"mime_type"`
+	Data      []byte `db:"data"`
+	CreatedAt string `db:"created_at"`
+}
+
+func (r photoRow) toProgressPhoto() types.ProgressPhoto {
+	return types.ProgressPhoto{
+		ID: r.ID, UserID: r.UserID, Date: r.Date, View: r.View, MimeType: r.MimeType,
+		Data: r.Data, CreatedAt: parseUTC(r.CreatedAt),
+	}
 }
 
 // GetPhotoData returns a single progress photo including BLOB data.
@@ -2202,16 +2460,14 @@ func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.Progres
 		SELECT id, user_id, date, view, mime_type, data, created_at
 		FROM progress_photos WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), photoID)
-	var p types.ProgressPhoto
-	var ca string
-	if err := row.Scan(&p.ID, &p.UserID, &p.Date, &p.View, &p.MimeType, &p.Data, &ca); err == sql.ErrNoRows {
-		return types.ProgressPhoto{}, types.ErrNotFound
-	} else if err != nil {
+	var row photoRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), photoID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.ProgressPhoto{}, types.ErrNotFound
+		}
 		return types.ProgressPhoto{}, fmt.Errorf("store: get photo data: %w", err)
 	}
-	p.CreatedAt = parseUTC(ca)
-	return p, nil
+	return row.toProgressPhoto(), nil
 }
 
 // UploadPhoto inserts a progress photo with BLOB data.
@@ -2246,24 +2502,17 @@ func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate 
 		WHERE user_id = ? AND date(at_utc) >= ? AND date(at_utc) <= ?
 		ORDER BY at_utc ASC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(mealQ), userID, startDate, endDate)
-	if err != nil {
+	var rows []mealRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(mealQ), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	var meals []types.Meal
 	var mealIDs []string
-	for rows.Next() {
-		m, err := scanMeal(rows)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan meal: %w", err)
-		}
+	for _, r := range rows {
+		m := r.toMeal()
 		meals = append(meals, m)
 		mealIDs = append(mealIDs, m.ID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: meals range rows: %w", err)
 	}
 
 	if len(meals) == 0 {
@@ -2291,22 +2540,40 @@ func (s *Store) GetProfile(ctx context.Context, userID string) (types.UserProfil
 		       target_weight_kg, weekly_rate, onboarded, created_at, updated_at
 		FROM user_profiles WHERE user_id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
-	var p types.UserProfile
-	var bd, ca, ua string
-	var onboarded int
-	if err := row.Scan(&p.UserID, &p.HeightCm, &bd, &p.Gender, &p.ActivityLevel, &p.Goal,
-		&p.TargetWeightKg, &p.WeeklyRate, &onboarded, &ca, &ua,
-	); err == sql.ErrNoRows {
-		return types.UserProfile{}, types.ErrNotFound
-	} else if err != nil {
+	var row profileRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.UserProfile{}, types.ErrNotFound
+		}
 		return types.UserProfile{}, fmt.Errorf("store: get profile: %w", err)
 	}
-	p.BirthDate = bd
-	p.Onboarded = onboarded != 0
-	p.CreatedAt = parseUTC(ca)
-	p.UpdatedAt = parseUTC(ua)
-	return p, nil
+	return row.toUserProfile(), nil
+}
+
+// profileRow is the flat DB shape of user_profiles; types.UserProfile stores
+// Onboarded as bool (DB: int) and CreatedAt/UpdatedAt as time.Time (DB:
+// RFC3339 strings).
+type profileRow struct {
+	UserID         string  `db:"user_id"`
+	HeightCm       float64 `db:"height_cm"`
+	BirthDate      string  `db:"birth_date"`
+	Gender         string  `db:"gender"`
+	ActivityLevel  string  `db:"activity_level"`
+	Goal           string  `db:"goal"`
+	TargetWeightKg float64 `db:"target_weight_kg"`
+	WeeklyRate     float64 `db:"weekly_rate"`
+	Onboarded      int     `db:"onboarded"`
+	CreatedAt      string  `db:"created_at"`
+	UpdatedAt      string  `db:"updated_at"`
+}
+
+func (r profileRow) toUserProfile() types.UserProfile {
+	return types.UserProfile{
+		UserID: r.UserID, HeightCm: r.HeightCm, BirthDate: r.BirthDate, Gender: r.Gender,
+		ActivityLevel: r.ActivityLevel, Goal: r.Goal, TargetWeightKg: r.TargetWeightKg,
+		WeeklyRate: r.WeeklyRate, Onboarded: r.Onboarded != 0,
+		CreatedAt: parseUTC(r.CreatedAt), UpdatedAt: parseUTC(r.UpdatedAt),
+	}
 }
 
 // UpsertProfile inserts or updates the user profile.
@@ -2319,7 +2586,8 @@ func (s *Store) UpsertProfile(ctx context.Context, p types.UserProfile) error {
 		INSERT INTO user_profiles
 			(user_id, height_cm, birth_date, gender, activity_level, goal,
 			 target_weight_kg, weekly_rate, onboarded, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:user_id, :height_cm, :birth_date, :gender, :activity_level, :goal,
+			:target_weight_kg, :weekly_rate, :onboarded, :created_at, :updated_at)
 		ON CONFLICT(user_id) DO UPDATE SET
 			height_cm        = excluded.height_cm,
 			birth_date       = excluded.birth_date,
@@ -2331,11 +2599,16 @@ func (s *Store) UpsertProfile(ctx context.Context, p types.UserProfile) error {
 			onboarded        = excluded.onboarded,
 			updated_at       = excluded.updated_at
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q),
-		p.UserID, p.HeightCm, p.BirthDate, p.Gender, p.ActivityLevel, p.Goal,
-		p.TargetWeightKg, p.WeeklyRate, onboarded,
-		utcStr(p.CreatedAt), utcStr(p.UpdatedAt),
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"user_id": p.UserID, "height_cm": p.HeightCm, "birth_date": p.BirthDate,
+		"gender": p.Gender, "activity_level": p.ActivityLevel, "goal": p.Goal,
+		"target_weight_kg": p.TargetWeightKg, "weekly_rate": p.WeeklyRate, "onboarded": onboarded,
+		"created_at": utcStr(p.CreatedAt), "updated_at": utcStr(p.UpdatedAt),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind upsert profile: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
 
@@ -2357,14 +2630,11 @@ func (s *Store) CreateLinkingCode(ctx context.Context, userID, platform, code st
 // LookupLinkingCode returns an unused linking code by its code string.
 func (s *Store) LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error) {
 	var lc types.LinkingCode
-	err := s.db.QueryRowContext(ctx,
-		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') FROM linking_codes WHERE code = ? AND used_at IS NULL`,
+	err := s.db.GetContext(ctx, &lc,
+		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') AS used_at FROM linking_codes WHERE code = ? AND used_at IS NULL`,
 		code,
-	).Scan(&lc.Code, &lc.UserID, &lc.Platform, &lc.ExpiresAt, &lc.UsedAt)
-	if err != nil {
-		return lc, err
-	}
-	return lc, nil
+	)
+	return lc, err
 }
 
 // LookupLinkingCodeAny returns a linking code regardless of whether it has been
@@ -2372,14 +2642,11 @@ func (s *Store) LookupLinkingCode(ctx context.Context, code string) (types.Linki
 // (LookupLinkingCode filters used_at IS NULL and would miss the transition).
 func (s *Store) LookupLinkingCodeAny(ctx context.Context, code string) (types.LinkingCode, error) {
 	var lc types.LinkingCode
-	err := s.db.QueryRowContext(ctx,
-		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') FROM linking_codes WHERE code = ?`,
+	err := s.db.GetContext(ctx, &lc,
+		`SELECT code, user_id, platform, expires_at, COALESCE(used_at, '') AS used_at FROM linking_codes WHERE code = ?`,
 		code,
-	).Scan(&lc.Code, &lc.UserID, &lc.Platform, &lc.ExpiresAt, &lc.UsedAt)
-	if err != nil {
-		return lc, err
-	}
-	return lc, nil
+	)
+	return lc, err
 }
 
 // ConsumeLinkingCode marks a linking code as used.
@@ -2412,55 +2679,37 @@ func (s *Store) LogWater(ctx context.Context, w types.WaterLog) error {
 // total ml consumed that day.
 func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error) {
 	const q = `
-		SELECT id, user_id, amount_ml, logged_at, COALESCE(note, '')
+		SELECT id, user_id, amount_ml, logged_at, COALESCE(note, '') AS note
 		FROM water_logs
 		WHERE user_id = ? AND date(logged_at) = ?
 		ORDER BY logged_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, localDate)
-	if err != nil {
+	var logs []types.WaterLog
+	if err := s.db.SelectContext(ctx, &logs, s.rewrite(q), userID, localDate); err != nil {
 		return nil, 0, fmt.Errorf("store: get water today: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var logs []types.WaterLog
 	total := 0
-	for rows.Next() {
-		var w types.WaterLog
-		if err := rows.Scan(&w.ID, &w.UserID, &w.AmountML, &w.LoggedAt, &w.Note); err != nil {
-			return nil, 0, fmt.Errorf("store: scan water log: %w", err)
-		}
+	for _, w := range logs {
 		total += w.AmountML
-		logs = append(logs, w)
 	}
-	return logs, total, rows.Err()
+	return logs, total, nil
 }
 
 // GetWaterDailyTotals returns per-day water totals between startDate and endDate
 // (inclusive, "YYYY-MM-DD" format). Days with no water logs are not returned.
 func (s *Store) GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error) {
 	const q = `
-		SELECT date(logged_at), SUM(amount_ml)
+		SELECT date(logged_at) AS date, SUM(amount_ml) AS total_ml
 		FROM water_logs
 		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
 		GROUP BY date(logged_at)
 		ORDER BY date(logged_at) ASC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
-	if err != nil {
+	var out []types.WaterDayTotal
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: get water daily totals: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.WaterDayTotal
-	for rows.Next() {
-		var wdt types.WaterDayTotal
-		if err := rows.Scan(&wdt.Date, &wdt.TotalML); err != nil {
-			return nil, fmt.Errorf("store: scan water daily total: %w", err)
-		}
-		out = append(out, wdt)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DeleteWater deletes a water log entry by user + ID. Returns ErrNotFound if absent.
@@ -2483,7 +2732,7 @@ func (s *Store) DeleteWater(ctx context.Context, userID, id string) error {
 
 // LogWorkout inserts a workout and its exercises inside a transaction.
 func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
@@ -2491,29 +2740,37 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 
 	const workoutQ = `
 		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :created_at)
 	`
-	_, err = tx.ExecContext(ctx, s.rewrite(workoutQ),
-		w.ID, w.UserID, w.Name, w.DurationMin, w.Intensity,
-		w.CaloriesBurned, nullStr(w.Note), w.LoggedAt, utcNow(),
-	)
+	workoutQuery, workoutArgs, err := sqlx.Named(workoutQ, map[string]any{
+		"id": w.ID, "user_id": w.UserID, "name": w.Name, "duration_min": w.DurationMin,
+		"intensity": w.Intensity, "calories_burned": w.CaloriesBurned, "note": nullStr(w.Note),
+		"logged_at": w.LoggedAt, "created_at": utcNow(),
+	})
 	if err != nil {
+		return fmt.Errorf("store: bind insert workout: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(workoutQuery), workoutArgs...); err != nil {
 		return fmt.Errorf("store: insert workout: %w", err)
 	}
 
 	const exerciseQ = `
 		INSERT INTO workout_exercises (id, workout_id, name, sets, reps, weight_kg, note)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :workout_id, :name, :sets, :reps, :weight_kg, :note)
 	`
 	for _, e := range w.Exercises {
 		exID := e.ID
 		if exID == "" {
 			exID = newID()
 		}
-		_, err = tx.ExecContext(ctx, s.rewrite(exerciseQ),
-			exID, w.ID, e.Name, e.Sets, e.Reps, e.WeightKg, nullStr(e.Note),
-		)
+		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
+			"id": exID, "workout_id": w.ID, "name": e.Name,
+			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
+		})
 		if err != nil {
+			return fmt.Errorf("store: bind insert exercise: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, s.rewrite(exerciseQuery), exerciseArgs...); err != nil {
 			return fmt.Errorf("store: insert exercise: %w", err)
 		}
 	}
@@ -2525,13 +2782,12 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 // Returns types.ErrNotFound when the workout does not exist.
 func (s *Store) GetWorkout(ctx context.Context, id string) (types.Workout, error) {
 	const q = `
-		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, '') AS note, logged_at
 		FROM workouts WHERE id = ?
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), id)
 	var w types.Workout
-	if err := row.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.GetContext(ctx, &w, s.rewrite(q), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return types.Workout{}, types.ErrNotFound
 		}
 		return types.Workout{}, fmt.Errorf("store: get workout: %w", err)
@@ -2548,27 +2804,17 @@ func (s *Store) GetWorkout(ctx context.Context, id string) (types.Workout, error
 // ListWorkouts returns the user's most recent workouts without exercises.
 func (s *Store) ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error) {
 	const q = `
-		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, '') AS note, logged_at
 		FROM workouts
 		WHERE user_id = ?
 		ORDER BY logged_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
-	if err != nil {
+	var out []types.Workout
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, limit); err != nil {
 		return nil, fmt.Errorf("store: list workouts: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.Workout
-	for rows.Next() {
-		var w types.Workout
-		if err := rows.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
-			return nil, fmt.Errorf("store: scan workout: %w", err)
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DeleteWorkout deletes a workout by user + ID. Exercises are cascade-deleted.
@@ -2590,50 +2836,30 @@ func (s *Store) DeleteWorkout(ctx context.Context, userID, id string) error {
 // (inclusive, "YYYY-MM-DD" format), ordered newest first, with no limit.
 func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error) {
 	const q = `
-		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, ''), logged_at
+		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, '') AS note, logged_at
 		FROM workouts
 		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
 		ORDER BY logged_at DESC
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, startDate, endDate)
-	if err != nil {
+	var out []types.Workout
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: list workouts in range: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.Workout
-	for rows.Next() {
-		var w types.Workout
-		if err := rows.Scan(&w.ID, &w.UserID, &w.Name, &w.DurationMin, &w.Intensity, &w.CaloriesBurned, &w.Note, &w.LoggedAt); err != nil {
-			return nil, fmt.Errorf("store: scan workout: %w", err)
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]types.WorkoutExercise, error) {
 	const q = `
-		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '')
+		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '') AS note
 		FROM workout_exercises
 		WHERE workout_id = ?
 		ORDER BY rowid
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), workoutID)
-	if err != nil {
+	var out []types.WorkoutExercise
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), workoutID); err != nil {
 		return nil, fmt.Errorf("store: query exercises: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.WorkoutExercise
-	for rows.Next() {
-		var e types.WorkoutExercise
-		if err := rows.Scan(&e.ID, &e.WorkoutID, &e.Name, &e.Sets, &e.Reps, &e.WeightKg, &e.Note); err != nil {
-			return nil, fmt.Errorf("store: scan exercise: %w", err)
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2644,12 +2870,16 @@ func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]t
 func (s *Store) LogSleep(ctx context.Context, sl types.SleepLog) error {
 	const q = `
 		INSERT INTO sleep_logs (id, user_id, sleep_at, wake_at, quality, note, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (:id, :user_id, :sleep_at, :wake_at, :quality, :note, :created_at)
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q),
-		sl.ID, sl.UserID, sl.SleepAt, sl.WakeAt, sl.Quality, nullStr(sl.Note), utcNow(),
-	)
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id": sl.ID, "user_id": sl.UserID, "sleep_at": sl.SleepAt, "wake_at": sl.WakeAt,
+		"quality": sl.Quality, "note": nullStr(sl.Note), "created_at": utcNow(),
+	})
 	if err != nil {
+		return fmt.Errorf("store: bind log sleep: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, s.rewrite(query), args...); err != nil {
 		return fmt.Errorf("store: log sleep: %w", err)
 	}
 	return nil
@@ -2659,23 +2889,18 @@ func (s *Store) LogSleep(ctx context.Context, sl types.SleepLog) error {
 // ErrNotFound if none is active.
 func (s *Store) GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error) {
 	const q = `
-		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '')
+		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '') AS note
 		FROM sleep_logs
 		WHERE user_id = ? AND wake_at IS NULL
 		ORDER BY sleep_at DESC
 		LIMIT 1
 	`
-	row := s.db.QueryRowContext(ctx, s.rewrite(q), userID)
 	var sl types.SleepLog
-	var wakeAt sql.NullString
-	if err := row.Scan(&sl.ID, &sl.UserID, &sl.SleepAt, &wakeAt, &sl.Quality, &sl.Note); err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.GetContext(ctx, &sl, s.rewrite(q), userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, types.ErrNotFound
 		}
 		return nil, fmt.Errorf("store: get active sleep: %w", err)
-	}
-	if wakeAt.Valid {
-		sl.WakeAt = &wakeAt.String
 	}
 	return &sl, nil
 }
@@ -2701,31 +2926,17 @@ func (s *Store) EndSleep(ctx context.Context, userID, id, wakeAt, quality string
 // ListSleep returns the user's most recent sleep logs, newest first.
 func (s *Store) ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error) {
 	const q = `
-		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '')
+		SELECT id, user_id, sleep_at, wake_at, quality, COALESCE(note, '') AS note
 		FROM sleep_logs
 		WHERE user_id = ?
 		ORDER BY sleep_at DESC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, s.rewrite(q), userID, limit)
-	if err != nil {
+	var out []types.SleepLog
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, limit); err != nil {
 		return nil, fmt.Errorf("store: list sleep: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []types.SleepLog
-	for rows.Next() {
-		var sl types.SleepLog
-		var wakeAt sql.NullString
-		if err := rows.Scan(&sl.ID, &sl.UserID, &sl.SleepAt, &wakeAt, &sl.Quality, &sl.Note); err != nil {
-			return nil, fmt.Errorf("store: scan sleep: %w", err)
-		}
-		if wakeAt.Valid {
-			sl.WakeAt = &wakeAt.String
-		}
-		out = append(out, sl)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DeleteSleep deletes a sleep log by user + ID. Returns ErrNotFound if absent.

@@ -178,6 +178,28 @@ func TestPostgresSearchFoods(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 salmon result, got %d", len(results))
 	}
+
+	// Test case for duplicate search results when aliases are present
+	if err := s.UpsertFood(ctx(), "user-pg-3", types.FoodMatch{
+		FoodID: "sf1", Name: "Chicken Breast", Source: "taco", Per100g: types.Macros{Calories: 165, Protein: 31, Fat: 3.6},
+	}, []string{"chicken breast grilled"}); err != nil {
+		t.Fatalf("UpsertFood with alias: %v", err)
+	}
+
+	results, err = s.SearchFoods(ctx(), "user-pg-3", "chicken")
+	if err != nil {
+		t.Fatalf("SearchFoods after alias: %v", err)
+	}
+	// Let's count how many times sf1 appears.
+	sf1Count := 0
+	for _, r := range results {
+		if r.FoodID == "sf1" {
+			sf1Count++
+		}
+	}
+	if sf1Count > 1 {
+		t.Errorf("expected sf1 to appear at most once, but got it %d times in results", sf1Count)
+	}
 }
 
 func TestPostgresDualDriverSmoke(t *testing.T) {
