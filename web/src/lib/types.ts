@@ -212,10 +212,10 @@ export interface BodyCompositionSummary {
   latest_trend_point?: WeightTrend | null
 }
 
-// ---------------------------------------------------------------------------
-// Health tracking, fasting (live backend) + water / workout / sleep (Phase 4;
+// -----------------------------------------------------------------------------
+// Health tracking, fasting (live backend) + water / workout / sleep (endpoints;
 // endpoints 404 until shipped, cards fall back to empty state).
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 // A single intermittent-fasting window. end_at is absent while in progress.
 export interface Fast {
@@ -445,7 +445,7 @@ export interface NudgeRuleUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// Streak & weekly budget (backend Phase 2 + Phase 4)
+// Streak & weekly budget
 // ---------------------------------------------------------------------------
 
 export interface StreakResponse {
