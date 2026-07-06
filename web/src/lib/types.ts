@@ -407,7 +407,7 @@ export interface MfaChallenge {
 export type LoginResponse = SessionResponse | MfaChallenge
 
 export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
-  return 'mfa_required' in r && r.mfa_required === true
+  return 'mfa_required' in r && r.mfa_required
 }
 
 // ---------------------------------------------------------------------------
