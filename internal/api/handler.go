@@ -230,8 +230,8 @@ type Suggester interface {
 type ChatStore interface {
 	CreateChatSession(ctx context.Context, id, userID, title string) error
 	ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error)
-	AppendChatMessage(ctx context.Context, id, sessionID, role, content, toolName string) error
-	GetChatMessages(ctx context.Context, sessionID string) ([]assistant.Message, error)
+	AppendChatMessage(ctx context.Context, id, userID, sessionID, role, content, toolName string) error
+	GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error)
 	GetAssistantSettings(ctx context.Context, userID string) (customInstructions string, found bool, err error)
 	SetAssistantSettings(ctx context.Context, userID, customInstructions string) error
 }

@@ -48,6 +48,17 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 	// Resolve localized system prompt.
 	systemPrompt := h.chatSystemPrompt(r.Context(), userID)
 
+	// Persist user message before streaming — also doubles as the session
+	// ownership check (AppendChatMessage no-ops and returns ErrNotFound if
+	// sessionID doesn't belong to userID), so a foreign/bogus session ID is
+	// rejected before any SSE headers go out or the LLM gets called.
+	if h.chatStore != nil {
+		if err := h.chatStore.AppendChatMessage(r.Context(), newHandlerID(), userID, sessionID, "user", req.Text, ""); err != nil {
+			h.writeErr(w, err)
+			return
+		}
+	}
+
 	// Flusher check (must be done before writing headers).
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -62,11 +73,6 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	// Persist user message before streaming.
-	if h.chatStore != nil {
-		_ = h.chatStore.AppendChatMessage(r.Context(), newHandlerID(), sessionID, "user", req.Text, "")
-	}
 
 	// Accumulators for persistence on done.
 	var (
@@ -99,7 +105,7 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 				"text": evt.ToolCall.Args,
 			})
 		case "done":
-			h.persistAssistantMessages(r.Context(), sessionID, textBuf.String(), toolInfos)
+			h.persistAssistantMessages(r.Context(), userID, sessionID, textBuf.String(), toolInfos)
 			writeSSE(w, "done", map[string]string{})
 			flusher.Flush()
 			return
@@ -109,7 +115,7 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 			}
 			// Save what we have so far before sending error.
 			if textBuf.Len() > 0 {
-				h.persistAssistantMessages(r.Context(), sessionID, textBuf.String(), toolInfos)
+				h.persistAssistantMessages(r.Context(), userID, sessionID, textBuf.String(), toolInfos)
 			}
 			writeSSE(w, "error", map[string]string{"message": "chat error, please try again"})
 			flusher.Flush()
@@ -162,17 +168,17 @@ type toolInfo struct {
 }
 
 // persistAssistantMessages saves the assistant's text and any tool results to the DB.
-func (h *Handler) persistAssistantMessages(ctx context.Context, sessionID, text string, tools []toolInfo) {
+func (h *Handler) persistAssistantMessages(ctx context.Context, userID, sessionID, text string, tools []toolInfo) {
 	if h.chatStore == nil {
 		return
 	}
 	// Save tool results first (they happened before the final text).
 	for _, ti := range tools {
-		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), sessionID, "tool", ti.Text, ti.Name)
+		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "tool", ti.Text, ti.Name)
 	}
 	// Save final assistant text.
 	if strings.TrimSpace(text) != "" {
-		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), sessionID, "assistant", text, "")
+		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "assistant", text, "")
 	}
 }
 
@@ -233,9 +239,7 @@ func (h *Handler) handleGetChatMessages(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	_ = userID // session ownership check deferred; messages are not sensitive
-
-	messages, err := h.chatStore.GetChatMessages(r.Context(), r.PathValue("id"))
+	messages, err := h.chatStore.GetChatMessages(r.Context(), userID, r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, err)
 		return

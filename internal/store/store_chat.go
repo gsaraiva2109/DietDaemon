@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
@@ -33,11 +34,20 @@ func (s *Store) ListChatSessions(ctx context.Context, userID string) ([]assistan
 
 // AppendChatMessage inserts a message into a session and bumps the session's
 // updated_at timestamp. toolName is optional; pass "" for non-tool messages.
-func (s *Store) AppendChatMessage(ctx context.Context, id, sessionID, role, content, toolName string) error {
-	const q = `INSERT INTO chat_messages (id, session_id, role, content, tool_name) VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), id, sessionID, role, content, toolName)
+// Returns types.ErrNotFound if sessionID doesn't belong to userID.
+func (s *Store) AppendChatMessage(ctx context.Context, id, userID, sessionID, role, content, toolName string) error {
+	const q = `
+		INSERT INTO chat_messages (id, session_id, role, content, tool_name)
+		SELECT ?, ?, ?, ?, ?
+		WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = ? AND user_id = ?)
+	`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), id, sessionID, role, content, toolName, sessionID, userID)
 	if err != nil {
 		return fmt.Errorf("store: append chat message: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
 	}
 
 	// Bump session timestamp.
@@ -46,11 +56,18 @@ func (s *Store) AppendChatMessage(ctx context.Context, id, sessionID, role, cont
 	return nil
 }
 
-// GetChatMessages returns all messages in a session, oldest first.
-func (s *Store) GetChatMessages(ctx context.Context, sessionID string) ([]assistant.Message, error) {
-	const q = `SELECT id, session_id, role, content, tool_name, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC`
+// GetChatMessages returns all messages in a session, oldest first. Returns an
+// empty slice (not an error) if sessionID doesn't belong to userID.
+func (s *Store) GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error) {
+	const q = `
+		SELECT cm.id, cm.session_id, cm.role, cm.content, cm.tool_name, cm.created_at
+		FROM chat_messages cm
+		WHERE cm.session_id = ?
+		AND EXISTS (SELECT 1 FROM chat_sessions cs WHERE cs.id = cm.session_id AND cs.user_id = ?)
+		ORDER BY cm.created_at ASC
+	`
 	var rows []assistant.Message
-	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), sessionID)
+	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), sessionID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: get chat messages: %w", err)
 	}
