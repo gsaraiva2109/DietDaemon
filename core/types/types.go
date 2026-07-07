@@ -346,16 +346,18 @@ type WeeklyBudgetConfig struct {
 
 // BackupConfig is a per-user scheduled backup/export setting, local disk or S3.
 type BackupConfig struct {
-	UserID      string
-	Enabled     bool
-	Destination string // "local" | "s3"
-	LocalSubdir string
-	S3Bucket    string
-	S3Prefix    string
-	S3Region    string
-	S3Endpoint  string
-	IntervalHrs int
-	LastRunAt   time.Time
+	UserID           string
+	Enabled          bool
+	Destination      string // "local" | "s3"
+	LocalSubdir      string
+	S3Bucket         string
+	S3Prefix         string
+	S3Region         string
+	S3Endpoint       string
+	IntervalHrs      int
+	LastRunAt        time.Time
+	LastMealsCount   int
+	LastRollupsCount int
 }
 
 // ---------------------------------------------------------------------------
