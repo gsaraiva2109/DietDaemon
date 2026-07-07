@@ -17,6 +17,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
@@ -268,6 +269,13 @@ type Handler struct {
 
 	// Chat adapter for the conversational assistant (nil when unsupported).
 	chatAdapter ports.ChatAdapter
+
+	// Assistant router for the chat endpoint (nil when unsupported).
+	assistantRouter *assistant.Router
+
+	// Tool descriptions and commands needed for per-user BYOK router construction.
+	chatCommands []ports.Command
+	toolDescs    map[string]string
 }
 
 // BackupRunner triggers an immediate backup for one user, sharing the same
@@ -282,7 +290,7 @@ type BackupRunner interface {
 // interfaces (they are satisfied by *store.Store). backupRunner may be nil if
 // scheduled backups aren't configured; the manual "run now" endpoint then
 // returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter, assistantRouter *assistant.Router, chatCommands []ports.Command, toolDescs map[string]string) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -315,6 +323,9 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		suggester:        suggester,
 		cfg:              c,
 		chatAdapter:      chatAdapter,
+		assistantRouter:  assistantRouter,
+		chatCommands:     chatCommands,
+		toolDescs:        toolDescs,
 	}
 }
 

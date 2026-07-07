@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
+	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
 // fakeChatAdapter is a test double for ports.ChatAdapter.
@@ -37,13 +38,20 @@ func (f *fakeChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest)
 	return ch, nil
 }
 
+// newChatHandler builds a Handler with a fake adapter wrapped in an assistant router.
+func newChatHandler(events []ports.ChatEvent, err error) *Handler {
+	fake := &fakeChatAdapter{events: events, err: err}
+	return &Handler{
+		chatAdapter:     fake,
+		assistantRouter: assistant.New(fake, nil, nil),
+	}
+}
+
 func TestHandleChatMessageBasic(t *testing.T) {
-	h := &Handler{chatAdapter: &fakeChatAdapter{
-		events: []ports.ChatEvent{
-			{Kind: "text-delta", Text: "Hi!"},
-			{Kind: "done"},
-		},
-	}}
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "Hi!"},
+		{Kind: "done"},
+	}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
 	rec := httptest.NewRecorder()
 
@@ -63,16 +71,12 @@ func TestHandleChatMessageBasic(t *testing.T) {
 }
 
 func TestHandleChatMessageSSEStreaming(t *testing.T) {
-	fake := &fakeChatAdapter{
-		events: []ports.ChatEvent{
-			{Kind: "text-delta", Text: "Hello"},
-			{Kind: "text-delta", Text: " there"},
-			{Kind: "text-delta", Text: "!"},
-			{Kind: "done"},
-		},
-	}
-
-	h := &Handler{chatAdapter: fake}
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "Hello"},
+		{Kind: "text-delta", Text: " there"},
+		{Kind: "text-delta", Text: "!"},
+		{Kind: "done"},
+	}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hi"}`))
 	rec := httptest.NewRecorder()
 
@@ -88,12 +92,10 @@ func TestHandleChatMessageSSEStreaming(t *testing.T) {
 	}
 
 	events := parseSSE(rec.Body.String())
-
 	if len(events) < 4 {
 		t.Fatalf("expected 4 events, got %d: %v", len(events), events)
 	}
 
-	// Verify delta events.
 	for i, expectedText := range []string{"Hello", " there", "!"} {
 		if events[i].Event != "delta" {
 			t.Errorf("event[%d]: expected event=delta, got %q", i, events[i].Event)
@@ -106,7 +108,6 @@ func TestHandleChatMessageSSEStreaming(t *testing.T) {
 		}
 	}
 
-	// Verify done event.
 	last := events[len(events)-1]
 	if last.Event != "done" {
 		t.Errorf("last event: expected done, got %q", last.Event)
@@ -114,7 +115,7 @@ func TestHandleChatMessageSSEStreaming(t *testing.T) {
 }
 
 func TestHandleChatMessageNoAdapterReturns503(t *testing.T) {
-	h := &Handler{chatAdapter: nil}
+	h := &Handler{chatAdapter: nil, assistantRouter: nil}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
 	rec := httptest.NewRecorder()
 
@@ -126,7 +127,7 @@ func TestHandleChatMessageNoAdapterReturns503(t *testing.T) {
 }
 
 func TestHandleChatMessageEmptyText(t *testing.T) {
-	h := &Handler{chatAdapter: &fakeChatAdapter{}}
+	h := newChatHandler(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":""}`))
 	rec := httptest.NewRecorder()
 
@@ -138,10 +139,7 @@ func TestHandleChatMessageEmptyText(t *testing.T) {
 }
 
 func TestHandleChatMessageAdapterError(t *testing.T) {
-	fake := &fakeChatAdapter{
-		err: fmt.Errorf("anthropic: 500 internal error"),
-	}
-	h := &Handler{chatAdapter: fake}
+	h := newChatHandler(nil, fmt.Errorf("anthropic: 500 internal error"))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
 	rec := httptest.NewRecorder()
 
@@ -158,16 +156,21 @@ func TestHandleChatMessageAdapterError(t *testing.T) {
 	if events[0].Event != "error" {
 		t.Fatalf("expected error event, got %q: %s", events[0].Event, events[0].Data)
 	}
+	// Verify error message is sanitized (not raw error).
+	var data map[string]string
+	if err := json.Unmarshal([]byte(events[0].Data), &data); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if data["message"] == "" {
+		t.Error("error event should have a message")
+	}
 }
 
 func TestHandleChatMessageStreamError(t *testing.T) {
-	fake := &fakeChatAdapter{
-		events: []ports.ChatEvent{
-			{Kind: "text-delta", Text: "ok"},
-			{Kind: "error", Err: fmt.Errorf("something went wrong")},
-		},
-	}
-	h := &Handler{chatAdapter: fake}
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "ok"},
+		{Kind: "error", Err: fmt.Errorf("something went wrong")},
+	}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
 	rec := httptest.NewRecorder()
 
@@ -183,35 +186,42 @@ func TestHandleChatMessageStreamError(t *testing.T) {
 	if events[1].Event != "error" {
 		t.Errorf("second event: expected error, got %q", events[1].Event)
 	}
+	// Verify error message is sanitized.
+	var data map[string]string
+	if err := json.Unmarshal([]byte(events[1].Data), &data); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if data["message"] == "" {
+		t.Error("error event should have a message")
+	}
 }
 
 func TestHandleChatMessageToolCallEvent(t *testing.T) {
-	fake := &fakeChatAdapter{
-		events: []ports.ChatEvent{
-			{Kind: "text-delta", Text: "Let me check..."},
-			{
-				Kind: "tool-call",
-				ToolCall: &ports.ToolCallEvent{
-					ID:   "tc_1",
-					Name: "suggest",
-					Args: "",
-				},
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "Let me check..."},
+		{
+			Kind: "tool-call",
+			ToolCall: &ports.ToolCallEvent{
+				ID:   "tc_1",
+				Name: "suggest",
+				Args: "",
 			},
-			{Kind: "done"},
 		},
-	}
-	h := &Handler{chatAdapter: fake}
+		{Kind: "done"},
+	}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"what should I eat"}`))
 	rec := httptest.NewRecorder()
 
 	h.handleChatMessage(rec, req, "test-user")
 
 	events := parseSSE(rec.Body.String())
+
+	// Should have: delta, tool-call, tool-result (unknown command).
 	if len(events) < 3 {
-		t.Fatalf("expected at least 3 events, got %d", len(events))
+		t.Fatalf("expected at least 3 events, got %d: %+v", len(events), events)
 	}
 
-	// Check tool-call event.
+	// Check tool-call event exists.
 	var found bool
 	for _, e := range events {
 		if e.Event == "tool-call" {
@@ -231,6 +241,28 @@ func TestHandleChatMessageToolCallEvent(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected a tool-call event")
+	}
+
+	// Check tool-result event exists.
+	var foundTR bool
+	for _, e := range events {
+		if e.Event == "tool-result" {
+			foundTR = true
+			var data map[string]string
+			if err := json.Unmarshal([]byte(e.Data), &data); err != nil {
+				t.Errorf("tool-result data: bad JSON: %v", err)
+			} else {
+				if data["id"] != "tc_1" {
+					t.Errorf("tool-result id: expected tc_1, got %q", data["id"])
+				}
+				if data["text"] == "" {
+					t.Error("tool-result text should not be empty")
+				}
+			}
+		}
+	}
+	if !foundTR {
+		t.Error("expected a tool-result event")
 	}
 }
 

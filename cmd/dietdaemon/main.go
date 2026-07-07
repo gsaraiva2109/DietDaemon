@@ -30,6 +30,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/api"
+	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/backup"
 	"github.com/gsaraiva2109/dietdaemon/internal/backup/localdisk"
@@ -338,7 +339,24 @@ func run() error {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel)
+		// Build assistant router (tool-calling loop) for the chat endpoint.
+		// nil when chatModel is nil (unsupported adapter).
+		var assistantRouter *assistant.Router
+		var toolDescs map[string]string
+		if chatModel != nil {
+			cmds := cmdRegistry.List()
+			toolDescs = make(map[string]string, len(cmds))
+			for _, c := range cmds {
+				desc := i18nBundle.T("en", c.Help(), nil)
+				if desc == "" {
+					desc = c.Name()
+				}
+				toolDescs[c.Name()] = desc
+			}
+			assistantRouter = assistant.New(chatModel, cmds, toolDescs)
+		}
+
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel, assistantRouter, cmdRegistry.List(), toolDescs)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
