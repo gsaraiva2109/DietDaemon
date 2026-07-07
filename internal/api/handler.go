@@ -404,8 +404,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/backup/run", h.wrap(h.handleRunBackupNow))
 
 	// Auth endpoints.
-	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublic(h.handleRegister))
-	mux.HandleFunc("POST /api/v1/auth/login", h.wrapPublic(h.handleLogin))
+	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublicLimited(h.handleRegister))
+	mux.HandleFunc("POST /api/v1/auth/login", h.wrapPublicLimited(h.handleLogin))
 	mux.HandleFunc("POST /api/v1/auth/logout", h.wrap(h.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/session", h.wrap(h.handleSession))
 	mux.HandleFunc("GET /api/v1/auth/providers", h.wrapPublic(h.handleProviders))
@@ -417,26 +417,26 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// TOTP two-factor authentication.
 	mux.HandleFunc("POST /api/v1/auth/totp/enroll", h.wrap(h.handleTOTPEnroll))
 	mux.HandleFunc("POST /api/v1/auth/totp/verify", h.wrap(h.handleTOTPVerify))
-	mux.HandleFunc("POST /api/v1/auth/totp/challenge", h.wrapPublic(h.handleTOTPChallenge))
+	mux.HandleFunc("POST /api/v1/auth/totp/challenge", h.wrapPublicLimited(h.handleTOTPChallenge))
 	mux.HandleFunc("DELETE /api/v1/auth/totp", h.wrap(h.handleTOTPDisable))
 	mux.HandleFunc("POST /api/v1/auth/totp/recovery-codes/regenerate", h.wrap(h.handleRegenerateRecovery))
 
 	// OIDC client login + account linking.
-	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/start", h.wrapPublic(h.handleOIDCStart))
-	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", h.wrapPublic(h.handleOIDCCallback))
+	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/start", h.wrapPublicLimited(h.handleOIDCStart))
+	mux.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", h.wrapPublicLimited(h.handleOIDCCallback))
 	mux.HandleFunc("GET /api/v1/auth/identities", h.wrap(h.handleListIdentities))
 	mux.HandleFunc("DELETE /api/v1/auth/identities/{id}", h.wrap(h.handleUnlinkIdentity))
 
 	// Email verification + password reset.
-	mux.HandleFunc("POST /api/v1/auth/email/verify", h.wrapPublic(h.handleEmailVerify))
+	mux.HandleFunc("POST /api/v1/auth/email/verify", h.wrapPublicLimited(h.handleEmailVerify))
 	mux.HandleFunc("POST /api/v1/auth/email/verify/resend", h.wrap(h.handleResendVerify))
 	mux.HandleFunc("POST /api/v1/auth/email/change", h.wrap(h.handleEmailChange))
-	mux.HandleFunc("POST /api/v1/auth/password/forgot", h.wrapPublic(h.handleForgotPassword))
-	mux.HandleFunc("POST /api/v1/auth/password/reset", h.wrapPublic(h.handleResetPassword))
+	mux.HandleFunc("POST /api/v1/auth/password/forgot", h.wrapPublicLimited(h.handleForgotPassword))
+	mux.HandleFunc("POST /api/v1/auth/password/reset", h.wrapPublicLimited(h.handleResetPassword))
 
 	// Passwordless email sign-in.
-	mux.HandleFunc("POST /api/v1/auth/magic/request", h.wrapPublic(h.handleMagicRequest))
-	mux.HandleFunc("POST /api/v1/auth/magic/verify", h.wrapPublic(h.handleMagicVerify))
+	mux.HandleFunc("POST /api/v1/auth/magic/request", h.wrapPublicLimited(h.handleMagicRequest))
+	mux.HandleFunc("POST /api/v1/auth/magic/verify", h.wrapPublicLimited(h.handleMagicVerify))
 
 	// Passkeys (WebAuthn) — management and login.
 	mux.HandleFunc("GET /api/v1/auth/passkeys", h.wrap(h.handleListPasskeys))
@@ -444,13 +444,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/passkeys/register/finish", h.wrap(h.handlePasskeyRegisterFinish))
 	mux.HandleFunc("PATCH /api/v1/auth/passkeys/{id}", h.wrap(h.handleRenamePasskey))
 	mux.HandleFunc("DELETE /api/v1/auth/passkeys/{id}", h.wrap(h.handleDeletePasskey))
-	mux.HandleFunc("POST /api/v1/auth/passkeys/login/begin", h.wrapPublic(h.handlePasskeyLoginBegin))
-	mux.HandleFunc("POST /api/v1/auth/passkeys/login/finish", h.wrapPublic(h.handlePasskeyLoginFinish))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/login/begin", h.wrapPublicLimited(h.handlePasskeyLoginBegin))
+	mux.HandleFunc("POST /api/v1/auth/passkeys/login/finish", h.wrapPublicLimited(h.handlePasskeyLoginFinish))
 	// Passkey-as-2FA + email-OTP fallback.
-	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/begin", h.wrapPublic(h.handleMFAPasskeyBegin))
-	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/finish", h.wrapPublic(h.handleMFAPasskeyFinish))
-	mux.HandleFunc("POST /api/v1/auth/mfa/email/send", h.wrapPublic(h.handleMFAEmailSend))
-	mux.HandleFunc("POST /api/v1/auth/mfa/email/verify", h.wrapPublic(h.handleMFAEmailVerify))
+	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/begin", h.wrapPublicLimited(h.handleMFAPasskeyBegin))
+	mux.HandleFunc("POST /api/v1/auth/mfa/passkey/finish", h.wrapPublicLimited(h.handleMFAPasskeyFinish))
+	mux.HandleFunc("POST /api/v1/auth/mfa/email/send", h.wrapPublicLimited(h.handleMFAEmailSend))
+	mux.HandleFunc("POST /api/v1/auth/mfa/email/verify", h.wrapPublicLimited(h.handleMFAEmailVerify))
 
 	// Adherence streak.
 	mux.HandleFunc("GET /api/v1/streak", h.wrap(h.handleStreak))
@@ -483,6 +483,19 @@ func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		next(w, r)
 	}
+}
+
+// wrapPublicLimited adds per-IP rate limiting on top of wrapPublic.
+func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
+	return h.wrapPublic(func(w http.ResponseWriter, r *http.Request) {
+		if !h.ipLimiter.Allow(clientIP(r)) {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+			return
+		}
+		next(w, r)
+	})
 }
 
 // authenticate tries cookie-session first, then Bearer API key. Returns the

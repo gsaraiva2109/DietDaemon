@@ -28,14 +28,6 @@ const magicTTL = 15 * time.Minute
 func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 
-	// Per-IP rate limit.
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	var body struct {
 		Email string `json:"email"`
 	}
@@ -113,14 +105,6 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-
-	// Per-IP rate limit.
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
 
 	var body struct {
 		Email string `json:"email"`

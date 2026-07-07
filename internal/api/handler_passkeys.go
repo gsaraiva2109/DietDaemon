@@ -259,14 +259,6 @@ func (h *Handler) handleDeletePasskey(w http.ResponseWriter, r *http.Request, us
 
 // POST /auth/passkeys/login/begin
 func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	var body struct {
@@ -327,13 +319,6 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 // POST /auth/passkeys/login/finish
 func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	ceremonyID := h.readWebAuthnCookie(r)
@@ -466,14 +451,6 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 
 // POST /auth/mfa/passkey/begin
 func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	var body struct {
@@ -542,13 +519,6 @@ func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 // POST /auth/mfa/passkey/finish
 func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	ceremonyID := h.readWebAuthnCookie(r)

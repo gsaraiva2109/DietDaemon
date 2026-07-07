@@ -5,6 +5,7 @@ package contract
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestPendingStoreContract(t *testing.T) {
 			}
 
 			// Get before save → ErrNotFound.
-			if _, err := s.Get(ctx, "u1"); err != types.ErrNotFound {
+			if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
 				t.Errorf("Get before Save: expected ErrNotFound, got %v", err)
 			}
 
@@ -130,7 +131,7 @@ func TestPendingStoreContract(t *testing.T) {
 			}
 
 			// Get after delete → ErrNotFound.
-			if _, err := s.Get(ctx, "u1"); err != types.ErrNotFound {
+			if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
 				t.Errorf("Get after Delete: expected ErrNotFound, got %v", err)
 			}
 
