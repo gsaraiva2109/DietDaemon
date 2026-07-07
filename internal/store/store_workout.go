@@ -23,13 +23,13 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const workoutQ = `
-		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, created_at)
-		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :created_at)
+		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, external_id, created_at)
+		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :external_id, :created_at)
 	`
 	workoutQuery, workoutArgs, err := sqlx.Named(workoutQ, map[string]any{
 		"id": w.ID, "user_id": w.UserID, "name": w.Name, "duration_min": w.DurationMin,
 		"intensity": w.Intensity, "calories_burned": w.CaloriesBurned, "note": nullStr(w.Note),
-		"logged_at": w.LoggedAt, "created_at": utcNow(),
+		"logged_at": w.LoggedAt, "external_id": w.ExternalID, "created_at": utcNow(),
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind insert workout: %w", err)
@@ -144,4 +144,58 @@ func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]t
 		return nil, fmt.Errorf("store: query exercises: %w", err)
 	}
 	return out, nil
+}
+
+// ImportWorkout inserts a workout with its external_id set (for idempotent import).
+// Same transactional insert pattern as LogWorkout. On a unique-constraint violation
+// (duplicate external_id for the same user — the re-run-safety case), the call is a
+// safe no-op and returns nil rather than an error — "import ran twice" is harmless.
+func (s *Store) ImportWorkout(ctx context.Context, w types.Workout) error {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const workoutQ = `
+		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, external_id, created_at)
+		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :external_id, :created_at)
+	`
+	workoutQuery, workoutArgs, err := sqlx.Named(workoutQ, map[string]any{
+		"id": w.ID, "user_id": w.UserID, "name": w.Name, "duration_min": w.DurationMin,
+		"intensity": w.Intensity, "calories_burned": w.CaloriesBurned, "note": nullStr(w.Note),
+		"logged_at": w.LoggedAt, "external_id": w.ExternalID, "created_at": utcNow(),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind insert workout: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(workoutQuery), workoutArgs...); err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already imported
+		}
+		return fmt.Errorf("store: insert workout: %w", err)
+	}
+
+	const exerciseQ = `
+		INSERT INTO workout_exercises (id, workout_id, name, sets, reps, weight_kg, note)
+		VALUES (:id, :workout_id, :name, :sets, :reps, :weight_kg, :note)
+	`
+	for _, e := range w.Exercises {
+		exID := e.ID
+		if exID == "" {
+			exID = newID()
+		}
+		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
+			"id": exID, "workout_id": w.ID, "name": e.Name,
+			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
+		})
+		if err != nil {
+			return fmt.Errorf("store: bind insert exercise: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, s.rewrite(exerciseQuery), exerciseArgs...); err != nil {
+			return fmt.Errorf("store: insert exercise: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

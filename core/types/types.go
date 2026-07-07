@@ -312,6 +312,7 @@ type TemplateLog struct {
 	UserID     string    `json:"user_id"`
 	TemplateID string    `json:"template_id"`
 	LoggedAt   time.Time `json:"logged_at"`
+	ExternalID *string   `json:"external_id,omitempty" db:"external_id"`
 }
 
 // PendingAlias is an embedding-matched alias awaiting user confirmation before
@@ -570,6 +571,7 @@ type Workout struct {
 	CaloriesBurned *int              `json:"calories_burned,omitempty" db:"calories_burned"`
 	Note           string            `json:"note,omitempty" db:"note"`
 	LoggedAt       string            `json:"logged_at" db:"logged_at"`
+	ExternalID     *string           `json:"external_id,omitempty" db:"external_id"`
 	Exercises      []WorkoutExercise `json:"exercises,omitempty" db:"-"`
 }
 
