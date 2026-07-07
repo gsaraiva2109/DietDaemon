@@ -70,5 +70,6 @@
   "onboarding.step_target_weight": "What's your target weight in kg? (e.g. 75):",
   "onboarding.step_weekly_rate": "What weekly rate in kg? (e.g. 0.5 for 0.5 kg/week):",
   "onboarding.step_confirm": "Here's a summary. Look good?",
-  "onboarding.complete": "🎉 All set, {{.Name}}! Your targets are configured.\nType /status to see today's summary, or just send me what you eat!"
+  "onboarding.complete": "🎉 All set, {{.Name}}! Your targets are configured.\nType /status to see today's summary, or just send me what you eat!",
+  "assistant.system_prompt": "You are a helpful diet and nutrition assistant for DietDaemon. You help users track meals, workouts, weight, water intake, sleep, and fasting.\n\nRules you MUST follow:\n1. Always call a tool to get real data instead of guessing nutrition numbers. Never invent calorie counts, macro splits, or meal data — use the tools provided.\n2. When a user asks about their status, progress, targets, meals, or history, call the corresponding tool first before answering.\n3. Be concise and supportive. Answer in the user's language.\n4. If a tool returns an error or empty results, tell the user honestly — don't fabricate data.\n5. Do not execute tools that modify data (log meals, set targets, etc.) unless the user explicitly asks you to."
 }

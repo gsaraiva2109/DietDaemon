@@ -20,6 +20,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
+	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
@@ -224,6 +225,17 @@ type Suggester interface {
 	Suggest(ctx context.Context, userID string) (types.MealSuggestion, error)
 }
 
+// ChatStore is the persistence interface the chat assistant endpoints need.
+// Satisfied by *store.Store.
+type ChatStore interface {
+	CreateChatSession(ctx context.Context, id, userID, title string) error
+	ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error)
+	AppendChatMessage(ctx context.Context, id, sessionID, role, content, toolName string) error
+	GetChatMessages(ctx context.Context, sessionID string) ([]assistant.Message, error)
+	GetAssistantSettings(ctx context.Context, userID string) (customInstructions string, found bool, err error)
+	SetAssistantSettings(ctx context.Context, userID, customInstructions string) error
+}
+
 // Handler serves the DietDaemon REST API.
 type Handler struct {
 	store     MealStore
@@ -276,6 +288,12 @@ type Handler struct {
 	// Tool descriptions and commands needed for per-user BYOK router construction.
 	chatCommands []ports.Command
 	toolDescs    map[string]string
+
+	// Chat persistence (sessions, messages, settings).
+	chatStore ChatStore
+
+	// I18n bundle for localized system prompts.
+	i18nBundle *i18n.Bundle
 }
 
 // BackupRunner triggers an immediate backup for one user, sharing the same
@@ -290,7 +308,7 @@ type BackupRunner interface {
 // interfaces (they are satisfied by *store.Store). backupRunner may be nil if
 // scheduled backups aren't configured; the manual "run now" endpoint then
 // returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter, assistantRouter *assistant.Router, chatCommands []ports.Command, toolDescs map[string]string) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter, assistantRouter *assistant.Router, chatCommands []ports.Command, toolDescs map[string]string, chatStore ChatStore, i18nBundle *i18n.Bundle) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -326,6 +344,8 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		assistantRouter:  assistantRouter,
 		chatCommands:     chatCommands,
 		toolDescs:        toolDescs,
+		chatStore:        chatStore,
+		i18nBundle:       i18nBundle,
 	}
 }
 
@@ -500,6 +520,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// AI chat assistant.
 	mux.HandleFunc("POST /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleChatMessage))
+	mux.HandleFunc("POST /api/v1/chat/sessions", h.wrap(h.handleCreateChatSession))
+	mux.HandleFunc("GET /api/v1/chat/sessions", h.wrap(h.handleListChatSessions))
+	mux.HandleFunc("GET /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleGetChatMessages))
+	mux.HandleFunc("GET /api/v1/chat/settings", h.wrap(h.handleGetChatSettings))
+	mux.HandleFunc("PUT /api/v1/chat/settings", h.wrap(h.handleSetChatSettings))
 
 	// Bot account linking.
 	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))

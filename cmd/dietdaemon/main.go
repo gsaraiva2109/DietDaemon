@@ -356,7 +356,7 @@ func run() error {
 			assistantRouter = assistant.New(chatModel, cmds, toolDescs)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel, assistantRouter, cmdRegistry.List(), toolDescs)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st, i18nBundle)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
