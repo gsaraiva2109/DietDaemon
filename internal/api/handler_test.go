@@ -388,6 +388,16 @@ func (s *fakeMealStore) DeleteUserAIKey(_ context.Context, _ string) error {
 	return nil
 }
 
+func (s *fakeMealStore) GetUserHevyKey(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (s *fakeMealStore) SetUserHevyKey(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) DeleteUserHevyKey(_ context.Context, _ string) error {
+	return nil
+}
+
 // Goals & profile.
 func (s *fakeMealStore) GetProfile(_ context.Context, _ string) (types.UserProfile, error) {
 	return s.profile, s.profileErr
@@ -420,6 +430,9 @@ func (s *fakeMealStore) DeleteWater(_ context.Context, _, _ string) error {
 	return nil
 }
 func (s *fakeMealStore) LogWorkout(_ context.Context, _ types.Workout) error {
+	return nil
+}
+func (s *fakeMealStore) ImportWorkout(_ context.Context, _ types.Workout) error {
 	return nil
 }
 func (s *fakeMealStore) GetWorkout(_ context.Context, _ string) (types.Workout, error) {

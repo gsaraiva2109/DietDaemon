@@ -41,15 +41,6 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
-6. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
-   `workouts`/`workout_exercises` tables. Hevy has a real REST API (unlike Apple Health/Google
-   Fit, see Dropped), so this is the only piece of the old "health platform import/export" idea
-   that's actually reachable server-side. Schema is one row per exercise, not per set, so import
-   aggregates: `sets` = count of Hevy set entries, `reps`/`weight_kg` = max across sets, raw
-   per-set data kept as JSON in the existing `note` column — no new sets table. Scope is
-   one-shot ETL, not ongoing sync (no cursor/last-synced state, matches the MyFitnessPal-import
-   item's reasoning above).
-
 ## High complexity
 
 1. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing

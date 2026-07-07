@@ -121,6 +121,11 @@ type MealStore interface {
 	SetUserAIKey(ctx context.Context, userID, provider, encKey string) error
 	DeleteUserAIKey(ctx context.Context, userID string) error
 
+	// Per-user Hevy API keys (workout import).
+	GetUserHevyKey(ctx context.Context, userID string) (encKey string, found bool, err error)
+	SetUserHevyKey(ctx context.Context, userID, encKey string) error
+	DeleteUserHevyKey(ctx context.Context, userID string) error
+
 	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	UpsertUser(ctx context.Context, u types.User) error
@@ -190,6 +195,7 @@ type MealStore interface {
 
 	// Workout tracking.
 	LogWorkout(ctx context.Context, w types.Workout) error
+	ImportWorkout(ctx context.Context, w types.Workout) error
 	GetWorkout(ctx context.Context, id string) (types.Workout, error)
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error)
 	DeleteWorkout(ctx context.Context, userID, id string) error
@@ -417,6 +423,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/ai-key", h.wrap(h.handleGetAIKey))
 	mux.HandleFunc("POST /api/v1/settings/ai-key", h.wrap(h.handleSetAIKey))
 	mux.HandleFunc("DELETE /api/v1/settings/ai-key", h.wrap(h.handleDeleteAIKey))
+
+	// Hevy: per-user API key + workout import.
+	mux.HandleFunc("GET /api/v1/settings/hevy-key", h.wrap(h.handleGetHevyKey))
+	mux.HandleFunc("POST /api/v1/settings/hevy-key", h.wrap(h.handleSetHevyKey))
+	mux.HandleFunc("DELETE /api/v1/settings/hevy-key", h.wrap(h.handleDeleteHevyKey))
+	mux.HandleFunc("POST /api/v1/import/hevy", h.wrap(h.handleImportHevy))
 
 	// Auth endpoints.
 	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublicLimited(h.handleRegister))
