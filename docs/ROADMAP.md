@@ -36,6 +36,7 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
+
 ## High complexity
 
 1. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing
