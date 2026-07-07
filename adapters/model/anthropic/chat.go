@@ -37,9 +37,67 @@ func NewChatAdapter(apiKey, model string, timeout time.Duration) *ChatAdapter {
 
 // --- request types ---
 
+// chatContentBlock is Anthropic's tagged-union message content block, covering
+// the three shapes this adapter needs to emit: plain text, a tool_use
+// request (replayed on later turns so its matching tool_result validates),
+// and a tool_result answer.
+type chatContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+}
+
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string             `json:"role"`
+	Content []chatContentBlock `json:"content"`
+}
+
+// toWireMessages converts generic ports.ChatMessage history into Anthropic's
+// message format. Anthropic only accepts role "user"/"assistant": a "tool"
+// message becomes a user-role tool_result block, and an assistant message
+// that requested tools gets its tool_use blocks replayed alongside any text
+// — Anthropic rejects a tool_result whose tool_use_id doesn't appear in the
+// immediately preceding assistant turn.
+func toWireMessages(msgs []ports.ChatMessage) []chatMessage {
+	out := make([]chatMessage, 0, len(msgs))
+	for _, m := range msgs {
+		switch m.Role {
+		case "tool":
+			out = append(out, chatMessage{
+				Role: "user",
+				Content: []chatContentBlock{{
+					Type:      "tool_result",
+					ToolUseID: m.ToolCallID,
+					Content:   m.Content,
+				}},
+			})
+		case "assistant":
+			blocks := make([]chatContentBlock, 0, 1+len(m.ToolCalls))
+			if m.Content != "" {
+				blocks = append(blocks, chatContentBlock{Type: "text", Text: m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				input, _ := json.Marshal(map[string]string{"args": tc.Args})
+				blocks = append(blocks, chatContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: input,
+				})
+			}
+			out = append(out, chatMessage{Role: "assistant", Content: blocks})
+		default: // "user"
+			out = append(out, chatMessage{
+				Role:    "user",
+				Content: []chatContentBlock{{Type: "text", Text: m.Content}},
+			})
+		}
+	}
+	return out
 }
 
 type toolSpec struct {
@@ -107,10 +165,7 @@ type errorData struct {
 // StreamChat sends a streaming request to Anthropic's Messages API and returns
 // a channel of ChatEvents. The channel is closed when the stream ends.
 func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-chan ports.ChatEvent, error) {
-	msgs := make([]chatMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		msgs[i] = chatMessage{Role: m.Role, Content: m.Content}
-	}
+	msgs := toWireMessages(req.Messages)
 
 	tools := make([]toolSpec, len(req.Tools))
 	for i, t := range req.Tools {

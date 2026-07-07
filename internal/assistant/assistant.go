@@ -8,6 +8,7 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -92,11 +93,15 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 				out <- evt // forward to client
 
 			case "done":
-				// Append accumulated assistant text (if any) to history.
-				if textBuf.Len() > 0 {
+				// Append accumulated assistant turn (text and/or tool_use
+				// blocks) to history. ToolCalls must be preserved even when
+				// there's no text — providers require the tool_use block
+				// that a tool_result answers to still be present in history.
+				if textBuf.Len() > 0 || len(toolCalls) > 0 {
 					messages = append(messages, ports.ChatMessage{
-						Role:    "assistant",
-						Content: textBuf.String(),
+						Role:      "assistant",
+						Content:   textBuf.String(),
+						ToolCalls: toolCalls,
 					})
 				}
 
@@ -113,8 +118,9 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 							},
 						}
 						messages = append(messages, ports.ChatMessage{
-							Role:    "tool",
-							Content: reply,
+							Role:       "tool",
+							Content:    reply,
+							ToolCallID: tc.ID,
 						})
 					}
 					// Continue to next round (tool results may prompt more text).
@@ -147,7 +153,7 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	// Exceeded max tool rounds.
 	out <- ports.ChatEvent{
 		Kind: "error",
-		Err:  fmt.Errorf(suggestFallback),
+		Err:  errors.New(suggestFallback),
 	}
 }
 

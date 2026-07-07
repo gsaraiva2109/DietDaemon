@@ -13,6 +13,17 @@ type ChatAdapter interface {
 type ChatMessage struct {
 	Role    string // "user" | "assistant" | "tool"
 	Content string
+
+	// ToolCalls is set on "assistant" messages that requested tool calls this
+	// round. Adapters must replay these in history (e.g. Anthropic's tool_use
+	// content blocks) — providers require the original call to still be
+	// present alongside its result on the next turn.
+	ToolCalls []ToolCallEvent
+
+	// ToolCallID is set on "tool" messages: the ID of the ToolCallEvent this
+	// result answers, so adapters can link result to call (e.g. Anthropic's
+	// tool_result.tool_use_id).
+	ToolCallID string
 }
 
 // ToolSpec describes a tool the model may call.
