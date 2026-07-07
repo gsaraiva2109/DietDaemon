@@ -484,3 +484,28 @@ export interface HevyImportResult {
   skipped_duplicates: number
   total: number
 }
+
+// ---------------------------------------------------------------------------
+// AI chat assistant
+// ---------------------------------------------------------------------------
+
+export interface ChatSession {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export type ChatRole = 'user' | 'assistant' | 'tool'
+
+export interface ChatMessageRecord {
+  id: string
+  role: ChatRole
+  content: string
+  tool_name?: string
+  created_at: string
+}
+
+export interface AssistantSettings {
+  custom_instructions: string
+}

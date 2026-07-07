@@ -909,3 +909,41 @@ export function useImportHevy() {
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// AI chat assistant. No demo-mode branch: a live LLM conversation can't be
+// meaningfully faked with static sample data, so Chat.tsx gates on useDemo()
+// directly and shows an explainer instead of mounting these hooks.
+// ---------------------------------------------------------------------------
+
+export function useChatSessions() {
+  return useQuery({ queryKey: ['chat', 'sessions'], queryFn: api.chat.listSessions })
+}
+
+export function useCreateChatSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.chat.createSession(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'sessions'] }),
+  })
+}
+
+export function useChatMessages(sessionID: string | null) {
+  return useQuery({
+    queryKey: ['chat', 'messages', sessionID],
+    queryFn: () => api.chat.getMessages(sessionID!),
+    enabled: !!sessionID,
+  })
+}
+
+export function useAssistantSettings() {
+  return useQuery({ queryKey: ['chat', 'settings'], queryFn: api.chat.settings.get })
+}
+
+export function useSetAssistantSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { custom_instructions: string }) => api.chat.settings.set(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'settings'] }),
+  })
+}

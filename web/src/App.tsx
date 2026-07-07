@@ -29,6 +29,7 @@ import { MagicLink } from '@/routes/MagicLink'
 // Summary is visited. Route components use named exports, wrap with
 // .then() to feed React.lazy the { default } shape it expects.
 const Dashboard = lazy(() => import('@/routes/Dashboard').then(m => ({ default: m.Dashboard })))
+const Chat = lazy(() => import('@/routes/Chat').then(m => ({ default: m.Chat })))
 const LogMeal = lazy(() => import('@/routes/LogMeal').then(m => ({ default: m.LogMeal })))
 const History = lazy(() => import('@/routes/History').then(m => ({ default: m.History })))
 const MealDetail = lazy(() => import('@/routes/MealDetail').then(m => ({ default: m.MealDetail })))
@@ -48,6 +49,7 @@ const SourcePrecedence = lazy(() =>
 const NudgeSettings = lazy(() => import('@/routes/NudgeSettings').then(m => ({ default: m.NudgeSettings })))
 const BackupSettings = lazy(() => import('@/routes/BackupSettings').then(m => ({ default: m.BackupSettings })))
 const AIKeySettings = lazy(() => import('@/routes/AIKeySettings').then(m => ({ default: m.AIKeySettings })))
+const AssistantSettings = lazy(() => import('@/routes/AssistantSettings').then(m => ({ default: m.AssistantSettings })))
 const HevyImport = lazy(() => import('@/routes/HevyImport').then(m => ({ default: m.HevyImport })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
@@ -113,6 +115,7 @@ function AppRoutes() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
           <Route path="/log" element={<LogMeal />} />
           <Route path="/history" element={<History />} />
           <Route path="/history/:mealID" element={<MealDetail />} />
@@ -127,6 +130,7 @@ function AppRoutes() {
           <Route path="/settings/nudges" element={<NudgeSettings />} />
           <Route path="/settings/backup" element={<BackupSettings />} />
           <Route path="/settings/ai-key" element={<AIKeySettings />} />
+          <Route path="/settings/assistant" element={<AssistantSettings />} />
           <Route path="/settings/hevy-import" element={<HevyImport />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />

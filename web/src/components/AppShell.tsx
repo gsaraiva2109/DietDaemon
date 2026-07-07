@@ -15,6 +15,7 @@ import {
   TemplateIcon,
   BodyIcon,
   GoalIcon,
+  ChatIcon,
 } from './icons'
 import { UtilityBar, DemoBanner } from './UtilityBar'
 import { VerifyEmailBanner } from './VerifyEmailBanner'
@@ -33,6 +34,7 @@ const NAV_GROUPS: { heading?: string; items: NavItem[] }[] = [
   {
     items: [
       { to: '/', label: 'Today', Icon: TodayIcon, end: true },
+      { to: '/chat', label: 'Chat', Icon: ChatIcon },
       { to: '/log', label: 'Log', Icon: LogIcon },
       { to: '/history', label: 'History', Icon: HistoryIcon },
     ],

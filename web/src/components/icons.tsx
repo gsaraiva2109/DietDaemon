@@ -212,6 +212,19 @@ export const DumbbellIcon = (p: IconProps) => (
   </svg>
 )
 
+export const ChatIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 5h16v11H9l-4 3.5V16H4z" />
+    <path d="M8 9h8M8 12.5h5" />
+  </svg>
+)
+
+export const SendIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 12 20 4l-6.5 16-2.5-6.5L4 12z" />
+  </svg>
+)
+
 export const LinkIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1.5 1.5" />
