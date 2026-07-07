@@ -9,37 +9,35 @@ sizing/design happens when picked up.
 1. **Split `internal/store/store.go` by domain** — reorg only, no logic change:
    users.go, meals.go, templates.go, nudges.go, etc. Same functions, same SQL, just moved.
    Zero behavior risk since nothing changes but file boundaries.
-2. **Split `internal/api/handler.go` by domain** — same reorg-only split: auth,
-   templates, meals, backup, etc. into separate files. Same reasoning as the store.go split.
-3. **Adopt sqlx incrementally** — replace hand-written `rows.Scan(&a, &b, ...)` boilerplate with
+2. **Adopt sqlx incrementally** — replace hand-written `rows.Scan(&a, &b, ...)` boilerplate with
    `sqlx.Get`/`Select` struct-scanning, one function at a time. `sqlx.Rebind()` covers what
    `s.rewrite()` already does for sqlite/postgres placeholders, so this is a drop-in, not a
    rewrite — picked over sqlc/jet specifically because both of those generate per-engine code
    with no equivalent bridge for a single query targeting two dialects (see the ORM/query-layer
    discussion this session for the full comparison).
-4. **Shareable read-only dashboard link** — read-only token scoped to one `account_id`, same
+3. **Shareable read-only dashboard link** — read-only token scoped to one `account_id`, same
    per-account isolation multi-user login already requires. Not a new access model, just another
    token type on the existing scoped-read path.
-5. **Import old logs (MyFitnessPal etc.)** — one-time CSV/export parser mapping to internal meal
+4. **Import old logs (MyFitnessPal etc.)** — one-time CSV/export parser mapping to internal meal
    records. No ongoing maintenance, it's a one-shot ETL path.
-6. **Confidence-colored macro numbers** — visually distinguish low-confidence/guessed values from
+5. **Confidence-colored macro numbers** — visually distinguish low-confidence/guessed values from
    resolved ones, not just a badge. Parser confidence is already computed, this is styling only.
-7. **"Why is this number here" trace** — tap a logged meal's macro, see which resolver source
+6. **"Why is this number here" trace** — tap a logged meal's macro, see which resolver source
    (OFF/TACO/USDA) + confidence tier answered it. Drill-down UI over data already stored, no new
    computation.
-8. **Data export sanity check** — before a scheduled backup/export runs, compare row counts
+7. **Data export sanity check** — before a scheduled backup/export runs, compare row counts
    against the last successful run, catch silent corruption instead of blindly dumping whatever's
    there. Extends `internal/backup`.
-9. **Rate limit auth endpoints** — login, passwordless, MFA-email, OIDC callback
+8. **Rate limit auth endpoints** — login, passwordless, MFA-email, OIDC callback
    (`handler_auth.go`, `handler_passwordless.go`, `handler_mfa_email.go`, `handler_oidc.go`) have
    no throttling today, confirmed via grep. `golang.org/x/time/rate`, per-IP or per-account
    token bucket, a few lines per handler — no new infra, no external dependency risk (same x/
    trust tier as `x/crypto`/`x/oauth2` already in use).
-10. **Squash migrations to one file per dialect** — no production data to preserve yet, so
-    collapse `migrations/{sqlite,postgres}/*.sql` into a single `001_init.sql` each reflecting
-    current schema, delete the rest, wipe dev DB files. No new dependency — the existing
-    hand-rolled runner (`runMigrations()`, sorted filename + `schema_migrations` table) already
-    handles a single file fine, this is a one-time reorg, not a tooling change.
+9. **Squash migrations to one file per dialect** — no production data to preserve yet, so
+   collapse `migrations/{sqlite,postgres}/*.sql` into a single `001_init.sql` each reflecting
+   current schema, delete the rest, wipe dev DB files. No new dependency — the existing
+   hand-rolled runner (`runMigrations()`, sorted filename + `schema_migrations` table) already
+   handles a single file fine, this is a one-time reorg, not a tooling change.
 
 ## Medium complexity
 
