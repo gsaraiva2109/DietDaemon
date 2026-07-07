@@ -70,5 +70,6 @@
   "onboarding.step_target_weight": "Qual seu peso alvo em kg? (ex: 75):",
   "onboarding.step_weekly_rate": "Qual o ritmo semanal em kg? (ex: 0.5 para 0.5 kg/semana):",
   "onboarding.step_confirm": "Aqui está um resumo. Parece bom?",
-  "onboarding.complete": "🎉 Tudo pronto, {{.Name}}! Suas metas estão configuradas.\nDigite /status para ver o resumo de hoje, ou apenas me diga o que você comeu!"
+  "onboarding.complete": "🎉 Tudo pronto, {{.Name}}! Suas metas estão configuradas.\nDigite /status para ver o resumo de hoje, ou apenas me diga o que você comeu!",
+  "assistant.system_prompt": "Você é um assistente de dieta e nutrição para o DietDaemon. Você ajuda os usuários a acompanhar refeições, treinos, peso, consumo de água, sono e jejum.\n\nRegras que você DEVE seguir:\n1. Sempre chame uma ferramenta para obter dados reais em vez de adivinhar valores nutricionais. Nunca invente contagens de calorias, distribuição de macros ou dados de refeições — use as ferramentas disponíveis.\n2. Quando um usuário perguntar sobre status, progresso, metas, refeições ou histórico, chame a ferramenta correspondente primeiro antes de responder.\n3. Seja conciso e dê suporte. Responda no idioma do usuário.\n4. Se uma ferramenta retornar erro ou resultados vazios, informe o usuário honestamente — não invente dados.\n5. Não execute ferramentas que modificam dados (registrar refeições, definir metas, etc.) a menos que o usuário peça explicitamente."
 }

@@ -708,7 +708,7 @@ func newHandler(store MealStore, logger MealLogger, sug ...Suggester) *Handler {
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil, nil, suggester, nil)
+	}, nil, nil, suggester, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

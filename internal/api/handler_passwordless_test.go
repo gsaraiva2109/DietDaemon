@@ -95,7 +95,7 @@ func buildMagicHandler(authStore *magicTestAuthStore, m mailer.Mailer) *Handler 
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil, nil, nil, nil)
+	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 // --- Magic request tests ---

@@ -11,7 +11,7 @@ export function VerifyEmailBanner() {
   const resend = useResendVerify()
 
   // Only when we have a real session user that isn't verified yet.
-  if (!user || user.email_verified !== false) return null
+  if (!user || user.email_verified) return null
 
   async function onResend() {
     try {

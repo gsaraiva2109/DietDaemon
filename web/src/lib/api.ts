@@ -14,8 +14,11 @@ import type {
 import type {
   AIKeyStatus,
   ApiKey,
+  AssistantSettings,
   BackupConfig,
   BodyCompositionSummary,
+  ChatMessageRecord,
+  ChatSession,
   DailyRollup,
   Fast,
   FoodDetail,
@@ -53,7 +56,7 @@ import type {
   WorkoutIntensity,
 } from './types'
 
-const BASE = '/api/v1'
+export const BASE = '/api/v1'
 
 // Generic, field-agnostic auth copy, never reveal which field was wrong.
 export const AUTH_ERROR = 'Invalid email or password.'
@@ -624,6 +627,34 @@ export const api = {
 
   importHevy: () =>
     request<HevyImportResult>('/import/hevy', { method: 'POST' }),
+
+  // --- AI chat assistant -------------------------------------------
+  chat: {
+    createSession: () => request<ChatSession>('/chat/sessions', { method: 'POST' }),
+    listSessions: () => request<ChatSession[]>('/chat/sessions'),
+    getMessages: (sessionID: string) =>
+      request<ChatMessageRecord[]>(`/chat/sessions/${encodeURIComponent(sessionID)}/messages`),
+    // The streaming send is a raw fetch (not the JSON `request()` wrapper):
+    // the caller reads the response body as an SSE stream itself. Carries the
+    // same credentials + CSRF header as every other mutation.
+    sendMessage: (sessionID: string, text: string, signal?: AbortSignal) => {
+      const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' })
+      const csrf = readCookie('dd_csrf')
+      if (csrf) headers.set('X-CSRF-Token', csrf)
+      return fetch(`${BASE}/chat/sessions/${encodeURIComponent(sessionID)}/messages`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ text }),
+        signal,
+      })
+    },
+    settings: {
+      get: () => request<AssistantSettings>('/chat/settings'),
+      set: (body: AssistantSettings) =>
+        request<AssistantSettings>('/chat/settings', { method: 'PUT', body: JSON.stringify(body) }),
+    },
+  },
 }
 
 // multipart sends FormData without forcing a JSON Content-Type (the browser

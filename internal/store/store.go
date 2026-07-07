@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
+	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 	"github.com/gsaraiva2109/dietdaemon/internal/backup"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/migrations"
@@ -34,6 +35,7 @@ var (
 	_ scheduler.SentNudgeStore    = (*Store)(nil)
 	_ scheduler.WeeklyBudgetStore = (*Store)(nil)
 	_ backup.Store                = (*Store)(nil)
+	_ assistant.Store             = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and

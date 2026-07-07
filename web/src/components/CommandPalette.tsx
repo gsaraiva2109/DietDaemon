@@ -8,6 +8,7 @@ import { useTheme } from '@/lib/theme'
 import { useDemo, demoAvailable } from '@/lib/demo'
 import {
   TodayIcon,
+  ChatIcon,
   LogIcon,
   HistoryIcon,
   TrendsIcon,
@@ -19,6 +20,7 @@ import {
   SearchIcon,
 } from './icons'
 import type { SVGProps } from 'react'
+import * as React from "react";
 
 interface Command {
   id: string
@@ -44,6 +46,7 @@ export function CommandPalette() {
     }
     return [
       { id: 'today', label: 'Go to Today', Icon: TodayIcon, run: go('/') },
+      { id: 'chat', label: 'Open Chat', Icon: ChatIcon, run: go('/chat') },
       { id: 'log', label: 'Log a meal', Icon: LogIcon, run: go('/log') },
       { id: 'history', label: 'Go to History', Icon: HistoryIcon, run: go('/history') },
       { id: 'trends', label: 'Go to Trends', Icon: TrendsIcon, run: go('/trends') },

@@ -12,6 +12,8 @@
     "dev:mock": "concurrently -k -n vite,mock -c cyan,magenta \"vite\" \"node dev-mock-api.mjs\""
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.14.26",
+    "@assistant-ui/react-markdown": "^0.14.5",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@simplewebauthn/browser": "^13.3.0",
     "@tanstack/react-query": "^5.101.0",
