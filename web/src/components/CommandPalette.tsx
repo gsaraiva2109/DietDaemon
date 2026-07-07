@@ -20,6 +20,7 @@ import {
   SearchIcon,
 } from './icons'
 import type { SVGProps } from 'react'
+import * as React from "react";
 
 interface Command {
   id: string

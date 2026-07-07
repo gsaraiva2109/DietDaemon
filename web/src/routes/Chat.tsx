@@ -15,7 +15,8 @@ import {
   useLocalRuntime,
   useThreadRuntime,
   type ThreadMessageLike,
-} from '@assistant-ui/react'
+  AuiIf,
+} from '@assistant-ui/react';
 import {
   useChatSessions,
   useCreateChatSession,
@@ -225,9 +226,9 @@ function ChatThread({ sessionID, initial }: { sessionID: string; initial: Thread
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="flex flex-1 flex-col overflow-hidden">
         <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-          <ThreadPrimitive.Empty>
+          <AuiIf condition={(s) => s.thread.isEmpty}>
             <ChatEmptyState />
-          </ThreadPrimitive.Empty>
+          </AuiIf>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
         </ThreadPrimitive.Viewport>
 
@@ -244,7 +245,7 @@ function ChatThread({ sessionID, initial }: { sessionID: string; initial: Thread
         </div>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
-  )
+  );
 }
 
 function ChatEmptyState() {
@@ -284,33 +285,33 @@ function UserMessage() {
   return (
     <MessagePrimitive.Root className="mb-4 flex justify-end">
       <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-ink">
-        <MessagePrimitive.Content />
+        <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
-  )
+  );
 }
 
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="group mb-4 flex flex-col items-start">
       <div className="max-w-[85%] rounded-2xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-ink">
-        <MessagePrimitive.Content components={{ Text: MarkdownText, tools: { Fallback: ToolCallChip } }} />
+        <MessagePrimitive.Parts components={{ Text: MarkdownText, tools: { Fallback: ToolCallChip } }} />
       </div>
       <ActionBarPrimitive.Root
         autohide="not-last"
         className="mt-1 flex gap-2 pl-1 text-muted opacity-0 transition group-hover:opacity-100"
       >
         <ActionBarPrimitive.Copy className="hover:text-ink" aria-label="Copy reply">
-          <MessagePrimitive.If copied>
+          <AuiIf condition={(s) => s.message.isCopied}>
             <CheckIcon width={13} height={13} />
-          </MessagePrimitive.If>
-          <MessagePrimitive.If copied={false}>
+          </AuiIf>
+          <AuiIf condition={(s) => !s.message.isCopied}>
             <CopyIcon width={13} height={13} />
-          </MessagePrimitive.If>
+          </AuiIf>
         </ActionBarPrimitive.Copy>
       </ActionBarPrimitive.Root>
     </MessagePrimitive.Root>
-  )
+  );
 }
 
 function Composer() {
@@ -322,7 +323,7 @@ function Composer() {
         placeholder="Ask anything, or tell me what you ate…"
         className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-ink outline-none placeholder:text-muted/70"
       />
-      <ThreadPrimitive.If running={false}>
+      <AuiIf condition={(s) => !s.thread.isRunning}>
         <ComposerPrimitive.Send asChild>
           <button
             aria-label="Send"
@@ -331,8 +332,8 @@ function Composer() {
             <SendIcon width={16} height={16} />
           </button>
         </ComposerPrimitive.Send>
-      </ThreadPrimitive.If>
-      <ThreadPrimitive.If running>
+      </AuiIf>
+      <AuiIf condition={(s) => s.thread.isRunning}>
         <ComposerPrimitive.Cancel asChild>
           <button
             aria-label="Stop"
@@ -341,7 +342,7 @@ function Composer() {
             <span className="size-3 rounded-sm bg-ink" />
           </button>
         </ComposerPrimitive.Cancel>
-      </ThreadPrimitive.If>
+      </AuiIf>
     </ComposerPrimitive.Root>
-  )
+  );
 }

@@ -11,6 +11,7 @@ import { Card, Eyebrow, Pill, Spinner } from '@/components/ui'
 import { ClockIcon } from '@/components/icons'
 import { cssVar } from '@/lib/format'
 import { easeOut } from '@/lib/motion'
+import * as React from "react";
 
 const TARGETS = [14, 16, 18, 20] // hours
 const SIZE = 168

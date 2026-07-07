@@ -39,7 +39,7 @@ export function SleepCard() {
           day: s.logged_at.slice(5, 10),
           hours: Math.round(s.duration_hours * 10) / 10,
         })),
-    [logs],
+    [],
   )
   const last = logs[0]
 
