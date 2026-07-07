@@ -49,20 +49,42 @@ func New(adapter ports.ChatAdapter, cmds []ports.Command, toolDescs map[string]s
 	}
 }
 
-// Run executes the tool-calling loop. It streams events to the returned channel.
-// The caller reads events and writes SSE to the HTTP client.
-func (r *Router) Run(ctx context.Context, userID, systemPrompt, userMessage string) <-chan ports.ChatEvent {
+// Run executes the tool-calling loop. history is the prior turns of this
+// session (may be nil for a new session); it is seeded ahead of userMessage
+// so the model has memory of the conversation so far. The caller reads
+// events from the returned channel and writes SSE to the HTTP client.
+func (r *Router) Run(ctx context.Context, userID, systemPrompt string, history []ports.ChatMessage, userMessage string) <-chan ports.ChatEvent {
 	ch := make(chan ports.ChatEvent, 32)
-	go r.loop(ctx, ch, userID, systemPrompt, userMessage)
+	go r.loop(ctx, ch, userID, systemPrompt, history, userMessage)
 	return ch
 }
 
-func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, systemPrompt, userMessage string) {
+// sendOut delivers evt to out, or bails if ctx is cancelled first — without
+// this, a client that disconnects mid-stream while out's buffer is full
+// leaks this goroutine (and the underlying adapter stream) forever. Tries a
+// non-blocking send first: a bare `select { case out<-evt: case <-ctx.Done(): }`
+// picks randomly between simultaneously-ready cases, so it can drop an event
+// even when out has buffer room, if ctx happens to already be cancelled.
+func sendOut(ctx context.Context, out chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
+	select {
+	case out <- evt:
+		return true
+	default:
+	}
+	select {
+	case out <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, systemPrompt string, history []ports.ChatMessage, userMessage string) {
 	defer close(out)
 
-	messages := []ports.ChatMessage{
-		{Role: "user", Content: userMessage},
-	}
+	messages := make([]ports.ChatMessage, 0, len(history)+1)
+	messages = append(messages, history...)
+	messages = append(messages, ports.ChatMessage{Role: "user", Content: userMessage})
 
 	for round := 0; round < maxToolRounds; round++ {
 		req := ports.ChatRequest{
@@ -73,7 +95,7 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 
 		events, err := r.adapter.StreamChat(ctx, req)
 		if err != nil {
-			out <- ports.ChatEvent{Kind: "error", Err: fmt.Errorf("assistant: stream: %w", err)}
+			sendOut(ctx, out, ports.ChatEvent{Kind: "error", Err: fmt.Errorf("assistant: stream: %w", err)})
 			return
 		}
 
@@ -86,11 +108,15 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 			switch evt.Kind {
 			case "text-delta":
 				textBuf.WriteString(evt.Text)
-				out <- evt // forward in real-time
+				if !sendOut(ctx, out, evt) { // forward in real-time
+					return
+				}
 
 			case "tool-call":
 				toolCalls = append(toolCalls, *evt.ToolCall)
-				out <- evt // forward to client
+				if !sendOut(ctx, out, evt) { // forward to client
+					return
+				}
 
 			case "done":
 				// Append accumulated assistant turn (text and/or tool_use
@@ -109,13 +135,15 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 				if len(toolCalls) > 0 {
 					for _, tc := range toolCalls {
 						reply := r.executeCommand(ctx, userID, tc)
-						out <- ports.ChatEvent{
+						if !sendOut(ctx, out, ports.ChatEvent{
 							Kind: "tool-result",
 							ToolCall: &ports.ToolCallEvent{
 								ID:   tc.ID,
 								Name: tc.Name,
 								Args: reply,
 							},
+						}) {
+							return
 						}
 						messages = append(messages, ports.ChatMessage{
 							Role:       "tool",
@@ -129,11 +157,11 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 				}
 
 				// No tools — conversation complete.
-				out <- evt // forward done event
+				sendOut(ctx, out, evt) // forward done event
 				return
 
 			case "error":
-				out <- evt
+				sendOut(ctx, out, evt)
 				return
 			}
 
@@ -152,10 +180,10 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	}
 
 	// Exceeded max tool rounds.
-	out <- ports.ChatEvent{
+	sendOut(ctx, out, ports.ChatEvent{
 		Kind: "error",
 		Err:  errors.New(suggestFallback),
-	}
+	})
 }
 
 // executeCommand looks up a command by name and calls its Handle method.

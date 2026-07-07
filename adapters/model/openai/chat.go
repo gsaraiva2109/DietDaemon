@@ -211,11 +211,28 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	}
 
 	ch := make(chan ports.ChatEvent, 32)
-	go c.readStream(resp.Body, ch)
+	go c.readStream(ctx, resp.Body, ch)
 	return ch, nil
 }
 
-func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) {
+// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
+// this, a client that disconnects mid-stream while the channel's buffer is
+// full leaks this goroutine (and its open upstream connection) forever.
+func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
+	select {
+	case ch <- evt:
+		return true
+	default:
+	}
+	select {
+	case ch <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer body.Close()
 
@@ -243,16 +260,18 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 		if data == "[DONE]" {
 			// Flush any incomplete tool calls.
 			for _, pt := range pending {
-				ch <- ports.ChatEvent{
+				if !sendEvent(ctx, ch, ports.ChatEvent{
 					Kind: "tool-call",
 					ToolCall: &ports.ToolCallEvent{
 						ID:   pt.id,
 						Name: pt.name,
 						Args: extractArgs(pt.args.String()),
 					},
+				}) {
+					return
 				}
 			}
-			ch <- ports.ChatEvent{Kind: "done"}
+			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
 			return
 		}
 
@@ -269,7 +288,9 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 
 		// Text delta.
 		if delta.Content != "" {
-			ch <- ports.ChatEvent{Kind: "text-delta", Text: delta.Content}
+			if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: delta.Content}) {
+				return
+			}
 		}
 
 		// Tool call deltas (incremental).
@@ -294,13 +315,15 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 		// terminal finish.
 		if choice.FinishReason != "" {
 			for _, pt := range pending {
-				ch <- ports.ChatEvent{
+				if !sendEvent(ctx, ch, ports.ChatEvent{
 					Kind: "tool-call",
 					ToolCall: &ports.ToolCallEvent{
 						ID:   pt.id,
 						Name: pt.name,
 						Args: extractArgs(pt.args.String()),
 					},
+				}) {
+					return
 				}
 			}
 			pending = make(map[int]*pendingTool)
@@ -308,10 +331,10 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		ch <- ports.ChatEvent{
+		sendEvent(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("openai chat: read stream: %w", err),
-		}
+		})
 	}
 }
 

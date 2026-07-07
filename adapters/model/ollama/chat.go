@@ -177,11 +177,28 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	}
 
 	ch := make(chan ports.ChatEvent, 32)
-	go c.readStream(resp.Body, ch)
+	go c.readStream(ctx, resp.Body, ch)
 	return ch, nil
 }
 
-func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) {
+// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
+// this, a client that disconnects mid-stream while the channel's buffer is
+// full leaks this goroutine (and its open upstream connection) forever.
+func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
+	select {
+	case ch <- evt:
+		return true
+	default:
+	}
+	select {
+	case ch <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer body.Close()
 
@@ -202,34 +219,39 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 		msg := chunk.Message
 
 		// Text delta: Ollama streams partial content in message.content.
-		if msg.Content != "" && len(msg.ToolCalls) == 0 {
-			ch <- ports.ChatEvent{Kind: "text-delta", Text: msg.Content}
+		// Not mutually exclusive with tool calls — a chunk can carry both.
+		if msg.Content != "" {
+			if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: msg.Content}) {
+				return
+			}
 		}
 
 		// Tool calls: Ollama delivers them complete in a single chunk
 		// (not incrementally like OpenAI).
 		for _, tc := range msg.ToolCalls {
-			ch <- ports.ChatEvent{
+			if !sendEvent(ctx, ch, ports.ChatEvent{
 				Kind: "tool-call",
 				ToolCall: &ports.ToolCallEvent{
 					ID:   tc.Function.Name, // Ollama has no tool-call ID; use name as ID
 					Name: tc.Function.Name,
 					Args: extractArgsOllama(tc.Function.Arguments),
 				},
+			}) {
+				return
 			}
 		}
 
 		if chunk.Done {
-			ch <- ports.ChatEvent{Kind: "done"}
+			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		ch <- ports.ChatEvent{
+		sendEvent(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("ollama chat: read stream: %w", err),
-		}
+		})
 	}
 }
 

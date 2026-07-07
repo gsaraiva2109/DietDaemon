@@ -15,15 +15,19 @@ import (
 // Test doubles
 // ---------------------------------------------------------------------------
 
-// fakeChatAdapter returns pre-programmed event sequences per round.
+// fakeChatAdapter returns pre-programmed event sequences per round, and
+// records the ChatRequest it was called with each round so tests can assert
+// on what history the router seeded.
 type fakeChatAdapter struct {
 	mu     sync.Mutex
 	rounds [][]ports.ChatEvent
 	index  int
+	reqs   []ports.ChatRequest
 }
 
-func (f *fakeChatAdapter) StreamChat(_ context.Context, _ ports.ChatRequest) (<-chan ports.ChatEvent, error) {
+func (f *fakeChatAdapter) StreamChat(_ context.Context, req ports.ChatRequest) (<-chan ports.ChatEvent, error) {
 	f.mu.Lock()
+	f.reqs = append(f.reqs, req)
 	if f.index >= len(f.rounds) {
 		f.mu.Unlock()
 		ch := make(chan ports.ChatEvent)
@@ -115,7 +119,7 @@ func TestRouterTextOnly(t *testing.T) {
 		},
 	}
 	r := New(adapter, nil, nil)
-	ch := r.Run(context.Background(), "u1", "system", "hi")
+	ch := r.Run(context.Background(), "u1", "system", nil, "hi")
 
 	events := collectEvents(ch)
 	if len(events) != 2 {
@@ -147,7 +151,7 @@ func TestRouterTextOnly_doneForwarded(t *testing.T) {
 		},
 	}
 	r := New(adapter, nil, nil)
-	ch := r.Run(context.Background(), "u1", "system", "hello")
+	ch := r.Run(context.Background(), "u1", "system", nil, "hello")
 
 	events := collectEvents(ch)
 	if len(events) != 3 {
@@ -156,6 +160,46 @@ func TestRouterTextOnly_doneForwarded(t *testing.T) {
 	last := events[len(events)-1]
 	if last.Kind != "done" {
 		t.Errorf("last event.Kind = %q, want done", last.Kind)
+	}
+}
+
+// TestRouterSeedsHistory guards the bug where handleChatMessage never loaded
+// prior session turns, so every message after the first in a session was
+// answered with zero memory of the conversation so far. Run must place the
+// given history ahead of the new user message in the first request sent to
+// the adapter.
+func TestRouterSeedsHistory(t *testing.T) {
+	adapter := &fakeChatAdapter{
+		rounds: [][]ports.ChatEvent{
+			{
+				{Kind: "text-delta", Text: "sure, oatmeal again"},
+				{Kind: "done"},
+			},
+		},
+	}
+	history := []ports.ChatMessage{
+		{Role: "user", Content: "what should I eat for breakfast"},
+		{Role: "assistant", Content: "how about oatmeal?"},
+	}
+	r := New(adapter, nil, nil)
+	collectEvents(r.Run(context.Background(), "u1", "system", history, "same as yesterday"))
+
+	if len(adapter.reqs) != 1 {
+		t.Fatalf("got %d adapter calls, want 1", len(adapter.reqs))
+	}
+	got := adapter.reqs[0].Messages
+	want := []ports.ChatMessage{
+		{Role: "user", Content: "what should I eat for breakfast"},
+		{Role: "assistant", Content: "how about oatmeal?"},
+		{Role: "user", Content: "same as yesterday"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d messages, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Role != want[i].Role || got[i].Content != want[i].Content {
+			t.Errorf("messages[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 
@@ -175,7 +219,7 @@ func TestRouterToolCallSingle(t *testing.T) {
 	}
 	cmd := &fakeCommand{name: "/search", result: "found it"}
 	r := New(adapter, []ports.Command{cmd}, map[string]string{"/search": "Search tool"})
-	ch := r.Run(context.Background(), "u1", "system", "search something")
+	ch := r.Run(context.Background(), "u1", "system", nil, "search something")
 
 	events := collectEvents(ch)
 	if len(events) != 5 {
@@ -233,7 +277,7 @@ func TestRouterToolCallMaxRounds(t *testing.T) {
 	adapter := &fakeChatAdapter{rounds: rounds}
 	cmd := &fakeCommand{name: "/search", result: "ok"}
 	r := New(adapter, []ports.Command{cmd}, map[string]string{"/search": "Search"})
-	ch := r.Run(context.Background(), "u1", "system", "loop")
+	ch := r.Run(context.Background(), "u1", "system", nil, "loop")
 
 	events := collectEvents(ch)
 	// 6 rounds * (tool-call + tool-result) + 1 error = 13
@@ -263,7 +307,7 @@ func TestRouterToolCallMaxRounds(t *testing.T) {
 
 func TestRouterErrorPropagation(t *testing.T) {
 	r := New(&errChatAdapter{err: errors.New("connection failed")}, nil, nil)
-	ch := r.Run(context.Background(), "u1", "system", "hi")
+	ch := r.Run(context.Background(), "u1", "system", nil, "hi")
 
 	events := collectEvents(ch)
 	if len(events) != 1 {
@@ -291,7 +335,7 @@ func TestRouterMidStreamError(t *testing.T) {
 		},
 	}
 	r := New(adapter, nil, nil)
-	ch := r.Run(context.Background(), "u1", "system", "hi")
+	ch := r.Run(context.Background(), "u1", "system", nil, "hi")
 
 	events := collectEvents(ch)
 	if len(events) != 2 {
@@ -323,7 +367,7 @@ func TestRouterUnknownCommand(t *testing.T) {
 	}
 	// No commands registered — unknown command path triggers.
 	r := New(adapter, nil, nil)
-	ch := r.Run(context.Background(), "u1", "system", "do something")
+	ch := r.Run(context.Background(), "u1", "system", nil, "do something")
 
 	events := collectEvents(ch)
 	if len(events) != 3 {
@@ -362,7 +406,7 @@ func TestRouterContextCancellation(t *testing.T) {
 		ready: ready,
 	}
 	r := New(adapter, nil, nil)
-	ch := r.Run(ctx, "u1", "system", "hello")
+	ch := r.Run(ctx, "u1", "system", nil, "hello")
 
 	// Wait for the adapter to have sent its event and block on ctx.Done().
 	<-ready

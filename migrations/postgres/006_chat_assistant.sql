@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TEXT NOT NULL DEFAULT (NOW())
 );
 
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+
 CREATE TABLE IF NOT EXISTS user_assistant_settings (
     user_id            TEXT PRIMARY KEY REFERENCES users(id),
     custom_instructions TEXT NOT NULL DEFAULT '',

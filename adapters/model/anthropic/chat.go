@@ -211,11 +211,28 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	}
 
 	ch := make(chan ports.ChatEvent, 32)
-	go c.readStream(resp.Body, ch)
+	go c.readStream(ctx, resp.Body, ch)
 	return ch, nil
 }
 
-func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) {
+// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
+// this, a client that disconnects mid-stream while the channel's buffer is
+// full leaks this goroutine (and its open upstream connection) forever.
+func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
+	select {
+	case ch <- evt:
+		return true
+	default:
+	}
+	select {
+	case ch <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer body.Close()
 
@@ -270,7 +287,9 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 			} else {
 				var td textDelta
 				if err := json.Unmarshal(delta.Delta, &td); err == nil && td.Type == "text_delta" {
-					ch <- ports.ChatEvent{Kind: "text-delta", Text: td.Text}
+					if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: td.Text}) {
+						return
+					}
 				}
 			}
 
@@ -278,38 +297,41 @@ func (c *ChatAdapter) readStream(body io.ReadCloser, ch chan<- ports.ChatEvent) 
 			if inToolUse {
 				// Extract "args" value from accumulated JSON.
 				argsStr := extractArgs(toolArgs.String())
-				ch <- ports.ChatEvent{
+				if !sendEvent(ctx, ch, ports.ChatEvent{
 					Kind: "tool-call",
 					ToolCall: &ports.ToolCallEvent{
 						ID:   currentToolID,
 						Name: currentToolName,
 						Args: argsStr,
 					},
+				}) {
+					return
 				}
 				inToolUse = false
 			}
 
 		case "message_stop":
-			ch <- ports.ChatEvent{Kind: "done"}
+			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+			return
 
 		case "error":
 			var ed errorData
 			if err := json.Unmarshal([]byte(data), &ed); err != nil {
 				continue
 			}
-			ch <- ports.ChatEvent{
+			sendEvent(ctx, ch, ports.ChatEvent{
 				Kind: "error",
 				Err:  fmt.Errorf("anthropic: %s: %s", ed.Error.Type, ed.Error.Message),
-			}
+			})
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		ch <- ports.ChatEvent{
+		sendEvent(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("anthropic chat: read stream: %w", err),
-		}
+		})
 	}
 }
 
