@@ -22,8 +22,14 @@ type ChatMessage struct {
 
 	// ToolCallID is set on "tool" messages: the ID of the ToolCallEvent this
 	// result answers, so adapters can link result to call (e.g. Anthropic's
-	// tool_result.tool_use_id).
+	// tool_result.tool_use_id, OpenAI's tool_call_id).
 	ToolCallID string
+
+	// ToolName is set on "tool" messages alongside ToolCallID. Ollama's
+	// /api/chat links tool results back to calls by function name
+	// (tool_name), not by ID — adapters that need the name read it from
+	// here instead of deriving it from the preceding assistant turn.
+	ToolName string
 }
 
 // ToolSpec describes a tool the model may call.

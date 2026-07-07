@@ -75,7 +75,7 @@ func buildChatAdapterForProvider(provider, apiKey, anthropicModel, openaiModel, 
 	case "anthropic":
 		return anthropic.NewChatAdapter(apiKey, anthropicModel, timeout), nil
 	case "openai":
-		return nil, fmt.Errorf("openai chat adapter not yet implemented")
+		return openai.NewChatAdapter(openaiBaseURL, apiKey, openaiModel, timeout), nil
 	default:
 		return nil, fmt.Errorf("unsupported BYOK chat provider %q", provider)
 	}

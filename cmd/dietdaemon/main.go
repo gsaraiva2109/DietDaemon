@@ -450,12 +450,16 @@ func buildCompletionAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
 }
 
 // buildChatAdapter creates the ChatAdapter for the conversational assistant.
-// Stage 1: Anthropic only. Returns nil when the configured adapter doesn't
-// support chat yet (ollama/openai) — the chat endpoint then returns 503.
+// All three providers are supported; returns nil when chat is unavailable
+// (e.g. missing API keys) — the chat endpoint then returns 503.
 func buildChatAdapter(cfg *config.Config) (ports.ChatAdapter, error) {
 	switch cfg.CompletionAdapter {
 	case "anthropic":
 		return anthropic.NewChatAdapter(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.ModelTimeout), nil
+	case "openai":
+		return openai.NewChatAdapter(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.ModelTimeout), nil
+	case "ollama":
+		return ollama.NewChatAdapter(cfg.OllamaURL, cfg.LLMModel, cfg.ModelTimeout), nil
 	default:
 		slog.Warn("chat adapter not available for configured COMPLETION_ADAPTER, chat endpoint will return 503", "adapter", cfg.CompletionAdapter)
 		return nil, nil

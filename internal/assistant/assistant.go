@@ -121,6 +121,7 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 							Role:       "tool",
 							Content:    reply,
 							ToolCallID: tc.ID,
+							ToolName:   tc.Name,
 						})
 					}
 					// Continue to next round (tool results may prompt more text).
