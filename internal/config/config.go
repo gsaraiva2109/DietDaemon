@@ -49,11 +49,19 @@ type Config struct {
 	USDAFDCAPIKey    string
 	TacoDataPath     string
 
-	ModelAdapter string
-	OllamaURL    string
-	EmbedModel   string
-	LLMModel     string
-	ModelTimeout time.Duration
+	EmbedAdapter      string
+	CompletionAdapter string
+	OllamaURL         string
+	EmbedModel        string
+	LLMModel          string
+	ModelTimeout      time.Duration
+
+	AnthropicAPIKey string
+	AnthropicModel  string
+
+	OpenAIBaseURL string
+	OpenAIAPIKey  string
+	OpenAIModel   string
 
 	EmbedMatchThreshold     float64
 	AliasWriteBackThreshold float64
@@ -174,11 +182,17 @@ func Load() (*Config, error) {
 		NutritionSources:        splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
 		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
 		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
-		ModelAdapter:            getStr("MODEL_ADAPTER", "ollama"),
+		EmbedAdapter:            getStr("EMBED_ADAPTER", "ollama"),
+		CompletionAdapter:       getStr("COMPLETION_ADAPTER", "ollama"),
 		OllamaURL:               getStr("OLLAMA_URL", ""),
 		EmbedModel:              getStr("EMBED_MODEL", "nomic-embed-text"),
 		LLMModel:                getStr("LLM_MODEL", "llama3.1"),
 		ModelTimeout:            getDuration("MODEL_TIMEOUT", 30*time.Second),
+		AnthropicAPIKey:         getStr("ANTHROPIC_API_KEY", ""),
+		AnthropicModel:          getStr("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+		OpenAIBaseURL:           getStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenAIAPIKey:            getStr("OPENAI_API_KEY", ""),
+		OpenAIModel:             getStr("OPENAI_MODEL", "gpt-4o-mini"),
 		EmbedMatchThreshold:     getFloat("EMBED_MATCH_THRESHOLD", 0.80),
 		AliasWriteBackThreshold: getFloat("ALIAS_WRITE_BACK_THRESHOLD", 0.92),
 		Notifier:                getStr("NOTIFIER", "ntfy"),
@@ -318,13 +332,26 @@ func (c *Config) validate(tierErr error) error {
 		}
 	}
 
-	if c.ParserTier > types.TierDeterministic {
-		if c.ModelAdapter == "" {
-			add("MODEL_ADAPTER is required when PARSER_TIER > 0")
-		}
-		if c.OllamaURL == "" {
-			add("OLLAMA_URL is required when PARSER_TIER > 0")
-		}
+	if c.EmbedAdapter == "" {
+		add("EMBED_ADAPTER is required")
+	} else if c.EmbedAdapter != "ollama" {
+		add("EMBED_ADAPTER must be \"ollama\" (no other adapter offers embeddings), got %q", c.EmbedAdapter)
+	}
+	validCompletion := map[string]bool{"ollama": true, "anthropic": true, "openai": true}
+	if c.CompletionAdapter == "" {
+		add("COMPLETION_ADAPTER is required")
+	} else if !validCompletion[c.CompletionAdapter] {
+		add("COMPLETION_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.CompletionAdapter)
+	}
+	if c.CompletionAdapter == "anthropic" && c.AnthropicAPIKey == "" {
+		add("ANTHROPIC_API_KEY is required when COMPLETION_ADAPTER=anthropic")
+	}
+	if c.CompletionAdapter == "openai" && c.OpenAIBaseURL == "" {
+		add("OPENAI_BASE_URL is required when COMPLETION_ADAPTER=openai")
+	}
+
+	if c.ParserTier > types.TierDeterministic && c.OllamaURL == "" {
+		add("OLLAMA_URL is required when PARSER_TIER > 0")
 	}
 
 	if c.EnableNotifications {

@@ -77,17 +77,18 @@ yet.
 All behaviour is driven by environment variables. See `.env.example` for every option.
 Key knobs:
 
-| Variable            | Description                                       |
-|---------------------|---------------------------------------------------|
-| `MESSAGING_ADAPTER` | `telegram`, `discord`, `matrix`                   |
-| `PARSER_TIER`       | `0` (deterministic), `1` (embeddings), `2` (LLM)  |
-| `NUTRITION_SOURCE`  | Comma-separated: `openfoodfacts,taco,usda`        |
-| `MODEL_ADAPTER`     | `ollama`, backing model for Tier 1 to 2           |
-| `ENABLE_STT`        | `true`, enables speech-to-text for audio messages |
-| `WHISPER_URL`       | Whisper.cpp HTTP server URL                       |
-| `NOTIFIER`          | `ntfy`, `gotify`                                  |
-| `DEFAULT_TIMEZONE`  | IANA timezone for daily rollup boundaries         |
-| `MULTI_USER`        | `true` to allow more than one account             |
+| Variable             | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| `MESSAGING_ADAPTER`  | `telegram`, `discord`, `matrix`                                             |
+| `PARSER_TIER`        | `0` (deterministic), `1` (embeddings), `2` (LLM)                            |
+| `NUTRITION_SOURCE`   | Comma-separated: `openfoodfacts,taco,usda`                                  |
+| `EMBED_ADAPTER`      | `ollama` only, backs food-matching embeddings                               |
+| `COMPLETION_ADAPTER` | `ollama`, `anthropic`, `openai` (opt-in), backs Tier-2 parsing + `/suggest` |
+| `ENABLE_STT`         | `true`, enables speech-to-text for audio messages                           |
+| `WHISPER_URL`        | Whisper.cpp HTTP server URL                                                 |
+| `NOTIFIER`           | `ntfy`, `gotify`                                                            |
+| `DEFAULT_TIMEZONE`   | IANA timezone for daily rollup boundaries                                   |
+| `MULTI_USER`         | `true` to allow more than one account                                       |
 
 ## Parser tiers vs. STT
 

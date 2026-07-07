@@ -210,11 +210,18 @@ type MealLogger interface {
 	LogMeal(ctx context.Context, meal types.Meal) error
 }
 
+// Suggester recommends a next meal from what's left of today's targets and
+// foods the user already eats. Satisfied by *suggest.Engine.
+type Suggester interface {
+	Suggest(ctx context.Context, userID string) (types.MealSuggestion, error)
+}
+
 // Handler serves the DietDaemon REST API.
 type Handler struct {
 	store     MealStore
 	authStore AuthStore
 	logger    MealLogger
+	suggester Suggester
 	loc       *time.Location
 
 	// Auth sub-components.
@@ -262,7 +269,7 @@ type BackupRunner interface {
 // interfaces (they are satisfied by *store.Store). backupRunner may be nil if
 // scheduled backups aren't configured; the manual "run now" endpoint then
 // returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -292,6 +299,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		cookieSecure:     cfg.CookieSecure,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
 		backupRunner:     backupRunner,
+		suggester:        suggester,
 	}
 }
 
@@ -320,6 +328,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods/search", h.wrap(h.handleSearchFoods))
 	mux.HandleFunc("GET /api/v1/foods/frequent", h.wrap(h.handleFrequentFoods))
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
+	mux.HandleFunc("GET /api/v1/suggest", h.wrap(h.handleSuggest))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
 
@@ -970,6 +979,16 @@ func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, us
 		foods = []types.FoodDetail{}
 	}
 	_ = json.NewEncoder(w).Encode(foods)
+}
+
+// handleSuggest recommends a next meal from what's left of today's targets.
+func (h *Handler) handleSuggest(w http.ResponseWriter, r *http.Request, userID string) {
+	sug, err := h.suggester.Suggest(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(sug)
 }
 
 func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID string) {

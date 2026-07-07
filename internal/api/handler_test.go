@@ -656,10 +656,25 @@ func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 	return l.err
 }
 
+type fakeSuggester struct {
+	sug types.MealSuggestion
+	err error
+}
+
+func (s *fakeSuggester) Suggest(_ context.Context, _ string) (types.MealSuggestion, error) {
+	return s.sug, s.err
+}
+
 // --- helpers ---
 
-func newHandler(store MealStore, logger MealLogger) *Handler {
+// sug is optional (variadic) so existing call sites that don't care about
+// suggestions don't need to change.
+func newHandler(store MealStore, logger MealLogger, sug ...Suggester) *Handler {
 	store2 := newFakeAuthStore()
+	var suggester Suggester
+	if len(sug) > 0 {
+		suggester = sug[0]
+	}
 	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", nil, nil, "none", "", AuthConfig{
 		SessionCfg: auth.SessionConfig{
 			IdleTTL:     1 * time.Hour,
@@ -669,7 +684,7 @@ func newHandler(store MealStore, logger MealLogger) *Handler {
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil, nil)
+	}, nil, nil, suggester)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -970,6 +985,43 @@ func TestHandleRollupsTodayNotFound(t *testing.T) {
 	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for not-found rollup, got %d", rec.Code)
+	}
+}
+
+func TestHandleSuggest(t *testing.T) {
+	store := newFakeMealStore()
+	sug := &fakeSuggester{sug: types.MealSuggestion{
+		Remaining: types.Macros{Calories: 500, Protein: 30},
+		Candidates: []types.SuggestedCombo{
+			{Score: 0.9},
+		},
+		Message: "test message",
+		Source:  "llm",
+	}}
+	h := newHandler(store, &fakeMealLogger{}, sug)
+
+	rec := doRequest(h, "GET", "/api/v1/suggest", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := decodeJSON[types.MealSuggestion](t, rec)
+	if got.Message != "test message" {
+		t.Errorf("message = %q, want %q", got.Message, "test message")
+	}
+	if got.Source != "llm" {
+		t.Errorf("source = %q, want %q", got.Source, "llm")
+	}
+}
+
+func TestHandleSuggestError(t *testing.T) {
+	store := newFakeMealStore()
+	sug := &fakeSuggester{err: types.ErrNotFound}
+	h := newHandler(store, &fakeMealLogger{}, sug)
+
+	rec := doRequest(h, "GET", "/api/v1/suggest", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
