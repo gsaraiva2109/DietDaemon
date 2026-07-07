@@ -12,6 +12,7 @@ import type {
   RegistrationResponseJSON,
 } from '@simplewebauthn/browser'
 import type {
+  AIKeyStatus,
   ApiKey,
   BackupConfig,
   BodyCompositionSummary,
@@ -19,6 +20,8 @@ import type {
   Fast,
   FoodDetail,
   GoalSuggestion,
+  HevyImportResult,
+  HevyKeyStatus,
   LinkedIdentity,
   LoginResponse,
   Macros,
@@ -596,6 +599,31 @@ export const api = {
       request<BackupConfig>('/settings/backup', { method: 'PUT', body: JSON.stringify(cfg) }),
     runNow: () => request<{ status: string }>('/settings/backup/run', { method: 'POST' }),
   },
+
+  // --- BYOK AI key -----------------------------------------------
+  aiKey: {
+    status: () => request<AIKeyStatus>('/settings/ai-key'),
+    set: (body: { provider: string; key: string }) =>
+      request<{ status: string }>('/settings/ai-key', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    delete: () => request<void>('/settings/ai-key', { method: 'DELETE' }),
+  },
+
+  // --- Hevy integration ------------------------------------------
+  hevyKey: {
+    status: () => request<HevyKeyStatus>('/settings/hevy-key'),
+    set: (body: { key: string }) =>
+      request<{ status: string }>('/settings/hevy-key', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    delete: () => request<void>('/settings/hevy-key', { method: 'DELETE' }),
+  },
+
+  importHevy: () =>
+    request<HevyImportResult>('/import/hevy', { method: 'POST' }),
 }
 
 // multipart sends FormData without forcing a JSON Content-Type (the browser

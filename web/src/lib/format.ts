@@ -53,6 +53,18 @@ export function confidenceLabel(c: number): 'high' | 'medium' | 'low' {
   return 'low'
 }
 
+export function confidenceTier(c: number): 'high' | 'medium' | 'low' {
+  if (c >= 0.85) return 'high'
+  if (c >= 0.6) return 'medium'
+  return 'low'
+}
+
+export function confidenceColor(c: number): string {
+  if (c >= 0.85) return ''
+  if (c >= 0.6) return 'text-amber-600 dark:text-amber-400'
+  return 'text-red-500 dark:text-red-400'
+}
+
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime()
   const diffMin = Math.round((Date.now() - then) / 60000)

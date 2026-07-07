@@ -229,3 +229,11 @@ export const DEMO_PENDING_ALIASES: PendingAlias[] = [
 // Empty = not customized, same as a fresh backend user; the settings page
 // falls back to NUTRITION_SOURCES' default order.
 export const DEMO_PRECEDENCE: string[] = []
+
+// --- demo AI key ------------------------------------------------------------
+
+export const DEMO_AI_KEY = { has_key: true, provider: 'anthropic' }
+
+// --- demo Hevy key ----------------------------------------------------------
+
+export const DEMO_HEVY_KEY = { has_key: false }

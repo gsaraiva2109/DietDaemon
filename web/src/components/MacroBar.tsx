@@ -4,7 +4,7 @@
 import { motion } from 'framer-motion'
 import { easeOut } from '@/lib/motion'
 import { AnimatedNumber } from './AnimatedNumber'
-import { progress, isOverTarget, remaining } from '@/lib/format'
+import { progress, isOverTarget, remaining, confidenceTier } from '@/lib/format'
 
 interface Props {
   consumed: number
@@ -12,12 +12,15 @@ interface Props {
   label: string
   unit: string
   color: string
+  confidence?: number
 }
 
-export function MacroBar({ consumed, target, label, unit, color }: Props) {
+export function MacroBar({ consumed, target, label, unit, color, confidence }: Props) {
   const p = progress(consumed, target)
   const over = isOverTarget(consumed, target)
   const left = remaining(consumed, target)
+  const tier = confidenceTier(confidence ?? 1)
+  const opacityClass = tier === 'high' ? '' : tier === 'medium' ? 'opacity-75' : 'opacity-50'
 
   return (
     <div>
@@ -39,7 +42,7 @@ export function MacroBar({ consumed, target, label, unit, color }: Props) {
         aria-label={`${label} progress`}
       >
         <motion.div
-          className="h-full rounded-full"
+          className={`h-full rounded-full ${opacityClass}`}
           style={{ background: over ? 'var(--color-accent)' : color }}
           initial={{ width: 0 }}
           animate={{ width: `${p * 100}%` }}
