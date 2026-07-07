@@ -139,6 +139,19 @@ func (m Macros) Scale(factor float64) Macros {
 	}
 }
 
+// Sub returns the element-wise difference m - o. Used to compute a user's
+// remaining macros for the day (targets minus consumed); may go negative when
+// already over target — callers decide how to treat that.
+func (m Macros) Sub(o Macros) Macros {
+	return Macros{
+		Calories: m.Calories - o.Calories,
+		Protein:  m.Protein - o.Protein,
+		Carbs:    m.Carbs - o.Carbs,
+		Fat:      m.Fat - o.Fat,
+		Fiber:    m.Fiber - o.Fiber,
+	}
+}
+
 // FoodMatch is a food entry resolved from a NutritionSource or the local food
 // library. Per100g holds macros per 100 grams; the resolver scales them to the
 // portion actually eaten.
@@ -220,6 +233,34 @@ type DailyRollup struct {
 	Date     string // local date "YYYY-MM-DD" in the user's timezone
 	Consumed Macros
 	Targets  Macros
+}
+
+// MealSuggestion is the result of /suggest: what's left for the day, candidate
+// meals built from foods the user already eats, and a message describing them.
+// Source is "llm" when the completion adapter ranked/phrased the candidates,
+// or "rules" when it fell back to the top rule-based candidate (LLM
+// unavailable, errored, or returned unparseable output).
+type MealSuggestion struct {
+	Remaining  Macros           `json:"remaining"`
+	Candidates []SuggestedCombo `json:"candidates"`
+	Message    string           `json:"message"`
+	Source     string           `json:"source"` // "llm" | "rules"
+}
+
+// SuggestedCombo is one candidate meal: a set of items (each an existing food
+// library entry at a serving size) and how well its total macros fit what's
+// remaining. Score is 0..1, higher is a closer fit.
+type SuggestedCombo struct {
+	Items  []SuggestedItem `json:"items"`
+	Macros Macros          `json:"macros"`
+	Score  float64         `json:"score"`
+}
+
+// SuggestedItem is one food at a serving size within a SuggestedCombo.
+type SuggestedItem struct {
+	FoodID string  `json:"food_id"`
+	Name   string  `json:"name"`
+	Grams  float64 `json:"grams"`
 }
 
 // ---------------------------------------------------------------------------

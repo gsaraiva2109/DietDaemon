@@ -19,7 +19,9 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/discord"
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/matrix"
 	"github.com/gsaraiva2109/dietdaemon/adapters/messaging/telegram"
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/anthropic"
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/ollama"
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/openai"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/gotify"
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/openfoodfacts"
@@ -48,6 +50,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver/embedding"
 	"github.com/gsaraiva2109/dietdaemon/internal/scheduler"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
+	"github.com/gsaraiva2109/dietdaemon/internal/suggest"
 	"github.com/gsaraiva2109/dietdaemon/internal/web"
 )
 
@@ -104,6 +107,17 @@ func run() error {
 		return err
 	}
 
+	// Completion adapter is built unconditionally (not just for PARSER_TIER>0):
+	// Tier-2 parsing uses it for text splitting, and /suggest uses it for
+	// meal ranking regardless of parser tier. Construction never dials out, so
+	// this stays safe with COMPLETION_ADAPTER left at its "ollama" default and
+	// no OLLAMA_URL set (zero-keys boot).
+	completionModel, err := buildCompletionAdapter(cfg)
+	if err != nil {
+		return err
+	}
+	slog.Info("completion adapter ready", "adapter", cfg.CompletionAdapter)
+
 	var (
 		parser  ports.Parser
 		matcher resolver.Matcher  = nil
@@ -112,22 +126,30 @@ func run() error {
 
 	switch {
 	case cfg.ParserTier >= types.TierLLM:
-		// Tier 2: LLM splitter + embedding matcher.
-		model, idx := buildModelAndIndex(cfg, st)
-		parser = llm.New(model, deterministic.New())
-		emb := embedding.New(model, idx, st, cfg.EmbedMatchThreshold)
+		// Tier 2: LLM splitter (completion adapter) + embedding matcher (embed adapter).
+		embedModel, err := buildEmbedAdapter(cfg)
+		if err != nil {
+			return err
+		}
+		idx := index.New(st.DB())
+		parser = llm.New(completionModel, deterministic.New())
+		emb := embedding.New(embedModel, idx, st, cfg.EmbedMatchThreshold)
 		matcher = emb
 		embed = emb
-		slog.Info("parser tier 2 (LLM + embedding)", "embed_model", cfg.EmbedModel, "llm_model", cfg.LLMModel)
+		slog.Info("parser tier 2 (LLM + embedding)", "embed_adapter", cfg.EmbedAdapter, "completion_adapter", cfg.CompletionAdapter)
 
 	case cfg.ParserTier >= types.TierEmbedding:
-		// Tier 1: deterministic splitter + embedding matcher.
-		model, idx := buildModelAndIndex(cfg, st)
+		// Tier 1: deterministic splitter + embedding matcher (embed adapter).
+		embedModel, err := buildEmbedAdapter(cfg)
+		if err != nil {
+			return err
+		}
+		idx := index.New(st.DB())
 		parser = deterministic.New()
-		emb := embedding.New(model, idx, st, cfg.EmbedMatchThreshold)
+		emb := embedding.New(embedModel, idx, st, cfg.EmbedMatchThreshold)
 		matcher = emb
 		embed = emb
-		slog.Info("parser tier 1 (deterministic + embedding)", "embed_model", cfg.EmbedModel)
+		slog.Info("parser tier 1 (deterministic + embedding)", "embed_adapter", cfg.EmbedAdapter)
 
 	default:
 		// Tier 0: deterministic splitter, exact-alias match.
@@ -197,6 +219,11 @@ func run() error {
 	}
 	if err := cmdRegistry.Register(commands.NewNudgeCommand(st)); err != nil {
 		return fmt.Errorf("register nudge command: %w", err)
+	}
+
+	suggestEngine := suggest.New(st, completionModel, cfg.Location)
+	if err := cmdRegistry.Register(commands.NewSuggestCommand(suggestEngine)); err != nil {
+		return fmt.Errorf("register suggest command: %w", err)
 	}
 
 	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
@@ -305,7 +332,7 @@ func run() error {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
@@ -371,12 +398,31 @@ func run() error {
 	return nil
 }
 
-// buildModelAndIndex creates the Ollama adapter and the embedding index. It is
-// only called when PARSER_TIER >= 1.
-func buildModelAndIndex(cfg *config.Config, st *store.Store) (ports.ModelAdapter, *index.SQLIndex) {
-	model := ollama.New(cfg.OllamaURL, cfg.EmbedModel, cfg.LLMModel, cfg.ModelTimeout)
-	idx := index.New(st.DB())
-	return model, idx
+// buildEmbedAdapter creates the adapter used for food-matching embeddings
+// (Tier-1/2 parsing, /suggest candidate pool). Only ollama offers embeddings.
+func buildEmbedAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
+	switch cfg.EmbedAdapter {
+	case "ollama":
+		return ollama.New(cfg.OllamaURL, cfg.EmbedModel, cfg.LLMModel, cfg.ModelTimeout), nil
+	default:
+		return nil, fmt.Errorf("unsupported EMBED_ADAPTER %q", cfg.EmbedAdapter)
+	}
+}
+
+// buildCompletionAdapter creates the adapter used for text completion
+// (Tier-2 parsing, /suggest ranking). Opt-in cloud providers require their
+// API key, validated in config.validate.
+func buildCompletionAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
+	switch cfg.CompletionAdapter {
+	case "ollama":
+		return ollama.New(cfg.OllamaURL, cfg.EmbedModel, cfg.LLMModel, cfg.ModelTimeout), nil
+	case "anthropic":
+		return anthropic.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.ModelTimeout), nil
+	case "openai":
+		return openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.ModelTimeout), nil
+	default:
+		return nil, fmt.Errorf("unsupported COMPLETION_ADAPTER %q", cfg.CompletionAdapter)
+	}
 }
 
 func buildMessaging(cfg *config.Config) (ports.MessagingAdapter, error) {

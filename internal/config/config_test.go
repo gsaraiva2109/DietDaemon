@@ -13,8 +13,9 @@ func setEnv(t *testing.T, kv map[string]string) {
 	t.Helper()
 	keys := []string{
 		"MESSAGING_ADAPTER", "TELEGRAM_BOT_TOKEN", "PARSER_TIER",
-		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "TACO_DATA_PATH", "MODEL_ADAPTER", "OLLAMA_URL",
+		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "TACO_DATA_PATH", "EMBED_ADAPTER", "COMPLETION_ADAPTER", "OLLAMA_URL",
 		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
+		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
 		"MULTI_USER", "API_AUTH_TOKEN",
@@ -83,12 +84,52 @@ func TestInvalidTimezoneFails(t *testing.T) {
 func TestTierRequiresModel(t *testing.T) {
 	env := validBase()
 	env["PARSER_TIER"] = "2"
-	env["MODEL_ADAPTER"] = ""
 	env["OLLAMA_URL"] = ""
 	setEnv(t, env)
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "OLLAMA_URL") {
 		t.Fatalf("expected OLLAMA_URL error for tier>0, got %v", err)
+	}
+}
+
+func TestEmbedAdapterMustBeOllama(t *testing.T) {
+	env := validBase()
+	env["EMBED_ADAPTER"] = "anthropic"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "EMBED_ADAPTER") {
+		t.Fatalf("expected EMBED_ADAPTER error, got %v", err)
+	}
+}
+
+func TestCompletionAdapterAnthropicRequiresAPIKey(t *testing.T) {
+	env := validBase()
+	env["COMPLETION_ADAPTER"] = "anthropic"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("expected ANTHROPIC_API_KEY error, got %v", err)
+	}
+
+	env["ANTHROPIC_API_KEY"] = "sk-ant-test"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.CompletionAdapter != "anthropic" {
+		t.Errorf("CompletionAdapter = %q, want anthropic", c.CompletionAdapter)
+	}
+}
+
+func TestCompletionAdapterDefaultsToOllamaZeroKeys(t *testing.T) {
+	setEnv(t, validBase())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.EmbedAdapter != "ollama" || c.CompletionAdapter != "ollama" {
+		t.Errorf("EmbedAdapter/CompletionAdapter = %q/%q, want ollama/ollama", c.EmbedAdapter, c.CompletionAdapter)
 	}
 }
 

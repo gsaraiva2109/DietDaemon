@@ -48,43 +48,36 @@ sizing/design happens when picked up.
    to begin with (not a DB gap, a barcode gap). Scope expectations accordingly. Will need a
    barcode-decode library when picked up — `gozxing` (pure-Go ZXing port) fits this repo's
    no-CGO stance (matches the `modernc.org/sqlite` choice); decide then, no dependency added now.
-2. **Rule-based macro-fit matching engine** — given remaining kcal/protein, search the food
-   library/resolver for combos that fit. No LLM needed. Foundation piece — both the fridge-recipe
-   suggestion below and the LLM-ranked suggestions in High reuse this matcher.
-3. **Macro-aware recipe suggestion from on-hand ingredients** — user lists what's in the fridge,
-   the matching engine above finds combos hitting remaining macros.
-4. **Smart reminders from historical patterns** — learn usual meal/log times from stored history,
+2. **Macro-aware recipe suggestion from on-hand ingredients** — user lists what's in the fridge,
+   the matching engine (`internal/suggest`, shipped) finds combos hitting remaining macros.
+3. **Smart reminders from historical patterns** — learn usual meal/log times from stored history,
    nudge before the user's own pattern instead of `scheduler.DefaultRules()`'s fixed hours.
    Extends the existing rules engine, not a new one.
-5. **Photo storage policy** — where/how progress photos (`PhotoGrid.tsx`, `PhotoCompare.tsx`) are
+4. **Photo storage policy** — where/how progress photos (`PhotoGrid.tsx`, `PhotoCompare.tsx`) are
    stored, size limits, retention. Needs a design pass (storage backend, retention, whether it
    survives `MULTI_USER` account deletion) before implementation.
-6. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
+5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
 
 ## High complexity
 
-1. **LLM adapter (local + cloud, opt-in)** — extends `MODEL_ADAPTER` (today: `ollama`) with an
-   `anthropic`/`openai`-compatible option. Opt-in only, core keeps booting with zero keys.
-2. **LLM-ranked meal suggestions** — rides on the rule-based matching engine and the LLM adapter
-   above: rule-based candidates, LLM ranks/phrases them, adjustable prompt.
-3. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing
+1. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing
    STT step), feed the transcript through the normal meal parser. Dish name → macros still needs
    an LLM rough-estimate (no nutrition source prices whole restaurant dishes), shipped as
-   low-confidence per the existing "honest about uncertainty" design principle. Depends on the
-   LLM adapter above. Skipping the digital-menu-scraper variant entirely (see Dropped). OCR
-   step: shell out to the `tesseract` binary via `os/exec` rather than a cgo binding
-   (`gosseract`), same no-CGO reasoning as the barcode-scan pick above — decide then, no
-   dependency added now.
-4. **Health platform import/export** — Apple Health / Google Fit / Garmin sync for weight and
+   low-confidence per the existing "honest about uncertainty" design principle. The LLM adapter
+   this depends on is already shipped (`COMPLETION_ADAPTER=ollama|anthropic|openai`). Skipping
+   the digital-menu-scraper variant entirely (see Dropped). OCR step: shell out to the
+   `tesseract` binary via `os/exec` rather than a cgo binding (`gosseract`), same no-CGO
+   reasoning as the barcode-scan pick above — decide then, no dependency added now.
+2. **Health platform import/export** — Apple Health / Google Fit / Garmin sync for weight and
    workout data, since those trackers already exist in-app (`weight.go`, `workout.go`). Carried
    over, still undone — genuinely large: several distinct third-party APIs/OAuth flows, sync and
    conflict-resolution logic, not one integration.
-5. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
+3. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
    across accounts. Auth already supports multi-user (OIDC, invite mode); this is a data-model
    layer on top (shared vs private meals/targets per household).
-6. **Target auto-suggestion from trend** — if weight trend contradicts the stated goal (e.g.
+4. **Target auto-suggestion from trend** — if weight trend contradicts the stated goal (e.g.
    "cutting" but flat 3 weeks), surface a gentle "adjust target?" prompt instead of silently
    nudging against a target that isn't working. Trend-detection isn't trivial (noise vs signal),
    and framing needs care to stay an observation about the user's own stated goal, not dietary
