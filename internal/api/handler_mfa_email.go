@@ -24,13 +24,6 @@ const mfaEmailMaxAttempts = 5
 // POST /auth/mfa/email/send
 func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	var body struct {
@@ -96,13 +89,6 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 // POST /auth/mfa/email/verify
 func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if !h.ipLimiter.Allow(ip) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-		return
-	}
-
 	ctx := r.Context()
 
 	var body struct {

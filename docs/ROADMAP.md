@@ -22,16 +22,6 @@ sizing/design happens when picked up.
 5. **"Why is this number here" trace** — tap a logged meal's macro, see which resolver source
    (OFF/TACO/USDA) + confidence tier answered it. Drill-down UI over data already stored, no new
    computation.
-6. **Rate limit auth endpoints** — login, passwordless, MFA-email, OIDC callback
-   (`handler_auth.go`, `handler_passwordless.go`, `handler_mfa_email.go`, `handler_oidc.go`) have
-   no throttling today, confirmed via grep. `golang.org/x/time/rate`, per-IP or per-account
-   token bucket, a few lines per handler — no new infra, no external dependency risk (same x/
-   trust tier as `x/crypto`/`x/oauth2` already in use).
-7. **Squash migrations to one file per dialect** — no production data to preserve yet, so
-   collapse `migrations/{sqlite,postgres}/*.sql` into a single `001_init.sql` each reflecting
-   current schema, delete the rest, wipe dev DB files. No new dependency — the existing
-   hand-rolled runner (`runMigrations()`, sorted filename + `schema_migrations` table) already
-   handles a single file fine, this is a one-time reorg, not a tooling change.
 
 ## Medium complexity
 
@@ -93,8 +83,3 @@ sizing/design happens when picked up.
   (identify + estimate portions), explicitly deferred, not touching yet.
 - **Digital-menu scraper** — one bespoke scraper per restaurant site, all different, all break
   silently, ToS-gray. Not worth it for a single-user self-hosted tool.
-- **Apple Health / Google Fit import** — neither has a server-reachable cloud API: Apple Health
-  data only leaves the device via a native iOS app (HealthKit) or a manually-exported XML zip;
-  Google Fit's cloud API is deprecated in favor of Health Connect, which is on-device/Android-only.
-  Not a coding-effort problem, a platform-access problem — dropped, not just deferred. Hevy
-  (real REST API) covers the workout-import use case instead, see Medium complexity.
