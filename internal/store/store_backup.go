@@ -19,7 +19,7 @@ import (
 // none has been configured (callers treat "not found" as "disabled").
 func (s *Store) GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error) {
 	const q = `
-		SELECT user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs, last_run_at
+		SELECT user_id, enabled, destination, local_subdir, s3_bucket, s3_prefix, s3_region, s3_endpoint, interval_hrs, last_run_at, last_meals_count, last_rollups_count
 		FROM backup_config WHERE user_id = ?
 	`
 	var row backupConfigRow
@@ -36,29 +36,33 @@ func (s *Store) GetBackupConfig(ctx context.Context, userID string) (types.Backu
 // stores Enabled as bool (DB: int) and LastRunAt as time.Time (DB: nullable
 // RFC3339 string).
 type backupConfigRow struct {
-	UserID      string         `db:"user_id"`
-	Enabled     int            `db:"enabled"`
-	Destination string         `db:"destination"`
-	LocalSubdir sql.NullString `db:"local_subdir"`
-	S3Bucket    sql.NullString `db:"s3_bucket"`
-	S3Prefix    sql.NullString `db:"s3_prefix"`
-	S3Region    sql.NullString `db:"s3_region"`
-	S3Endpoint  sql.NullString `db:"s3_endpoint"`
-	IntervalHrs int            `db:"interval_hrs"`
-	LastRunAt   sql.NullString `db:"last_run_at"`
+	UserID           string         `db:"user_id"`
+	Enabled          int            `db:"enabled"`
+	Destination      string         `db:"destination"`
+	LocalSubdir      sql.NullString `db:"local_subdir"`
+	S3Bucket         sql.NullString `db:"s3_bucket"`
+	S3Prefix         sql.NullString `db:"s3_prefix"`
+	S3Region         sql.NullString `db:"s3_region"`
+	S3Endpoint       sql.NullString `db:"s3_endpoint"`
+	IntervalHrs      int            `db:"interval_hrs"`
+	LastRunAt        sql.NullString `db:"last_run_at"`
+	LastMealsCount   int            `db:"last_meals_count"`
+	LastRollupsCount int            `db:"last_rollups_count"`
 }
 
 func (r backupConfigRow) toBackupConfig() types.BackupConfig {
 	cfg := types.BackupConfig{
-		UserID:      r.UserID,
-		Enabled:     r.Enabled != 0,
-		Destination: r.Destination,
-		LocalSubdir: r.LocalSubdir.String,
-		S3Bucket:    r.S3Bucket.String,
-		S3Prefix:    r.S3Prefix.String,
-		S3Region:    r.S3Region.String,
-		S3Endpoint:  r.S3Endpoint.String,
-		IntervalHrs: r.IntervalHrs,
+		UserID:           r.UserID,
+		Enabled:          r.Enabled != 0,
+		Destination:      r.Destination,
+		LocalSubdir:      r.LocalSubdir.String,
+		S3Bucket:         r.S3Bucket.String,
+		S3Prefix:         r.S3Prefix.String,
+		S3Region:         r.S3Region.String,
+		S3Endpoint:       r.S3Endpoint.String,
+		IntervalHrs:      r.IntervalHrs,
+		LastMealsCount:   r.LastMealsCount,
+		LastRollupsCount: r.LastRollupsCount,
 	}
 	if r.LastRunAt.Valid && r.LastRunAt.String != "" {
 		cfg.LastRunAt = parseUTC(r.LastRunAt.String)
@@ -102,5 +106,12 @@ func (s *Store) SetBackupConfig(ctx context.Context, cfg types.BackupConfig) err
 func (s *Store) SetBackupLastRun(ctx context.Context, userID string, t time.Time) error {
 	const q = `UPDATE backup_config SET last_run_at = ? WHERE user_id = ?`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(t), userID)
+	return err
+}
+
+// SetBackupCounts records the row counts from the last successful backup run.
+func (s *Store) SetBackupCounts(ctx context.Context, userID string, mealsCount, rollupsCount int) error {
+	const q = `UPDATE backup_config SET last_meals_count = ?, last_rollups_count = ? WHERE user_id = ?`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), mealsCount, rollupsCount, userID)
 	return err
 }

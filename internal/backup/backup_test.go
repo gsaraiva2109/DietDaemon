@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -9,13 +11,20 @@ import (
 )
 
 type fakeStore struct {
-	users    []types.User
-	configs  map[string]types.BackupConfig
-	lastRuns map[string]time.Time
+	users      []types.User
+	configs    map[string]types.BackupConfig
+	lastRuns   map[string]time.Time
+	mealCounts map[string]int
+	rollCounts map[string]int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{configs: map[string]types.BackupConfig{}, lastRuns: map[string]time.Time{}}
+	return &fakeStore{
+		configs:    map[string]types.BackupConfig{},
+		lastRuns:   map[string]time.Time{},
+		mealCounts: map[string]int{},
+		rollCounts: map[string]int{},
+	}
 }
 
 func (f *fakeStore) ListUsers(context.Context) ([]types.User, error) { return f.users, nil }
@@ -32,6 +41,16 @@ func (f *fakeStore) SetBackupLastRun(_ context.Context, userID string, t time.Ti
 	f.lastRuns[userID] = t
 	cfg := f.configs[userID]
 	cfg.LastRunAt = t
+	f.configs[userID] = cfg
+	return nil
+}
+
+func (f *fakeStore) SetBackupCounts(_ context.Context, userID string, mealsCount, rollupsCount int) error {
+	f.mealCounts[userID] = mealsCount
+	f.rollCounts[userID] = rollupsCount
+	cfg := f.configs[userID]
+	cfg.LastMealsCount = mealsCount
+	cfg.LastRollupsCount = rollupsCount
 	f.configs[userID] = cfg
 	return nil
 }
@@ -135,5 +154,48 @@ func TestRunFor_MissingDestinationErrors(t *testing.T) {
 
 	if err := r.RunOnce(context.Background(), "u1"); err == nil {
 		t.Fatalf("expected error when s3 destination is nil")
+	}
+}
+
+func TestRunFor_SetsBackupCounts(t *testing.T) {
+	store := newFakeStore()
+	store.configs["u1"] = types.BackupConfig{UserID: "u1", Enabled: true, Destination: "local"}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	if err := r.RunOnce(context.Background(), "u1"); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	// Both meals and rollups return empty slices, so counts should be 0.
+	if store.mealCounts["u1"] != 0 {
+		t.Fatalf("expected meal count 0, got %d", store.mealCounts["u1"])
+	}
+	if store.rollCounts["u1"] != 0 {
+		t.Fatalf("expected rollup count 0, got %d", store.rollCounts["u1"])
+	}
+}
+
+func TestRunFor_WarnsOnCountDrop(t *testing.T) {
+	store := newFakeStore()
+	// Previous run had 100 meals and 50 rollups.
+	store.configs["u1"] = types.BackupConfig{
+		UserID: "u1", Enabled: true, Destination: "local",
+		LastMealsCount: 100, LastRollupsCount: 50,
+	}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	// Capture log output.
+	var buf bytes.Buffer
+	r.log = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	if err := r.RunOnce(context.Background(), "u1"); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	// meals and rollups both return empty (0), which is >50% drop from 100 and 50.
+	output := buf.String()
+	if output == "" {
+		t.Fatalf("expected warning logs for row count drops, got none")
 	}
 }

@@ -26,11 +26,16 @@ const earliestDate = "1970-01-01"
 // interval_hrs (defensive; the store default is 24).
 const defaultIntervalHrs = 24
 
+// backupCountDropThreshold is the fraction of previously-seen rows below which
+// a backup run logs a warning. 0.5 means a >50% drop triggers a warning.
+const backupCountDropThreshold = 0.5
+
 // Store is the read/write side a backup run needs. *store.Store satisfies it.
 type Store interface {
 	ListUsers(ctx context.Context) ([]types.User, error)
 	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
 	SetBackupLastRun(ctx context.Context, userID string, t time.Time) error
+	SetBackupCounts(ctx context.Context, userID string, mealsCount, rollupsCount int) error
 	GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error)
 	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
 }
@@ -152,6 +157,13 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 	if err != nil {
 		return fmt.Errorf("backup: load meals: %w", err)
 	}
+
+	// Warn on significant row-count drops vs previous run (log-only, no alerting infra).
+	if cfg.LastMealsCount > 0 && float64(len(meals)) < float64(cfg.LastMealsCount)*(1-backupCountDropThreshold) {
+		r.log.Warn("backup: row count dropped significantly", "user", userID, "entity", "meals",
+			"previous", cfg.LastMealsCount, "current", len(meals))
+	}
+
 	var mealsBuf bytes.Buffer
 	if err := exportfmt.WriteMealsCSV(&mealsBuf, meals); err != nil {
 		return fmt.Errorf("backup: write meals csv: %w", err)
@@ -164,6 +176,12 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 	if err != nil {
 		return fmt.Errorf("backup: load rollups: %w", err)
 	}
+
+	if cfg.LastRollupsCount > 0 && float64(len(rollups)) < float64(cfg.LastRollupsCount)*(1-backupCountDropThreshold) {
+		r.log.Warn("backup: row count dropped significantly", "user", userID, "entity", "rollups",
+			"previous", cfg.LastRollupsCount, "current", len(rollups))
+	}
+
 	var rollupsBuf bytes.Buffer
 	if err := exportfmt.WriteRollupsCSV(&rollupsBuf, rollups); err != nil {
 		return fmt.Errorf("backup: write rollups csv: %w", err)
@@ -174,6 +192,9 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 
 	if err := r.store.SetBackupLastRun(ctx, userID, now); err != nil {
 		return fmt.Errorf("backup: set last run: %w", err)
+	}
+	if err := r.store.SetBackupCounts(ctx, userID, len(meals), len(rollups)); err != nil {
+		return fmt.Errorf("backup: set counts: %w", err)
 	}
 	return nil
 }
