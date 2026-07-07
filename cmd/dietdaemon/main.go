@@ -118,6 +118,12 @@ func run() error {
 	}
 	slog.Info("completion adapter ready", "adapter", cfg.CompletionAdapter)
 
+	chatModel, err := buildChatAdapter(cfg)
+	if err != nil {
+		return err
+	}
+	slog.Info("chat adapter ready", "adapter", cfg.CompletionAdapter)
+
 	var (
 		parser  ports.Parser
 		matcher resolver.Matcher  = nil
@@ -332,7 +338,7 @@ func run() error {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
@@ -422,6 +428,19 @@ func buildCompletionAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
 		return openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.ModelTimeout), nil
 	default:
 		return nil, fmt.Errorf("unsupported COMPLETION_ADAPTER %q", cfg.CompletionAdapter)
+	}
+}
+
+// buildChatAdapter creates the ChatAdapter for the conversational assistant.
+// Stage 1: Anthropic only. Returns nil when the configured adapter doesn't
+// support chat yet (ollama/openai) — the chat endpoint then returns 503.
+func buildChatAdapter(cfg *config.Config) (ports.ChatAdapter, error) {
+	switch cfg.CompletionAdapter {
+	case "anthropic":
+		return anthropic.NewChatAdapter(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.ModelTimeout), nil
+	default:
+		slog.Warn("chat adapter not available for configured COMPLETION_ADAPTER, chat endpoint will return 503", "adapter", cfg.CompletionAdapter)
+		return nil, nil
 	}
 }
 

@@ -67,3 +67,44 @@ func (h *Handler) injectModelOverride(ctx context.Context, userID string) contex
 	}
 	return ports.WithModelOverride(ctx, adapter)
 }
+
+// buildChatAdapterForProvider mirrors buildChatAdapter in main.go but takes an
+// explicit API key. Only anthropic/openai — ollama is self-hosted.
+func buildChatAdapterForProvider(provider, apiKey, anthropicModel, openaiModel, openaiBaseURL string, timeout time.Duration) (ports.ChatAdapter, error) {
+	switch provider {
+	case "anthropic":
+		return anthropic.NewChatAdapter(apiKey, anthropicModel, timeout), nil
+	case "openai":
+		return nil, fmt.Errorf("openai chat adapter not yet implemented")
+	default:
+		return nil, fmt.Errorf("unsupported BYOK chat provider %q", provider)
+	}
+}
+
+// injectChatAdapterOverride checks AI_KEY_MODE, looks up the user's stored key,
+// decrypts it, builds a per-user chat adapter, and injects it into ctx.
+func (h *Handler) injectChatAdapterOverride(ctx context.Context, userID string) context.Context {
+	if h.cfg == nil || h.cfg.AIKeyMode != "byok" {
+		return ctx
+	}
+	provider, encKey, found, err := h.store.GetUserAIKey(ctx, userID)
+	if err != nil || !found {
+		return ctx
+	}
+	plaintext, err := decryptAIKey(encKey, h.cfg.AIKeyEncKey)
+	if err != nil {
+		return ctx
+	}
+	adapter, err := buildChatAdapterForProvider(
+		provider,
+		string(plaintext),
+		h.cfg.AnthropicModel,
+		h.cfg.OpenAIModel,
+		h.cfg.OpenAIBaseURL,
+		h.cfg.ModelTimeout,
+	)
+	if err != nil {
+		return ctx
+	}
+	return ports.WithChatAdapterOverride(ctx, adapter)
+}

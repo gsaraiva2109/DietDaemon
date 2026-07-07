@@ -15,6 +15,7 @@ import (
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
@@ -264,6 +265,9 @@ type Handler struct {
 
 	// Full config (needed by BYOK adapter construction).
 	cfg *config.Config
+
+	// Chat adapter for the conversational assistant (nil when unsupported).
+	chatAdapter ports.ChatAdapter
 }
 
 // BackupRunner triggers an immediate backup for one user, sharing the same
@@ -278,7 +282,7 @@ type BackupRunner interface {
 // interfaces (they are satisfied by *store.Store). backupRunner may be nil if
 // scheduled backups aren't configured; the manual "run now" endpoint then
 // returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -310,6 +314,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		backupRunner:     backupRunner,
 		suggester:        suggester,
 		cfg:              c,
+		chatAdapter:      chatAdapter,
 	}
 }
 
@@ -481,6 +486,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Adherence streak.
 	mux.HandleFunc("GET /api/v1/streak", h.wrap(h.handleStreak))
+
+	// AI chat assistant.
+	mux.HandleFunc("POST /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleChatMessage))
 
 	// Bot account linking.
 	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))
