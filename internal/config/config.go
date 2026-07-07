@@ -105,6 +105,10 @@ type Config struct {
 	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
 	TOTPIssuer string // otpauth issuer label
 
+	// --- BYOK: per-user AI API keys ---
+	AIKeyEncKey []byte // AES-256-GCM key, 32 bytes; separate from TOTPEncKey for domain separation
+	AIKeyMode   string // "shared" (default) or "byok"
+
 	// --- Auth — OIDC ---
 	OIDCProviders []OIDCProviderConfig
 	PublicBaseURL string
@@ -231,6 +235,16 @@ func Load() (*Config, error) {
 		}
 		c.TOTPEncKey = key
 	}
+
+	// BYOK: per-user AI API key encryption (separate from TOTP for domain separation).
+	if raw := getStr("AI_KEY_ENC_KEY", ""); raw != "" {
+		key, err := decodeKey(raw)
+		if err != nil {
+			return nil, fmt.Errorf("AI_KEY_ENC_KEY: %w", err)
+		}
+		c.AIKeyEncKey = key
+	}
+	c.AIKeyMode = strings.ToLower(getStr("AI_KEY_MODE", "shared"))
 
 	// OIDC providers.
 	c.PublicBaseURL = strings.TrimRight(getStr("PUBLIC_BASE_URL", ""), "/")

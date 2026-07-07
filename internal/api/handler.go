@@ -17,6 +17,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
@@ -114,6 +115,11 @@ type MealStore interface {
 	// Scheduled backup settings.
 	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
 	SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error
+
+	// Per-user AI API keys (BYOK).
+	GetUserAIKey(ctx context.Context, userID string) (provider string, encKey string, found bool, err error)
+	SetUserAIKey(ctx context.Context, userID, provider, encKey string) error
+	DeleteUserAIKey(ctx context.Context, userID string) error
 
 	// Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
@@ -249,6 +255,9 @@ type Handler struct {
 
 	// Scheduled backup manual trigger. Nil when backups aren't wired up.
 	backupRunner BackupRunner
+
+	// Full config (needed by BYOK adapter construction).
+	cfg *config.Config
 }
 
 // BackupRunner triggers an immediate backup for one user, sharing the same
@@ -263,7 +272,7 @@ type BackupRunner interface {
 // interfaces (they are satisfied by *store.Store). backupRunner may be nil if
 // scheduled backups aren't configured; the manual "run now" endpoint then
 // returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, cfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester) *Handler {
+func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -287,13 +296,14 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		emailProvider:    emailProvider,
 		publicBaseURL:    publicBaseURL,
 		webauthn:         wa,
-		sessionCfg:       cfg.SessionCfg,
-		lockoutCfg:       cfg.LockoutCfg,
-		registrationMode: cfg.RegistrationMode,
-		cookieSecure:     cfg.CookieSecure,
+		sessionCfg:       authCfg.SessionCfg,
+		lockoutCfg:       authCfg.LockoutCfg,
+		registrationMode: authCfg.RegistrationMode,
+		cookieSecure:     authCfg.CookieSecure,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
 		backupRunner:     backupRunner,
 		suggester:        suggester,
+		cfg:              c,
 	}
 }
 
@@ -402,6 +412,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/backup", h.wrap(h.handleGetBackupConfig))
 	mux.HandleFunc("PUT /api/v1/settings/backup", h.wrap(h.handleSetBackupConfig))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", h.wrap(h.handleRunBackupNow))
+
+	// BYOK: per-user AI API keys.
+	mux.HandleFunc("GET /api/v1/settings/ai-key", h.wrap(h.handleGetAIKey))
+	mux.HandleFunc("POST /api/v1/settings/ai-key", h.wrap(h.handleSetAIKey))
+	mux.HandleFunc("DELETE /api/v1/settings/ai-key", h.wrap(h.handleDeleteAIKey))
 
 	// Auth endpoints.
 	mux.HandleFunc("POST /api/v1/auth/register", h.wrapPublicLimited(h.handleRegister))

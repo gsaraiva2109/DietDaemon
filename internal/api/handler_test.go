@@ -377,6 +377,17 @@ func (s *fakeMealStore) GetMealsInRange(_ context.Context, _, _, _ string) ([]ty
 	return s.mealsInRange, s.mealsInRangeErr
 }
 
+// BYOK: per-user AI API keys.
+func (s *fakeMealStore) GetUserAIKey(_ context.Context, _ string) (string, string, bool, error) {
+	return "", "", false, nil
+}
+func (s *fakeMealStore) SetUserAIKey(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (s *fakeMealStore) DeleteUserAIKey(_ context.Context, _ string) error {
+	return nil
+}
+
 // Goals & profile.
 func (s *fakeMealStore) GetProfile(_ context.Context, _ string) (types.UserProfile, error) {
 	return s.profile, s.profileErr
@@ -684,7 +695,7 @@ func newHandler(store MealStore, logger MealLogger, sug ...Suggester) *Handler {
 		LockoutCfg:       auth.DefaultLockoutConfig(),
 		RegistrationMode: types.RegistrationOpen,
 		CookieSecure:     false,
-	}, nil, nil, suggester)
+	}, nil, nil, suggester, nil)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
