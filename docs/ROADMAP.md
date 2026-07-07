@@ -59,6 +59,22 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
+6. **Per-user AI API keys (BYOK)** — admin picks instance-wide `AI_KEY_MODE=shared|byok`; in byok
+   mode each user supplies their own Anthropic/OpenAI key instead of the instance's shared
+   `COMPLETION_ADAPTER` credentials. Storage reuses the AES-256-GCM pattern already used for
+   `TOTPEncKey` (new `user_ai_keys` table, own `AI_KEY_ENC_KEY` — distinct from `TOTPEncKey` for
+   domain separation, same `decodeKey()`/encrypt/decrypt code, no new crypto). Engine shifts from
+   one adapter built once at boot to building an adapter per request from the caller's decrypted
+   key — `anthropic.New`/`openai.New` don't dial out at construction, so this is cheap, no
+   pooling needed. Needs a settings command/endpoint for a user to set/clear their own key.
+7. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
+   `workouts`/`workout_exercises` tables. Hevy has a real REST API (unlike Apple Health/Google
+   Fit, see Dropped), so this is the only piece of the old "health platform import/export" idea
+   that's actually reachable server-side. Schema is one row per exercise, not per set, so import
+   aggregates: `sets` = count of Hevy set entries, `reps`/`weight_kg` = max across sets, raw
+   per-set data kept as JSON in the existing `note` column — no new sets table. Scope is
+   one-shot ETL, not ongoing sync (no cursor/last-synced state, matches the MyFitnessPal-import
+   item's reasoning above).
 
 ## High complexity
 
@@ -70,14 +86,10 @@ sizing/design happens when picked up.
    the digital-menu-scraper variant entirely (see Dropped). OCR step: shell out to the
    `tesseract` binary via `os/exec` rather than a cgo binding (`gosseract`), same no-CGO
    reasoning as the barcode-scan pick above — decide then, no dependency added now.
-2. **Health platform import/export** — Apple Health / Google Fit / Garmin sync for weight and
-   workout data, since those trackers already exist in-app (`weight.go`, `workout.go`). Carried
-   over, still undone — genuinely large: several distinct third-party APIs/OAuth flows, sync and
-   conflict-resolution logic, not one integration.
-3. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
+2. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
    across accounts. Auth already supports multi-user (OIDC, invite mode); this is a data-model
    layer on top (shared vs private meals/targets per household).
-4. **Target auto-suggestion from trend** — if weight trend contradicts the stated goal (e.g.
+3. **Target auto-suggestion from trend** — if weight trend contradicts the stated goal (e.g.
    "cutting" but flat 3 weeks), surface a gentle "adjust target?" prompt instead of silently
    nudging against a target that isn't working. Trend-detection isn't trivial (noise vs signal),
    and framing needs care to stay an observation about the user's own stated goal, not dietary
@@ -89,3 +101,8 @@ sizing/design happens when picked up.
   (identify + estimate portions), explicitly deferred, not touching yet.
 - **Digital-menu scraper** — one bespoke scraper per restaurant site, all different, all break
   silently, ToS-gray. Not worth it for a single-user self-hosted tool.
+- **Apple Health / Google Fit import** — neither has a server-reachable cloud API: Apple Health
+  data only leaves the device via a native iOS app (HealthKit) or a manually-exported XML zip;
+  Google Fit's cloud API is deprecated in favor of Health Connect, which is on-device/Android-only.
+  Not a coding-effort problem, a platform-access problem — dropped, not just deferred. Hevy
+  (real REST API) covers the workout-import use case instead, see Medium complexity.
