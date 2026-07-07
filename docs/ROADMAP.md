@@ -17,11 +17,6 @@ sizing/design happens when picked up.
    token type on the existing scoped-read path.
 3. **Import old logs (MyFitnessPal etc.)** — one-time CSV/export parser mapping to internal meal
    records. No ongoing maintenance, it's a one-shot ETL path.
-4. **Confidence-colored macro numbers** — visually distinguish low-confidence/guessed values from
-   resolved ones, not just a badge. Parser confidence is already computed, this is styling only.
-5. **"Why is this number here" trace** — tap a logged meal's macro, see which resolver source
-   (OFF/TACO/USDA) + confidence tier answered it. Drill-down UI over data already stored, no new
-   computation.
 
 ## Medium complexity
 
@@ -41,6 +36,7 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
+
 ## High complexity
 
 1. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing

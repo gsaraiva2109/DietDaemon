@@ -47,6 +47,8 @@ const SourcePrecedence = lazy(() =>
 )
 const NudgeSettings = lazy(() => import('@/routes/NudgeSettings').then(m => ({ default: m.NudgeSettings })))
 const BackupSettings = lazy(() => import('@/routes/BackupSettings').then(m => ({ default: m.BackupSettings })))
+const AIKeySettings = lazy(() => import('@/routes/AIKeySettings').then(m => ({ default: m.AIKeySettings })))
+const HevyImport = lazy(() => import('@/routes/HevyImport').then(m => ({ default: m.HevyImport })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
 const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals })))
@@ -124,6 +126,8 @@ function AppRoutes() {
           <Route path="/settings/precedence" element={<SourcePrecedence />} />
           <Route path="/settings/nudges" element={<NudgeSettings />} />
           <Route path="/settings/backup" element={<BackupSettings />} />
+          <Route path="/settings/ai-key" element={<AIKeySettings />} />
+          <Route path="/settings/hevy-import" element={<HevyImport />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/body" element={<Body />} />

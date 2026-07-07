@@ -7,9 +7,12 @@ import { Card, Pill, Spinner, Button } from '@/components/ui'
 import { CorrectItemModal } from '@/components/CorrectItemModal'
 import { SaveTemplateModal } from '@/components/SaveTemplateModal'
 import { ShareCard } from '@/components/ShareCard'
+import { MacroTrace } from '@/components/MacroTrace'
 import { ChevronLeft, LogIcon, CloseIcon, TemplateIcon, ShareIcon } from '@/components/icons'
 import {
   clockTime,
+  confidenceColor,
+  confidenceTier,
   confidenceLabel,
   formatGrams,
   formatNumber,
@@ -28,6 +31,7 @@ export function MealDetail() {
   const [editing, setEditing] = useState<number | null>(null)
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [sharing, setSharing] = useState(false)
+  const [traceOpen, setTraceOpen] = useState(false)
 
   if (meal.isLoading) return <Spinner label="Loading meal" />
   if (meal.isError || !meal.data) {
@@ -63,9 +67,21 @@ export function MealDetail() {
       </PageHeader>
 
       <div className="mb-5 flex items-center justify-between gap-3">
-        <p className="text-sm text-muted">
-          <span className="text-2xl font-bold text-ink tnum">{formatNumber(total)}</span> kcal total
-        </p>
+        <button
+          type="button"
+          onClick={() => setTraceOpen(true)}
+          title={
+            (() => {
+              const t = confidenceTier(m.Confidence)
+              return t === 'high' ? undefined : `${t.charAt(0).toUpperCase() + t.slice(1)} confidence — tap for details`
+            })()
+          }
+          className="text-sm text-muted text-left"
+        >
+          <span className={`text-2xl font-bold tnum ${confidenceColor(m.Confidence) || 'text-ink'}`}>
+            {formatNumber(total)}
+          </span>{' '}kcal total
+        </button>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" onClick={() => setSharing(true)} className="px-3 py-1.5 text-xs">
             <ShareIcon width={15} height={15} /> Share
@@ -118,7 +134,7 @@ export function MealDetail() {
               {MACRO_KEYS.map((k) => (
                 <div key={k}>
                   <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">{MACRO_META[k].label}</dt>
-                  <dd className="font-semibold text-ink tnum">{Math.round(it.Macros[k])}</dd>
+                  <dd className={`font-semibold tnum ${confidenceColor(it.Match.MatchScore) || 'text-ink'}`}>{Math.round(it.Macros[k])}</dd>
                 </div>
               ))}
             </dl>
@@ -144,6 +160,9 @@ export function MealDetail() {
           consumed={mealMacros}
           onClose={() => setSharing(false)}
         />
+      )}
+      {traceOpen && (
+        <MacroTrace items={m.Items} onClose={() => setTraceOpen(false)} />
       )}
     </div>
   )

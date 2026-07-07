@@ -461,3 +461,26 @@ export interface WeeklyBudgetResponse {
   calories: WeeklyBudgetView
   protein: WeeklyBudgetView
 }
+
+// ---------------------------------------------------------------------------
+// AI Key settings (BYOK)
+// ---------------------------------------------------------------------------
+
+export interface AIKeyStatus {
+  has_key: boolean
+  provider: string
+}
+
+// ---------------------------------------------------------------------------
+// Hevy integration
+// ---------------------------------------------------------------------------
+
+export interface HevyKeyStatus {
+  has_key: boolean
+}
+
+export interface HevyImportResult {
+  imported: number
+  skipped_duplicates: number
+  total: number
+}

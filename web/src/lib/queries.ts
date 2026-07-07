@@ -28,6 +28,8 @@ import {
   DEMO_PROFILE,
   DEMO_PENDING_ALIASES,
   DEMO_PRECEDENCE,
+  DEMO_AI_KEY,
+  DEMO_HEVY_KEY,
 } from './demo'
 import type {
   BackupConfig,
@@ -839,5 +841,71 @@ export function useGoalSuggestions() {
             message: "You're losing 0.3 kg/week at ~2050 kcal. To hit 0.5 kg/week, try ~1900 kcal.",
           }
         : api.goalSuggestions(),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// BYOK AI key
+// ---------------------------------------------------------------------------
+
+export function useAIKey() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['settings', 'ai-key', demo],
+    queryFn: () => (demo ? DEMO_AI_KEY : api.aiKey.status()),
+  })
+}
+
+export function useSetAIKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { provider: string; key: string }) => api.aiKey.set(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'ai-key'] }),
+  })
+}
+
+export function useDeleteAIKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.aiKey.delete(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'ai-key'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Hevy integration
+// ---------------------------------------------------------------------------
+
+export function useHevyKey() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['settings', 'hevy-key', demo],
+    queryFn: () => (demo ? DEMO_HEVY_KEY : api.hevyKey.status()),
+  })
+}
+
+export function useSetHevyKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { key: string }) => api.hevyKey.set(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'hevy-key'] }),
+  })
+}
+
+export function useDeleteHevyKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.hevyKey.delete(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'hevy-key'] }),
+  })
+}
+
+export function useImportHevy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.importHevy(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workouts'] })
+    },
   })
 }

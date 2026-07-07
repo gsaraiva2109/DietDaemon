@@ -139,6 +139,8 @@ export function Settings() {
         />
         <RowLink to="/settings/nudges" Icon={ClockIcon} label="Nudges" hint="Macro, health & digest reminders" />
         <RowLink to="/settings/backup" Icon={ClockIcon} label="Backup" hint="Scheduled export to local disk or S3" />
+        <RowLink to="/settings/ai-key" Icon={SettingsIcon} label="AI API Key" hint="Bring your own LLM provider key" />
+        <RowLink to="/settings/hevy-import" Icon={DownloadIcon} label="Hevy Import" hint="Import workouts from Hevy" />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"
