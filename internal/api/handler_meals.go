@@ -365,7 +365,8 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 		Text:   body.Text,
 		Kind:   types.MessageText,
 	}
-	if err := h.logger.Handle(r.Context(), msg); err != nil {
+	ctx := h.injectModelOverride(r.Context(), userID)
+	if err := h.logger.Handle(ctx, msg); err != nil {
 		h.writeErr(w, err)
 		return
 	}

@@ -73,7 +73,11 @@ func (e *Engine) Suggest(ctx context.Context, userID string) (types.MealSuggesti
 		Source:     "rules",
 	}
 
-	raw, err := e.model.Complete(ctx, rankPrompt(remaining, combos))
+	model := e.model
+	if override, ok := ports.ModelOverrideFromContext(ctx); ok {
+		model = override
+	}
+	raw, err := model.Complete(ctx, rankPrompt(remaining, combos))
 	if err != nil {
 		// Model unavailable: fall back to the top rule-based candidate.
 		return rulesFallback, nil

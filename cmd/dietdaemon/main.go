@@ -332,7 +332,7 @@ func run() error {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine)
+		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

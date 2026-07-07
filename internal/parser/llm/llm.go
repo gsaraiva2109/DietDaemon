@@ -63,7 +63,11 @@ func (p *Parser) Tier() types.ParserTier { return types.TierLLM }
 // Tier-0 parser so a flaky model never drops a meal.
 func (p *Parser) Extract(ctx context.Context, text, locale string) ([]types.ParsedItem, float64, error) {
 	prompt := fmt.Sprintf(promptTemplate, text)
-	raw, err := p.model.Complete(ctx, prompt)
+	model := p.model
+	if override, ok := ports.ModelOverrideFromContext(ctx); ok {
+		model = override
+	}
+	raw, err := model.Complete(ctx, prompt)
 	if err != nil {
 		// Model unavailable: fall back to deterministic.
 		return p.fallback.Extract(ctx, text, locale)

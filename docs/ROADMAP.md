@@ -41,15 +41,7 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
-6. **Per-user AI API keys (BYOK)** — admin picks instance-wide `AI_KEY_MODE=shared|byok`; in byok
-   mode each user supplies their own Anthropic/OpenAI key instead of the instance's shared
-   `COMPLETION_ADAPTER` credentials. Storage reuses the AES-256-GCM pattern already used for
-   `TOTPEncKey` (new `user_ai_keys` table, own `AI_KEY_ENC_KEY` — distinct from `TOTPEncKey` for
-   domain separation, same `decodeKey()`/encrypt/decrypt code, no new crypto). Engine shifts from
-   one adapter built once at boot to building an adapter per request from the caller's decrypted
-   key — `anthropic.New`/`openai.New` don't dial out at construction, so this is cheap, no
-   pooling needed. Needs a settings command/endpoint for a user to set/clear their own key.
-7. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
+6. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
    `workouts`/`workout_exercises` tables. Hevy has a real REST API (unlike Apple Health/Google
    Fit, see Dropped), so this is the only piece of the old "health platform import/export" idea
    that's actually reachable server-side. Schema is one row per exercise, not per set, so import

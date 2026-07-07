@@ -75,7 +75,8 @@ func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, us
 
 // handleSuggest recommends a next meal from what's left of today's targets.
 func (h *Handler) handleSuggest(w http.ResponseWriter, r *http.Request, userID string) {
-	sug, err := h.suggester.Suggest(r.Context(), userID)
+	ctx := h.injectModelOverride(r.Context(), userID)
+	sug, err := h.suggester.Suggest(ctx, userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
