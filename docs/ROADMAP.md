@@ -41,7 +41,7 @@ sizing/design happens when picked up.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
-7. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
+6. **Hevy workout import** — one-time import of Hevy workout-log history into the existing
    `workouts`/`workout_exercises` tables. Hevy has a real REST API (unlike Apple Health/Google
    Fit, see Dropped), so this is the only piece of the old "health platform import/export" idea
    that's actually reachable server-side. Schema is one row per exercise, not per set, so import
