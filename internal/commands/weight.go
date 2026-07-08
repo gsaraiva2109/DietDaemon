@@ -12,7 +12,7 @@ import (
 
 // WeightStore is the subset of store methods needed by /weight.
 type WeightStore interface {
-	LogWeight(ctx context.Context, entry types.WeightEntry) error
+	LogWeight(ctx context.Context, entry types.WeightEntry) (string, error)
 	WeightTrend(ctx context.Context, userID string, days int) ([]types.WeightTrend, error)
 	ListWeight(ctx context.Context, userID string, limit int) ([]types.WeightEntry, error)
 }
@@ -72,7 +72,7 @@ func (c *WeightCommand) Handle(ctx context.Context, msg types.InboundMessage, ar
 		WeightKg:  kg,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := c.store.LogWeight(ctx, entry); err != nil {
+	if _, err := c.store.LogWeight(ctx, entry); err != nil {
 		return types.Reply{}, fmt.Errorf("log weight: %w", err)
 	}
 

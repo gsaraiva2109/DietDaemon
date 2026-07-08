@@ -77,10 +77,10 @@ type AuthStore interface {
 	ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error)
 
 	// MFA email codes.
-	UpsertMFAEmailCode(ctx context.Context, challengeID, codeHash, expiresAt string) error
-	GetMFAEmailCode(ctx context.Context, challengeID string) (codeHash, expiresAt string, attempts int, err error)
-	IncrementMFAEmailCodeAttempts(ctx context.Context, challengeID string) error
-	DeleteMFAEmailCode(ctx context.Context, challengeID string) error
+	UpsertMFAEmailCode(ctx context.Context, userID, codeHash, expiresAt string) error
+	GetMFAEmailCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error)
+	IncrementMFAEmailCodeAttempts(ctx context.Context, userID string) error
+	DeleteMFAEmailCode(ctx context.Context, userID string) error
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
@@ -138,7 +138,7 @@ type MealStore interface {
 	SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
-	GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
+	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
 
@@ -158,9 +158,12 @@ type MealStore interface {
 	DeleteTemplate(ctx context.Context, userID, templateID string) error
 	LogTemplateUse(ctx context.Context, tl types.TemplateLog) error
 
-	// Body tracking — weight.
+	// Body tracking — weight. LogWeight upserts by (user_id, date) — logging
+	// twice in the same day overwrites the earlier entry — and returns the
+	// persisted row's ID, which may differ from w.ID when an existing entry
+	// was updated instead of a new one inserted.
 	ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error)
-	LogWeight(ctx context.Context, w types.WeightEntry) error
+	LogWeight(ctx context.Context, w types.WeightEntry) (string, error)
 	DeleteWeight(ctx context.Context, userID, entryID string) error
 	WeightTrend(ctx context.Context, userID string, days int) ([]types.WeightTrend, error)
 
@@ -170,9 +173,11 @@ type MealStore interface {
 	EndFast(ctx context.Context, userID, fastID string, endAt time.Time, completed bool) (types.Fast, error)
 	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
 
-	// Body tracking — measurements.
+	// Body tracking — measurements. LogMeasurement upserts by (user_id, date)
+	// — same one-entry-per-day rule as LogWeight — and returns the persisted
+	// row's ID.
 	ListMeasurements(ctx context.Context, userID string, days int) ([]types.MeasurementEntry, error)
-	LogMeasurement(ctx context.Context, m types.MeasurementEntry) error
+	LogMeasurement(ctx context.Context, m types.MeasurementEntry) (string, error)
 	DeleteMeasurement(ctx context.Context, userID, entryID string) error
 
 	// Body tracking — photos.

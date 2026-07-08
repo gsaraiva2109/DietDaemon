@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/jmoiron/sqlx"
@@ -15,70 +15,147 @@ import (
 // Meal templates
 // ---------------------------------------------------------------------------
 
-// SaveTemplate inserts or upserts a meal template.
+// SaveTemplate inserts or upserts a meal template and its items.
 func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
-	itemsJSON, err := json.Marshal(t.Items)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: marshal template items: %w", err)
+		return fmt.Errorf("store: begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
+
 	const q = `
-		INSERT INTO meal_templates (id, user_id, name, items_json, created_at, last_used)
-		VALUES (:id, :user_id, :name, :items_json, :created_at, :last_used)
+		INSERT INTO meal_templates (id, user_id, name, created_at, last_used)
+		VALUES (:id, :user_id, :name, :created_at, :last_used)
 		ON CONFLICT(id) DO UPDATE SET
-			name       = excluded.name,
-			items_json = excluded.items_json,
-			last_used  = excluded.last_used
+			name      = excluded.name,
+			last_used = excluded.last_used
 	`
 	query, args, err := sqlx.Named(q, map[string]any{
-		"id": t.ID, "user_id": t.UserID, "name": t.Name, "items_json": string(itemsJSON),
+		"id": t.ID, "user_id": t.UserID, "name": t.Name,
 		"created_at": utcStr(t.CreatedAt), "last_used": utcStr(t.LastUsed),
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind save template: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
-	return err
+	if _, err = tx.ExecContext(ctx, s.rewrite(query), args...); err != nil {
+		return fmt.Errorf("store: insert template: %w", err)
+	}
+
+	const delQ = `DELETE FROM meal_template_items WHERE template_id = ?`
+	if _, err = tx.ExecContext(ctx, s.rewrite(delQ), t.ID); err != nil {
+		return fmt.Errorf("store: delete template items: %w", err)
+	}
+
+	const itemQ = `
+		INSERT INTO meal_template_items
+			(id, template_id, position, raw_phrase, quantity, unit, normalized_grams,
+			 food_id, food_name, source, match_score,
+			 kcal, protein, carbs, fat, fiber)
+		VALUES (:id, :template_id, :position, :raw_phrase, :quantity, :unit, :normalized_grams,
+			:food_id, :food_name, :source, :match_score,
+			:kcal, :protein, :carbs, :fat, :fiber)
+	`
+	for i, it := range t.Items {
+		itemQuery, itemArgs, err := sqlx.Named(itemQ, templateItemNamedArgs(newID(), t.ID, i, it))
+		if err != nil {
+			return fmt.Errorf("store: bind template item: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, s.rewrite(itemQuery), itemArgs...); err != nil {
+			return fmt.Errorf("store: insert template item: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTemplates returns all templates for a user, newest first.
 func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error) {
 	const q = `
-		SELECT id, user_id, name, items_json, created_at, last_used
+		SELECT id, user_id, name, created_at, last_used
 		FROM meal_templates WHERE user_id = ?
 		ORDER BY created_at DESC
 	`
-	var rows []templateRow
+	var rows []struct {
+		ID        string `db:"id"`
+		UserID    string `db:"user_id"`
+		Name      string `db:"name"`
+		CreatedAt string `db:"created_at"`
+		LastUsed  string `db:"last_used"`
+	}
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: get templates: %w", err)
 	}
+
 	out := make([]types.MealTemplate, 0, len(rows))
+	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
-		t, err := r.toTemplate()
-		if err != nil {
-			return nil, fmt.Errorf("store: unmarshal template items: %w", err)
-		}
-		out = append(out, t)
+		out = append(out, types.MealTemplate{
+			ID: r.ID, UserID: r.UserID, Name: r.Name,
+			CreatedAt: parseUTC(r.CreatedAt), LastUsed: parseUTC(r.LastUsed),
+		})
+		ids = append(ids, r.ID)
 	}
+	if len(out) == 0 {
+		return out, nil
+	}
+
+	itemsByTemplate, err := s.loadTemplateItems(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		items := itemsByTemplate[out[i].ID]
+		if items == nil {
+			items = []types.ResolvedItem{}
+		}
+		out[i].Items = items
+	}
+
 	return out, nil
 }
 
 // GetTemplate returns a single template by ID.
 func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealTemplate, error) {
 	const q = `
-		SELECT id, user_id, name, items_json, created_at, last_used
+		SELECT id, user_id, name, created_at, last_used
 		FROM meal_templates WHERE id = ?
 	`
-	var row templateRow
+	var row struct {
+		ID        string `db:"id"`
+		UserID    string `db:"user_id"`
+		Name      string `db:"name"`
+		CreatedAt string `db:"created_at"`
+		LastUsed  string `db:"last_used"`
+	}
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), templateID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.MealTemplate{}, types.ErrNotFound
 		}
-		return types.MealTemplate{}, err
+		return types.MealTemplate{}, fmt.Errorf("store: get template: %w", err)
 	}
-	t, err := row.toTemplate()
-	if err != nil {
-		return types.MealTemplate{}, fmt.Errorf("store: unmarshal template items: %w", err)
+
+	t := types.MealTemplate{
+		ID: row.ID, UserID: row.UserID, Name: row.Name,
+		CreatedAt: parseUTC(row.CreatedAt), LastUsed: parseUTC(row.LastUsed),
 	}
+
+	const itemQ = `
+		SELECT template_id, raw_phrase, quantity, unit, normalized_grams,
+		       food_id, food_name, source, match_score,
+		       kcal, protein, carbs, fat, fiber
+		FROM meal_template_items
+		WHERE template_id = ?
+		ORDER BY position
+	`
+	var itemRows []templateItemRow
+	if err := s.db.SelectContext(ctx, &itemRows, s.rewrite(itemQ), templateID); err != nil {
+		return types.MealTemplate{}, fmt.Errorf("store: load template items: %w", err)
+	}
+	t.Items = make([]types.ResolvedItem, 0, len(itemRows))
+	for _, ir := range itemRows {
+		t.Items = append(t.Items, ir.toResolvedItem())
+	}
+
 	return t, nil
 }
 
@@ -103,27 +180,97 @@ func (s *Store) LogTemplateUse(ctx context.Context, tl types.TemplateLog) error 
 	return err
 }
 
-// templateRow is the flat DB shape of meal_templates; types.MealTemplate
-// decodes ItemsJSON into Items and parses the RFC3339 timestamp columns.
-type templateRow struct {
-	ID        string `db:"id"`
-	UserID    string `db:"user_id"`
-	Name      string `db:"name"`
-	ItemsJSON string `db:"items_json"`
-	CreatedAt string `db:"created_at"`
-	LastUsed  string `db:"last_used"`
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// templateItemRow is the flat DB shape of meal_template_items.
+type templateItemRow struct {
+	TemplateID      string  `db:"template_id"`
+	RawPhrase       string  `db:"raw_phrase"`
+	Quantity        float64 `db:"quantity"`
+	Unit            string  `db:"unit"`
+	NormalizedGrams float64 `db:"normalized_grams"`
+	FoodID          string  `db:"food_id"`
+	FoodName        string  `db:"food_name"`
+	Source          string  `db:"source"`
+	MatchScore      float64 `db:"match_score"`
+	Kcal            float64 `db:"kcal"`
+	Protein         float64 `db:"protein"`
+	Carbs           float64 `db:"carbs"`
+	Fat             float64 `db:"fat"`
+	Fiber           float64 `db:"fiber"`
 }
 
-func (r templateRow) toTemplate() (types.MealTemplate, error) {
-	t := types.MealTemplate{
-		ID: r.ID, UserID: r.UserID, Name: r.Name,
-		CreatedAt: parseUTC(r.CreatedAt), LastUsed: parseUTC(r.LastUsed),
+func (r templateItemRow) toResolvedItem() types.ResolvedItem {
+	macros := types.Macros{Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber}
+	return types.ResolvedItem{
+		Parsed: types.ParsedItem{
+			RawPhrase: r.RawPhrase, Quantity: r.Quantity, Unit: r.Unit, NormalizedGrams: r.NormalizedGrams,
+		},
+		Match: types.FoodMatch{
+			FoodID: r.FoodID, Name: r.FoodName, Source: r.Source, MatchScore: r.MatchScore,
+			Per100g: macrosPer100g(macros, r.NormalizedGrams),
+		},
+		Macros: macros,
 	}
-	if err := json.Unmarshal([]byte(r.ItemsJSON), &t.Items); err != nil {
-		return types.MealTemplate{}, err
+}
+
+// templateItemNamedArgs builds the named-parameter map for inserting a
+// meal_template_items row.
+func templateItemNamedArgs(id, templateID string, position int, it types.ResolvedItem) map[string]any {
+	return map[string]any{
+		"id":               id,
+		"template_id":      templateID,
+		"position":         position,
+		"raw_phrase":       it.Parsed.RawPhrase,
+		"quantity":         it.Parsed.Quantity,
+		"unit":             it.Parsed.Unit,
+		"normalized_grams": it.Parsed.NormalizedGrams,
+		"food_id":          it.Match.FoodID,
+		"food_name":        it.Match.Name,
+		"source":           it.Match.Source,
+		"match_score":      it.Match.MatchScore,
+		"kcal":             it.Macros.Calories,
+		"protein":          it.Macros.Protein,
+		"carbs":            it.Macros.Carbs,
+		"fat":              it.Macros.Fat,
+		"fiber":            it.Macros.Fiber,
 	}
-	if t.Items == nil {
-		t.Items = []types.ResolvedItem{}
+}
+
+// loadTemplateItems fetches all meal_template_items for the given template IDs,
+// grouped by template_id.
+func (s *Store) loadTemplateItems(ctx context.Context, templateIDs []string) (map[string][]types.ResolvedItem, error) {
+	if len(templateIDs) == 0 {
+		return nil, nil
 	}
-	return t, nil
+
+	placeholders := make([]string, len(templateIDs))
+	args := make([]any, len(templateIDs))
+	for i, id := range templateIDs {
+		placeholders[i] = s.dialect.Placeholder(i + 1)
+		args[i] = id
+	}
+
+	// #nosec G201 -- placeholder expansion is ? only, values are args
+	q := fmt.Sprintf(`
+		SELECT template_id, raw_phrase, quantity, unit, normalized_grams,
+		       food_id, food_name, source, match_score,
+		       kcal, protein, carbs, fat, fiber
+		FROM meal_template_items
+		WHERE template_id IN (%s)
+		ORDER BY template_id, position
+	`, strings.Join(placeholders, ","))
+
+	var rows []templateItemRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
+		return nil, fmt.Errorf("store: query template items: %w", err)
+	}
+
+	out := make(map[string][]types.ResolvedItem)
+	for _, r := range rows {
+		out[r.TemplateID] = append(out[r.TemplateID], r.toResolvedItem())
+	}
+	return out, nil
 }

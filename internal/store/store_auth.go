@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -80,7 +81,7 @@ func (s *Store) CreateUserWithPassword(ctx context.Context, accountID, userID, e
 // GetUserByEmail returns the user for a given lowercase email. Returns
 // types.ErrNotFound when no user matches.
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle
 		FROM users WHERE email = ?`
 	row := s.db.QueryRowContext(ctx, q, email)
 	u, err := scanUser(row)
@@ -145,7 +146,7 @@ func (s *Store) GetUserByAPIKey(ctx context.Context, hashedKey string) (types.Us
 	// Touch last_used_at.
 	_, _ = tx.ExecContext(ctx, `UPDATE api_keys SET last_used_at = ? WHERE hashed_key = ?`, utcNow(), hashedKey)
 
-	const userQ = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
+	const userQ = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle
 		FROM users WHERE id = ?`
 	row := tx.QueryRowContext(ctx, userQ, userID)
 	u, err := scanUser(row)
@@ -418,37 +419,41 @@ func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, hash string) (b
 	return true, tx.Commit()
 }
 
-// --- MFA challenges ---
+// --- MFA challenges (stored in auth_challenges with kind='mfa') ---
 
-// CreateMFAChallenge inserts a hashed MFA challenge token.
+// CreateMFAChallenge inserts a new MFA challenge row. The remember flag is
+// serialised into the JSON payload column.
 func (s *Store) CreateMFAChallenge(ctx context.Context, id, userID string, remember bool, expiresAt string) error {
-	rem := 0
-	if remember {
-		rem = 1
-	}
-	const q = `INSERT INTO mfa_challenges (id, user_id, remember, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, id, userID, rem, expiresAt, utcNow())
+	payload, _ := json.Marshal(map[string]bool{"remember": remember})
+	const q = `INSERT INTO auth_challenges (id, user_id, kind, payload_json, expires_at, created_at)
+		VALUES (?, ?, 'mfa', ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, string(payload), expiresAt, utcNow())
 	return err
 }
 
 // GetMFAChallenge retrieves a challenge by its hashed token ID.
 // Returns types.ErrNotFound when the challenge does not exist.
 func (s *Store) GetMFAChallenge(ctx context.Context, id string) (userID string, remember bool, expiresAt string, err error) {
-	const q = `SELECT user_id, remember, expires_at FROM mfa_challenges WHERE id = ?`
+	const q = `SELECT user_id, payload_json, expires_at FROM auth_challenges WHERE id = ? AND kind = 'mfa'`
 	row := s.db.QueryRowContext(ctx, q, id)
-	var rem int
-	if err := row.Scan(&userID, &rem, &expiresAt); err == sql.ErrNoRows {
+	var payload string
+	if err := row.Scan(&userID, &payload, &expiresAt); err == sql.ErrNoRows {
 		return "", false, "", types.ErrNotFound
 	} else if err != nil {
 		return "", false, "", fmt.Errorf("store: get mfa challenge: %w", err)
 	}
-	return userID, rem != 0, expiresAt, nil
+	var data struct {
+		Remember bool `json:"remember"`
+	}
+	if json.Unmarshal([]byte(payload), &data) == nil {
+		remember = data.Remember
+	}
+	return userID, remember, expiresAt, nil
 }
 
 // DeleteMFAChallenge removes a challenge by its hashed token ID.
 func (s *Store) DeleteMFAChallenge(ctx context.Context, id string) error {
-	const q = `DELETE FROM mfa_challenges WHERE id = ?`
+	const q = `DELETE FROM auth_challenges WHERE id = ?`
 	_, err := s.db.ExecContext(ctx, q, id)
 	return err
 }
@@ -458,7 +463,7 @@ func (s *Store) DeleteMFAChallenge(ctx context.Context, id string) error {
 // GetUserByOIDCIdentity returns the user linked to a provider+subject pair.
 // Returns types.ErrNotFound when no matching identity exists.
 func (s *Store) GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error) {
-	const q = `SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.created_at, u.webauthn_handle
+	const q = `SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.locale, u.created_at, u.webauthn_handle
 		FROM oidc_identities oi JOIN users u ON u.id = oi.user_id
 		WHERE oi.provider = ? AND oi.subject = ?`
 	row := s.db.QueryRowContext(ctx, q, provider, subject)
@@ -642,7 +647,11 @@ func (s *Store) DeleteOIDCState(ctx context.Context, id string) error {
 	return err
 }
 
-// --- Email tokens ---
+// --- Email tokens (stored in auth_verification_codes) ---
+
+// ponytail: Old auth_email_tokens had no UNIQUE; merged auth_verification_codes
+// enforces UNIQUE(user_id, purpose). Requesting a second code for the same
+// purpose replaces the outstanding one (ON CONFLICT DO UPDATE).
 
 // MarkEmailVerified sets email_verified_at to now for the user.
 func (s *Store) MarkEmailVerified(ctx context.Context, userID string) error {
@@ -659,11 +668,15 @@ func (s *Store) UpdateUserEmail(ctx context.Context, userID, email string) error
 	return err
 }
 
-// CreateEmailToken persists a single-use email token (hashed id).
+// CreateEmailToken persists a single-use email token. The caller-provided id is
+// already a SHA-256 hash. ON CONFLICT replaces any outstanding token for the
+// same (user_id, purpose) — requesting a second code invalidates the first.
 func (s *Store) CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error {
-	const q = `INSERT INTO auth_email_tokens (id, user_id, purpose, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, id, userID, purpose, expiresAt, utcNow())
+	const q = `INSERT INTO auth_verification_codes (id, user_id, purpose, code_hash, attempts, expires_at, created_at)
+		VALUES (?, ?, ?, ?, 0, ?, ?)
+		ON CONFLICT(user_id, purpose) DO UPDATE SET id = excluded.id, code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
+	// code_hash is set to id (both are the SHA-256 hash of the raw token).
+	_, err := s.db.ExecContext(ctx, q, id, userID, purpose, id, expiresAt, utcNow())
 	return err
 }
 
@@ -677,35 +690,30 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, id, purpose string) (user
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var expiresAt string
-	const q = `SELECT user_id, expires_at FROM auth_email_tokens WHERE id = ?`
+	var storedPurpose, expiresAt string
+	const q = `SELECT user_id, purpose, expires_at FROM auth_verification_codes WHERE id = ?`
 	row := tx.QueryRowContext(ctx, q, id)
-	if scanErr := row.Scan(&userID, &expiresAt); scanErr == sql.ErrNoRows {
+	if scanErr := row.Scan(&userID, &storedPurpose, &expiresAt); scanErr == sql.ErrNoRows {
 		return "", types.ErrNotFound
 	} else if scanErr != nil {
 		return "", fmt.Errorf("store: scan email token: %w", scanErr)
+	}
+
+	// Verify purpose matches.
+	if storedPurpose != purpose {
+		return "", types.ErrNotFound
 	}
 
 	// Check expiry.
 	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
 	if parseErr != nil || time.Now().UTC().After(exp) {
 		// Delete expired token.
-		_, _ = tx.ExecContext(ctx, `DELETE FROM auth_email_tokens WHERE id = ?`, id)
+		_, _ = tx.ExecContext(ctx, `DELETE FROM auth_verification_codes WHERE id = ?`, id)
 		_ = tx.Commit()
 		return "", types.ErrNotFound
 	}
 
-	// Verify purpose matches.
-	var rowPurpose string
-	if scanErr := tx.QueryRowContext(ctx, `SELECT purpose FROM auth_email_tokens WHERE id = ?`, id).Scan(&rowPurpose); scanErr != nil {
-		_ = tx.Commit()
-		return "", types.ErrNotFound
-	}
-	if rowPurpose != purpose {
-		return "", types.ErrNotFound
-	}
-
-	if _, delErr := tx.ExecContext(ctx, `DELETE FROM auth_email_tokens WHERE id = ?`, id); delErr != nil {
+	if _, delErr := tx.ExecContext(ctx, `DELETE FROM auth_verification_codes WHERE id = ?`, id); delErr != nil {
 		return "", fmt.Errorf("store: delete email token: %w", delErr)
 	}
 
@@ -719,26 +727,27 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, id, purpose string) (user
 // DeleteEmailTokensByUserAndPurpose removes all email tokens for a user+purpose
 // combination. Used to clean up sibling credentials on successful magic sign-in.
 func (s *Store) DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error {
-	const q = `DELETE FROM auth_email_tokens WHERE user_id = ? AND purpose = ?`
+	const q = `DELETE FROM auth_verification_codes WHERE user_id = ? AND purpose = ?`
 	_, err := s.db.ExecContext(ctx, q, userID, purpose)
 	return err
 }
 
-// --- Magic codes ---
+// --- Magic codes (stored in auth_verification_codes with purpose='magic_signin') ---
 
 // UpsertMagicCode inserts or replaces the active magic code for a user.
-// One active code per user (user_id PK); resend overwrites.
+// One active code per user (UNIQUE(user_id, purpose='magic_signin')); resend
+// overwrites.
 func (s *Store) UpsertMagicCode(ctx context.Context, userID, codeHash, expiresAt string) error {
-	const q = `INSERT INTO auth_magic_codes (user_id, code_hash, expires_at, attempts, created_at)
-		VALUES (?, ?, ?, 0, ?)
-		ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
-	_, err := s.db.ExecContext(ctx, q, userID, codeHash, expiresAt, utcNow())
+	const q = `INSERT INTO auth_verification_codes (id, user_id, purpose, code_hash, attempts, expires_at, created_at)
+		VALUES (?, ?, 'magic_signin', ?, 0, ?, ?)
+		ON CONFLICT(user_id, purpose) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
+	_, err := s.db.ExecContext(ctx, q, newID(), userID, codeHash, expiresAt, utcNow())
 	return err
 }
 
 // GetMagicCode returns the stored magic code info for a user, or types.ErrNotFound.
 func (s *Store) GetMagicCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error) {
-	const q = `SELECT code_hash, expires_at, attempts FROM auth_magic_codes WHERE user_id = ?`
+	const q = `SELECT code_hash, expires_at, attempts FROM auth_verification_codes WHERE user_id = ? AND purpose = 'magic_signin'`
 	row := s.db.QueryRowContext(ctx, q, userID)
 	if scanErr := row.Scan(&codeHash, &expiresAt, &attempts); scanErr == sql.ErrNoRows {
 		return "", "", 0, types.ErrNotFound
@@ -750,7 +759,7 @@ func (s *Store) GetMagicCode(ctx context.Context, userID string) (codeHash, expi
 
 // IncrementMagicCodeAttempts bumps the attempt counter for an active code.
 func (s *Store) IncrementMagicCodeAttempts(ctx context.Context, userID string) error {
-	const q = `UPDATE auth_magic_codes SET attempts = attempts + 1 WHERE user_id = ?`
+	const q = `UPDATE auth_verification_codes SET attempts = attempts + 1 WHERE user_id = ? AND purpose = 'magic_signin'`
 	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
@@ -758,7 +767,7 @@ func (s *Store) IncrementMagicCodeAttempts(ctx context.Context, userID string) e
 // DeleteMagicCode removes the active magic code for a user (consume on success,
 // clear on expiry/cap).
 func (s *Store) DeleteMagicCode(ctx context.Context, userID string) error {
-	const q = `DELETE FROM auth_magic_codes WHERE user_id = ?`
+	const q = `DELETE FROM auth_verification_codes WHERE user_id = ? AND purpose = 'magic_signin'`
 	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
@@ -795,7 +804,7 @@ func (s *Store) GetOrCreateWebAuthnHandle(ctx context.Context, userID string) (s
 // GetUserByWebAuthnHandle returns the user for a given webauthn handle (used in
 // discoverable login to resolve the user from the authenticator response).
 func (s *Store) GetUserByWebAuthnHandle(ctx context.Context, handle string) (types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle
 		FROM users WHERE webauthn_handle = ?`
 	row := s.db.QueryRowContext(ctx, q, handle)
 	u, err := scanUser(row)
@@ -892,13 +901,13 @@ func (s *Store) DeleteWebAuthnCredential(ctx context.Context, userID, id string)
 	return nil
 }
 
-// --- WebAuthn ceremony sessions ---
+// --- WebAuthn ceremony sessions (stored in auth_challenges with kind='webauthn_ceremony') ---
 
 // CreateWebAuthnSession persists a go-webauthn SessionData. userID may be ""
 // for discoverable login (the user is not yet known).
 func (s *Store) CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error {
-	const q = `INSERT INTO webauthn_sessions (id, user_id, session_data, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?)`
+	const q = `INSERT INTO auth_challenges (id, user_id, kind, payload_json, expires_at, created_at)
+		VALUES (?, ?, 'webauthn_ceremony', ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, q, id, nullStr(userID), sessionDataJSON, expiresAt, utcNow())
 	return err
 }
@@ -914,7 +923,7 @@ func (s *Store) ConsumeWebAuthnSession(ctx context.Context, id string) (userID, 
 	defer func() { _ = tx.Rollback() }()
 
 	var uid sql.NullString
-	const q = `SELECT user_id, session_data, expires_at FROM webauthn_sessions WHERE id = ?`
+	const q = `SELECT user_id, payload_json, expires_at FROM auth_challenges WHERE id = ? AND kind = 'webauthn_ceremony'`
 	row := tx.QueryRowContext(ctx, q, id)
 	var expiresAt string
 	if scanErr := row.Scan(&uid, &sessionDataJSON, &expiresAt); scanErr == sql.ErrNoRows {
@@ -930,7 +939,7 @@ func (s *Store) ConsumeWebAuthnSession(ctx context.Context, id string) (userID, 
 		return "", "", types.ErrNotFound
 	}
 
-	if _, delErr := tx.ExecContext(ctx, `DELETE FROM webauthn_sessions WHERE id = ?`, id); delErr != nil {
+	if _, delErr := tx.ExecContext(ctx, `DELETE FROM auth_challenges WHERE id = ?`, id); delErr != nil {
 		return "", "", fmt.Errorf("store: delete webauthn session: %w", delErr)
 	}
 
@@ -944,22 +953,26 @@ func (s *Store) ConsumeWebAuthnSession(ctx context.Context, id string) (userID, 
 	return userID, sessionDataJSON, nil
 }
 
-// --- MFA email codes ---
+// --- MFA email codes (stored in auth_verification_codes with purpose='mfa_email') ---
 
-// UpsertMFAEmailCode inserts or replaces the active email code for an MFA challenge.
-// One active code per challenge (challenge_id PK); resend overwrites.
-func (s *Store) UpsertMFAEmailCode(ctx context.Context, challengeID, codeHash, expiresAt string) error {
-	const q = `INSERT INTO mfa_email_codes (challenge_id, code_hash, expires_at, attempts, created_at)
-		VALUES (?, ?, ?, 0, ?)
-		ON CONFLICT(challenge_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
-	_, err := s.db.ExecContext(ctx, q, challengeID, codeHash, expiresAt, utcNow())
+// ponytail: Old mfa_email_codes was keyed by challenge_id; merged
+// auth_verification_codes keys by (user_id, purpose). The caller already has
+// the real userID from GetMFAChallenge. UNIQUE(user_id, purpose) guarantees
+// one active code per user.
+
+// UpsertMFAEmailCode inserts or replaces the active email code for an MFA step-up.
+func (s *Store) UpsertMFAEmailCode(ctx context.Context, userID, codeHash, expiresAt string) error {
+	const q = `INSERT INTO auth_verification_codes (id, user_id, purpose, code_hash, attempts, expires_at, created_at)
+		VALUES (?, ?, 'mfa_email', ?, 0, ?, ?)
+		ON CONFLICT(user_id, purpose) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at`
+	_, err := s.db.ExecContext(ctx, q, newID(), userID, codeHash, expiresAt, utcNow())
 	return err
 }
 
-// GetMFAEmailCode returns the stored email code info for a challenge, or types.ErrNotFound.
-func (s *Store) GetMFAEmailCode(ctx context.Context, challengeID string) (codeHash, expiresAt string, attempts int, err error) {
-	const q = `SELECT code_hash, expires_at, attempts FROM mfa_email_codes WHERE challenge_id = ?`
-	row := s.db.QueryRowContext(ctx, q, challengeID)
+// GetMFAEmailCode returns the stored email code info for a user, or types.ErrNotFound.
+func (s *Store) GetMFAEmailCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error) {
+	const q = `SELECT code_hash, expires_at, attempts FROM auth_verification_codes WHERE user_id = ? AND purpose = 'mfa_email'`
+	row := s.db.QueryRowContext(ctx, q, userID)
 	if scanErr := row.Scan(&codeHash, &expiresAt, &attempts); scanErr == sql.ErrNoRows {
 		return "", "", 0, types.ErrNotFound
 	} else if scanErr != nil {
@@ -969,16 +982,16 @@ func (s *Store) GetMFAEmailCode(ctx context.Context, challengeID string) (codeHa
 }
 
 // IncrementMFAEmailCodeAttempts bumps the attempt counter for an active code.
-func (s *Store) IncrementMFAEmailCodeAttempts(ctx context.Context, challengeID string) error {
-	const q = `UPDATE mfa_email_codes SET attempts = attempts + 1 WHERE challenge_id = ?`
-	_, err := s.db.ExecContext(ctx, q, challengeID)
+func (s *Store) IncrementMFAEmailCodeAttempts(ctx context.Context, userID string) error {
+	const q = `UPDATE auth_verification_codes SET attempts = attempts + 1 WHERE user_id = ? AND purpose = 'mfa_email'`
+	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
 
-// DeleteMFAEmailCode removes the active email code for a challenge.
-func (s *Store) DeleteMFAEmailCode(ctx context.Context, challengeID string) error {
-	const q = `DELETE FROM mfa_email_codes WHERE challenge_id = ?`
-	_, err := s.db.ExecContext(ctx, q, challengeID)
+// DeleteMFAEmailCode removes the active email code for a user.
+func (s *Store) DeleteMFAEmailCode(ctx context.Context, userID string) error {
+	const q = `DELETE FROM auth_verification_codes WHERE user_id = ? AND purpose = 'mfa_email'`
+	_, err := s.db.ExecContext(ctx, q, userID)
 	return err
 }
 

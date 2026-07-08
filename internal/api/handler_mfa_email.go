@@ -69,7 +69,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	codeHash := auth.HashToken(code)
 	codeExpiresAt := time.Now().UTC().Add(mfaEmailTTL).Format(time.RFC3339)
 
-	if err := h.authStore.UpsertMFAEmailCode(ctx, challengeID, codeHash, codeExpiresAt); err != nil {
+	if err := h.authStore.UpsertMFAEmailCode(ctx, chUserID, codeHash, codeExpiresAt); err != nil {
 		h.writeErr(w, err)
 		return
 	}
@@ -122,13 +122,13 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	chExp, parseErr := time.Parse(time.RFC3339, chExpiresAt)
 	if parseErr != nil || time.Now().UTC().After(chExp) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
-		_ = h.authStore.DeleteMFAEmailCode(ctx, challengeID)
+		_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
 		return
 	}
 
-	storedHash, codeExpiresAt, attempts, err := h.authStore.GetMFAEmailCode(ctx, challengeID)
+	storedHash, codeExpiresAt, attempts, err := h.authStore.GetMFAEmailCode(ctx, chUserID)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no code requested"})
@@ -137,7 +137,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 
 	codeExp, parseErr := time.Parse(time.RFC3339, codeExpiresAt)
 	if parseErr != nil || time.Now().UTC().After(codeExp) || attempts >= mfaEmailMaxAttempts {
-		_ = h.authStore.DeleteMFAEmailCode(ctx, challengeID)
+		_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
@@ -147,7 +147,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	// Constant-time compare.
 	inputHash := auth.HashToken(body.Code)
 	if subtle.ConstantTimeCompare([]byte(inputHash), []byte(storedHash)) != 1 {
-		_ = h.authStore.IncrementMFAEmailCodeAttempts(ctx, challengeID)
+		_ = h.authStore.IncrementMFAEmailCodeAttempts(ctx, chUserID)
 		ua := r.UserAgent()
 		h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad email code")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -156,7 +156,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Success — consume code and challenge.
-	_ = h.authStore.DeleteMFAEmailCode(ctx, challengeID)
+	_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, r.UserAgent(), h.sessionCfg)

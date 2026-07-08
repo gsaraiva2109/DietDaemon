@@ -32,18 +32,25 @@ func (s *Store) ListWeight(ctx context.Context, userID string, days int) ([]type
 	return out, nil
 }
 
-// LogWeight inserts or updates a weight entry.
-func (s *Store) LogWeight(ctx context.Context, w types.WeightEntry) error {
+// LogWeight inserts or updates a weight entry, upserting on (user_id, date):
+// one entry per user per day, so logging again the same day overwrites the
+// existing entry instead of creating a second row. Returns the persisted
+// row's ID — callers must use this, not w.ID, since an overwrite keeps the
+// original row's ID rather than adopting w.ID.
+func (s *Store) LogWeight(ctx context.Context, w types.WeightEntry) (string, error) {
 	const q = `
 		INSERT INTO weight_log (id, user_id, date, weight_kg, note, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			date      = excluded.date,
+		ON CONFLICT(user_id, date) DO UPDATE SET
 			weight_kg = excluded.weight_kg,
 			note      = excluded.note
+		RETURNING id
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), w.ID, w.UserID, w.Date, w.WeightKg, w.Note, utcStr(w.CreatedAt))
-	return err
+	var id string
+	if err := s.db.GetContext(ctx, &id, s.rewrite(q), w.ID, w.UserID, w.Date, w.WeightKg, w.Note, utcStr(w.CreatedAt)); err != nil {
+		return "", fmt.Errorf("store: log weight: %w", err)
+	}
+	return id, nil
 }
 
 // DeleteWeight deletes a weight entry by user + ID. Returns ErrNotFound if absent.

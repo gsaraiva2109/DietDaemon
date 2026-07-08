@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/jmoiron/sqlx"
@@ -18,11 +19,19 @@ import (
 // UpsertUser inserts or updates a user row. New auth columns are set via
 // separate auth-dedicated methods (CreateUserWithPassword); this method
 // preserves the existing id/timezone/created_at contract for the pipeline.
+// When AccountID is empty it defaults to ID (1:1 mapping).
 func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
+	if u.AccountID == "" {
+		u.AccountID = u.ID
+	}
+	// Ensure the accounts row exists before inserting the user (FK constraint).
+	if _, err := s.db.ExecContext(ctx, s.rewrite(`INSERT INTO accounts (id) VALUES (?) ON CONFLICT DO NOTHING`), u.AccountID); err != nil {
+		return fmt.Errorf("store: ensure account: %w", err)
+	}
 	const q = `
-		INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, created_at)
-		VALUES (:id, :account_id, :email, :email_verified_at, :status, :display_name, :timezone, :created_at)
-		ON CONFLICT(id) DO UPDATE SET timezone = excluded.timezone
+		INSERT INTO users (id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at)
+		VALUES (:id, :account_id, :email, :email_verified_at, :status, :display_name, :timezone, :locale, :created_at)
+		ON CONFLICT(id) DO UPDATE SET timezone = excluded.timezone, locale = excluded.locale
 	`
 	var emailVerifiedAt any
 	if u.EmailVerifiedAt != nil {
@@ -30,12 +39,13 @@ func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 	}
 	query, args, err := sqlx.Named(q, map[string]any{
 		"id":                u.ID,
-		"account_id":        nullStr(u.AccountID),
+		"account_id":        u.AccountID,
 		"email":             nullStr(u.Email),
 		"email_verified_at": emailVerifiedAt,
 		"status":            u.Status,
 		"display_name":      nullStr(u.DisplayName),
 		"timezone":          u.Timezone,
+		"locale":            u.Locale,
 		"created_at":        utcStr(u.CreatedAt),
 	})
 	if err != nil {
@@ -47,7 +57,7 @@ func (s *Store) UpsertUser(ctx context.Context, u types.User) error {
 
 // GetUser returns the user or types.ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users WHERE id = ?`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle FROM users WHERE id = ?`
 	var row userRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -60,7 +70,7 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, created_at, webauthn_handle FROM users ORDER BY id`
+	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle FROM users ORDER BY id`
 	var rows []userRow
 	if err := s.db.SelectContext(ctx, &rows, q); err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
@@ -83,6 +93,7 @@ type userRow struct {
 	Status          sql.NullString `db:"status"`
 	DisplayName     sql.NullString `db:"display_name"`
 	Timezone        string         `db:"timezone"`
+	Locale          string         `db:"locale"`
 	CreatedAt       string         `db:"created_at"`
 	WebAuthnHandle  sql.NullString `db:"webauthn_handle"`
 }
@@ -95,11 +106,13 @@ func (r userRow) toUser() types.User {
 		DisplayName:    r.DisplayName.String,
 		Status:         r.Status.String,
 		Timezone:       r.Timezone,
+		Locale:         r.Locale,
 		CreatedAt:      parseUTC(r.CreatedAt),
 		WebAuthnHandle: r.WebAuthnHandle.String,
 	}
 	if r.EmailVerifiedAt.Valid {
-		u.EmailVerifiedAt = new(parseUTC(r.EmailVerifiedAt.String))
+		u.EmailVerifiedAt = new(time.Time)
+		*u.EmailVerifiedAt = parseUTC(r.EmailVerifiedAt.String)
 	}
 	if !r.Status.Valid {
 		u.Status = "active"

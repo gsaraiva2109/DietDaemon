@@ -55,8 +55,10 @@ func TestOIDCStateLinkFlow(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
-	id := "link-state"
 	linkUserID := "user-42"
+	mustUser(t, s, types.User{ID: linkUserID})
+
+	id := "link-state"
 	expiresAt := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339)
 
 	if err := s.CreateOIDCState(ctx(), id, "nonce", "verifier", linkUserID, "", expiresAt); err != nil {

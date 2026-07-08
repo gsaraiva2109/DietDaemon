@@ -72,7 +72,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 
 	expiresAt := time.Now().UTC().Add(magicTTL).Format(time.RFC3339)
 
-	// Generate and persist magic link token (reuses auth_email_tokens).
+	// Generate and persist magic link token (reuses auth_verification_codes).
 	linkToken := auth.NewToken()
 	linkHash := auth.HashToken(linkToken)
 	if err := h.authStore.CreateEmailToken(ctx, linkHash, u.ID, "magic_link", expiresAt); err != nil {

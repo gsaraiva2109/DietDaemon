@@ -41,6 +41,24 @@ func pendingSQLite(t *testing.T) (ports.PendingStore, func()) {
 		t.Fatalf("New(%q): %v", path, err)
 	}
 
+	// pending_state references users(id) which references accounts(id) —
+	// both must exist for every user_id the contract tests will reference.
+	db := st.DB()
+	ctx := context.Background()
+	for _, uid := range []string{"u1"} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO accounts (id) VALUES (?) ON CONFLICT DO NOTHING`, uid,
+		); err != nil {
+			t.Fatalf("insert test account: %v", err)
+		}
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO users (id, account_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+			uid, uid,
+		); err != nil {
+			t.Fatalf("insert test user: %v", err)
+		}
+	}
+
 	s := pendingstore.New(st.DB(), time.Hour)
 	return s, func() {
 		st.Close()

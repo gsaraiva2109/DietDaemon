@@ -104,112 +104,42 @@ func (s *Store) runMigrations() error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	// Run the migration loop up to twice. A second pass is only needed
-	// when a legacy "mark all as applied" bug recorded migrations that
-	// never actually ran — the first pass detects the inconsistency,
-	// removes the bogus tracking entries, and the second pass applies
-	// them for real.
-	for pass := range 2 {
-		applied := 0
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-				continue
-			}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
 
-			var already int
-			if err := s.db.Get(&already, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()); err != nil {
-				return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-			}
-			if already > 0 {
-				continue
-			}
+		var already int
+		if err := s.db.Get(&already, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()); err != nil {
+			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
+		}
+		if already > 0 {
+			continue
+		}
 
-			content, err := migrations.FS(s.driver).ReadFile(s.driver + "/" + entry.Name())
-			if err != nil {
-				return fmt.Errorf("read %s: %w", entry.Name(), err)
-			}
-			if _, err := s.db.Exec(s.rewrite(string(content))); err != nil {
-				// Idempotency: databases that predate migration tracking may
-				// already have tables/columns/indexes from manual or older
-				// migration paths. Treat "already exists" errors as success
-				// so the migration is tracked and skipped on next start.
-				if isBenignMigrationErr(err) {
-					if _, recErr := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); recErr != nil {
-						return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
-					}
-					continue
+		content, err := migrations.FS(s.driver).ReadFile(s.driver + "/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("read %s: %w", entry.Name(), err)
+		}
+		if _, err := s.db.Exec(s.rewrite(string(content))); err != nil {
+			// Idempotency: databases that predate migration tracking may
+			// already have tables/columns/indexes from manual or older
+			// migration paths. Treat "already exists" errors as success
+			// so the migration is tracked and skipped on next start.
+			if isBenignMigrationErr(err) {
+				if _, recErr := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); recErr != nil {
+					return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
 				}
-				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+				continue
 			}
-			if _, err := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); err != nil {
-				return fmt.Errorf("record migration %s: %w", entry.Name(), err)
-			}
-			applied++
+			return fmt.Errorf("exec %s: %w", entry.Name(), err)
 		}
-
-		// Self-heal: detect migrations that were tracked as applied by a
-		// buggy legacy path but whose DDL effects are actually missing.
-		// If found, delete the bogus entries so the next pass applies them.
-		if applied == 0 && pass == 0 {
-			if healed := s.healMissingColumns(); healed > 0 {
-				continue // re-run loop with cleaned tracking
-			}
+		if _, err := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); err != nil {
+			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 		}
-		break
 	}
 
 	return nil
-}
-
-// healMissingColumns detects migrations that are tracked as applied in
-// schema_migrations but whose key columns never materialised (legacy
-// "mark all as applied" bug). It removes the bogus tracking entries so
-// the next migration pass runs them for real.
-func (s *Store) healMissingColumns() int {
-	// healMissingColumns is a SQLite-only legacy fix. Postgres databases don't
-	// have the "mark all as applied" bug this addresses.
-	if s.driver != "sqlite" {
-		return 0
-	}
-	checks := []struct {
-		migration string
-		table     string
-		column    string
-	}{
-		// 006_food_metadata adds category, brand, barcode + more to food_library.
-		{"006_food_metadata.sql", "food_library", "category"},
-		// 008_body_tracking adds weight_log, measurement_log, progress_photos.
-		{"008_body_tracking.sql", "weight_log", "id"},
-		// 009_user_profile adds the user_profiles table.
-		{"009_user_profile.sql", "user_profiles", "user_id"},
-		// 011_auth_foundation adds account_id, email, status + more to users.
-		{"011_auth_foundation.sql", "users", "account_id"},
-		// 012_totp adds totp_secrets, recovery_codes.
-		{"012_totp.sql", "totp_secrets", "user_id"},
-	}
-	healed := 0
-	for _, c := range checks {
-		var tracked int
-		if err := s.db.Get(&tracked, `SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, c.migration); err != nil {
-			continue
-		}
-		if tracked == 0 {
-			continue
-		}
-		// Check if the column/table actually exists.
-		var exists int
-		if err := s.db.Get(&exists, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column); err != nil {
-			// Table might not exist either — that's also a sign of missing migration.
-			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
-			healed++
-			continue
-		}
-		if exists == 0 {
-			_, _ = s.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, c.migration)
-			healed++
-		}
-	}
-	return healed
 }
 
 // isBenignMigrationErr returns true when err indicates the DDL/DML operation

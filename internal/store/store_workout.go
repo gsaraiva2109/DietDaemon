@@ -39,16 +39,16 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 	}
 
 	const exerciseQ = `
-		INSERT INTO workout_exercises (id, workout_id, name, sets, reps, weight_kg, note)
-		VALUES (:id, :workout_id, :name, :sets, :reps, :weight_kg, :note)
+		INSERT INTO workout_exercises (id, workout_id, position, name, sets, reps, weight_kg, note)
+		VALUES (:id, :workout_id, :position, :name, :sets, :reps, :weight_kg, :note)
 	`
-	for _, e := range w.Exercises {
+	for i, e := range w.Exercises {
 		exID := e.ID
 		if exID == "" {
 			exID = newID()
 		}
 		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
-			"id": exID, "workout_id": w.ID, "name": e.Name,
+			"id": exID, "workout_id": w.ID, "position": i, "name": e.Name,
 			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
 		})
 		if err != nil {
@@ -122,7 +122,7 @@ func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endD
 	const q = `
 		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, '') AS note, logged_at
 		FROM workouts
-		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
+		WHERE user_id = ? AND logged_date >= ? AND logged_date <= ?
 		ORDER BY logged_at DESC
 	`
 	var out []types.Workout
@@ -137,7 +137,7 @@ func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]t
 		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '') AS note
 		FROM workout_exercises
 		WHERE workout_id = ?
-		ORDER BY rowid
+		ORDER BY position
 	`
 	var out []types.WorkoutExercise
 	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), workoutID); err != nil {
@@ -177,16 +177,16 @@ func (s *Store) ImportWorkout(ctx context.Context, w types.Workout) error {
 	}
 
 	const exerciseQ = `
-		INSERT INTO workout_exercises (id, workout_id, name, sets, reps, weight_kg, note)
-		VALUES (:id, :workout_id, :name, :sets, :reps, :weight_kg, :note)
+		INSERT INTO workout_exercises (id, workout_id, position, name, sets, reps, weight_kg, note)
+		VALUES (:id, :workout_id, :position, :name, :sets, :reps, :weight_kg, :note)
 	`
-	for _, e := range w.Exercises {
+	for i, e := range w.Exercises {
 		exID := e.ID
 		if exID == "" {
 			exID = newID()
 		}
 		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
-			"id": exID, "workout_id": w.ID, "name": e.Name,
+			"id": exID, "workout_id": w.ID, "position": i, "name": e.Name,
 			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
 		})
 		if err != nil {

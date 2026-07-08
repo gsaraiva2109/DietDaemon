@@ -41,7 +41,7 @@ type stubStore struct {
 func (s *stubStore) LookupFood(_ context.Context, _, _ string) (types.FoodMatch, error) {
 	return types.FoodMatch{}, types.ErrNoMatch
 }
-func (s *stubStore) GetFood(_ context.Context, _, foodID string) (types.FoodMatch, error) {
+func (s *stubStore) GetFood(_ context.Context, foodID string) (types.FoodMatch, error) {
 	if fm, ok := s.foods[foodID]; ok {
 		return fm, nil
 	}
@@ -67,11 +67,9 @@ func openTestDB(t *testing.T) *sql.DB {
 
 	const q = `
 		CREATE TABLE IF NOT EXISTS food_vectors (
-			user_id TEXT NOT NULL,
-			food_id TEXT NOT NULL,
+			food_id TEXT PRIMARY KEY,
 			dim     INTEGER NOT NULL,
-			vec     BLOB NOT NULL,
-			PRIMARY KEY (user_id, food_id)
+			vec     BLOB NOT NULL
 		);
 	`
 	if _, err := db.Exec(q); err != nil {
@@ -93,7 +91,7 @@ func TestMatchAboveThreshold(t *testing.T) {
 		"chicken-1": {FoodID: "chicken-1", Name: "Chicken Breast", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}},
 	}}
-	requireNoErr(t, idx.Upsert(context.Background(), "u1", "chicken-1", []float32{1, 0}))
+	requireNoErr(t, idx.Upsert(context.Background(), "chicken-1", []float32{1, 0}))
 
 	model := &stubModel{embedMap: map[string][]float32{
 		"frango": {0.95, 0.05}, // close to chicken [1,0]
@@ -123,7 +121,7 @@ func TestMatchBelowThreshold(t *testing.T) {
 	st := &stubStore{foods: map[string]types.FoodMatch{
 		"chicken-1": {FoodID: "chicken-1", Name: "Chicken", Per100g: types.Macros{Calories: 165}},
 	}}
-	requireNoErr(t, idx.Upsert(context.Background(), "u1", "chicken-1", []float32{1, 0}))
+	requireNoErr(t, idx.Upsert(context.Background(), "chicken-1", []float32{1, 0}))
 
 	// "pizza" maps to [0,1] — cosine with [1,0] is 0.
 	model := &stubModel{embedMap: map[string][]float32{
@@ -164,7 +162,7 @@ func TestEmbedFood(t *testing.T) {
 	requireNoErr(t, m.EmbedFood(context.Background(), "u1", "chicken-1", "Chicken Breast"))
 
 	// Verify the vector was stored by querying for it.
-	nn, err := idx.Nearest(context.Background(), "u1", []float32{1, 0, 0.5}, 1)
+	nn, err := idx.Nearest(context.Background(), []float32{1, 0, 0.5}, 1)
 	requireNoErr(t, err)
 	if len(nn) != 1 || nn[0].FoodID != "chicken-1" {
 		t.Fatalf("nearest after EmbedFood = %+v, want chicken-1", nn)
@@ -187,7 +185,7 @@ func TestTier2CrossLanguageEmbedding(t *testing.T) {
 		"chicken-1": {FoodID: "chicken-1", Name: "Chicken Breast", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}},
 	}}
-	requireNoErr(t, idx.Upsert(context.Background(), "u1", "chicken-1", []float32{1, 0}))
+	requireNoErr(t, idx.Upsert(context.Background(), "chicken-1", []float32{1, 0}))
 
 	// "frango" and "chicken" land near the stored [1,0]; "pizza" is orthogonal.
 	model := &stubModel{embedMap: map[string][]float32{

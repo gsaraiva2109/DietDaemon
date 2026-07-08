@@ -41,10 +41,15 @@ func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, 
 	body.ID = newHandlerID()
 	body.UserID = userID
 	body.CreatedAt = time.Now().UTC()
-	if err := h.store.LogMeasurement(r.Context(), body); err != nil {
+	id, err := h.store.LogMeasurement(r.Context(), body)
+	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
+	// LogMeasurement upserts by (user_id, date): logging twice the same day
+	// overwrites the earlier entry, so the persisted ID may not be the one
+	// just generated above — always report back what was actually stored.
+	body.ID = id
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(body)
 }

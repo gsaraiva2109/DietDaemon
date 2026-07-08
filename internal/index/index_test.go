@@ -20,11 +20,9 @@ func openTestDB(t *testing.T) *sql.DB {
 
 	const q = `
 		CREATE TABLE IF NOT EXISTS food_vectors (
-			user_id TEXT NOT NULL,
-			food_id TEXT NOT NULL,
+			food_id TEXT PRIMARY KEY,
 			dim     INTEGER NOT NULL,
-			vec     BLOB NOT NULL,
-			PRIMARY KEY (user_id, food_id)
+			vec     BLOB NOT NULL
 		);
 	`
 	if _, err := db.Exec(q); err != nil {
@@ -108,11 +106,11 @@ func TestUpsertAndNearest(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert two vectors.
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_a", []float32{1, 0, 0}))
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_b", []float32{0, 1, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "food_a", []float32{1, 0, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "food_b", []float32{0, 1, 0}))
 
 	// Query with [1, 0.1, 0] — closer to food_a.
-	nn, err := ix.Nearest(ctx, "u1", []float32{1, 0.1, 0}, 2)
+	nn, err := ix.Nearest(ctx, []float32{1, 0.1, 0}, 2)
 	requireNoErr(t, err)
 	if len(nn) != 2 {
 		t.Fatalf("got %d neighbors, want 2", len(nn))
@@ -130,11 +128,11 @@ func TestNearestWithKLessThanN(t *testing.T) {
 	ix := New(db)
 	ctx := context.Background()
 
-	requireNoErr(t, ix.Upsert(ctx, "u1", "a", []float32{1, 0}))
-	requireNoErr(t, ix.Upsert(ctx, "u1", "b", []float32{0, 1}))
-	requireNoErr(t, ix.Upsert(ctx, "u1", "c", []float32{0.5, 0.5}))
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{1, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "b", []float32{0, 1}))
+	requireNoErr(t, ix.Upsert(ctx, "c", []float32{0.5, 0.5}))
 
-	nn, err := ix.Nearest(ctx, "u1", []float32{1, 0}, 1)
+	nn, err := ix.Nearest(ctx, []float32{1, 0}, 1)
 	requireNoErr(t, err)
 	if len(nn) != 1 {
 		t.Fatalf("got %d neighbors, want 1", len(nn))
@@ -149,7 +147,7 @@ func TestNearestEmptyUser(t *testing.T) {
 	ix := New(db)
 	ctx := context.Background()
 
-	nn, err := ix.Nearest(ctx, "u1", []float32{1, 0}, 5)
+	nn, err := ix.Nearest(ctx, []float32{1, 0}, 5)
 	requireNoErr(t, err)
 	if len(nn) != 0 {
 		t.Errorf("got %d neighbors, want 0", len(nn))
@@ -162,11 +160,11 @@ func TestThresholdCutoff(t *testing.T) {
 	ctx := context.Background()
 
 	// food_a is close, food_b is orthogonal.
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_a", []float32{1, 0}))
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_b", []float32{0, 1}))
+	requireNoErr(t, ix.Upsert(ctx, "food_a", []float32{1, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "food_b", []float32{0, 1}))
 
 	// Query near food_a: top score should be high, second much lower.
-	nn, err := ix.Nearest(ctx, "u1", []float32{0.99, 0.01}, 2)
+	nn, err := ix.Nearest(ctx, []float32{0.99, 0.01}, 2)
 	requireNoErr(t, err)
 
 	if nn[0].Score < 0.99 {
@@ -182,13 +180,13 @@ func TestDelete(t *testing.T) {
 	ix := New(db)
 	ctx := context.Background()
 
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_a", []float32{1, 0}))
-	requireNoErr(t, ix.Upsert(ctx, "u1", "food_b", []float32{0, 1}))
+	requireNoErr(t, ix.Upsert(ctx, "food_a", []float32{1, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "food_b", []float32{0, 1}))
 
 	// Delete food_a.
-	requireNoErr(t, ix.Delete(ctx, "u1", "food_a"))
+	requireNoErr(t, ix.Delete(ctx, "food_a"))
 
-	nn, err := ix.Nearest(ctx, "u1", []float32{1, 0}, 2)
+	nn, err := ix.Nearest(ctx, []float32{1, 0}, 2)
 	requireNoErr(t, err)
 	if len(nn) != 1 {
 		t.Fatalf("got %d neighbors after delete, want 1", len(nn))
@@ -203,11 +201,11 @@ func TestUpsertReplaces(t *testing.T) {
 	ix := New(db)
 	ctx := context.Background()
 
-	requireNoErr(t, ix.Upsert(ctx, "u1", "a", []float32{1, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{1, 0}))
 	// Replace with different vector.
-	requireNoErr(t, ix.Upsert(ctx, "u1", "a", []float32{0, 1}))
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{0, 1}))
 
-	nn, err := ix.Nearest(ctx, "u1", []float32{0, 1}, 1)
+	nn, err := ix.Nearest(ctx, []float32{0, 1}, 1)
 	requireNoErr(t, err)
 	if nn[0].FoodID != "a" {
 		t.Errorf("top = %q, want a", nn[0].FoodID)
@@ -224,34 +222,34 @@ func TestCacheInvalidation(t *testing.T) {
 	ctx := context.Background()
 
 	// Load cache.
-	requireNoErr(t, ix.Upsert(ctx, "u1", "a", []float32{1, 0}))
-	_, err := ix.Nearest(ctx, "u1", []float32{1, 0}, 1)
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{1, 0}))
+	_, err := ix.Nearest(ctx, []float32{1, 0}, 1)
 	requireNoErr(t, err)
 
 	// Verify cache populated.
 	ix.mu.RLock()
-	_, ok := ix.caches["u1"]
+	cached := ix.cache != nil
 	ix.mu.RUnlock()
-	if !ok {
-		t.Fatal("expected cache entry for u1")
+	if !cached {
+		t.Fatal("expected cache to be populated")
 	}
 
 	// Upsert should invalidate.
-	requireNoErr(t, ix.Upsert(ctx, "u1", "b", []float32{0, 1}))
+	requireNoErr(t, ix.Upsert(ctx, "b", []float32{0, 1}))
 	ix.mu.RLock()
-	_, ok = ix.caches["u1"]
+	cached = ix.cache != nil
 	ix.mu.RUnlock()
-	if ok {
+	if cached {
 		t.Error("cache should be invalidated after Upsert")
 	}
 
 	// Delete should invalidate.
-	_, _ = ix.Nearest(ctx, "u1", []float32{1, 0}, 1) // reload
-	requireNoErr(t, ix.Delete(ctx, "u1", "b"))
+	_, _ = ix.Nearest(ctx, []float32{1, 0}, 1) // reload
+	requireNoErr(t, ix.Delete(ctx, "b"))
 	ix.mu.RLock()
-	_, ok = ix.caches["u1"]
+	cached = ix.cache != nil
 	ix.mu.RUnlock()
-	if ok {
+	if cached {
 		t.Error("cache should be invalidated after Delete")
 	}
 }

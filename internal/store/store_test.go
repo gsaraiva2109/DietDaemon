@@ -365,6 +365,8 @@ func TestTargetsSetGet(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
+	mustUser(t, s, types.User{ID: "u1"})
+
 	// Get on missing → ErrNotFound.
 	_, err := s.GetTargets(ctx(), "u1")
 	if err != types.ErrNotFound {
@@ -407,6 +409,8 @@ func TestTargetsSetGet(t *testing.T) {
 func TestRollupUpsertGet(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1"})
 
 	// Get on missing → ErrNotFound.
 	_, err := s.GetRollup(ctx(), "u1", "2026-06-17")
@@ -610,6 +614,9 @@ func TestListUsers(t *testing.T) {
 func TestNudgeDedupe(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1"})
+	mustUser(t, s, types.User{ID: "u2"})
 
 	// Nothing nudged yet.
 	done, err := s.WasNudged(ctx(), "u1", "2026-06-17", "rule-1")

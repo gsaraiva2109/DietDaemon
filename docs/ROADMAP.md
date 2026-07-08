@@ -6,16 +6,10 @@ sizing/design happens when picked up.
 
 ## Low complexity
 
-1. **Adopt sqlx incrementally** — replace hand-written `rows.Scan(&a, &b, ...)` boilerplate with
-   `sqlx.Get`/`Select` struct-scanning, one function at a time. `sqlx.Rebind()` covers what
-   `s.rewrite()` already does for sqlite/postgres placeholders, so this is a drop-in, not a
-   rewrite — picked over sqlc/jet specifically because both of those generate per-engine code
-   with no equivalent bridge for a single query targeting two dialects (see the ORM/query-layer
-   discussion this session for the full comparison).
-2. **Shareable read-only dashboard link** — read-only token scoped to one `account_id`, same
+1. **Shareable read-only dashboard link** — read-only token scoped to one `account_id`, same
    per-account isolation multi-user login already requires. Not a new access model, just another
    token type on the existing scoped-read path.
-3. **Import old logs (MyFitnessPal etc.)** — one-time CSV/export parser mapping to internal meal
+2. **Import old logs (MyFitnessPal etc.)** — one-time CSV/export parser mapping to internal meal
    records. No ongoing maintenance, it's a one-shot ETL path.
 
 ## Medium complexity
