@@ -55,10 +55,15 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 		Note:      body.Note,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := h.store.LogWeight(r.Context(), entry); err != nil {
+	id, err := h.store.LogWeight(r.Context(), entry)
+	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
+	// LogWeight upserts by (user_id, date): logging twice the same day
+	// overwrites the earlier entry, so the persisted ID may not be the one
+	// just generated above — always report back what was actually stored.
+	entry.ID = id
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(entry)
 }

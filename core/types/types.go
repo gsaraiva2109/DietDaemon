@@ -158,7 +158,7 @@ func (m Macros) Sub(o Macros) Macros {
 type FoodMatch struct {
 	FoodID     string  // stable id within Source
 	Name       string  // canonical display name
-	Source     string  // "food_library", "openfoodfacts", "taco", "usda", …
+	Source     string  // "foods" (global catalog cache hit), "openfoodfacts", "taco", "usda", …
 	Per100g    Macros  // macros per 100 grams
 	MatchScore float64 // 0..1 confidence of the name match
 }
@@ -312,7 +312,6 @@ type TemplateLog struct {
 	UserID     string    `json:"user_id"`
 	TemplateID string    `json:"template_id"`
 	LoggedAt   time.Time `json:"logged_at"`
-	ExternalID *string   `json:"external_id,omitempty" db:"external_id"`
 }
 
 // PendingAlias is an embedding-matched alias awaiting user confirmation before

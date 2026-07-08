@@ -45,15 +45,15 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 
 	const itemQ = `
 		INSERT INTO resolved_items
-			(id, meal_id, raw_phrase, quantity, unit, normalized_grams,
+			(id, meal_id, position, raw_phrase, quantity, unit, normalized_grams,
 			 food_id, food_name, source, match_score,
 			 kcal, protein, carbs, fat, fiber)
-		VALUES (:id, :meal_id, :raw_phrase, :quantity, :unit, :normalized_grams,
+		VALUES (:id, :meal_id, :position, :raw_phrase, :quantity, :unit, :normalized_grams,
 			:food_id, :food_name, :source, :match_score,
 			:kcal, :protein, :carbs, :fat, :fiber)
 	`
-	for _, it := range m.Items {
-		itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), m.ID, it))
+	for i, it := range m.Items {
+		itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), m.ID, i, it))
 		if err != nil {
 			return fmt.Errorf("store: bind resolved_item: %w", err)
 		}
@@ -66,11 +66,14 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 }
 
 // resolvedItemNamedArgs builds the named-parameter map shared by every insert
-// of a resolved_items row (SaveMeal, AddMealItem).
-func resolvedItemNamedArgs(id, mealID string, it types.ResolvedItem) map[string]any {
+// of a resolved_items row (SaveMeal, AddMealItem). position is the item's
+// 0-based ordinal within the meal, replacing reliance on SQLite's implicit
+// rowid for ordering.
+func resolvedItemNamedArgs(id, mealID string, position int, it types.ResolvedItem) map[string]any {
 	return map[string]any{
 		"id":               id,
 		"meal_id":          mealID,
+		"position":         position,
 		"raw_phrase":       it.Parsed.RawPhrase,
 		"quantity":         it.Parsed.Quantity,
 		"unit":             it.Parsed.Unit,
@@ -251,7 +254,7 @@ func (s *Store) loadItems(ctx context.Context, mealIDs []string) (map[string][]t
 		       kcal, protein, carbs, fat, fiber
 		FROM resolved_items
 		WHERE meal_id IN (%s)
-		ORDER BY meal_id, rowid
+		ORDER BY meal_id, position
 	`, strings.Join(placeholders, ","))
 
 	var rows []resolvedItemRow
@@ -302,9 +305,9 @@ func (s *Store) mealOwner(ctx context.Context, tx *sqlx.Tx, mealID, userID strin
 }
 
 // CorrectMealItem updates one resolved item's macros for a meal, then
-// recalculates the daily rollup and refreshes the food_library cache so future
+// recalculates the daily rollup and refreshes the global foods cache so future
 // logs use the corrected values. itemIndex is the 0-based position of the item
-// within the meal's items (ordered by rowid).
+// within the meal's items (ordered by the position column).
 func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -319,14 +322,15 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	}
 	mealAt := parseUTC(meal.AtUTC)
 
-	// Load items by rowid so we can find and update the target item.
+	// Load items ordered by position so we can find and update the target item
+	// by its real id.
 	const itemsQ = `
-		SELECT rowid, raw_phrase, quantity, unit, normalized_grams,
+		SELECT id, raw_phrase, quantity, unit, normalized_grams,
 		       food_id, food_name, source, match_score,
 		       kcal, protein, carbs, fat, fiber
 		FROM resolved_items
 		WHERE meal_id = ?
-		ORDER BY rowid
+		ORDER BY position
 	`
 	var itemRows []mealItemRow
 	if err := tx.SelectContext(ctx, &itemRows, s.rewrite(itemsQ), mealID); err != nil {
@@ -334,13 +338,13 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	}
 
 	type item struct {
-		rowid int64
-		ri    types.ResolvedItem
+		id string
+		ri types.ResolvedItem
 	}
 	items := make([]item, len(itemRows))
 	var oldTotal types.Macros
 	for i, r := range itemRows {
-		items[i] = item{rowid: r.Rowid, ri: r.resolvedItemRow.toResolvedItem()}
+		items[i] = item{id: r.ID, ri: r.resolvedItemRow.toResolvedItem()}
 		oldTotal = oldTotal.Add(items[i].ri.Macros)
 	}
 	if itemIndex < 0 || itemIndex >= len(items) {
@@ -362,7 +366,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 			normalized_grams = :normalized_grams, food_id = :food_id, food_name = :food_name,
 			source = :source, match_score = :match_score,
 			kcal = :kcal, protein = :protein, carbs = :carbs, fat = :fat, fiber = :fiber
-		WHERE rowid = :rowid
+		WHERE id = :id
 	`
 	updateQuery, updateArgs, err := sqlx.Named(updateQ, map[string]any{
 		"normalized_grams": corrected.Parsed.NormalizedGrams,
@@ -375,7 +379,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		"carbs":            corrected.Macros.Carbs,
 		"fat":              corrected.Macros.Fat,
 		"fiber":            corrected.Macros.Fiber,
-		"rowid":            items[itemIndex].rowid,
+		"id":               items[itemIndex].id,
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind update item: %w", err)
@@ -427,37 +431,38 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		return fmt.Errorf("store: update rollup: %w", err)
 	}
 
-	// Refresh the food_library cache: upsert the corrected food so future
-	// alias lookups use the corrected macros.
+	// Refresh the global food catalog: upsert the corrected macros so future
+	// alias lookups (by any user) use the corrected values.
 	if corrected.Match.FoodID != "" {
 		const foodQ = `
-			INSERT INTO food_library
-				(food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, query_count, last_used)
-			VALUES (:food_id, :user_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, 0, '')
-			ON CONFLICT(user_id, food_id) DO UPDATE SET
-				kcal_100g   = excluded.kcal_100g,
-				protein_100g= excluded.protein_100g,
-				carbs_100g  = excluded.carbs_100g,
-				fat_100g    = excluded.fat_100g,
-				fiber_100g  = excluded.fiber_100g
+			INSERT INTO foods
+				(food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
+			VALUES (:food_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, :now, :now)
+			ON CONFLICT(food_id) DO UPDATE SET
+				kcal_100g    = excluded.kcal_100g,
+				protein_100g = excluded.protein_100g,
+				carbs_100g   = excluded.carbs_100g,
+				fat_100g     = excluded.fat_100g,
+				fiber_100g   = excluded.fiber_100g,
+				updated_at   = excluded.updated_at
 		`
-		foodQuery, foodArgs, err := sqlx.Named(foodQ, foodLibraryNamedArgs(userID, corrected.Match))
+		foodQuery, foodArgs, err := sqlx.Named(foodQ, foodNamedArgs(corrected.Match))
 		if err != nil {
-			return fmt.Errorf("store: bind upsert food library: %w", err)
+			return fmt.Errorf("store: bind upsert food: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, s.rewrite(foodQuery), foodArgs...); err != nil {
-			return fmt.Errorf("store: upsert food library: %w", err)
+			return fmt.Errorf("store: upsert food: %w", err)
 		}
 	}
 
 	return tx.Commit()
 }
 
-// mealItemRow is resolvedItemRow plus the SQLite rowid, used where the
-// caller must locate and later update or delete a specific resolved_items
-// row (CorrectMealItem, DeleteMealItem).
+// mealItemRow is resolvedItemRow plus its own id, used where the caller must
+// locate and later update or delete a specific resolved_items row
+// (CorrectMealItem, DeleteMealItem).
 type mealItemRow struct {
-	Rowid int64 `db:"rowid"`
+	ID string `db:"id"`
 	resolvedItemRow
 }
 
@@ -475,16 +480,24 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 		return err
 	}
 
+	// Next position is one past the current max for this meal (-1 when empty,
+	// so the first item lands at 0).
+	const posQ = `SELECT COALESCE(MAX(position), -1) + 1 FROM resolved_items WHERE meal_id = ?`
+	var nextPosition int
+	if err := tx.GetContext(ctx, &nextPosition, s.rewrite(posQ), mealID); err != nil {
+		return fmt.Errorf("store: next item position: %w", err)
+	}
+
 	const itemQ = `
 		INSERT INTO resolved_items
-			(id, meal_id, raw_phrase, quantity, unit, normalized_grams,
+			(id, meal_id, position, raw_phrase, quantity, unit, normalized_grams,
 			 food_id, food_name, source, match_score,
 			 kcal, protein, carbs, fat, fiber)
-		VALUES (:id, :meal_id, :raw_phrase, :quantity, :unit, :normalized_grams,
+		VALUES (:id, :meal_id, :position, :raw_phrase, :quantity, :unit, :normalized_grams,
 			:food_id, :food_name, :source, :match_score,
 			:kcal, :protein, :carbs, :fat, :fiber)
 	`
-	itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), mealID, item))
+	itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), mealID, nextPosition, item))
 	if err != nil {
 		return fmt.Errorf("store: bind resolved_item: %w", err)
 	}
@@ -521,8 +534,8 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 	return tx.Commit()
 }
 
-// DeleteMealItem removes the item at itemIndex (zero-based, rowid order) from a
-// meal and subtracts its macros from that day's rollup.
+// DeleteMealItem removes the item at itemIndex (zero-based, position order)
+// from a meal and subtracts its macros from that day's rollup.
 func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemIndex int) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -536,8 +549,8 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	}
 
 	const itemsQ = `
-		SELECT rowid, kcal, protein, carbs, fat, fiber
-		FROM resolved_items WHERE meal_id = ? ORDER BY rowid
+		SELECT id, kcal, protein, carbs, fat, fiber
+		FROM resolved_items WHERE meal_id = ? ORDER BY position
 	`
 	var items []mealItemRow
 	if err := tx.SelectContext(ctx, &items, s.rewrite(itemsQ), mealID); err != nil {
@@ -548,7 +561,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 	}
 
 	target := items[itemIndex]
-	if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM resolved_items WHERE rowid = ?`), target.Rowid); err != nil {
+	if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM resolved_items WHERE id = ?`), target.ID); err != nil {
 		return fmt.Errorf("store: delete item: %w", err)
 	}
 

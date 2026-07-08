@@ -78,7 +78,7 @@ func (h *Handler) handleComposeTemplate(w http.ResponseWriter, r *http.Request, 
 
 	items := make([]types.ResolvedItem, 0, len(body.Items))
 	for _, it := range body.Items {
-		food, err := h.store.GetFood(r.Context(), userID, it.FoodID)
+		food, err := h.store.GetFood(r.Context(), it.FoodID)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown food_id: " + it.FoodID})

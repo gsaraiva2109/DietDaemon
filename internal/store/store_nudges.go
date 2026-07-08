@@ -49,44 +49,61 @@ func (s *Store) MarkNudged(ctx context.Context, userID, localDate, ruleID string
 
 // RecordSentNudge inserts a sent nudge row for later undo.
 func (s *Store) RecordSentNudge(ctx context.Context, n types.SentNudge) error {
-	snap, err := json.Marshal(n.Snapshot)
-	if err != nil {
-		return fmt.Errorf("store: marshal snapshot: %w", err)
-	}
 	const q = `
-		INSERT INTO sent_nudges (id, user_id, rule_id, sent_at, body, snapshot_json, status)
-		VALUES (:id, :user_id, :rule_id, :sent_at, :body, :snapshot_json, :status)
+		INSERT INTO sent_nudges
+			(id, user_id, rule_id, sent_at, body,
+			 snapshot_kcal, snapshot_protein, snapshot_carbs, snapshot_fat, snapshot_fiber,
+			 status)
+		VALUES
+			(:id, :user_id, :rule_id, :sent_at, :body,
+			 :snapshot_kcal, :snapshot_protein, :snapshot_carbs, :snapshot_fat, :snapshot_fiber,
+			 :status)
 	`
 	query, args, bindErr := sqlx.Named(q, map[string]any{
 		"id": n.ID, "user_id": n.UserID, "rule_id": n.RuleID, "sent_at": utcStr(n.SentAt),
-		"body": n.Body, "snapshot_json": string(snap), "status": n.Status,
+		"body":             n.Body,
+		"snapshot_kcal":    n.Snapshot.Calories,
+		"snapshot_protein": n.Snapshot.Protein,
+		"snapshot_carbs":   n.Snapshot.Carbs,
+		"snapshot_fat":     n.Snapshot.Fat,
+		"snapshot_fiber":   n.Snapshot.Fiber,
+		"status":           n.Status,
 	})
 	if bindErr != nil {
 		return fmt.Errorf("store: bind record sent nudge: %w", bindErr)
 	}
-	if _, err = s.db.ExecContext(ctx, s.rewrite(query), args...); err != nil {
+	if _, err := s.db.ExecContext(ctx, s.rewrite(query), args...); err != nil {
 		return fmt.Errorf("store: record sent nudge: %w", err)
 	}
 	return nil
 }
 
 // sentNudgeRow is the flat DB shape of sent_nudges; types.SentNudge nests
-// Snapshot as a decoded Macros (DB: JSON string) and ResolvedAt as *time.Time
-// (DB: nullable RFC3339 string).
+// Snapshot as a decoded Macros (5 flat REAL columns) and ResolvedAt as
+// *time.Time (DB: nullable RFC3339 string).
 type sentNudgeRow struct {
-	ID           string         `db:"id"`
-	UserID       string         `db:"user_id"`
-	RuleID       string         `db:"rule_id"`
-	SentAt       string         `db:"sent_at"`
-	Body         string         `db:"body"`
-	SnapshotJSON string         `db:"snapshot_json"`
-	Status       string         `db:"status"`
-	ResolvedAt   sql.NullString `db:"resolved_at"`
+	ID              string         `db:"id"`
+	UserID          string         `db:"user_id"`
+	RuleID          string         `db:"rule_id"`
+	SentAt          string         `db:"sent_at"`
+	Body            string         `db:"body"`
+	SnapshotKcal    float64        `db:"snapshot_kcal"`
+	SnapshotProtein float64        `db:"snapshot_protein"`
+	SnapshotCarbs   float64        `db:"snapshot_carbs"`
+	SnapshotFat     float64        `db:"snapshot_fat"`
+	SnapshotFiber   float64        `db:"snapshot_fiber"`
+	Status          string         `db:"status"`
+	ResolvedAt      sql.NullString `db:"resolved_at"`
 }
 
 // GetSentNudge returns a sent nudge by id, or types.ErrNotFound.
 func (s *Store) GetSentNudge(ctx context.Context, id string) (types.SentNudge, error) {
-	const q = `SELECT id, user_id, rule_id, sent_at, body, snapshot_json, status, resolved_at FROM sent_nudges WHERE id = ?`
+	const q = `
+		SELECT id, user_id, rule_id, sent_at, body,
+		       snapshot_kcal, snapshot_protein, snapshot_carbs, snapshot_fat, snapshot_fiber,
+		       status, resolved_at
+		FROM sent_nudges WHERE id = ?
+	`
 	var row sentNudgeRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -97,13 +114,17 @@ func (s *Store) GetSentNudge(ctx context.Context, id string) (types.SentNudge, e
 	n := types.SentNudge{
 		ID: row.ID, UserID: row.UserID, RuleID: row.RuleID,
 		SentAt: parseUTC(row.SentAt), Body: row.Body, Status: row.Status,
+		Snapshot: types.Macros{
+			Calories: row.SnapshotKcal,
+			Protein:  row.SnapshotProtein,
+			Carbs:    row.SnapshotCarbs,
+			Fat:      row.SnapshotFat,
+			Fiber:    row.SnapshotFiber,
+		},
 	}
 	if row.ResolvedAt.Valid {
 		n.ResolvedAt = new(time.Time)
 		*n.ResolvedAt = parseUTC(row.ResolvedAt.String)
-	}
-	if err := json.Unmarshal([]byte(row.SnapshotJSON), &n.Snapshot); err != nil {
-		return types.SentNudge{}, fmt.Errorf("store: unmarshal snapshot: %w", err)
 	}
 	return n, nil
 }

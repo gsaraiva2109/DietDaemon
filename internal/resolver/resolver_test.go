@@ -30,7 +30,7 @@ func (f *fakeStore) LookupFood(_ context.Context, _, phrase string) (types.FoodM
 	return types.FoodMatch{}, types.ErrNoMatch
 }
 
-func (f *fakeStore) GetFood(_ context.Context, _, foodID string) (types.FoodMatch, error) {
+func (f *fakeStore) GetFood(_ context.Context, foodID string) (types.FoodMatch, error) {
 	for _, m := range f.lib {
 		if m.FoodID == foodID {
 			return m, nil

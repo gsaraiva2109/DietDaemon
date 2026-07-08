@@ -1,11 +1,13 @@
 // Package index provides a brute-force cosine-similarity nearest-neighbour
-// index over per-user food embedding vectors stored in SQLite. The personal
-// food library is small (tens to low hundreds of entries), so O(N) per query
-// is fine and avoids an external vector DB dependency.
+// index over the global food embedding vectors stored in SQLite/Postgres. An
+// embedding is a pure function of the food's canonical name, so it's computed
+// and stored once per food_id globally — never per user. The catalog is small
+// (tens to low hundreds of entries), so O(N) per query is fine and avoids an
+// external vector DB dependency.
 //
-// Vectors are stored as little-endian float32 BLOBs in the food_vectors table.
-// Each user's vectors are loaded into memory lazily on first query and cached
-// until an Upsert or Delete invalidates that user's cache.
+// Vectors are stored as little-endian float32 BLOBs in the food_vectors
+// table. The whole table is loaded into memory lazily on first query and
+// cached until an Upsert or Delete invalidates the cache.
 package index
 
 import (
@@ -27,20 +29,22 @@ type Neighbor struct {
 
 // Index is the embedding nearest-neighbour store.
 type Index interface {
-	Upsert(ctx context.Context, userID, foodID string, vec []float32) error
-	Nearest(ctx context.Context, userID string, vec []float32, k int) ([]Neighbor, error)
-	Delete(ctx context.Context, userID, foodID string) error
+	Upsert(ctx context.Context, foodID string, vec []float32) error
+	Nearest(ctx context.Context, vec []float32, k int) ([]Neighbor, error)
+	Exists(ctx context.Context, foodID string) (bool, error)
+	Delete(ctx context.Context, foodID string) error
 }
 
 // Compile-time interface guard.
 var _ Index = (*SQLIndex)(nil)
 
-// SQLIndex implements Index backed by a SQLite food_vectors table.
+// SQLIndex implements Index backed by the global food_vectors table.
 type SQLIndex struct {
 	db *sql.DB
 
 	mu     sync.RWMutex
-	caches map[string][]entry // userID -> vectors, invalidated on write
+	cache  []entry
+	primed bool
 }
 
 type entry struct {
@@ -49,35 +53,32 @@ type entry struct {
 }
 
 // New returns a ready SQLIndex backed by db. The food_vectors table must
-// already exist (applied via migration 003_food_vectors.sql).
+// already exist (applied via the store's migrations).
 func New(db *sql.DB) *SQLIndex {
-	return &SQLIndex{
-		db:     db,
-		caches: make(map[string][]entry),
-	}
+	return &SQLIndex{db: db}
 }
 
-// Upsert inserts or replaces the vector for (userID, foodID).
-func (ix *SQLIndex) Upsert(ctx context.Context, userID, foodID string, vec []float32) error {
+// Upsert inserts or replaces the vector for foodID.
+func (ix *SQLIndex) Upsert(ctx context.Context, foodID string, vec []float32) error {
 	blob := packF32LE(vec)
 	const q = `
-		INSERT OR REPLACE INTO food_vectors (user_id, food_id, dim, vec)
-		VALUES (?, ?, ?, ?)
+		INSERT OR REPLACE INTO food_vectors (food_id, dim, vec)
+		VALUES (?, ?, ?)
 	`
-	_, err := ix.db.ExecContext(ctx, q, userID, foodID, len(vec), blob)
+	_, err := ix.db.ExecContext(ctx, q, foodID, len(vec), blob)
 	if err != nil {
 		return fmt.Errorf("index: upsert: %w", err)
 	}
 
-	ix.invalidate(userID)
+	ix.invalidate()
 	return nil
 }
 
-// Nearest returns the k nearest neighbours by cosine similarity. When fewer
-// than k vectors exist for the user, all are returned (sorted by score desc).
-// Returns an empty slice (not an error) when the user has no vectors.
-func (ix *SQLIndex) Nearest(ctx context.Context, userID string, vec []float32, k int) ([]Neighbor, error) {
-	entries, err := ix.loadUser(ctx, userID)
+// Nearest returns the k nearest neighbours by cosine similarity across the
+// entire catalog. When fewer than k vectors exist, all are returned (sorted
+// by score desc). Returns an empty slice (not an error) when nothing exists.
+func (ix *SQLIndex) Nearest(ctx context.Context, vec []float32, k int) ([]Neighbor, error) {
+	entries, err := ix.load(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -99,14 +100,29 @@ func (ix *SQLIndex) Nearest(ctx context.Context, userID string, vec []float32, k
 	return neighbors, nil
 }
 
-// Delete removes the vector for (userID, foodID). Idempotent.
-func (ix *SQLIndex) Delete(ctx context.Context, userID, foodID string) error {
-	const q = `DELETE FROM food_vectors WHERE user_id = ? AND food_id = ?`
-	_, err := ix.db.ExecContext(ctx, q, userID, foodID)
+// Exists reports whether foodID already has a global embedding, so callers
+// can skip a redundant embedding-model call.
+func (ix *SQLIndex) Exists(ctx context.Context, foodID string) (bool, error) {
+	entries, err := ix.load(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if e.foodID == foodID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Delete removes the vector for foodID. Idempotent.
+func (ix *SQLIndex) Delete(ctx context.Context, foodID string) error {
+	const q = `DELETE FROM food_vectors WHERE food_id = ?`
+	_, err := ix.db.ExecContext(ctx, q, foodID)
 	if err != nil {
 		return fmt.Errorf("index: delete: %w", err)
 	}
-	ix.invalidate(userID)
+	ix.invalidate()
 	return nil
 }
 
@@ -114,30 +130,32 @@ func (ix *SQLIndex) Delete(ctx context.Context, userID, foodID string) error {
 // Cache
 // ---------------------------------------------------------------------------
 
-func (ix *SQLIndex) invalidate(userID string) {
+func (ix *SQLIndex) invalidate() {
 	ix.mu.Lock()
-	delete(ix.caches, userID)
+	ix.primed = false
+	ix.cache = nil
 	ix.mu.Unlock()
 }
 
-func (ix *SQLIndex) loadUser(ctx context.Context, userID string) ([]entry, error) {
+func (ix *SQLIndex) load(ctx context.Context) ([]entry, error) {
 	ix.mu.RLock()
-	cached, ok := ix.caches[userID]
-	ix.mu.RUnlock()
-	if ok {
+	if ix.primed {
+		cached := ix.cache
+		ix.mu.RUnlock()
 		return cached, nil
 	}
+	ix.mu.RUnlock()
 
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
 	// Double-check after acquiring write lock.
-	if cached, ok = ix.caches[userID]; ok {
-		return cached, nil
+	if ix.primed {
+		return ix.cache, nil
 	}
 
-	const q = `SELECT food_id, vec FROM food_vectors WHERE user_id = ?`
-	rows, err := ix.db.QueryContext(ctx, q, userID)
+	const q = `SELECT food_id, vec FROM food_vectors`
+	rows, err := ix.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("index: load: %w", err)
 	}
@@ -163,7 +181,8 @@ func (ix *SQLIndex) loadUser(ctx context.Context, userID string) ([]entry, error
 	if entries == nil {
 		entries = []entry{}
 	}
-	ix.caches[userID] = entries
+	ix.cache = entries
+	ix.primed = true
 	return entries, nil
 }
 

@@ -13,23 +13,20 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Personal food library
+// Global food catalog + per-user usage stats
 // ---------------------------------------------------------------------------
 
-// LookupFood matches a phrase against the user's food aliases, joins to
-// food_library, and returns the top match ordered by query_count DESC.
-// Returns types.ErrNoMatch when no alias matches.
+// LookupFood matches phrase against the user's personal aliases and joins to
+// the global food catalog. Returns types.ErrNoMatch when no alias matches.
 func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.FoodMatch, error) {
 	normalized := normalize.Normalize(phrase)
 
 	const q = `
-		SELECT fl.food_id, fl.name, fl.source, fl.kcal_100g, fl.protein_100g,
-		       fl.carbs_100g, fl.fat_100g, fl.fiber_100g
+		SELECT f.food_id, f.name, f.source, f.kcal_100g, f.protein_100g,
+		       f.carbs_100g, f.fat_100g, f.fiber_100g
 		FROM food_aliases fa
-		JOIN food_library fl ON fl.user_id = fa.user_id AND fl.food_id = fa.food_id
+		JOIN foods f ON f.food_id = fa.food_id
 		WHERE fa.user_id = ? AND fa.alias_normalized = ?
-		ORDER BY fl.query_count DESC
-		LIMIT 1
 	`
 	var row foodMatchRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, normalized); err != nil {
@@ -44,17 +41,17 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 	return fm, nil
 }
 
-// GetFood loads a food by its (userID, foodID) primary key. Returns
-// types.ErrNoMatch when the food does not exist in the library.
-func (s *Store) GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error) {
+// GetFood loads a food from the global catalog by its food_id. Returns
+// types.ErrNoMatch when the food does not exist.
+func (s *Store) GetFood(ctx context.Context, foodID string) (types.FoodMatch, error) {
 	const q = `
 		SELECT food_id, name, source, kcal_100g, protein_100g,
 		       carbs_100g, fat_100g, fiber_100g
-		FROM food_library
-		WHERE user_id = ? AND food_id = ?
+		FROM foods
+		WHERE food_id = ?
 	`
 	var row foodMatchRow
-	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, foodID); err != nil {
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), foodID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.FoodMatch{}, types.ErrNoMatch
 		}
@@ -87,8 +84,10 @@ func (r foodMatchRow) toFoodMatch() types.FoodMatch {
 	}
 }
 
-// UpsertFood inserts or replaces a food_library row and adds any new normalized
-// aliases, all within a single transaction.
+// UpsertFood writes a resolved food into the global catalog (shared by every
+// user — a food's name/source/macros are resolved once, ever, regardless of
+// how many users log it), ensures a per-user usage-stats row exists, and adds
+// any new normalized aliases for this user, all within a single transaction.
 func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -97,24 +96,34 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	defer func() { _ = tx.Rollback() }()
 
 	const foodQ = `
-		INSERT INTO food_library
-			(food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, query_count, last_used)
-		VALUES (:food_id, :user_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, 0, '')
-		ON CONFLICT(user_id, food_id) DO UPDATE SET
-			name        = excluded.name,
-			source      = excluded.source,
-			kcal_100g   = excluded.kcal_100g,
-			protein_100g= excluded.protein_100g,
-			carbs_100g  = excluded.carbs_100g,
-			fat_100g    = excluded.fat_100g,
-			fiber_100g  = excluded.fiber_100g
+		INSERT INTO foods
+			(food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
+		VALUES (:food_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, :now, :now)
+		ON CONFLICT(food_id) DO UPDATE SET
+			name         = excluded.name,
+			source       = excluded.source,
+			kcal_100g    = excluded.kcal_100g,
+			protein_100g = excluded.protein_100g,
+			carbs_100g   = excluded.carbs_100g,
+			fat_100g     = excluded.fat_100g,
+			fiber_100g   = excluded.fiber_100g,
+			updated_at   = excluded.updated_at
 	`
-	foodQuery, foodArgs, err := sqlx.Named(foodQ, foodLibraryNamedArgs(userID, match))
+	foodQuery, foodArgs, err := sqlx.Named(foodQ, foodNamedArgs(match))
 	if err != nil {
 		return fmt.Errorf("store: bind upsert food: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, s.rewrite(foodQuery), foodArgs...); err != nil {
 		return fmt.Errorf("store: upsert food: %w", err)
+	}
+
+	const statsQ = `
+		INSERT INTO user_food_stats (user_id, food_id, query_count, last_used)
+		VALUES (?, ?, 0, '')
+		ON CONFLICT(user_id, food_id) DO NOTHING
+	`
+	if _, err := tx.ExecContext(ctx, s.rewrite(statsQ), userID, match.FoodID); err != nil {
+		return fmt.Errorf("store: ensure user food stats: %w", err)
 	}
 
 	const aliasQ = `
@@ -135,23 +144,26 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	return tx.Commit()
 }
 
-// RecordFoodQuery bumps query_count and sets last_used to now.
+// RecordFoodQuery bumps this user's query_count and last_used for a food,
+// creating the usage-stats row if it doesn't exist yet (e.g. the first time
+// this user matches a food another user already resolved).
 func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) error {
 	const q = `
-		UPDATE food_library
-		SET query_count = query_count + 1, last_used = ?
-		WHERE user_id = ? AND food_id = ?
+		INSERT INTO user_food_stats (user_id, food_id, query_count, last_used)
+		VALUES (?, ?, 1, ?)
+		ON CONFLICT(user_id, food_id) DO UPDATE SET
+			query_count = user_food_stats.query_count + 1,
+			last_used   = excluded.last_used
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), utcNow(), userID, foodID)
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID, utcNow())
 	return err
 }
 
-// foodLibraryNamedArgs builds the named-parameter map shared by every upsert
-// of a food_library row (UpsertFood, CorrectMealItem's cache refresh).
-func foodLibraryNamedArgs(userID string, match types.FoodMatch) map[string]any {
+// foodNamedArgs builds the named-parameter map for every upsert of a global
+// foods row (UpsertFood, CorrectMealItem's cache refresh).
+func foodNamedArgs(match types.FoodMatch) map[string]any {
 	return map[string]any{
 		"food_id":      match.FoodID,
-		"user_id":      userID,
 		"name":         match.Name,
 		"source":       match.Source,
 		"kcal_100g":    match.Per100g.Calories,
@@ -159,24 +171,31 @@ func foodLibraryNamedArgs(userID string, match types.FoodMatch) map[string]any {
 		"carbs_100g":   match.Per100g.Carbs,
 		"fat_100g":     match.Per100g.Fat,
 		"fiber_100g":   match.Per100g.Fiber,
+		"now":          utcNow(),
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Food discovery
+// Food discovery — always scoped to foods this user has personally used
+// (i.e. has a user_food_stats row for), joined against the global catalog.
 // ---------------------------------------------------------------------------
 
-// ListFoods returns paginated food library entries, optionally filtered by source.
+// ListFoods returns paginated food entries this user has used, optionally
+// filtered by source.
 func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, offset int) ([]types.FoodDetail, error) {
 	args := []any{userID}
-	q := `SELECT food_id, user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
-	       category, brand, barcode, image_url, serving_size, serving_unit, query_count, last_used
-		FROM food_library WHERE user_id = ?`
+	q := `
+		SELECT f.food_id, ufs.user_id, f.name, f.source, f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       ufs.query_count, ufs.last_used
+		FROM user_food_stats ufs
+		JOIN foods f ON f.food_id = ufs.food_id
+		WHERE ufs.user_id = ?`
 	if source != "" {
-		q += ` AND source = ?`
+		q += ` AND f.source = ?`
 		args = append(args, source)
 	}
-	q += ` ORDER BY last_used DESC LIMIT ? OFFSET ?`
+	q += ` ORDER BY ufs.last_used DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
 	var rows []foodDetailRow
@@ -186,35 +205,42 @@ func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, off
 	return foodDetailRows(rows), nil
 }
 
-// SearchFoods searches food_library by name and alias using full-text search.
+// SearchFoods searches foods this user has used by name and alias using
+// full-text search. The search index itself spans the global catalog plus
+// every user's personal aliases (food_search.user_id = ” for global rows),
+// but results are still restricted to foods this user has a stats row for.
 func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error) {
 	searchParam := s.dialect.SearchQuery(query)
 
 	var q string
 	if s.driver == "postgres" {
 		q = `
-		SELECT fl.food_id, fl.user_id, fl.name, fl.source,
-		       fl.kcal_100g, fl.protein_100g, fl.carbs_100g, fl.fat_100g, fl.fiber_100g,
-		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
-		       fl.query_count, fl.last_used
-		FROM food_library fl
-		WHERE fl.user_id = ? AND fl.food_id IN (
-			SELECT fs.food_id FROM food_search fs WHERE fs.tsv @@ to_tsquery('simple', ?) AND fs.user_id = ?
+		SELECT f.food_id, ufs.user_id, f.name, f.source,
+		       f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       ufs.query_count, ufs.last_used
+		FROM user_food_stats ufs
+		JOIN foods f ON f.food_id = ufs.food_id
+		WHERE ufs.user_id = ? AND ufs.food_id IN (
+			SELECT fs.food_id FROM food_search fs
+			WHERE fs.tsv @@ to_tsquery('simple', ?) AND (fs.user_id = '' OR fs.user_id = ?)
 		)
-		ORDER BY fl.query_count DESC
+		ORDER BY ufs.query_count DESC
 		LIMIT 20
 	`
 	} else {
 		q = `
-		SELECT fl.food_id, fl.user_id, fl.name, fl.source,
-		       fl.kcal_100g, fl.protein_100g, fl.carbs_100g, fl.fat_100g, fl.fiber_100g,
-		       fl.category, fl.brand, fl.barcode, fl.image_url, fl.serving_size, fl.serving_unit,
-		       fl.query_count, fl.last_used
-		FROM food_library fl
-		WHERE fl.user_id = ? AND fl.food_id IN (
-			SELECT fs.food_id FROM food_search fs WHERE food_search MATCH ? AND fs.user_id = ?
+		SELECT f.food_id, ufs.user_id, f.name, f.source,
+		       f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       ufs.query_count, ufs.last_used
+		FROM user_food_stats ufs
+		JOIN foods f ON f.food_id = ufs.food_id
+		WHERE ufs.user_id = ? AND ufs.food_id IN (
+			SELECT fs.food_id FROM food_search fs
+			WHERE food_search MATCH ? AND (fs.user_id = '' OR fs.user_id = ?)
 		)
-		ORDER BY fl.query_count DESC
+		ORDER BY ufs.query_count DESC
 		LIMIT 20
 	`
 	}
@@ -225,16 +251,17 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 	return foodDetailRows(rows), nil
 }
 
-// FrequentFoods returns the most frequently logged foods.
+// FrequentFoods returns this user's most frequently logged foods.
 func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error) {
 	const q = `
-		SELECT food_id, user_id, name, source,
-		       kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
-		       category, brand, barcode, image_url, serving_size, serving_unit,
-		       query_count, last_used
-		FROM food_library
-		WHERE user_id = ? AND query_count > 0
-		ORDER BY query_count DESC, last_used DESC
+		SELECT f.food_id, ufs.user_id, f.name, f.source,
+		       f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       ufs.query_count, ufs.last_used
+		FROM user_food_stats ufs
+		JOIN foods f ON f.food_id = ufs.food_id
+		WHERE ufs.user_id = ? AND ufs.query_count > 0
+		ORDER BY ufs.query_count DESC, ufs.last_used DESC
 		LIMIT ?
 	`
 	var rows []foodDetailRow
@@ -244,15 +271,16 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 	return foodDetailRows(rows), nil
 }
 
-// GetFoodDetail returns a single food with its aliases.
+// GetFoodDetail returns a single food this user has used, with its aliases.
 func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error) {
 	const foodQ = `
-		SELECT food_id, user_id, name, source,
-		       kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
-		       category, brand, barcode, image_url, serving_size, serving_unit,
-		       query_count, last_used
-		FROM food_library
-		WHERE user_id = ? AND food_id = ?
+		SELECT f.food_id, ufs.user_id, f.name, f.source,
+		       f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       ufs.query_count, ufs.last_used
+		FROM user_food_stats ufs
+		JOIN foods f ON f.food_id = ufs.food_id
+		WHERE ufs.user_id = ? AND ufs.food_id = ?
 	`
 	var row foodDetailRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(foodQ), userID, foodID); err != nil {
@@ -438,9 +466,9 @@ func (s *Store) SetSourcePrecedence(ctx context.Context, userID string, order []
 	return tx.Commit()
 }
 
-// foodDetailRow is the flat DB shape of food_library; types.FoodDetail nests
-// the macro columns into Per100g and carries a non-column Aliases slice
-// populated separately (GetFoodDetail).
+// foodDetailRow is the flat DB shape of a foods+user_food_stats join;
+// types.FoodDetail nests the macro columns into Per100g and carries a
+// non-column Aliases slice populated separately (GetFoodDetail).
 type foodDetailRow struct {
 	FoodID      string  `db:"food_id"`
 	UserID      string  `db:"user_id"`

@@ -16,7 +16,7 @@ import (
 // custom SELECT elsewhere in that file.
 func scanUser(row *sql.Row) (types.User, error) {
 	var r userRow
-	if err := row.Scan(&r.ID, &r.AccountID, &r.Email, &r.EmailVerifiedAt, &r.Status, &r.DisplayName, &r.Timezone, &r.CreatedAt, &r.WebAuthnHandle); err != nil {
+	if err := row.Scan(&r.ID, &r.AccountID, &r.Email, &r.EmailVerifiedAt, &r.Status, &r.DisplayName, &r.Timezone, &r.Locale, &r.CreatedAt, &r.WebAuthnHandle); err != nil {
 		return types.User{}, err
 	}
 	return r.toUser(), nil

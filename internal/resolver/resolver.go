@@ -24,7 +24,7 @@ import (
 // trivially testable; the concrete store satisfies it automatically.
 type FoodStore interface {
 	LookupFood(ctx context.Context, userID, phrase string) (types.FoodMatch, error)
-	GetFood(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
+	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
 	UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error
 	RecordFoodQuery(ctx context.Context, userID, foodID string) error
 	// AddPendingAlias queues an embedding near-miss for user confirmation

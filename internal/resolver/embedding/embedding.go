@@ -37,16 +37,19 @@ func New(model ports.ModelAdapter, idx index.Index, store resolver.FoodStore, th
 	}
 }
 
-// Match embeds phrase, finds the nearest neighbour in the user's index, and
-// returns the corresponding FoodMatch when the similarity meets the threshold.
-// Returns types.ErrNoMatch when no neighbour clears the threshold.
+// Match embeds phrase, finds the nearest neighbour in the global embedding
+// index, and returns the corresponding FoodMatch when the similarity meets
+// the threshold. Returns types.ErrNoMatch when no neighbour clears the
+// threshold. userID is unused for the search itself (the index is global,
+// shared by every user) but kept in the signature for interface conformance.
 func (m *Matcher) Match(ctx context.Context, userID, phrase string) (types.FoodMatch, error) {
+	_ = userID
 	vec, err := m.model.Embed(ctx, phrase)
 	if err != nil {
 		return types.FoodMatch{}, fmt.Errorf("embedding: embed: %w", err)
 	}
 
-	nn, err := m.idx.Nearest(ctx, userID, vec, 1)
+	nn, err := m.idx.Nearest(ctx, vec, 1)
 	if err != nil {
 		return types.FoodMatch{}, fmt.Errorf("embedding: nearest: %w", err)
 	}
@@ -54,7 +57,7 @@ func (m *Matcher) Match(ctx context.Context, userID, phrase string) (types.FoodM
 		return types.FoodMatch{}, types.ErrNoMatch
 	}
 
-	fm, err := m.store.GetFood(ctx, userID, nn[0].FoodID)
+	fm, err := m.store.GetFood(ctx, nn[0].FoodID)
 	if err != nil {
 		return types.FoodMatch{}, fmt.Errorf("embedding: get food: %w", err)
 	}
@@ -66,11 +69,23 @@ func (m *Matcher) Match(ctx context.Context, userID, phrase string) (types.FoodM
 func (m *Matcher) SetThreshold(t float64) { m.threshold = t }
 
 // EmbedFood embeds the canonical food name and upserts the vector into the
-// index so future embedding queries can match it.
+// global index so future embedding queries can match it. userID is unused
+// (kept for interface conformance): an embedding is a pure function of name,
+// so it's computed and stored once per foodID regardless of which user
+// triggered the resolution. Skips the (costly) model call entirely when a
+// vector for this food already exists.
 func (m *Matcher) EmbedFood(ctx context.Context, userID, foodID, name string) error {
+	_ = userID
+	exists, err := m.idx.Exists(ctx, foodID)
+	if err != nil {
+		return fmt.Errorf("embedding: check exists: %w", err)
+	}
+	if exists {
+		return nil
+	}
 	vec, err := m.model.Embed(ctx, name)
 	if err != nil {
 		return fmt.Errorf("embedding: embed food: %w", err)
 	}
-	return m.idx.Upsert(ctx, userID, foodID, vec)
+	return m.idx.Upsert(ctx, foodID, vec)
 }

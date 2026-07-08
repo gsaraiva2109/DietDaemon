@@ -241,7 +241,7 @@ func (s *fakeMealStore) FrequentFoods(_ context.Context, _ string, _ int) ([]typ
 func (s *fakeMealStore) GetFoodDetail(_ context.Context, _, _ string) (types.FoodDetail, error) {
 	return s.foodDetail, s.foodDetailErr
 }
-func (s *fakeMealStore) GetFood(_ context.Context, _, foodID string) (types.FoodMatch, error) {
+func (s *fakeMealStore) GetFood(_ context.Context, foodID string) (types.FoodMatch, error) {
 	if fm, ok := s.foodsByID[foodID]; ok {
 		return fm, nil
 	}
@@ -298,8 +298,8 @@ func (s *fakeMealStore) SaveMeal(_ context.Context, _ types.Meal) error {
 func (s *fakeMealStore) ListWeight(_ context.Context, _ string, _ int) ([]types.WeightEntry, error) {
 	return s.weights, s.weightsErr
 }
-func (s *fakeMealStore) LogWeight(_ context.Context, _ types.WeightEntry) error {
-	return s.logWeightErr
+func (s *fakeMealStore) LogWeight(_ context.Context, _ types.WeightEntry) (string, error) {
+	return "", s.logWeightErr
 }
 func (s *fakeMealStore) DeleteWeight(_ context.Context, _, _ string) error {
 	return s.deleteWeightErr
@@ -351,8 +351,8 @@ func (s *fakeMealStore) ListFasts(_ context.Context, _ string, _ int) ([]types.F
 func (s *fakeMealStore) ListMeasurements(_ context.Context, _ string, _ int) ([]types.MeasurementEntry, error) {
 	return s.measurements, s.measurementsErr
 }
-func (s *fakeMealStore) LogMeasurement(_ context.Context, _ types.MeasurementEntry) error {
-	return s.logMeasurementErr
+func (s *fakeMealStore) LogMeasurement(_ context.Context, _ types.MeasurementEntry) (string, error) {
+	return "", s.logMeasurementErr
 }
 func (s *fakeMealStore) DeleteMeasurement(_ context.Context, _, _ string) error {
 	return s.deleteMeasurementErr

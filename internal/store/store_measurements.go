@@ -30,16 +30,19 @@ func (s *Store) ListMeasurements(ctx context.Context, userID string, days int) (
 	return out, nil
 }
 
-// LogMeasurement inserts or updates a measurement entry.
-func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) error {
+// LogMeasurement inserts or updates a measurement entry, upserting on
+// (user_id, date): one entry per user per day, so logging again the same day
+// overwrites the existing entry instead of creating a second row. Returns the
+// persisted row's ID — callers must use this, not m.ID, since an overwrite
+// keeps the original row's ID rather than adopting m.ID.
+func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) (string, error) {
 	const q = `
 		INSERT INTO measurement_log
 			(id, user_id, date, waist_cm, hips_cm, chest_cm, left_arm_cm, right_arm_cm,
 			 left_thigh_cm, right_thigh_cm, note, created_at)
 		VALUES (:id, :user_id, :date, :waist_cm, :hips_cm, :chest_cm, :left_arm_cm, :right_arm_cm,
 			:left_thigh_cm, :right_thigh_cm, :note, :created_at)
-		ON CONFLICT(id) DO UPDATE SET
-			date           = excluded.date,
+		ON CONFLICT(user_id, date) DO UPDATE SET
 			waist_cm       = excluded.waist_cm,
 			hips_cm        = excluded.hips_cm,
 			chest_cm       = excluded.chest_cm,
@@ -48,6 +51,7 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 			left_thigh_cm  = excluded.left_thigh_cm,
 			right_thigh_cm = excluded.right_thigh_cm,
 			note           = excluded.note
+		RETURNING id
 	`
 	query, args, err := sqlx.Named(q, map[string]any{
 		"id": m.ID, "user_id": m.UserID, "date": m.Date,
@@ -57,10 +61,13 @@ func (s *Store) LogMeasurement(ctx context.Context, m types.MeasurementEntry) er
 		"note": m.Note, "created_at": utcStr(m.CreatedAt),
 	})
 	if err != nil {
-		return fmt.Errorf("store: bind log measurement: %w", err)
+		return "", fmt.Errorf("store: bind log measurement: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
-	return err
+	var id string
+	if err := s.db.GetContext(ctx, &id, s.rewrite(query), args...); err != nil {
+		return "", fmt.Errorf("store: log measurement: %w", err)
+	}
+	return id, nil
 }
 
 // DeleteMeasurement deletes a measurement entry by user + ID. Returns ErrNotFound.
