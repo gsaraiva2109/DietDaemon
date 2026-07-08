@@ -149,9 +149,10 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 	}
 }
 
-// chatSystemPrompt builds the system prompt from the i18n base template and
-// the user's custom instructions.
-func (h *Handler) chatSystemPrompt(ctx context.Context, userID string) string {
+// chatBasePrompt resolves the i18n base system prompt for the user's locale,
+// before any custom instructions are appended. Exposed via GET /chat/settings
+// so the UI can show it read-only alongside the editable custom instructions.
+func (h *Handler) chatBasePrompt(ctx context.Context, userID string) string {
 	// Resolve locale from the user record.
 	locale := "en"
 	if h.store != nil {
@@ -167,6 +168,13 @@ func (h *Handler) chatSystemPrompt(ctx context.Context, userID string) string {
 			basePrompt = resolved
 		}
 	}
+	return basePrompt
+}
+
+// chatSystemPrompt builds the system prompt from the i18n base template and
+// the user's custom instructions.
+func (h *Handler) chatSystemPrompt(ctx context.Context, userID string) string {
+	basePrompt := h.chatBasePrompt(ctx, userID)
 
 	// Append custom instructions if set, clearly delimited as user content
 	// that cannot override the data-safety rules above it.
@@ -286,11 +294,11 @@ func (h *Handler) handleGetChatSettings(w http.ResponseWriter, r *http.Request, 
 		h.writeErr(w, err)
 		return
 	}
+	basePrompt := h.chatBasePrompt(r.Context(), userID)
 	if !found {
-		_ = json.NewEncoder(w).Encode(map[string]string{"custom_instructions": ""})
-		return
+		ci = ""
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{"custom_instructions": ci})
+	_ = json.NewEncoder(w).Encode(map[string]string{"custom_instructions": ci, "base_prompt": basePrompt})
 }
 
 // handleSetChatSettings updates the user's assistant settings.

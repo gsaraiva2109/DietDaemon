@@ -187,7 +187,7 @@ func Load() (*Config, error) {
 		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
 		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
 		EmbedAdapter:            getStr("EMBED_ADAPTER", "ollama"),
-		CompletionAdapter:       getStr("COMPLETION_ADAPTER", "ollama"),
+		CompletionAdapter:       getStr("COMPLETION_ADAPTER", ""),
 		OllamaURL:               getStr("OLLAMA_URL", ""),
 		EmbedModel:              getStr("EMBED_MODEL", "nomic-embed-text"),
 		LLMModel:                getStr("LLM_MODEL", "llama3.1"),
@@ -225,6 +225,21 @@ func Load() (*Config, error) {
 		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
 		TOTPIssuer:              getStr("TOTP_ISSUER", "DietDaemon"),
+	}
+
+	// COMPLETION_ADAPTER left unset: infer from which credentials are
+	// actually present instead of defaulting to ollama, so setting
+	// OPENAI_API_KEY (or ANTHROPIC_API_KEY) alone is enough to switch
+	// providers without also having to set COMPLETION_ADAPTER explicitly.
+	if c.CompletionAdapter == "" {
+		switch {
+		case c.OpenAIAPIKey != "":
+			c.CompletionAdapter = "openai"
+		case c.AnthropicAPIKey != "":
+			c.CompletionAdapter = "anthropic"
+		default:
+			c.CompletionAdapter = "ollama"
+		}
 	}
 
 	// TOTP encryption key: optional (TOTP is unavailable without it).

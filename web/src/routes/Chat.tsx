@@ -4,7 +4,7 @@
 // untouched. Built on assistant-ui's useLocalRuntime with a custom
 // ChatModelAdapter (lib/chatRuntime.ts) that speaks our own SSE wire format.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AssistantRuntimeProvider,
@@ -64,9 +64,19 @@ export function Chat() {
   // external side effect (a POST), so it's the one thing that does belong in
   // an effect — the resulting setState happens inside the mutation callback,
   // not synchronously in the effect body.
+  //
+  // Guard is a ref, not createSession.isPending: StrictMode double-invokes
+  // this effect synchronously before the first mutate() call re-renders, so
+  // an isPending-based guard hasn't flipped yet on the second pass and both
+  // fire, creating two sessions.
+  const creatingSession = useRef(false)
   useEffect(() => {
-    if (demo || !sessions.isSuccess || sortedSessions.length > 0 || createSession.isPending) return
-    createSession.mutate(undefined, { onSuccess: (s) => setSessionID(s.id) })
+    if (demo || !sessions.isSuccess || sortedSessions.length > 0 || creatingSession.current) return
+    creatingSession.current = true
+    createSession.mutate(undefined, {
+      onSuccess: (s) => setSessionID(s.id),
+      onSettled: () => { creatingSession.current = false },
+    })
   }, [demo, sessions.isSuccess, sortedSessions.length, createSession])
 
   const messages = useChatMessages(activeSessionID)

@@ -90,8 +90,8 @@ export function Foods() {
           title={searching ? 'No matches' : 'No foods yet'}
           hint={
             searching
-              ? 'Try a different name or alias.'
-              : 'Foods appear here as you log meals.'
+              ? "This only searches foods you've already logged — try a different name/alias, or log the meal directly."
+              : 'Foods appear here as you log meals — there is no preloaded database, each food gets added the first time you log it.'
           }
         />
       ) : (
