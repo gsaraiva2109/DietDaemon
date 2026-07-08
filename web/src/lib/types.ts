@@ -508,4 +508,5 @@ export interface ChatMessageRecord {
 
 export interface AssistantSettings {
   custom_instructions: string
+  base_prompt: string
 }

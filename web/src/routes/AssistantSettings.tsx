@@ -44,6 +44,15 @@ export function AssistantSettings() {
         <Spinner label="Loading assistant settings" />
       ) : (
         <Card className="mb-5 p-5">
+          <h2 className="mb-1 font-semibold text-ink">Base instructions</h2>
+          <p className="mb-2 text-sm text-muted">
+            Always active, for every conversation, on every model (cloud or self-hosted). Read
+            only — your custom instructions below are added to this, not a replacement for it.
+          </p>
+          <p className="mb-4 whitespace-pre-wrap rounded-lg border border-line bg-surface-2 px-4 py-3 text-sm text-muted">
+            {query.data?.base_prompt}
+          </p>
+
           <h2 className="mb-1 font-semibold text-ink">Custom instructions</h2>
           <p className="mb-4 text-sm text-muted">
             Added to the assistant's base instructions for every conversation — tone, dietary

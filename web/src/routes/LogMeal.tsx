@@ -13,7 +13,7 @@ import type { MealTemplate } from '@/lib/types'
 import { TemplateIcon, CopyIcon } from '@/components/icons'
 import { fadeUp } from '@/lib/motion'
 
-const EXAMPLES = ['200g frango grelhado, 2 ovos, 150g arroz', '1 banana e um copo de leite', '3 slices of pizza']
+const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
 
 export function LogMeal() {
   const [params] = useSearchParams()

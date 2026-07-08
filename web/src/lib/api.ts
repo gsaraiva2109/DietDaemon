@@ -651,8 +651,8 @@ export const api = {
     },
     settings: {
       get: () => request<AssistantSettings>('/chat/settings'),
-      set: (body: AssistantSettings) =>
-        request<AssistantSettings>('/chat/settings', { method: 'PUT', body: JSON.stringify(body) }),
+      set: (body: { custom_instructions: string }) =>
+        request<{ status: string }>('/chat/settings', { method: 'PUT', body: JSON.stringify(body) }),
     },
   },
 }
