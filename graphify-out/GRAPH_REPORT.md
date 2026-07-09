@@ -1,7 +1,8 @@
-# Graph Report - .  (2026-07-08)
+# Graph Report - DietDaemon  (2026-07-09)
 
 ## Corpus Check
-- Large corpus: 303 files · ~202,290 words. Semantic extraction will be expensive (many Claude tokens). Consider running on a subfolder, or use --no-semantic to run AST-only.
+- 291 files · ~202,231 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
 - 2677 nodes · 4540 edges · 85 communities detected
