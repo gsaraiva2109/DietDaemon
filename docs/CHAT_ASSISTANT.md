@@ -35,14 +35,14 @@ User text → POST /api/v1/chat/sessions/{id}/messages
 
 All endpoints require authentication (session cookie or bearer key).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/chat/sessions` | Create a new chat session. Optional body: `{"title": "..."}`. Returns `{"id": "..."}`. |
-| `GET` | `/api/v1/chat/sessions` | List all sessions for the authenticated user, newest first. |
-| `POST` | `/api/v1/chat/sessions/{id}/messages` | Send a message and stream the response via SSE. Body: `{"text": "..."}`. |
-| `GET` | `/api/v1/chat/sessions/{id}/messages` | Get message history for a session. |
-| `GET` | `/api/v1/chat/settings` | Get the user's custom assistant instructions. |
-| `PUT` | `/api/v1/chat/settings` | Set custom instructions. Body: `{"custom_instructions": "..."}`. |
+| Method | Path                                  | Description                                                                            |
+|--------|---------------------------------------|----------------------------------------------------------------------------------------|
+| `POST` | `/api/v1/chat/sessions`               | Create a new chat session. Optional body: `{"title": "..."}`. Returns `{"id": "..."}`. |
+| `GET`  | `/api/v1/chat/sessions`               | List all sessions for the authenticated user, newest first.                            |
+| `POST` | `/api/v1/chat/sessions/{id}/messages` | Send a message and stream the response via SSE. Body: `{"text": "..."}`.               |
+| `GET`  | `/api/v1/chat/sessions/{id}/messages` | Get message history for a session.                                                     |
+| `GET`  | `/api/v1/chat/settings`               | Get the user's custom assistant instructions.                                          |
+| `PUT`  | `/api/v1/chat/settings`               | Set custom instructions. Body: `{"custom_instructions": "..."}`.                       |
 
 ## SSE event catalog
 
@@ -140,16 +140,16 @@ boot-configured provider for ollama (which is self-hosted and has no per-user ke
 
 No new environment variables. The assistant reuses existing config:
 
-| Variable | Used for |
-|----------|----------|
-| `COMPLETION_ADAPTER` | Selects the provider (`anthropic`, `openai`, `ollama`) |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `ANTHROPIC_MODEL` | Anthropic model (e.g. `claude-sonnet-4-5`) |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `OPENAI_MODEL` | OpenAI model (e.g. `gpt-4o`) |
-| `OPENAI_BASE_URL` | OpenAI-compatible base URL (default: `https://api.openai.com/v1`) |
-| `OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434`) |
-| `LLM_MODEL` | Ollama chat model (e.g. `llama3.1`) |
-| `MODEL_TIMEOUT` | HTTP client timeout for LLM requests |
-| `AI_KEY_MODE` | Set to `byok` to enable per-user API keys |
-| `AI_KEY_ENC_KEY` | 32-byte hex key for encrypting stored BYOK keys |
+| Variable             | Used for                                                          |
+|----------------------|-------------------------------------------------------------------|
+| `COMPLETION_ADAPTER` | Selects the provider (`anthropic`, `openai`, `ollama`)            |
+| `ANTHROPIC_API_KEY`  | Anthropic API key                                                 |
+| `ANTHROPIC_MODEL`    | Anthropic model (e.g. `claude-sonnet-4-5`)                        |
+| `OPENAI_API_KEY`     | OpenAI API key                                                    |
+| `OPENAI_MODEL`       | OpenAI model (e.g. `gpt-4o`)                                      |
+| `OPENAI_BASE_URL`    | OpenAI-compatible base URL (default: `https://api.openai.com/v1`) |
+| `OLLAMA_URL`         | Ollama base URL (default: `http://localhost:11434`)               |
+| `LLM_MODEL`          | Ollama chat model (e.g. `llama3.1`)                               |
+| `MODEL_TIMEOUT`      | HTTP client timeout for LLM requests                              |
+| `AI_KEY_MODE`        | Set to `byok` to enable per-user API keys                         |
+| `AI_KEY_ENC_KEY`     | 32-byte hex key for encrypting stored BYOK keys                   |

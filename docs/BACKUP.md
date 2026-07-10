@@ -38,34 +38,34 @@ calls the same export logic outside the interval gate.
 
 ### Server (environment variables)
 
-| Variable                | Default | Description                                                        |
-|--------------------------|---------|----------------------------------------------------------------------|
-| `BACKUP_LOCAL_DIR`       | (empty) | Base directory for the "local" destination. Empty disables it.       |
-| `BACKUP_CHECK_INTERVAL`  | `1h`    | How often the runner checks which users are due for a backup.        |
+| Variable                | Default | Description                                                    |
+|-------------------------|---------|----------------------------------------------------------------|
+| `BACKUP_LOCAL_DIR`      | (empty) | Base directory for the "local" destination. Empty disables it. |
+| `BACKUP_CHECK_INTERVAL` | `1h`    | How often the runner checks which users are due for a backup.  |
 
 ### Per-user (Settings → Backup, or `PUT /api/v1/settings/backup`)
 
-| Field          | Applies to | Description                                              |
-|----------------|------------|-----------------------------------------------------------|
-| `Enabled`      | both       | Turns scheduled backup on/off for this user.               |
-| `Destination`  | both       | `local` or `s3`.                                           |
-| `IntervalHrs`  | both       | Hours between runs (default 24).                           |
-| `LocalSubdir`  | local      | Subdirectory under `BACKUP_LOCAL_DIR` for this user's files. |
-| `S3Bucket`     | s3         | Target bucket.                                             |
-| `S3Prefix`     | s3         | Key prefix (e.g. `dietdaemon-backups/alice`).               |
-| `S3Region`     | s3         | Overrides the SDK's default region when set.                |
-| `S3Endpoint`   | s3         | Custom endpoint for S3-compatible stores (e.g. MinIO).      |
+| Field         | Applies to | Description                                                  |
+|---------------|------------|--------------------------------------------------------------|
+| `Enabled`     | both       | Turns scheduled backup on/off for this user.                 |
+| `Destination` | both       | `local` or `s3`.                                             |
+| `IntervalHrs` | both       | Hours between runs (default 24).                             |
+| `LocalSubdir` | local      | Subdirectory under `BACKUP_LOCAL_DIR` for this user's files. |
+| `S3Bucket`    | s3         | Target bucket.                                               |
+| `S3Prefix`    | s3         | Key prefix (e.g. `dietdaemon-backups/alice`).                |
+| `S3Region`    | s3         | Overrides the SDK's default region when set.                 |
+| `S3Endpoint`  | s3         | Custom endpoint for S3-compatible stores (e.g. MinIO).       |
 
 `local_subdir` is validated against `BACKUP_LOCAL_DIR` before any file is written — a
 value that would escape the base directory (e.g. `../../etc`) is rejected outright.
 
 ## API
 
-| Method & path                    | Description                                  |
-|-----------------------------------|-----------------------------------------------|
-| `GET /api/v1/settings/backup`     | Read the authenticated user's backup config.  |
-| `PUT /api/v1/settings/backup`     | Create/update the config.                     |
-| `POST /api/v1/settings/backup/run`| Trigger an immediate backup.                  |
+| Method & path                      | Description                                  |
+|------------------------------------|----------------------------------------------|
+| `GET /api/v1/settings/backup`      | Read the authenticated user's backup config. |
+| `PUT /api/v1/settings/backup`      | Create/update the config.                    |
+| `POST /api/v1/settings/backup/run` | Trigger an immediate backup.                 |
 
 ## Troubleshooting
 

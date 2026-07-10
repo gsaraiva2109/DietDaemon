@@ -8,27 +8,27 @@ Color strategy: **Restrained**, near-neutral surfaces, sage carries the calm, on
 
 ### Light (default)
 
-| Role | OKLCH | Use |
-|---|---|---|
-| `--bg` | `oklch(0.994 0.002 150)` | App background, near-pure paper white |
-| `--surface` | `oklch(0.975 0.006 155)` | Cards, panels, nav |
-| `--surface-2` | `oklch(0.955 0.008 155)` | Inset wells, hover |
-| `--ink` | `oklch(0.27 0.020 160)` | Body text (≥7:1 on bg) |
-| `--muted` | `oklch(0.52 0.015 160)` | Secondary text (≥4.5:1 on bg) |
-| `--line` | `oklch(0.90 0.006 155)` | Hairlines, dividers |
-| `--primary` | `oklch(0.62 0.090 155)` | Sage, calories ring, primary actions; white text on fill |
-| `--primary-soft` | `oklch(0.93 0.030 155)` | Tints, ring tracks, selected bg |
-| `--accent` | `oklch(0.70 0.150 65)` | Warm amber, "behind target" emphasis; white text on fill |
+| Role             | OKLCH                    | Use                                                      |
+|------------------|--------------------------|----------------------------------------------------------|
+| `--bg`           | `oklch(0.994 0.002 150)` | App background, near-pure paper white                    |
+| `--surface`      | `oklch(0.975 0.006 155)` | Cards, panels, nav                                       |
+| `--surface-2`    | `oklch(0.955 0.008 155)` | Inset wells, hover                                       |
+| `--ink`          | `oklch(0.27 0.020 160)`  | Body text (≥7:1 on bg)                                   |
+| `--muted`        | `oklch(0.52 0.015 160)`  | Secondary text (≥4.5:1 on bg)                            |
+| `--line`         | `oklch(0.90 0.006 155)`  | Hairlines, dividers                                      |
+| `--primary`      | `oklch(0.62 0.090 155)`  | Sage, calories ring, primary actions; white text on fill |
+| `--primary-soft` | `oklch(0.93 0.030 155)`  | Tints, ring tracks, selected bg                          |
+| `--accent`       | `oklch(0.70 0.150 65)`   | Warm amber, "behind target" emphasis; white text on fill |
 
 ### Macro hues (color-blind-safe set; ALWAYS paired with a label/number, never color alone)
 
-| Macro | OKLCH | Note |
-|---|---|---|
+| Macro    | OKLCH                   | Note           |
+|----------|-------------------------|----------------|
 | Calories | `oklch(0.62 0.090 155)` | sage (primary) |
-| Protein | `oklch(0.58 0.110 250)` | calm blue |
-| Carbs | `oklch(0.72 0.130 75)` | amber |
-| Fat | `oklch(0.64 0.110 25)` | clay/rose |
-| Fiber | `oklch(0.60 0.070 180)` | muted teal |
+| Protein  | `oklch(0.58 0.110 250)` | calm blue      |
+| Carbs    | `oklch(0.72 0.130 75)`  | amber          |
+| Fat      | `oklch(0.64 0.110 25)`  | clay/rose      |
+| Fiber    | `oklch(0.60 0.070 180)` | muted teal     |
 
 State: `--over-target` reuses `--accent` (amber), surfaced with an icon + text, not color alone. `--on-track`/met = `--primary` (sage).
 
