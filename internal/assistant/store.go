@@ -29,4 +29,7 @@ type Store interface {
 	GetChatMessages(ctx context.Context, userID, sessionID string) ([]Message, error)
 	GetAssistantSettings(ctx context.Context, userID string) (customInstructions string, found bool, err error)
 	SetAssistantSettings(ctx context.Context, userID, customInstructions string) error
+	SoftDeleteChatSession(ctx context.Context, userID, sessionID string) error
+	RestoreChatSession(ctx context.Context, userID, sessionID string) error
+	ListDeletedChatSessions(ctx context.Context, userID string) ([]Session, error)
 }

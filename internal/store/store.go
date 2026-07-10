@@ -36,6 +36,7 @@ var (
 	_ scheduler.WeeklyBudgetStore = (*Store)(nil)
 	_ backup.Store                = (*Store)(nil)
 	_ assistant.Store             = (*Store)(nil)
+	_ assistant.PurgeStore        = (*Store)(nil)
 )
 
 // New opens a database, applies driver-specific setup, runs migrations, and

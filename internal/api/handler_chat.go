@@ -342,6 +342,58 @@ func (h *Handler) handleSetChatSettings(w http.ResponseWriter, r *http.Request, 
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// ---------------------------------------------------------------------------
+// Session soft-delete and restore
+// ---------------------------------------------------------------------------
+
+// handleDeleteChatSession soft-deletes a session.
+// DELETE /api/v1/chat/sessions/{id}
+func (h *Handler) handleDeleteChatSession(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.chatStore == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		return
+	}
+	if err := h.chatStore.SoftDeleteChatSession(r.Context(), userID, r.PathValue("id")); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleRestoreChatSession restores a soft-deleted session.
+// POST /api/v1/chat/sessions/{id}/restore
+func (h *Handler) handleRestoreChatSession(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.chatStore == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		return
+	}
+	if err := h.chatStore.RestoreChatSession(r.Context(), userID, r.PathValue("id")); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleListDeletedChatSessions returns the user's soft-deleted sessions.
+// GET /api/v1/chat/sessions/deleted
+func (h *Handler) handleListDeletedChatSessions(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.chatStore == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		return
+	}
+	sessions, err := h.chatStore.ListDeletedChatSessions(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(sessions)
+}
+
 // writeSSE writes a single SSE event to the response writer.
 func writeSSE(w http.ResponseWriter, event string, data any) {
 	b, err := json.Marshal(data)

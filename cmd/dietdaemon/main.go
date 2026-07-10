@@ -298,6 +298,9 @@ func run() error {
 	go backupRunner.Run(ctx)
 	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
 
+	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
+	slog.Info("chat session purge runner running", "retention", "30d")
+
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
 		authCfg := api.AuthConfig{

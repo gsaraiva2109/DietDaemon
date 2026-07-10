@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
@@ -270,6 +271,182 @@ func TestHandleChatMessageToolCallEvent(t *testing.T) {
 type sseEvent struct {
 	Event string
 	Data  string
+}
+
+// ---------------------------------------------------------------------------
+// Session soft-delete and restore handler tests
+// ---------------------------------------------------------------------------
+
+// fakeChatStore is a test double for ChatStore.
+type fakeChatStore struct {
+	sessions        []assistant.Session
+	deletedSessions []assistant.Session
+	messages        []assistant.Message
+	settings        string
+	settingsFound   bool
+	softDeleteErr   error
+	restoreErr      error
+	listDeletedErr  error
+}
+
+func (f *fakeChatStore) CreateChatSession(ctx context.Context, id, userID, title string) error {
+	return nil
+}
+func (f *fakeChatStore) ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
+	return f.sessions, nil
+}
+func (f *fakeChatStore) AppendChatMessage(ctx context.Context, id, userID, sessionID, role, content, toolName string) error {
+	return nil
+}
+func (f *fakeChatStore) GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error) {
+	return f.messages, nil
+}
+func (f *fakeChatStore) GetAssistantSettings(ctx context.Context, userID string) (string, bool, error) {
+	return f.settings, f.settingsFound, nil
+}
+func (f *fakeChatStore) SetAssistantSettings(ctx context.Context, userID, instructions string) error {
+	return nil
+}
+func (f *fakeChatStore) SoftDeleteChatSession(ctx context.Context, userID, sessionID string) error {
+	return f.softDeleteErr
+}
+func (f *fakeChatStore) RestoreChatSession(ctx context.Context, userID, sessionID string) error {
+	return f.restoreErr
+}
+func (f *fakeChatStore) ListDeletedChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
+	if f.listDeletedErr != nil {
+		return nil, f.listDeletedErr
+	}
+	return f.deletedSessions, nil
+}
+
+func TestHandleDeleteChatSession(t *testing.T) {
+	h := &Handler{
+		chatStore: &fakeChatStore{},
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chat/sessions/sess-1", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleDeleteChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("expected status=ok, got %q", body["status"])
+	}
+}
+
+func TestHandleDeleteChatSessionNotFound(t *testing.T) {
+	h := &Handler{
+		chatStore: &fakeChatStore{softDeleteErr: types.ErrNotFound},
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chat/sessions/sess-404", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleDeleteChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDeleteChatSessionNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chat/sessions/sess-1", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleDeleteChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRestoreChatSession(t *testing.T) {
+	h := &Handler{
+		chatStore: &fakeChatStore{},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/sess-1/restore", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleRestoreChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRestoreChatSessionNotFound(t *testing.T) {
+	h := &Handler{
+		chatStore: &fakeChatStore{restoreErr: types.ErrNotFound},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/sess-404/restore", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleRestoreChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRestoreChatSessionNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/sess-1/restore", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleRestoreChatSession(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleListDeletedChatSessions(t *testing.T) {
+	h := &Handler{
+		chatStore: &fakeChatStore{
+			deletedSessions: []assistant.Session{
+				{ID: "sess-1", Title: "Deleted session"},
+			},
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/deleted", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleListDeletedChatSessions(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var sessions []assistant.Session
+	if err := json.Unmarshal(rec.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 deleted session, got %d", len(sessions))
+	}
+	if sessions[0].ID != "sess-1" {
+		t.Errorf("expected sess-1, got %q", sessions[0].ID)
+	}
+}
+
+func TestHandleListDeletedChatSessionsNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/deleted", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleListDeletedChatSessions(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 // parseSSE parses an SSE event stream from a response body.
