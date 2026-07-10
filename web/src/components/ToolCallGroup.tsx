@@ -2,7 +2,7 @@
 // Copilot-style "reasoning" panel: collapsed by default once done, expanded
 // automatically while any call in the run is still going, toggle to inspect.
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { SparkleIcon, ChevronDown } from './icons'
 import { fadeUp } from '@/lib/motion'
@@ -15,10 +15,11 @@ interface ToolCallGroupProps {
 
 export function ToolCallGroup({ running, count, children }: ToolCallGroupProps) {
   const [open, setOpen] = useState(running)
-
-  useEffect(() => {
+  const [prevRunning, setPrevRunning] = useState(running)
+  if (running !== prevRunning) {
+    setPrevRunning(running)
     if (running) setOpen(true)
-  }, [running])
+  }
 
   return (
     <motion.div

@@ -40,7 +40,7 @@ export function Foods() {
   const isLoading = searching ? search.isLoading : browse.isLoading
   const foods = useMemo(
     () => (searching ? search.data : browse.data) ?? [],
-    [search.data, browse.data],
+    [searching, search.data, browse.data],
   )
 
   return (

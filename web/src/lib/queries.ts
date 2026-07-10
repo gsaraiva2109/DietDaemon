@@ -13,8 +13,8 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query'
 import { api, ApiError } from './api'
+import { useDemo } from './demo'
 import {
-  useDemo,
   demoToday,
   demoRange,
   DEMO_MEALS,
@@ -30,7 +30,7 @@ import {
   DEMO_PRECEDENCE,
   DEMO_AI_KEY,
   DEMO_HEVY_KEY,
-} from './demo'
+} from './demoData'
 import type {
   BackupConfig,
   DailyRollup,
