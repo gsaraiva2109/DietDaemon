@@ -206,8 +206,9 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 		return nil, fmt.Errorf("openai chat: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("openai chat: status %d", resp.StatusCode)
+		defer resp.Body.Close()
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("openai chat: status %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
 	}
 
 	ch := make(chan ports.ChatEvent, 32)
@@ -344,7 +345,7 @@ func extractArgs(raw string) string {
 	var obj struct {
 		Args string `json:"args"`
 	}
-	if err := json.Unmarshal([]byte(raw), &obj); err == nil && obj.Args != "" {
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
 		return obj.Args
 	}
 	return raw

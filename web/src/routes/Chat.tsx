@@ -16,6 +16,7 @@ import {
   useThreadRuntime,
   type ThreadMessageLike,
   AuiIf,
+  groupPartByType,
 } from '@assistant-ui/react';
 import {
   useChatSessions,
@@ -28,6 +29,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Button, EmptyState, Spinner } from '@/components/ui'
 import { MarkdownText } from '@/components/MarkdownText'
 import { ToolCallChip } from '@/components/ToolCallChip'
+import { ToolCallGroup } from '@/components/ToolCallGroup'
 import { ChatIcon, SendIcon, LogIcon, CopyIcon, CheckIcon, ChevronDown } from '@/components/icons'
 import { fadeUp, stagger, easeOut } from '@/lib/motion'
 import type { ChatMessageRecord, ChatSession } from '@/lib/types'
@@ -301,11 +303,33 @@ function UserMessage() {
   );
 }
 
+// Coalesces adjacent tool-call parts into a single "group-tools" node so a
+// multi-step run (search, search again, log...) renders as one collapsible
+// panel instead of a stack of individually-boxed calls.
+const toolGroupBy = groupPartByType({ 'tool-call': ['group-tools'] })
+
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="group mb-4 flex flex-col items-start">
       <div className="max-w-[85%] rounded-2xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-ink">
-        <MessagePrimitive.Parts components={{ Text: MarkdownText, tools: { Fallback: ToolCallChip } }} />
+        <MessagePrimitive.GroupedParts groupBy={toolGroupBy}>
+          {({ part, children }) => {
+            switch (part.type) {
+              case 'group-tools':
+                return (
+                  <ToolCallGroup running={part.status.type === 'running'} count={part.indices.length}>
+                    {children}
+                  </ToolCallGroup>
+                )
+              case 'text':
+                return <MarkdownText />
+              case 'tool-call':
+                return <ToolCallChip {...part} />
+              default:
+                return null
+            }
+          }}
+        </MessagePrimitive.GroupedParts>
       </div>
       <ActionBarPrimitive.Root
         autohide="not-last"

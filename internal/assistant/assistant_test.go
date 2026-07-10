@@ -208,7 +208,7 @@ func TestRouterToolCallSingle(t *testing.T) {
 		rounds: [][]ports.ChatEvent{
 			{
 				{Kind: "text-delta", Text: "Checking..."},
-				{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c1", Name: "/search", Args: "diet"}},
+				{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c1", Name: "search", Args: "diet"}},
 				{Kind: "done"},
 			},
 			{
@@ -237,8 +237,8 @@ func TestRouterToolCallSingle(t *testing.T) {
 	if e.Kind != "tool-call" {
 		t.Fatalf("events[1].Kind = %q, want tool-call", e.Kind)
 	}
-	if e.ToolCall == nil || e.ToolCall.ID != "c1" || e.ToolCall.Name != "/search" || e.ToolCall.Args != "diet" {
-		t.Errorf("events[1].ToolCall = %+v, want {c1 /search diet}", e.ToolCall)
+	if e.ToolCall == nil || e.ToolCall.ID != "c1" || e.ToolCall.Name != "search" || e.ToolCall.Args != "diet" {
+		t.Errorf("events[1].ToolCall = %+v, want {c1 search diet}", e.ToolCall)
 	}
 
 	// (2) tool-result emitted
@@ -246,8 +246,8 @@ func TestRouterToolCallSingle(t *testing.T) {
 	if e.Kind != "tool-result" {
 		t.Fatalf("events[2].Kind = %q, want tool-result", e.Kind)
 	}
-	if e.ToolCall == nil || e.ToolCall.ID != "c1" || e.ToolCall.Name != "/search" {
-		t.Errorf("events[2].ToolCall = %+v, want {c1 /search ...}", e.ToolCall)
+	if e.ToolCall == nil || e.ToolCall.ID != "c1" || e.ToolCall.Name != "search" {
+		t.Errorf("events[2].ToolCall = %+v, want {c1 search ...}", e.ToolCall)
 	}
 	if e.ToolCall.Args != "found it" {
 		t.Errorf("events[2].ToolCall.Args = %q, want 'found it'", e.ToolCall.Args)
@@ -270,7 +270,7 @@ func TestRouterToolCallMaxRounds(t *testing.T) {
 	rounds := make([][]ports.ChatEvent, 6)
 	for i := range rounds {
 		rounds[i] = []ports.ChatEvent{
-			{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c", Name: "/search", Args: "x"}},
+			{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c", Name: "search", Args: "x"}},
 			{Kind: "done"},
 		}
 	}

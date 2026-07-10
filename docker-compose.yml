@@ -16,13 +16,9 @@ services:
     volumes:
       - dietdaemon_data:/data
 
-    # Internal port only — Dokploy Traefik routes to this.
-    # Add domain in Dokploy UI (Domains tab → container port 8080).
     expose:
       - 8080
 
-    networks:
-      - dokploy-network
 
 #  # Opt-in AI: docker compose --profile ai up
 #  ollama:
@@ -33,15 +29,9 @@ services:
 #      - ollama_data:/root/.ollama
 #    profiles:
 #      - ai
-#    networks:
-#      - dokploy-network
 #
 #  # Uncomment when ollama service above is active.
 #  ollama_data:
 
 volumes:
   dietdaemon_data:
-
-networks:
-  dokploy-network:
-    external: true
