@@ -36,7 +36,7 @@ export function ToolCallGroup({ running, count, children }: ToolCallGroupProps) 
         <span className="text-primary">
           <SparkleIcon width={14} height={14} />
         </span>
-        <span className="flex-1 text-left">
+        <span className={`flex-1 text-left ${running ? 'chat-shimmer' : ''}`}>
           {running ? 'Running' : 'Ran'} {count} tool{count === 1 ? '' : 's'}
         </span>
         {running && <span className="size-3 animate-spin rounded-full border-2 border-line border-t-primary" />}

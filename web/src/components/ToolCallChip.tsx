@@ -17,11 +17,10 @@ export function ToolCallChip({ toolName, argsText, result, status }: ToolCallMes
         <span className="text-primary">
           <SparkleIcon width={14} height={14} />
         </span>
-        <span>
+        <span className={running ? 'chat-shimmer' : undefined}>
           {running ? 'Running' : 'Ran'} <code className="rounded bg-surface px-1 py-0.5 text-ink">/{toolName}</code>
           {argsText ? <span className="text-muted"> {argsText}</span> : null}
         </span>
-        {running && <span className="size-3 animate-spin rounded-full border-2 border-line border-t-primary" />}
       </div>
       {typeof result === 'string' && result && <p className="pl-5 text-sm text-ink">{result}</p>}
     </motion.div>

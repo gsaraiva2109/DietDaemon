@@ -6,6 +6,7 @@
 //   event: delta        data: {"text": "..."}
 //   event: tool-call     data: {"id": "...", "name": "...", "args": "..."}
 //   event: tool-result   data: {"id": "...", "text": "..."}
+//   event: suggestions  data: {"options": ["...", ...]}   (see 08b brief; backend-optional)
 //   event: done          data: {}
 //   event: error         data: {"message": "..."}
 //
@@ -15,6 +16,7 @@
 import type {
   ChatModelAdapter,
   ChatModelRunResult,
+  SuggestionAdapter,
   ThreadAssistantMessagePart,
   ThreadMessage,
 } from '@assistant-ui/react'
@@ -52,12 +54,26 @@ function parseSSEBlock(block: string): { event: string; data: string } | null {
   return { event, data: dataLines.join('\n') }
 }
 
-export function createChatModelAdapter(getSessionID: () => string | null): ChatModelAdapter {
-  return {
+export interface ChatAdapters {
+  modelAdapter: ChatModelAdapter
+  suggestionAdapter: SuggestionAdapter
+}
+
+// Bundles the chat model adapter with a SuggestionAdapter fed by the same SSE
+// run: the backend (see 08b-chat-suggestions.md) may end a turn with a
+// `suggestions` event carrying quick-reply options. assistant-ui calls
+// suggestionAdapter.generate() itself once a run finishes, so `run` just has
+// to stash the latest options where `generate` can hand them back — no event
+// means no suggestions, exactly as the backend brief allows.
+export function createChatAdapters(getSessionID: () => string | null): ChatAdapters {
+  let latestSuggestions: string[] = []
+
+  const modelAdapter: ChatModelAdapter = {
     async *run({ messages, abortSignal }) {
       const sessionID = getSessionID()
       if (!sessionID) throw new Error('No active chat session yet.')
 
+      latestSuggestions = []
       const text = extractText(messages[messages.length - 1])
       const res = await api.chat.sendMessage(sessionID, text, abortSignal)
       if (!res.ok || !res.body) {
@@ -112,6 +128,9 @@ export function createChatModelAdapter(getSessionID: () => string | null): ChatM
             const tc = toolParts.get(payload.id)
             if (tc) tc.result = payload.text
             yield snapshot()
+          } else if (event === 'suggestions') {
+            const payload = JSON.parse(data) as { options: string[] }
+            latestSuggestions = payload.options ?? []
           } else if (event === 'error') {
             const payload = JSON.parse(data) as { message: string }
             throw new Error(payload.message)
@@ -121,4 +140,10 @@ export function createChatModelAdapter(getSessionID: () => string | null): ChatM
       }
     },
   }
+
+  const suggestionAdapter: SuggestionAdapter = {
+    generate: async () => latestSuggestions.map((prompt) => ({ prompt })),
+  }
+
+  return { modelAdapter, suggestionAdapter }
 }

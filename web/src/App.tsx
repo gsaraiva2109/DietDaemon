@@ -50,6 +50,7 @@ const NudgeSettings = lazy(() => import('@/routes/NudgeSettings').then(m => ({ d
 const BackupSettings = lazy(() => import('@/routes/BackupSettings').then(m => ({ default: m.BackupSettings })))
 const AIKeySettings = lazy(() => import('@/routes/AIKeySettings').then(m => ({ default: m.AIKeySettings })))
 const AssistantSettings = lazy(() => import('@/routes/AssistantSettings').then(m => ({ default: m.AssistantSettings })))
+const DeletedChatSessions = lazy(() => import('@/routes/DeletedChatSessions').then(m => ({ default: m.DeletedChatSessions })))
 const HevyImport = lazy(() => import('@/routes/HevyImport').then(m => ({ default: m.HevyImport })))
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
@@ -131,6 +132,7 @@ function AppRoutes() {
           <Route path="/settings/backup" element={<BackupSettings />} />
           <Route path="/settings/ai-key" element={<AIKeySettings />} />
           <Route path="/settings/assistant" element={<AssistantSettings />} />
+          <Route path="/settings/deleted-chats" element={<DeletedChatSessions />} />
           <Route path="/settings/hevy-import" element={<HevyImport />} />
           <Route path="/foods" element={<Foods />} />
           <Route path="/templates" element={<Templates />} />
