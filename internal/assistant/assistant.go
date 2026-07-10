@@ -39,8 +39,13 @@ func New(adapter ports.ChatAdapter, cmds []ports.Command, toolDescs map[string]s
 		if desc == "" {
 			desc = name
 		}
-		tools = append(tools, ports.ToolSpec{Name: name, Description: desc})
-		cmdMap[name] = c
+		// LLM tool-call names must match ^[a-zA-Z0-9_-]+$ (OpenAI/Anthropic
+		// both reject "/"), but command names are Telegram-style "/foo" —
+		// strip the slash for the wire spec and key the map the same way so
+		// executeCommand can look tool calls up directly.
+		wireName := strings.TrimPrefix(name, "/")
+		tools = append(tools, ports.ToolSpec{Name: wireName, Description: desc})
+		cmdMap[wireName] = c
 	}
 	return &Router{
 		adapter:  adapter,
@@ -195,7 +200,7 @@ func (r *Router) executeCommand(ctx context.Context, userID string, tc ports.Too
 
 	msg := types.InboundMessage{
 		UserID:      userID,
-		Text:        tc.Name + " " + tc.Args,
+		Text:        "/" + tc.Name + " " + tc.Args,
 		ChannelMeta: map[string]string{"channel": "web"},
 	}
 
