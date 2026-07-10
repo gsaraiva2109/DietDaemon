@@ -20,6 +20,7 @@ import {
   CheckIcon,
   SparkleIcon,
   ClockIcon,
+  TrashIcon,
 } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
@@ -141,6 +142,7 @@ export function Settings() {
         <RowLink to="/settings/backup" Icon={ClockIcon} label="Backup" hint="Scheduled export to local disk or S3" />
         <RowLink to="/settings/ai-key" Icon={SettingsIcon} label="AI API Key" hint="Bring your own LLM provider key" />
         <RowLink to="/settings/assistant" Icon={SparkleIcon} label="Assistant" hint="Custom instructions for the chat assistant" />
+        <RowLink to="/settings/deleted-chats" Icon={TrashIcon} label="Recently deleted" hint="Restore chat conversations deleted in the last 30 days" />
         <RowLink to="/settings/hevy-import" Icon={DownloadIcon} label="Hevy Import" hint="Import workouts from Hevy" />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}

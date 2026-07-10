@@ -914,25 +914,23 @@ export function useImportHevy() {
 // AI chat assistant. No demo-mode branch: a live LLM conversation can't be
 // meaningfully faked with static sample data, so Chat.tsx gates on useDemo()
 // directly and shows an explainer instead of mounting these hooks.
+//
+// Session list/create/messages are no longer queried by hand here — Chat.tsx
+// gets them through assistant-ui's RemoteThreadListAdapter (lib/chatThreadListAdapter.ts),
+// which owns that data as part of the thread-list runtime. Only the
+// Settings-side "recently deleted" list (a separate page, outside the chat
+// runtime entirely) still needs plain query hooks.
 // ---------------------------------------------------------------------------
 
-export function useChatSessions() {
-  return useQuery({ queryKey: ['chat', 'sessions'], queryFn: api.chat.listSessions })
+export function useDeletedChatSessions() {
+  return useQuery({ queryKey: ['chat', 'sessions', 'deleted'], queryFn: api.chat.listDeletedSessions })
 }
 
-export function useCreateChatSession() {
+export function useRestoreChatSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api.chat.createSession(),
+    mutationFn: (sessionID: string) => api.chat.restoreSession(sessionID),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'sessions'] }),
-  })
-}
-
-export function useChatMessages(sessionID: string | null) {
-  return useQuery({
-    queryKey: ['chat', 'messages', sessionID],
-    queryFn: () => api.chat.getMessages(sessionID!),
-    enabled: !!sessionID,
   })
 }
 

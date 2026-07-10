@@ -632,6 +632,13 @@ export const api = {
   chat: {
     createSession: () => request<ChatSession>('/chat/sessions', { method: 'POST' }),
     listSessions: () => request<ChatSession[]>('/chat/sessions'),
+    // Soft-delete (30-day retention, backend purges after that) + restore.
+    // See .context/prompts/chat-assistant-v2/08c-chat-session-soft-delete.md.
+    deleteSession: (sessionID: string) =>
+      request<void>(`/chat/sessions/${encodeURIComponent(sessionID)}`, { method: 'DELETE' }),
+    restoreSession: (sessionID: string) =>
+      request<void>(`/chat/sessions/${encodeURIComponent(sessionID)}/restore`, { method: 'POST' }),
+    listDeletedSessions: () => request<ChatSession[]>('/chat/sessions/deleted'),
     getMessages: (sessionID: string) =>
       request<ChatMessageRecord[]>(`/chat/sessions/${encodeURIComponent(sessionID)}/messages`),
     // The streaming send is a raw fetch (not the JSON `request()` wrapper):

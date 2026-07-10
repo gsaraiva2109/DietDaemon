@@ -174,6 +174,20 @@ export const TrashIcon = (p: IconProps) => (
   </svg>
 )
 
+export const RefreshIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M20 11a8 8 0 0 0-14.6-4.5M4 13a8 8 0 0 0 14.6 4.5" />
+    <path d="M5 3v4h4M19 21v-4h-4" />
+  </svg>
+)
+
+export const RestoreIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 4v6h6" />
+    <path d="M5.5 15A8 8 0 1 0 7 6.3L4 10" />
+  </svg>
+)
+
 export const CameraIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
