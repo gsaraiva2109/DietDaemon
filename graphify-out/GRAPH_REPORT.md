@@ -1,12 +1,12 @@
 # Graph Report - DietDaemon  (2026-07-10)
 
 ## Corpus Check
-- 297 files · ~204,601 words
+- 301 files · ~207,136 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2689 nodes · 4555 edges · 89 communities detected
-- Extraction: 74% EXTRACTED · 26% INFERRED · 0% AMBIGUOUS · INFERRED: 1202 edges (avg confidence: 0.8)
+- 2732 nodes · 4647 edges · 87 communities detected
+- Extraction: 73% EXTRACTED · 27% INFERRED · 0% AMBIGUOUS · INFERRED: 1244 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -71,24 +71,24 @@
 - [[_COMMUNITY_Community 61|Community 61]]
 - [[_COMMUNITY_Community 62|Community 62]]
 - [[_COMMUNITY_Community 63|Community 63]]
-- [[_COMMUNITY_Community 64|Community 64]]
 - [[_COMMUNITY_Community 65|Community 65]]
-- [[_COMMUNITY_Community 67|Community 67]]
-- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 66|Community 66]]
 - [[_COMMUNITY_Community 69|Community 69]]
+- [[_COMMUNITY_Community 70|Community 70]]
 - [[_COMMUNITY_Community 72|Community 72]]
-- [[_COMMUNITY_Community 74|Community 74]]
-- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 76|Community 76]]
+- [[_COMMUNITY_Community 77|Community 77]]
 - [[_COMMUNITY_Community 79|Community 79]]
-- [[_COMMUNITY_Community 81|Community 81]]
-- [[_COMMUNITY_Community 82|Community 82]]
-- [[_COMMUNITY_Community 93|Community 93]]
-- [[_COMMUNITY_Community 94|Community 94]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 91|Community 91]]
+- [[_COMMUNITY_Community 92|Community 92]]
+- [[_COMMUNITY_Community 121|Community 121]]
+- [[_COMMUNITY_Community 122|Community 122]]
 - [[_COMMUNITY_Community 123|Community 123]]
 - [[_COMMUNITY_Community 124|Community 124]]
-- [[_COMMUNITY_Community 125|Community 125]]
 - [[_COMMUNITY_Community 126|Community 126]]
-- [[_COMMUNITY_Community 128|Community 128]]
+- [[_COMMUNITY_Community 171|Community 171]]
+- [[_COMMUNITY_Community 172|Community 172]]
 - [[_COMMUNITY_Community 173|Community 173]]
 - [[_COMMUNITY_Community 174|Community 174]]
 - [[_COMMUNITY_Community 175|Community 175]]
@@ -97,11 +97,9 @@
 - [[_COMMUNITY_Community 178|Community 178]]
 - [[_COMMUNITY_Community 179|Community 179]]
 - [[_COMMUNITY_Community 180|Community 180]]
-- [[_COMMUNITY_Community 181|Community 181]]
-- [[_COMMUNITY_Community 182|Community 182]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `New()` - 185 edges
+1. `New()` - 189 edges
 2. `Store` - 175 edges
 3. `Handler` - 147 edges
 4. `now()` - 99 edges
@@ -110,7 +108,7 @@
 7. `newHandler()` - 81 edges
 8. `fakeMealStore` - 78 edges
 9. `newFakeMealStore()` - 78 edges
-10. `contains()` - 64 edges
+10. `contains()` - 76 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `run()` --calls--> `NewCancelCommand()`  [INFERRED]
@@ -128,7 +126,7 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.02
-Nodes (72): AuthConfig, AuthStore, BackupRunner, ChatStore, emailToken, fakeMailer, Handler, clientIP() (+64 more)
+Nodes (107): AuthConfig, AuthStore, BackupRunner, ChatStore, emailToken, fakeMailer, Handler, clientIP() (+99 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
@@ -136,23 +134,23 @@ Nodes (39): NewWebAuthnHandle(), parseTier(), Normalize(), TestNormalize(), unac
 
 ### Community 2 - "Community 2"
 Cohesion: 0.02
-Nodes (162): newFakeStore(), TestRunFor_MissingDestinationErrors(), TestRunFor_SetsBackupCounts(), TestRunFor_WarnsOnCountDrop(), TestRunOnce_IgnoresIntervalGate(), TestTick_RunsWhenIntervalElapsed(), TestTick_SkipsDisabledOrUnconfigured(), TestTick_SkipsWhenNotYetDue() (+154 more)
+Nodes (174): collectEvents(), TestRouterContextCancellation(), TestRouterErrorPropagation(), TestRouterMidStreamError(), TestRouterSeedsHistory(), TestRouterTextOnly(), TestRouterTextOnly_doneForwarded(), TestRouterToolCallMaxRounds() (+166 more)
 
 ### Community 3 - "Community 3"
+Cohesion: 0.03
+Nodes (83): TestComplete(), TestCompleteHTTPError(), TestEmbedNotSupported(), NewCorrectCommand(), TestCorrectCommand_BadGramsFormat(), TestCorrectCommand_HappyPath(), TestCorrectCommand_NoRecentMeal(), fakeCorrectResolver (+75 more)
+
+### Community 4 - "Community 4"
 Cohesion: 0.02
 Nodes (46): ProtectedRoute(), UtilityBar(), VerifyEmailBanner(), AuthProvider(), useAuth(), useDemo(), useActiveFast(), useAIKey() (+38 more)
 
-### Community 4 - "Community 4"
-Cohesion: 0.04
-Nodes (69): TestComplete(), TestCompleteHTTPError(), TestEmbedNotSupported(), NewCorrectCommand(), TestCorrectCommand_BadGramsFormat(), TestCorrectCommand_HappyPath(), TestCorrectCommand_NoRecentMeal(), fakeCmd (+61 more)
-
 ### Community 5 - "Community 5"
-Cohesion: 0.03
-Nodes (58): fakeChatAdapter, newChatHandler(), parseSSE(), TestHandleChatMessageAdapterError(), TestHandleChatMessageBasic(), TestHandleChatMessageEmptyText(), TestHandleChatMessageSSEStreaming(), TestHandleChatMessageStreamError() (+50 more)
-
-### Community 6 - "Community 6"
 Cohesion: 0.09
 Nodes (83): fakeMealLogger, fakeSuggester, decodeJSON(), doRequest(), newFakeMealStore(), newHandler(), TestAddAlias(), TestAddAliasMissing() (+75 more)
+
+### Community 6 - "Community 6"
+Cohesion: 0.03
+Nodes (54): fakeChatAdapter, newChatHandler(), parseSSE(), TestHandleChatMessageAdapterError(), TestHandleChatMessageBasic(), TestHandleChatMessageEmptyText(), TestHandleChatMessageSSEStreaming(), TestHandleChatMessageStreamError() (+46 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.05
@@ -164,7 +162,7 @@ Nodes (1): fakeMealStore
 
 ### Community 9 - "Community 9"
 Cohesion: 0.03
-Nodes (61): fakeSuggestEngine, NewSuggestCommand(), TestSuggestCommand_EmptyMessage(), TestSuggestCommand_EngineError(), TestSuggestCommand_HappyPath(), TestSuggestCommand_Metadata(), SuggestCommand, SuggestEngine (+53 more)
+Nodes (52): FS(), APIKey, AuditEvent, BackupConfig, BodyCompositionSummary, DailyRollup, DailyTargets, Fast (+44 more)
 
 ### Community 10 - "Community 10"
 Cohesion: 0.05
@@ -183,12 +181,12 @@ Cohesion: 0.07
 Nodes (48): AppleIcon(), Auth0Icon(), AuthentikIcon(), base(), BodyIcon(), brand(), CameraIcon(), ChatIcon() (+40 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.05
-Nodes (47): DietDaemon, Open Food Facts, TACO (Brazilian Food Composition Table), DietDaemon Container Service, Ollama Sidecar Service, DietDaemon Spoon Favicon, DietDaemon Web App Entry Point, Optional Dashboard (+39 more)
+Cohesion: 0.04
+Nodes (23): fakeStore, CorrectCommand, CorrectResolver, CorrectStore, MealStore, NewProfileCommand(), ProfileCommand, ProfileStore (+15 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.13
-Nodes (40): postgresDB(), TestPostgresDualDriverSmoke(), TestPostgresMealLifecycle(), TestPostgresSearchFoods(), TestPostgresUserRoundTrip(), TestGetUserByOIDCIdentity(), TestLinkOIDCIdentityUniqueness(), TestListDeleteOIDCIdentities() (+32 more)
+Cohesion: 0.05
+Nodes (47): DietDaemon, Open Food Facts, TACO (Brazilian Food Composition Table), DietDaemon Container Service, Ollama Sidecar Service, DietDaemon Spoon Favicon, DietDaemon Web App Entry Point, Optional Dashboard (+39 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.06
@@ -196,35 +194,35 @@ Nodes (22): formatDurationShort(), NewFastCommand(), FastCommand, FastStore, cal
 
 ### Community 17 - "Community 17"
 Cohesion: 0.05
-Nodes (22): CorrectCommand, CorrectResolver, CorrectStore, MealStore, NewProfileCommand(), ProfileCommand, ProfileStore, NewTargetCommand() (+14 more)
+Nodes (28): runHevyImport(), hevyClient, hevyKeyStatus, importResult, Client, NewClient(), listResponse, floatPtr() (+20 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.09
 Nodes (21): fakeSessionRepo, Session, CreateSession(), RotateSession(), cfg(), newFakeSessionRepo(), TestCreateSession(), TestCreateSessionRemember() (+13 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.07
-Nodes (28): extractArgs(), NewChatAdapter(), sendEvent(), TestExtractArgsEmptyValue(), TestStreamChatHTTPError(), TestToWireMessagesToolRoundTrip(), toWireMessages(), ChatAdapter (+20 more)
-
-### Community 20 - "Community 20"
 Cohesion: 0.09
 Nodes (24): ChatRouteStore, ChatSender, DigestStore, HealthStore, Notifier, NudgeStore, Option, RuleConfigStore (+16 more)
+
+### Community 20 - "Community 20"
+Cohesion: 0.07
+Nodes (28): extractArgs(), NewChatAdapter(), sendEvent(), TestExtractArgsEmptyValue(), TestStreamChatHTTPError(), TestToWireMessagesToolRoundTrip(), toWireMessages(), ChatAdapter (+20 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.1
 Nodes (22): Bundle, NewBundle(), entry, Index, cosineSimilarity(), packF32LE(), sortByScore(), openTestDB() (+14 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.07
-Nodes (18): Client, NewClient(), listResponse, Config, Mailer, New(), smtpPortOrDefault(), TestNew() (+10 more)
-
-### Community 23 - "Community 23"
-Cohesion: 0.14
+Cohesion: 0.12
 Nodes (13): Engine, MealStore, Parser, PendingStore, askText(), isNotFound(), parseGrams(), plural() (+5 more)
 
-### Community 24 - "Community 24"
+### Community 23 - "Community 23"
 Cohesion: 0.1
 Nodes (17): Dialect, NewDialect(), SQLiteDialect(), TestColumnExists(), TestNewDialectInvalid(), TestNow(), TestPlaceholder(), TestPostgresRewritePlaceholders() (+9 more)
+
+### Community 24 - "Community 24"
+Cohesion: 0.15
+Nodes (14): fakeCmd, NewHelpCommand(), buildTestBundle(), mustRegister(), TestHelpCommand_Detail(), TestHelpCommand_FallbackLocale(), TestHelpCommand_HTMLEscape(), TestHelpCommand_ListAll() (+6 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.12
@@ -243,20 +241,20 @@ Cohesion: 0.09
 Nodes (12): Adapter, contentBlock, message, messagesRequest, messagesResponse, Strip(), TestStrip(), Adapter (+4 more)
 
 ### Community 29 - "Community 29"
+Cohesion: 0.15
+Nodes (15): New(), sendOut(), Router, ExtractSuggestions(), TestExtractSuggestions_BlockNotAtEnd(), TestExtractSuggestions_EmptyArray(), TestExtractSuggestions_IntArray(), TestExtractSuggestions_MalformedJSON() (+7 more)
+
+### Community 30 - "Community 30"
 Cohesion: 0.13
 Nodes (12): isPrevDay(), Streak(), TestStreak_AboveCeilStops(), TestStreak_AllInBand(), TestStreak_DateGap(), TestStreak_Empty(), TestStreak_ExactBoundary(), TestStreak_MissingTarget() (+4 more)
 
-### Community 30 - "Community 30"
+### Community 31 - "Community 31"
 Cohesion: 0.12
 Nodes (8): onSubmit(), onAdd(), isMfaChallenge(), isWebAuthnCancel(), loginWithPasskey(), registerPasskey(), signInWithPasskey(), usePasskey()
 
-### Community 31 - "Community 31"
+### Community 32 - "Community 32"
 Cohesion: 0.15
 Nodes (10): isLockedOut(), issueMagic(), issueResetToken(), issueVerifyToken(), parseCookies(), recordFailure(), seed(), sessionFor() (+2 more)
-
-### Community 32 - "Community 32"
-Cohesion: 0.13
-Nodes (11): Adapter, callbackQuery, getUpdatesResponse, sendMessageRequest, sendMessageResponse, tgChat, tgInlineKeyboardButton, tgInlineKeyboardMarkup (+3 more)
 
 ### Community 33 - "Community 33"
 Cohesion: 0.18
@@ -335,155 +333,147 @@ Cohesion: 0.38
 Nodes (4): dayFraction(), insights(), trend(), weeklyStats()
 
 ### Community 55 - "Community 55"
-Cohesion: 0.52
-Nodes (5): floatPtr(), intPtr(), TestToWorkout(), TestToWorkoutNilSafety(), ToWorkout()
-
-### Community 56 - "Community 56"
 Cohesion: 0.29
 Nodes (2): NewStartCommand(), StartCommand
 
-### Community 57 - "Community 57"
+### Community 56 - "Community 56"
 Cohesion: 0.29
 Nodes (2): NewTimezoneCommand(), TimezoneCommand
 
-### Community 58 - "Community 58"
+### Community 57 - "Community 57"
 Cohesion: 0.29
 Nodes (3): NewWorkoutCommand(), WorkoutCommand, WorkoutStore
 
-### Community 59 - "Community 59"
+### Community 58 - "Community 58"
 Cohesion: 0.29
 Nodes (3): NewWeightCommand(), WeightCommand, WeightStore
 
-### Community 60 - "Community 60"
+### Community 59 - "Community 59"
 Cohesion: 0.29
 Nodes (3): NewWaterCommand(), WaterCommand, WaterStore
 
-### Community 61 - "Community 61"
+### Community 60 - "Community 60"
 Cohesion: 0.29
 Nodes (3): NewLinkCommand(), LinkCodeStore, LinkCommand
 
+### Community 61 - "Community 61"
+Cohesion: 0.29
+Nodes (1): fakeStore
+
 ### Community 62 - "Community 62"
-Cohesion: 0.29
-Nodes (1): fakeStore
-
-### Community 63 - "Community 63"
-Cohesion: 0.29
-Nodes (1): fakeStore
-
-### Community 64 - "Community 64"
 Cohesion: 0.33
 Nodes (3): Notifier, priorityString(), TestPriorityMapping()
 
-### Community 65 - "Community 65"
+### Community 63 - "Community 63"
 Cohesion: 0.29
 Nodes (6): ChatAdapter, ChatEvent, ChatMessage, ChatRequest, ToolCallEvent, ToolSpec
 
-### Community 67 - "Community 67"
+### Community 65 - "Community 65"
 Cohesion: 0.33
 Nodes (1): WebAuthnUser
 
-### Community 68 - "Community 68"
+### Community 66 - "Community 66"
 Cohesion: 0.33
 Nodes (1): Matcher
 
 ### Community 69 - "Community 69"
-Cohesion: 0.33
-Nodes (1): stubStore
+Cohesion: 0.4
+Nodes (1): fakeCommand
 
-### Community 72 - "Community 72"
+### Community 70 - "Community 70"
 Cohesion: 0.4
 Nodes (2): inferenceResponse, Provider
 
-### Community 74 - "Community 74"
+### Community 72 - "Community 72"
 Cohesion: 0.5
 Nodes (5): MULTI_USER (Product Deployment Mode), Users, Auth, MULTI_USER, Family/Household Multi-user Sharing
 
-### Community 78 - "Community 78"
+### Community 76 - "Community 76"
 Cohesion: 0.5
 Nodes (3): HevyExercise, HevySet, HevyWorkout
 
-### Community 79 - "Community 79"
+### Community 77 - "Community 77"
 Cohesion: 0.5
 Nodes (2): Memory, Queue
 
-### Community 81 - "Community 81"
+### Community 79 - "Community 79"
 Cohesion: 0.5
 Nodes (3): Message, Session, Store
 
-### Community 82 - "Community 82"
+### Community 80 - "Community 80"
 Cohesion: 0.5
 Nodes (1): Dest
 
-### Community 93 - "Community 93"
+### Community 91 - "Community 91"
 Cohesion: 1.0
 Nodes (2): dayKey(), relativeDayLabel()
 
-### Community 94 - "Community 94"
+### Community 92 - "Community 92"
 Cohesion: 0.67
 Nodes (1): notifierFactory
 
-### Community 123 - "Community 123"
+### Community 121 - "Community 121"
 Cohesion: 1.0
 Nodes (1): pendingAliasView
 
-### Community 124 - "Community 124"
+### Community 122 - "Community 122"
 Cohesion: 1.0
 Nodes (1): aiKeyStatus
 
-### Community 125 - "Community 125"
+### Community 123 - "Community 123"
 Cohesion: 1.0
 Nodes (1): sentNudgeRow
 
-### Community 126 - "Community 126"
+### Community 124 - "Community 124"
 Cohesion: 1.0
 Nodes (1): ProviderKey
 
-### Community 128 - "Community 128"
+### Community 126 - "Community 126"
 Cohesion: 1.0
 Nodes (2): STT Error Behaviour, STT Troubleshooting
 
-### Community 173 - "Community 173"
+### Community 171 - "Community 171"
 Cohesion: 1.0
 Nodes (1): Typography (Plus Jakarta Sans)
 
-### Community 174 - "Community 174"
+### Community 172 - "Community 172"
 Cohesion: 1.0
 Nodes (1): Anti-references
 
-### Community 175 - "Community 175"
+### Community 173 - "Community 173"
 Cohesion: 1.0
 Nodes (1): Recipe / Multi-ingredient Composition
 
-### Community 176 - "Community 176"
+### Community 174 - "Community 174"
 Cohesion: 1.0
 Nodes (1): Weekly/Monthly Digest Notification
 
-### Community 177 - "Community 177"
+### Community 175 - "Community 175"
 Cohesion: 1.0
 Nodes (1): Health Platform Import/Export
 
-### Community 178 - "Community 178"
+### Community 176 - "Community 176"
 Cohesion: 1.0
 Nodes (1): Configurable Nudge Rules
 
-### Community 179 - "Community 179"
+### Community 177 - "Community 177"
 Cohesion: 1.0
 Nodes (1): Scheduled Data Export/Backup
 
-### Community 180 - "Community 180"
+### Community 178 - "Community 178"
 Cohesion: 1.0
 Nodes (1): Precedence UI
 
-### Community 181 - "Community 181"
+### Community 179 - "Community 179"
 Cohesion: 1.0
 Nodes (1): Group 2 — Food Logging & Resolution
 
-### Community 182 - "Community 182"
+### Community 180 - "Community 180"
 Cohesion: 1.0
 Nodes (1): Group 3 — Scheduler & Data Ops
 
 ## Knowledge Gaps
-- **303 isolated node(s):** `phraseEntry`, `HevyWorkout`, `HevyExercise`, `HevySet`, `listResponse` (+298 more)
+- **304 isolated node(s):** `phraseEntry`, `HevyWorkout`, `HevyExercise`, `HevySet`, `listResponse` (+299 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **Thin community `Community 8`** (77 nodes): `fakeMealStore`, `.AddFoodAlias()`, `.AddMealItem()`, `.ConfirmPendingAlias()`, `.ConsumeLinkingCode()`, `.CorrectMealItem()`, `.CreateLinkingCode()`, `.DeleteFoodAlias()`, `.DeleteMealItem()`, `.DeleteMeasurement()`, `.DeletePhoto()`, `.DeleteSleep()`, `.DeleteTemplate()`, `.DeleteUserAIKey()`, `.DeleteUserHevyKey()`, `.DeleteWater()`, `.DeleteWeight()`, `.DeleteWorkout()`, `.EndFast()`, `.EndSleep()`, `.FrequentFoods()`, `.GetActiveFast()`, `.GetActiveSleep()`, `.GetBackupConfig()`, `.GetFood()`, `.GetFoodDetail()`, `.GetMeal()`, `.GetMealsInRange()`, `.GetNudgeRuleConfig()`, `.GetPhotoData()`, `.GetProfile()`, `.GetRollup()`, `.GetRollups()`, `.GetSourcePrecedence()`, `.GetTargets()`, `.GetTemplate()`, `.GetTemplates()`, `.GetUser()`, `.GetUserAIKey()`, `.GetUserHevyKey()`, `.GetWaterToday()`, `.GetWorkout()`, `.ImportWorkout()`, `.LatestMealTime()`, `.ListFasts()`, `.ListFoods()`, `.ListMeasurements()`, `.ListPendingAliases()`, `.ListPhotoMetadata()`, `.ListSleep()`, `.ListWeight()`, `.ListWorkouts()`, `.LogMeasurement()`, `.LogSleep()`, `.LogTemplateUse()`, `.LogWater()`, `.LogWeight()`, `.LogWorkout()`, `.LookupLinkingCode()`, `.LookupLinkingCodeAny()`, `.RecentMeals()`, `.RejectPendingAlias()`, `.SaveMeal()`, `.SaveTemplate()`, `.SearchFoods()`, `.SetBackupConfig()`, `.SetNudgeRuleConfig()`, `.SetSourcePrecedence()`, `.SetTargets()`, `.SetUserAIKey()`, `.SetUserHevyKey()`, `.StartFast()`, `.UpdateRollupTargets()`, `.UploadPhoto()`, `.UpsertProfile()`, `.UpsertUser()`, `.WeightTrend()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -495,72 +485,70 @@ Nodes (1): Group 3 — Scheduler & Data Ops
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 48`** (8 nodes): `pendingstore.go`, `New()`, `Store`, `.Delete()`, `.deleteRow()`, `.expired()`, `.Get()`, `.Save()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 56`** (7 nodes): `NewStartCommand()`, `StartCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `start.go`
+- **Thin community `Community 55`** (7 nodes): `NewStartCommand()`, `StartCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `start.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 57`** (7 nodes): `NewTimezoneCommand()`, `TimezoneCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `timezone.go`
+- **Thin community `Community 56`** (7 nodes): `NewTimezoneCommand()`, `TimezoneCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`, `timezone.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 62`** (7 nodes): `fakeStore`, `.GetBackupConfig()`, `.GetMealsInRange()`, `.GetRollups()`, `.ListUsers()`, `.SetBackupCounts()`, `.SetBackupLastRun()`
+- **Thin community `Community 61`** (7 nodes): `fakeStore`, `.AddPendingAlias()`, `.GetFood()`, `.GetSourcePrecedence()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 63`** (7 nodes): `fakeStore`, `.AddPendingAlias()`, `.GetFood()`, `.GetSourcePrecedence()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
+- **Thin community `Community 65`** (6 nodes): `WebAuthnUser`, `.WebAuthnCredentials()`, `.WebAuthnDisplayName()`, `.WebAuthnIcon()`, `.WebAuthnID()`, `.WebAuthnName()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 67`** (6 nodes): `WebAuthnUser`, `.WebAuthnCredentials()`, `.WebAuthnDisplayName()`, `.WebAuthnIcon()`, `.WebAuthnID()`, `.WebAuthnName()`
+- **Thin community `Community 66`** (6 nodes): `New()`, `Matcher`, `.EmbedFood()`, `.Match()`, `.SetThreshold()`, `embedding.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 68`** (6 nodes): `New()`, `Matcher`, `.EmbedFood()`, `.Match()`, `.SetThreshold()`, `embedding.go`
+- **Thin community `Community 69`** (5 nodes): `fakeCommand`, `.Aliases()`, `.Handle()`, `.Help()`, `.Name()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 69`** (6 nodes): `stubStore`, `.AddPendingAlias()`, `.GetFood()`, `.LookupFood()`, `.RecordFoodQuery()`, `.UpsertFood()`
+- **Thin community `Community 70`** (5 nodes): `whisper.go`, `inferenceResponse`, `Provider`, `.Transcribe()`, `New()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 72`** (5 nodes): `whisper.go`, `inferenceResponse`, `Provider`, `.Transcribe()`, `New()`
+- **Thin community `Community 77`** (4 nodes): `queue.go`, `Memory`, `Queue`, `NewMemory()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 79`** (4 nodes): `queue.go`, `Memory`, `Queue`, `NewMemory()`
+- **Thin community `Community 80`** (4 nodes): `s3dest.go`, `Dest`, `.Write()`, `New()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 82`** (4 nodes): `s3dest.go`, `Dest`, `.Write()`, `New()`
+- **Thin community `Community 91`** (3 nodes): `dayKey()`, `relativeDayLabel()`, `History.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 93`** (3 nodes): `dayKey()`, `relativeDayLabel()`, `History.tsx`
+- **Thin community `Community 92`** (3 nodes): `TestNotifierContract()`, `notifierFactory`, `notifier_test.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 94`** (3 nodes): `TestNotifierContract()`, `notifierFactory`, `notifier_test.go`
+- **Thin community `Community 121`** (2 nodes): `pendingAliasView`, `handler_food.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 123`** (2 nodes): `pendingAliasView`, `handler_food.go`
+- **Thin community `Community 122`** (2 nodes): `aiKeyStatus`, `handler_settings.go`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 124`** (2 nodes): `aiKeyStatus`, `handler_settings.go`
+- **Thin community `Community 123`** (2 nodes): `store_nudges.go`, `sentNudgeRow`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 125`** (2 nodes): `store_nudges.go`, `sentNudgeRow`
+- **Thin community `Community 124`** (2 nodes): `store_provider_keys.go`, `ProviderKey`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 126`** (2 nodes): `store_provider_keys.go`, `ProviderKey`
+- **Thin community `Community 126`** (2 nodes): `STT Error Behaviour`, `STT Troubleshooting`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 128`** (2 nodes): `STT Error Behaviour`, `STT Troubleshooting`
+- **Thin community `Community 171`** (1 nodes): `Typography (Plus Jakarta Sans)`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 173`** (1 nodes): `Typography (Plus Jakarta Sans)`
+- **Thin community `Community 172`** (1 nodes): `Anti-references`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 174`** (1 nodes): `Anti-references`
+- **Thin community `Community 173`** (1 nodes): `Recipe / Multi-ingredient Composition`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 175`** (1 nodes): `Recipe / Multi-ingredient Composition`
+- **Thin community `Community 174`** (1 nodes): `Weekly/Monthly Digest Notification`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 176`** (1 nodes): `Weekly/Monthly Digest Notification`
+- **Thin community `Community 175`** (1 nodes): `Health Platform Import/Export`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 177`** (1 nodes): `Health Platform Import/Export`
+- **Thin community `Community 176`** (1 nodes): `Configurable Nudge Rules`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 178`** (1 nodes): `Configurable Nudge Rules`
+- **Thin community `Community 177`** (1 nodes): `Scheduled Data Export/Backup`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 179`** (1 nodes): `Scheduled Data Export/Backup`
+- **Thin community `Community 178`** (1 nodes): `Precedence UI`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 180`** (1 nodes): `Precedence UI`
+- **Thin community `Community 179`** (1 nodes): `Group 2 — Food Logging & Resolution`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 181`** (1 nodes): `Group 2 — Food Logging & Resolution`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 182`** (1 nodes): `Group 3 — Scheduler & Data Ops`
+- **Thin community `Community 180`** (1 nodes): `Group 3 — Scheduler & Data Ops`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `New()` connect `Community 2` to `Community 0`, `Community 1`, `Community 5`, `Community 6`, `Community 7`, `Community 9`, `Community 11`, `Community 15`, `Community 17`, `Community 19`, `Community 21`, `Community 22`, `Community 24`?**
-  _High betweenness centrality (0.149) - this node is a cross-community bridge._
-- **Why does `Store` connect `Community 1` to `Community 0`, `Community 5`?**
-  _High betweenness centrality (0.091) - this node is a cross-community bridge._
-- **Why does `run()` connect `Community 2` to `Community 0`, `Community 4`, `Community 7`, `Community 9`, `Community 16`, `Community 17`, `Community 20`, `Community 21`, `Community 24`, `Community 35`, `Community 49`, `Community 50`, `Community 51`, `Community 56`, `Community 57`, `Community 58`, `Community 59`, `Community 60`, `Community 61`?**
+- **Why does `New()` connect `Community 2` to `Community 0`, `Community 1`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 11`, `Community 14`, `Community 17`, `Community 20`, `Community 21`, `Community 23`, `Community 29`?**
+  _High betweenness centrality (0.171) - this node is a cross-community bridge._
+- **Why does `run()` connect `Community 2` to `Community 0`, `Community 3`, `Community 7`, `Community 14`, `Community 16`, `Community 19`, `Community 21`, `Community 23`, `Community 24`, `Community 35`, `Community 49`, `Community 50`, `Community 51`, `Community 55`, `Community 56`, `Community 57`, `Community 58`, `Community 59`, `Community 60`?**
+  _High betweenness centrality (0.125) - this node is a cross-community bridge._
+- **Why does `Handler` connect `Community 0` to `Community 33`, `Community 34`, `Community 2`, `Community 36`, `Community 3`, `Community 7`, `Community 17`, `Community 19`, `Community 20`, `Community 30`?**
   _High betweenness centrality (0.082) - this node is a cross-community bridge._
-- **Are the 180 inferred relationships involving `New()` (e.g. with `run()` and `buildEmbedAdapter()`) actually correct?**
-  _`New()` has 180 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 184 inferred relationships involving `New()` (e.g. with `run()` and `buildEmbedAdapter()`) actually correct?**
+  _`New()` has 184 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 2 inferred relationships involving `Handler` (e.g. with `run()` and `TestHandlerServesSPA()`) actually correct?**
   _`Handler` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 95 inferred relationships involving `now()` (e.g. with `TestCreateSession()` and `TestValidateSessionExpiredAbsolute()`) actually correct?**

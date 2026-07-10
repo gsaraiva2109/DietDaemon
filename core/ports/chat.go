@@ -56,8 +56,9 @@ type ToolCallEvent struct {
 
 // ChatEvent is a single event from a streaming chat response.
 type ChatEvent struct {
-	Kind     string // "text-delta" | "tool-call" | "done" | "error"
-	Text     string
-	ToolCall *ToolCallEvent
-	Err      error
+	Kind        string // "text-delta" | "tool-call" | "done" | "error" | "suggestions"
+	Text        string
+	ToolCall    *ToolCallEvent
+	Suggestions []string // set when Kind == "suggestions"
+	Err         error
 }

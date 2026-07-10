@@ -123,8 +123,16 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 				"name": evt.ToolCall.Name,
 				"text": evt.ToolCall.Args,
 			})
+		case "suggestions":
+			writeSSE(w, "suggestions", map[string]any{"options": evt.Suggestions})
 		case "done":
-			h.persistAssistantMessages(r.Context(), userID, sessionID, textBuf.String(), toolInfos)
+			// Persist cleaned text (fenced ```suggestions block stripped)
+			// so the wire-protocol artifact doesn't reappear in history.
+			persistText := textBuf.String()
+			if cleaned, _ := assistant.ExtractSuggestions(persistText); cleaned != persistText {
+				persistText = cleaned
+			}
+			h.persistAssistantMessages(r.Context(), userID, sessionID, persistText, toolInfos)
 			writeSSE(w, "done", map[string]string{})
 			flusher.Flush()
 			return
