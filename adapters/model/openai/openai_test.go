@@ -91,13 +91,18 @@ func TestCompleteStripsFence(t *testing.T) {
 
 func TestCompleteHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"model does not support tools"}}`))
 	}))
 	defer srv.Close()
 
 	a := New(srv.URL, "sk-test", "gpt-4o-mini", 30*time.Second)
-	if _, err := a.Complete(t.Context(), "prompt"); err == nil {
-		t.Error("expected error on 500, got nil")
+	_, err := a.Complete(t.Context(), "prompt")
+	if err == nil {
+		t.Fatal("expected error on 400, got nil")
+	}
+	if !strings.Contains(err.Error(), "model does not support tools") {
+		t.Errorf("error = %q, want it to include the response body detail", err.Error())
 	}
 }
 

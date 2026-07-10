@@ -63,13 +63,18 @@ func TestComplete(t *testing.T) {
 
 func TestCompleteHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"invalid model"}}`))
 	}))
 	defer srv.Close()
 
 	a := &Adapter{apiKey: "test-key", model: "claude-haiku-4-5-20251001", client: &http.Client{Timeout: 5 * time.Second}, baseURL: srv.URL}
-	if _, err := a.Complete(t.Context(), "prompt"); err == nil {
-		t.Error("expected error on 500, got nil")
+	_, err := a.Complete(t.Context(), "prompt")
+	if err == nil {
+		t.Fatal("expected error on 400, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid model") {
+		t.Errorf("error = %q, want it to include the response body detail", err.Error())
 	}
 }
 

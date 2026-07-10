@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -100,7 +101,8 @@ func (a *Adapter) Complete(ctx context.Context, prompt string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("anthropic: messages status %d", resp.StatusCode)
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("anthropic: messages status %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
 	}
 
 	var mr messagesResponse
