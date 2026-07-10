@@ -1,11 +1,10 @@
-// Renders a tool-call message part (the assistant invoking a DietDaemon
-// command mid-conversation) as a quiet inline chip, in the same visual family
-// as the confidence/source Pills in MacroTrace.tsx — a labelled capsule while
-// the command runs, resolving into its plain-text reply.
+// Renders a single tool-call message part (the assistant invoking a
+// DietDaemon command mid-conversation) as a slim row. Always mounted inside
+// a ToolCallGroup, which supplies the surrounding card/border — this stays
+// borderless so a run of calls reads as one block instead of stacked boxes.
 
 import { motion } from 'framer-motion'
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
-import { Pill } from './ui'
 import { SparkleIcon } from './icons'
 import { fadeUp } from '@/lib/motion'
 
@@ -13,12 +12,7 @@ export function ToolCallChip({ toolName, argsText, result, status }: ToolCallMes
   const running = status.type === 'running' && result === undefined
 
   return (
-    <motion.div
-      variants={fadeUp}
-      initial="hidden"
-      animate="show"
-      className="my-1.5 flex flex-col gap-2 rounded-lg border border-line bg-surface-2 px-3 py-2.5"
-    >
+    <motion.div variants={fadeUp} initial="hidden" animate="show" className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
       <div className="flex items-center gap-2 text-xs text-muted">
         <span className="text-primary">
           <SparkleIcon width={14} height={14} />
@@ -29,12 +23,7 @@ export function ToolCallChip({ toolName, argsText, result, status }: ToolCallMes
         </span>
         {running && <span className="size-3 animate-spin rounded-full border-2 border-line border-t-primary" />}
       </div>
-      {typeof result === 'string' && result && (
-        <p className="flex items-start gap-2 text-sm text-ink">
-          <Pill tone="primary">via /{toolName}</Pill>
-          <span className="flex-1">{result}</span>
-        </p>
-      )}
+      {typeof result === 'string' && result && <p className="pl-5 text-sm text-ink">{result}</p>}
     </motion.div>
   )
 }

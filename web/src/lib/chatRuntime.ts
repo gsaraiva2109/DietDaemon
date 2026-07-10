@@ -27,9 +27,16 @@ function extractText(message: ThreadMessage): string {
     .trim()
 }
 
-interface ToolCallState {
+interface TextPart {
+  type: 'text'
+  text: string
+}
+
+interface ToolPart {
+  type: 'tool-call'
   toolCallId: string
   toolName: string
+  args: Record<string, never>
   argsText: string
   result?: string
 }
@@ -60,25 +67,16 @@ export function createChatModelAdapter(getSessionID: () => string | null): ChatM
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let assembledText = ''
-      const toolCalls = new Map<string, ToolCallState>()
-      const toolOrder: string[] = []
+
+      // Parts in arrival order — a tool-call run splits surrounding text into
+      // separate blocks instead of merging everything into one leading blob,
+      // so text that streams in after tools finish shows up below them.
+      const content: (TextPart | ToolPart)[] = []
+      let currentText: TextPart | null = null
+      const toolParts = new Map<string, ToolPart>()
 
       function snapshot(): ChatModelRunResult {
-        const content: ThreadAssistantMessagePart[] = []
-        if (assembledText) content.push({ type: 'text', text: assembledText })
-        for (const id of toolOrder) {
-          const tc = toolCalls.get(id)!
-          content.push({
-            type: 'tool-call',
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            args: {},
-            argsText: tc.argsText,
-            ...(tc.result !== undefined ? { result: tc.result } : {}),
-          })
-        }
-        return { content }
+        return { content: content.map((p) => ({ ...p })) as ThreadAssistantMessagePart[] }
       }
 
       while (true) {
@@ -96,16 +94,22 @@ export function createChatModelAdapter(getSessionID: () => string | null): ChatM
 
           if (event === 'delta') {
             const payload = JSON.parse(data) as { text: string }
-            assembledText += payload.text
+            if (!currentText) {
+              currentText = { type: 'text', text: '' }
+              content.push(currentText)
+            }
+            currentText.text += payload.text
             yield snapshot()
           } else if (event === 'tool-call') {
             const payload = JSON.parse(data) as { id: string; name: string; args: string }
-            toolCalls.set(payload.id, { toolCallId: payload.id, toolName: payload.name, argsText: payload.args })
-            toolOrder.push(payload.id)
+            currentText = null // next delta (if any) starts a fresh block after this tool run
+            const part: ToolPart = { type: 'tool-call', toolCallId: payload.id, toolName: payload.name, args: {}, argsText: payload.args }
+            toolParts.set(payload.id, part)
+            content.push(part)
             yield snapshot()
           } else if (event === 'tool-result') {
             const payload = JSON.parse(data) as { id: string; text: string }
-            const tc = toolCalls.get(payload.id)
+            const tc = toolParts.get(payload.id)
             if (tc) tc.result = payload.text
             yield snapshot()
           } else if (event === 'error') {
