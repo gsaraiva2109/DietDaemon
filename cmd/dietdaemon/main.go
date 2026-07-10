@@ -239,6 +239,10 @@ func run() error {
 		return fmt.Errorf("register template command: %w", err)
 	}
 
+	if err := cmdRegistry.Register(commands.NewLogMealCommand(engine)); err != nil {
+		return fmt.Errorf("register logmeal command: %w", err)
+	}
+
 	if err := cmdRegistry.Register(commands.NewCorrectCommand(st, res)); err != nil {
 		return fmt.Errorf("register correct command: %w", err)
 	}
