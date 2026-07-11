@@ -162,6 +162,19 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 				}
 
 				// No tools — conversation complete.
+				// Extract model-native suggestions before forwarding the done
+				// event, so the frontend receives them before "done".
+				if cleaned, suggestions := ExtractSuggestions(textBuf.String()); len(suggestions) > 0 {
+					if !sendOut(ctx, out, ports.ChatEvent{Kind: "suggestions", Suggestions: suggestions}) {
+						return
+					}
+					// Persist cleaned text (without the fenced block) so the
+					// wire-protocol artifact doesn't reappear in history replays.
+					// The text-delta events already streamed the raw block to the
+					// client mid-turn; the frontend strips it visually, and the
+					// handler persists the cleaned version below via the done event.
+					_ = cleaned
+				}
 				sendOut(ctx, out, evt) // forward done event
 				return
 

@@ -239,6 +239,10 @@ func run() error {
 		return fmt.Errorf("register template command: %w", err)
 	}
 
+	if err := cmdRegistry.Register(commands.NewLogMealCommand(engine)); err != nil {
+		return fmt.Errorf("register logmeal command: %w", err)
+	}
+
 	if err := cmdRegistry.Register(commands.NewCorrectCommand(st, res)); err != nil {
 		return fmt.Errorf("register correct command: %w", err)
 	}
@@ -293,6 +297,9 @@ func run() error {
 	backupRunner := backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval)
 	go backupRunner.Run(ctx)
 	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
+
+	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
+	slog.Info("chat session purge runner running", "retention", "30d")
 
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {

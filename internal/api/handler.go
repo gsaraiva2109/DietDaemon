@@ -239,6 +239,9 @@ type ChatStore interface {
 	GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error)
 	GetAssistantSettings(ctx context.Context, userID string) (customInstructions string, found bool, err error)
 	SetAssistantSettings(ctx context.Context, userID, customInstructions string) error
+	SoftDeleteChatSession(ctx context.Context, userID, sessionID string) error
+	RestoreChatSession(ctx context.Context, userID, sessionID string) error
+	ListDeletedChatSessions(ctx context.Context, userID string) ([]assistant.Session, error)
 }
 
 // Handler serves the DietDaemon REST API.
@@ -526,8 +529,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// AI chat assistant.
 	mux.HandleFunc("POST /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleChatMessage))
 	mux.HandleFunc("POST /api/v1/chat/sessions", h.wrap(h.handleCreateChatSession))
+	mux.HandleFunc("GET /api/v1/chat/sessions/deleted", h.wrap(h.handleListDeletedChatSessions))
 	mux.HandleFunc("GET /api/v1/chat/sessions", h.wrap(h.handleListChatSessions))
 	mux.HandleFunc("GET /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleGetChatMessages))
+	mux.HandleFunc("DELETE /api/v1/chat/sessions/{id}", h.wrap(h.handleDeleteChatSession))
+	mux.HandleFunc("POST /api/v1/chat/sessions/{id}/restore", h.wrap(h.handleRestoreChatSession))
 	mux.HandleFunc("GET /api/v1/chat/settings", h.wrap(h.handleGetChatSettings))
 	mux.HandleFunc("PUT /api/v1/chat/settings", h.wrap(h.handleSetChatSettings))
 

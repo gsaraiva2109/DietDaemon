@@ -133,10 +133,39 @@ func (e *Engine) ParseAndResolve(ctx context.Context, userID, text, locale strin
 // LogMeal directly persists a fully-resolved meal and updates the daily rollup,
 // bypassing parsing and resolution. Used by template logging and meal duplication.
 func (e *Engine) LogMeal(ctx context.Context, meal types.Meal) error {
-	if err := e.store.SaveMeal(ctx, meal); err != nil {
-		return fmt.Errorf("pipeline: log meal: %w", err)
+	return e.persistMeal(ctx, meal)
+}
+
+// LogMealFromItems persists already-resolved items as a meal and returns it,
+// for callers (like the assistant's log-meal tool) that already ran
+// ParseAndResolve and don't need Handle's channel/pending/command-dispatch machinery.
+func (e *Engine) LogMealFromItems(ctx context.Context, userID string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) (types.Meal, error) {
+	meal := types.Meal{
+		ID:         e.idgen(),
+		UserID:     userID,
+		At:         at,
+		RawText:    rawText,
+		Items:      items,
+		Confidence: confidence,
+		ParserTier: e.parser.Tier(),
+		CreatedAt:  e.now().UTC(),
 	}
-	return e.updateRollup(ctx, meal.UserID, meal.At, meal.Total(), e.userLoc(ctx, meal.UserID))
+	if err := e.persistMeal(ctx, meal); err != nil {
+		return types.Meal{}, err
+	}
+	return meal, nil
+}
+
+// persistMeal saves a meal and updates the daily rollup. Single save+rollup path
+// used by LogMeal, LogMealFromItems, and (via LogMealFromItems) commitMeal.
+func (e *Engine) persistMeal(ctx context.Context, meal types.Meal) error {
+	if err := e.store.SaveMeal(ctx, meal); err != nil {
+		return fmt.Errorf("pipeline: save meal: %w", err)
+	}
+	if err := e.updateRollup(ctx, meal.UserID, meal.At, meal.Total(), e.userLoc(ctx, meal.UserID)); err != nil {
+		return fmt.Errorf("pipeline: update rollup: %w", err)
+	}
+	return nil
 }
 
 // Handle runs the full pipeline for one inbound message. Parsing/resolution
@@ -396,21 +425,9 @@ func (e *Engine) userLoc(ctx context.Context, userID string) *time.Location {
 // commitMeal persists a fully resolved meal, folds it into the day's rollup, and
 // acknowledges it. Shared by the direct path and the clarification finalize.
 func (e *Engine) commitMeal(ctx context.Context, userID string, meta map[string]string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) error {
-	meal := types.Meal{
-		ID:         e.idgen(),
-		UserID:     userID,
-		At:         at,
-		RawText:    rawText,
-		Items:      items,
-		Confidence: confidence,
-		ParserTier: e.parser.Tier(),
-		CreatedAt:  e.now().UTC(),
-	}
-	if err := e.store.SaveMeal(ctx, meal); err != nil {
-		return fmt.Errorf("pipeline: save meal: %w", err)
-	}
-	if err := e.updateRollup(ctx, userID, at, meal.Total(), e.userLoc(ctx, userID)); err != nil {
-		return fmt.Errorf("pipeline: update rollup: %w", err)
+	meal, err := e.LogMealFromItems(ctx, userID, at, rawText, confidence, items)
+	if err != nil {
+		return err
 	}
 	return e.replyMeta(ctx, userID, meta, e.summary(meal))
 }

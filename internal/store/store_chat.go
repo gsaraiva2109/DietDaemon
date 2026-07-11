@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
@@ -19,8 +20,9 @@ func (s *Store) CreateChatSession(ctx context.Context, id, userID, title string)
 }
 
 // ListChatSessions returns all chat sessions for a user, newest first.
+// Soft-deleted sessions are excluded.
 func (s *Store) ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
-	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC`
+	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`
 	var rows []assistant.Session
 	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID)
 	if err != nil {
@@ -75,4 +77,67 @@ func (s *Store) GetChatMessages(ctx context.Context, userID, sessionID string) (
 		rows = []assistant.Message{}
 	}
 	return rows, nil
+}
+
+// SoftDeleteChatSession marks a session as deleted (deleted_at = now) rather
+// than removing the row, so it can be restored within the retention window.
+// Returns types.ErrNotFound if sessionID doesn't belong to userID or is
+// already deleted.
+func (s *Store) SoftDeleteChatSession(ctx context.Context, userID, sessionID string) error {
+	q := fmt.Sprintf(`UPDATE chat_sessions SET deleted_at = %s WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, s.dialect.Now())
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), sessionID, userID)
+	if err != nil {
+		return fmt.Errorf("store: soft delete chat session: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// RestoreChatSession un-deletes a session and bumps updated_at to now, so it
+// reappears at the top of the active session list.
+func (s *Store) RestoreChatSession(ctx context.Context, userID, sessionID string) error {
+	q := fmt.Sprintf(`UPDATE chat_sessions SET deleted_at = NULL, updated_at = %s WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL`, s.dialect.Now())
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), sessionID, userID)
+	if err != nil {
+		return fmt.Errorf("store: restore chat session: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// ListDeletedChatSessions returns a user's soft-deleted sessions, most
+// recently deleted first.
+func (s *Store) ListDeletedChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
+	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`
+	var rows []assistant.Session
+	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list deleted chat sessions: %w", err)
+	}
+	if rows == nil {
+		rows = []assistant.Session{}
+	}
+	return rows, nil
+}
+
+// PurgeDeletedChatSessions permanently removes sessions soft-deleted before
+// olderThan. chat_messages rows cascade via ON DELETE CASCADE.
+// Returns the number of sessions purged.
+func (s *Store) PurgeDeletedChatSessions(ctx context.Context, olderThan time.Time) (int, error) {
+	const q = `DELETE FROM chat_sessions WHERE deleted_at IS NOT NULL AND deleted_at < ?`
+	// "2006-01-02 15:04:05" matches sqlite datetime('now') output format,
+	// making TEXT comparison lexicographically correct, and is also a valid
+	// timestamp literal for PostgreSQL.
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), olderThan.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge deleted chat sessions: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
