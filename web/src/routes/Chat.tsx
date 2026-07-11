@@ -25,11 +25,9 @@ import {
   useLocalRuntime,
   useRemoteThreadListRuntime,
   useThreadListItemRuntime,
-  useThreadList,
-  useThread,
-  useMessage,
   useMessageTiming,
-  useAssistantRuntime,
+  useAui,
+  useAuiState,
   type ThreadMessageLike,
   type ToolCallMessagePartProps,
   AuiIf,
@@ -78,11 +76,6 @@ export function Chat() {
   // empty sidebar when the backend can't be reached at all.
   const health = useQuery({ queryKey: ['chat', 'health'], queryFn: api.chat.listSessions, retry: 1 })
 
-  const runtime = useRemoteThreadListRuntime({
-    runtimeHook: useChatThreadRuntime,
-    adapter: chatThreadListAdapter,
-  })
-
   if (demo) {
     return (
       <div>
@@ -110,28 +103,57 @@ export function Chat() {
   }
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <div className="flex h-[calc(100dvh-8.5rem)] flex-col md:h-[calc(100dvh-7rem)]">
-        <PageHeader eyebrow="Assistant" title="Chat">
-          <Button variant="ghost" className="px-3 py-1.5 text-xs md:hidden" onClick={() => setRailOpen((o) => !o)}>
-            History
-          </Button>
-        </PageHeader>
+    <div className="flex h-[calc(100dvh-8.5rem)] flex-col md:h-[calc(100dvh-7rem)]">
+      <PageHeader eyebrow="Assistant" title="Chat">
+        <Button variant="ghost" className="px-3 py-1.5 text-xs md:hidden" onClick={() => setRailOpen((o) => !o)}>
+          History
+        </Button>
+      </PageHeader>
 
-        <div className="relative flex min-h-0 flex-1 gap-4">
-          <SessionRail open={railOpen} onClose={() => setRailOpen(false)} />
-
-          <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-line bg-surface">
-            <Suspense
-              fallback={
-                <div className="grid flex-1 place-items-center">
-                  <Spinner label="Loading conversation" />
-                </div>
-              }
-            >
-              <ChatThread />
-            </Suspense>
+      <Suspense
+        fallback={
+          <div className="grid flex-1 place-items-center">
+            <Spinner label="Loading conversation" />
           </div>
+        }
+      >
+        <ChatApp railOpen={railOpen} onCloseRail={() => setRailOpen(false)} />
+      </Suspense>
+    </div>
+  )
+}
+
+// Constructs the remote-thread-list runtime and everything downstream of it.
+// Split out from Chat() (rather than called there directly) because
+// useRemoteThreadListRuntime's runtimeHook (useChatThreadRuntime) runs its own
+// useSuspenseQuery before this component returns any JSX — if it suspends
+// (e.g. switching to a different conversation resuspends on that thread's
+// remoteId), the nearest boundary that can catch it is the one wrapping
+// *this* component, not one further down in the JSX Chat() itself returns.
+// Catching it here, below Chat()'s own render, keeps that resuspend from ever
+// reaching the app-level route-transition AnimatePresence in App.tsx, whose
+// interrupted opacity animation was otherwise getting stuck at 0.
+function ChatApp({ railOpen, onCloseRail }: { railOpen: boolean; onCloseRail: () => void }) {
+  const runtime = useRemoteThreadListRuntime({
+    runtimeHook: useChatThreadRuntime,
+    adapter: chatThreadListAdapter,
+  })
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <div className="relative flex min-h-0 flex-1 gap-4">
+        <SessionRail open={railOpen} onClose={onCloseRail} />
+
+        <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-line bg-surface">
+          <Suspense
+            fallback={
+              <div className="grid flex-1 place-items-center">
+                <Spinner label="Loading conversation" />
+              </div>
+            }
+          >
+            <ChatThread />
+          </Suspense>
         </div>
       </div>
     </AssistantRuntimeProvider>
@@ -167,8 +189,8 @@ function useChatThreadRuntime() {
 // --- Session rail: desktop-persistent, mobile-overlay --------------------
 
 function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const isLoading = useThreadList((s) => s.isLoading)
-  const count = useThreadList((s) => s.threadIds.length)
+  const isLoading = useAuiState((s) => s.threads.isLoading)
+  const count = useAuiState((s) => s.threads.threadIds.length)
 
   const list = (
     <div className="flex h-full w-64 flex-col gap-1 overflow-y-auto rounded-xl border border-line bg-surface p-2">
@@ -216,14 +238,14 @@ function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) 
 }
 
 function SessionRow({ onSelect }: { onSelect: () => void }) {
-  const itemRuntime = useThreadListItemRuntime()
+  const aui = useAui()
   const [confirming, setConfirming] = useState(false)
 
   return (
-    <ThreadListItemPrimitive.Root className="group relative flex items-center rounded-lg data-[active]:bg-primary-soft data-[active]:text-primary">
+    <ThreadListItemPrimitive.Root className="group relative flex items-center rounded-lg data-active:bg-primary-soft data-active:text-primary">
       <ThreadListItemPrimitive.Trigger
         onClick={onSelect}
-        className="min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm text-muted transition group-data-[active]:text-primary hover:bg-surface-2 hover:text-ink group-data-[active]:hover:bg-transparent"
+        className="min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm text-muted transition group-data-active:text-primary hover:bg-surface-2 hover:text-ink group-data-active:hover:bg-transparent"
       >
         <ThreadListItemPrimitive.Title fallback="New conversation" />
       </ThreadListItemPrimitive.Trigger>
@@ -239,7 +261,7 @@ function SessionRow({ onSelect }: { onSelect: () => void }) {
         <DeleteChatSessionModal
           onCancel={() => setConfirming(false)}
           onConfirm={() => {
-            itemRuntime.archive()
+            aui.threadListItem().archive()
             setConfirming(false)
           }}
         />
@@ -257,7 +279,9 @@ function ChatThread() {
         <AuiIf condition={(s) => s.thread.isEmpty}>
           <ChatEmptyState />
         </AuiIf>
-        <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+        <ThreadPrimitive.Messages>
+          {({ message }) => (message.role === 'user' ? <UserMessage /> : <AssistantMessage />)}
+        </ThreadPrimitive.Messages>
       </ThreadPrimitive.Viewport>
 
       <div className="relative">
@@ -277,7 +301,7 @@ function ChatThread() {
 }
 
 function ChatEmptyState() {
-  const runtime = useAssistantRuntime()
+  const aui = useAui()
   return (
     <motion.div
       variants={stagger}
@@ -297,7 +321,7 @@ function ChatEmptyState() {
             <button
               key={ex}
               type="button"
-              onClick={() => runtime.thread.append(ex)}
+              onClick={() => aui.thread().append(ex)}
               className="rounded-full border border-line bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
             >
               {ex}
@@ -317,8 +341,8 @@ function ChatEmptyState() {
 // SuggestionAdapter.generate() populates), so there's no ready-made trigger
 // for this particular data.
 function Suggestions() {
-  const suggestions = useThread((s) => s.suggestions)
-  const runtime = useAssistantRuntime()
+  const suggestions = useAuiState((s) => s.thread.suggestions)
+  const aui = useAui()
   if (!suggestions.length) return null
 
   return (
@@ -327,7 +351,7 @@ function Suggestions() {
         <button
           key={i}
           type="button"
-          onClick={() => runtime.thread.append(s.prompt)}
+          onClick={() => aui.thread().append(s.prompt)}
           className="rounded-full border border-line bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
         >
           {s.prompt}
@@ -371,7 +395,7 @@ function UserMessage() {
 const toolGroupBy = groupPartByType({ 'tool-call': ['group-tools'] })
 
 function AssistantMessage() {
-  const status = useMessage((m) => m.status)
+  const status = useAuiState((s) => s.message.status)
   const hasError = status?.type === 'incomplete' && status.reason === 'error'
   const timing = useMessageTiming()
 
@@ -443,12 +467,12 @@ function AssistantMessage() {
 // backend's wording doesn't match — the format isn't a public contract, this
 // is a best-effort upgrade, not something that should ever break the message.
 const LOGMEAL_RESULT_RE =
-  /^Logged: (.+)\n([\d.]+) kcal(?:[^\d]+([\d.]+)g protein)?(?:[^\d]+([\d.]+)g carbs)?(?:[^\d]+([\d.]+)g fat)?/
+  /^Logged: (.+)\n([\d.]+) kcal(?:\D+([\d.]+)g protein)?(?:\D+([\d.]+)g carbs)?(?:\D+([\d.]+)g fat)?/
 
 function LogMealToolCard(props: ToolCallMessagePartProps) {
   const { result } = props
   const parsed = typeof result === 'string' ? LOGMEAL_RESULT_RE.exec(result) : null
-  const assistant = useAssistantRuntime()
+  const aui = useAui()
 
   if (!parsed) return <ToolCallChip {...props} />
   const [, rawText, kcal, protein, carbs, fat] = parsed
@@ -469,7 +493,7 @@ function LogMealToolCard(props: ToolCallMessagePartProps) {
       </div>
       <button
         type="button"
-        onClick={() => assistant.thread.composer.setText(`Actually, log "${rawText}" as `)}
+        onClick={() => aui.thread().composer().setText(`Actually, log "${rawText}" as `)}
         className="mt-2 text-xs font-medium text-primary hover:underline"
       >
         Log a different amount
