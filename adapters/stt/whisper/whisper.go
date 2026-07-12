@@ -72,7 +72,7 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte) (string, string
 	if err != nil {
 		return "", "", fmt.Errorf("whisper: inference: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

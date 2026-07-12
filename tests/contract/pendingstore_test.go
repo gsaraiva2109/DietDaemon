@@ -33,8 +33,8 @@ func pendingSQLite(t *testing.T) (ports.PendingStore, func()) {
 		t.Fatalf("create temp file: %v", err)
 	}
 	path := f.Name()
-	f.Close()
-	os.Remove(path)
+	_ = f.Close()
+	_ = os.Remove(path)
 
 	st, err := store.New("sqlite", path, store.SQLiteDialect())
 	if err != nil {
@@ -61,8 +61,8 @@ func pendingSQLite(t *testing.T) (ports.PendingStore, func()) {
 
 	s := pendingstore.New(st.DB(), time.Hour)
 	return s, func() {
-		st.Close()
-		os.Remove(path)
+		_ = st.Close()
+		_ = os.Remove(path)
 	}
 }
 

@@ -72,15 +72,6 @@ func (s *pendingMarkupStore) get(roomID string) (types.ReplyMarkup, bool) {
 	return m, ok
 }
 
-// countButtons returns the total number of buttons across all rows.
-func countButtons(markup types.ReplyMarkup) int {
-	n := 0
-	for _, row := range markup.InlineKeyboard {
-		n += len(row)
-	}
-	return n
-}
-
 // callbackDataByIndex returns the CallbackData of the button at the given
 // flat index (0-based), or false if the index is out of range.
 func callbackDataByIndex(markup types.ReplyMarkup, idx int) (string, bool) {
@@ -158,7 +149,7 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	if err != nil {
 		return fmt.Errorf("matrix: send: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)

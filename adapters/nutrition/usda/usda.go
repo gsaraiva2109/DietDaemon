@@ -8,23 +8,43 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 )
 
-// Compile-time interface check.
-var _ ports.NutritionSource = (*Source)(nil)
+// Compile-time interface checks.
+var (
+	_ ports.NutritionSource = (*Source)(nil)
+	_ ports.BulkSource      = (*Source)(nil)
+)
 
 // DefaultBaseURL is the USDA FoodData Central API v1 endpoint.
 const DefaultBaseURL = "https://api.nal.usda.gov/fdc/v1"
 
+// defaultBulkDataTypes is the dataType allowlist used when a BulkFilter
+// doesn't specify one. Excludes "Branded" — the much larger, noisier
+// UPC-scanned dataset — by product decision.
+var defaultBulkDataTypes = []string{"Foundation", "SR Legacy"}
+
+// bulkPageDelay throttles fetchBulkAPI's page requests to stay under USDA's
+// rate cap. Var (not const) so tests can zero it out.
+var bulkPageDelay = time.Second
+
+// bulkAPIPageSize is USDA's max pageSize for /foods/search.
+const bulkAPIPageSize = 200
+
 // Source resolves foods by searching the USDA FDC API.
 type Source struct {
-	client  *http.Client
-	baseURL string
-	apiKey  string
+	client       *http.Client
+	baseURL      string
+	apiKey       string
+	bulkFilePath string // non-empty: FetchBulk streams from this local file instead of the live API
 }
 
 // New returns a Source pointed at the USDA FDC API.
@@ -34,6 +54,14 @@ func New(apiKey string) *Source {
 		baseURL: DefaultBaseURL,
 		apiKey:  apiKey,
 	}
+}
+
+// NewBulk returns a Source configured for bulk import. If bulkFilePath is
+// non-empty, FetchBulk streams from that local file instead of the live API.
+func NewBulk(apiKey, bulkFilePath string) *Source {
+	s := New(apiKey) // reuse existing constructor for shared setup (http client, api key, etc)
+	s.bulkFilePath = bulkFilePath
+	return s
 }
 
 // Name returns "usda".
@@ -48,9 +76,39 @@ type searchResponse struct {
 }
 
 type food struct {
-	FdcID         int            `json:"fdcId"`
-	Description   string         `json:"description"`
-	FoodNutrients []foodNutrient `json:"foodNutrients"`
+	FdcID               int            `json:"fdcId"`
+	Description         string         `json:"description"`
+	DataType            string         `json:"dataType"`
+	FoodCategory        foodCategory   `json:"foodCategory"`        // Foundation/SR Legacy/Survey: an object; see foodCategory.UnmarshalJSON
+	BrandedFoodCategory string         `json:"brandedFoodCategory"` // Branded dataType only: a plain string
+	ServingSize         float64        `json:"servingSize"`
+	ServingSizeUnit     string         `json:"servingSizeUnit"`
+	BrandOwner          string         `json:"brandOwner"` // Branded dataType only; empty for Foundation/SR Legacy
+	GtinUpc             string         `json:"gtinUpc"`    // Branded dataType only (barcode); empty for Foundation/SR Legacy
+	FoodNutrients       []foodNutrient `json:"foodNutrients"`
+}
+
+// foodCategory absorbs USDA's inconsistent foodCategory shape across
+// dataTypes: Foundation/SR Legacy/Survey return an object (e.g.
+// {"id":53,"code":"0100","description":"Dairy and Egg Products"}), while some
+// other endpoints return a plain string. Either shape decodes into the
+// category's display name.
+type foodCategory string
+
+func (c *foodCategory) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*c = foodCategory(s)
+		return nil
+	}
+	var obj struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return fmt.Errorf("foodCategory: unsupported shape: %w", err)
+	}
+	*c = foodCategory(obj.Description)
+	return nil
 }
 
 type foodNutrient struct {
@@ -92,7 +150,7 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 	if err != nil {
 		return types.FoodMatch{}, fmt.Errorf("usda: search: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return types.FoodMatch{}, fmt.Errorf("usda: status %d", resp.StatusCode)
@@ -109,22 +167,41 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 
 	// Pick the first food with a usable description and non-zero energy.
 	for _, f := range sr.Foods {
-		if f.Description == "" {
-			continue
+		if fm, ok := foodToMatch(f); ok {
+			return fm, nil
 		}
-		macros := extractMacros(f.FoodNutrients)
-		if macros.Calories == 0 {
-			continue
-		}
-		return types.FoodMatch{
-			FoodID:  fmt.Sprintf("%d", f.FdcID),
-			Name:    f.Description,
-			Source:  "usda",
-			Per100g: macros,
-		}, nil
 	}
 
 	return types.FoodMatch{}, types.ErrNoMatch
+}
+
+// foodToMatch maps a USDA food search result to a types.FoodMatch. ok is false
+// when the food lacks a usable description or has no energy value — the
+// caller should skip it. Shared by Resolve, fetchBulkAPI, and fetchBulkFile so
+// the response-to-FoodMatch mapping lives in exactly one place.
+func foodToMatch(f food) (types.FoodMatch, bool) {
+	if f.Description == "" {
+		return types.FoodMatch{}, false
+	}
+	macros := extractMacros(f.FoodNutrients)
+	if macros.Calories == 0 {
+		return types.FoodMatch{}, false
+	}
+	category := string(f.FoodCategory)
+	if f.BrandedFoodCategory != "" {
+		category = f.BrandedFoodCategory // Branded dataType uses this field instead
+	}
+	return types.FoodMatch{
+		FoodID:      fmt.Sprintf("%d", f.FdcID),
+		Name:        f.Description,
+		Source:      "usda",
+		Per100g:     macros,
+		Category:    category,
+		Brand:       f.BrandOwner,
+		Barcode:     f.GtinUpc,
+		ServingSize: f.ServingSize,
+		ServingUnit: f.ServingSizeUnit,
+	}, true
 }
 
 // extractMacros pulls per-100g macros from the USDA nutrient list. USDA returns
@@ -146,4 +223,153 @@ func extractMacros(nutrients []foodNutrient) types.Macros {
 		}
 	}
 	return m
+}
+
+// ---------------------------------------------------------------------------
+// Bulk import
+// ---------------------------------------------------------------------------
+
+// FetchBulk implements ports.BulkSource, dispatching to the live API or a
+// local bulk-export file depending on how the Source was constructed.
+func (s *Source) FetchBulk(ctx context.Context, filter ports.BulkFilter, emit func(types.FoodMatch) error) error {
+	if s.bulkFilePath != "" {
+		return s.fetchBulkFile(ctx, filter, emit)
+	}
+	return s.fetchBulkAPI(ctx, filter, emit)
+}
+
+// bulkDataTypes returns filter.DataTypes, defaulting to defaultBulkDataTypes
+// when the filter doesn't specify one.
+func bulkDataTypes(filter []string) []string {
+	if len(filter) == 0 {
+		return defaultBulkDataTypes
+	}
+	return filter
+}
+
+// fetchBulkAPI pages through USDA's /foods/search with no query — a bulk
+// browse of every food in the allowed dataType(s) — instead of Resolve's
+// name search. Stops on an empty page, ctx cancellation, filter.MaxRows, or
+// an emit error.
+func (s *Source) fetchBulkAPI(ctx context.Context, filter ports.BulkFilter, emit func(types.FoodMatch) error) error {
+	dataTypes := strings.Join(bulkDataTypes(filter.DataTypes), ",")
+
+	n := 0
+	for page := 1; ; page++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		q := url.Values{}
+		q.Set("api_key", s.apiKey)
+		q.Set("dataType", dataTypes)
+		q.Set("pageSize", strconv.Itoa(bulkAPIPageSize))
+		q.Set("pageNumber", strconv.Itoa(page))
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			s.baseURL+"/foods/search?"+q.Encode(), nil)
+		if err != nil {
+			return fmt.Errorf("usda: build bulk request: %w", err)
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("usda: bulk search: %w", err)
+		}
+		var sr searchResponse
+		decErr := json.NewDecoder(resp.Body).Decode(&sr)
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if status != http.StatusOK {
+			return fmt.Errorf("usda: bulk status %d", status)
+		}
+		if decErr != nil {
+			return fmt.Errorf("usda: bulk decode: %w", decErr)
+		}
+
+		if len(sr.Foods) == 0 {
+			return nil
+		}
+
+		for _, f := range sr.Foods {
+			if filter.MaxRows > 0 && n >= filter.MaxRows {
+				return nil
+			}
+			fm, ok := foodToMatch(f)
+			if !ok {
+				continue
+			}
+			if err := emit(fm); err != nil {
+				return err
+			}
+			n++
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(bulkPageDelay):
+		}
+	}
+}
+
+// fetchBulkFile stream-decodes USDA food objects from s.bulkFilePath one
+// element at a time, so a multi-GB bulk export never has to fit in memory.
+// Elements whose dataType isn't in the filter's allowlist are skipped.
+//
+// USDA's FoodData Central full downloads aren't a bare top-level array — they
+// wrap it in an object under a key like "FoundationFoods"/"SRLegacyFoods"
+// (e.g. {"FoundationFoods": [...]}). Rather than special-case the wrapper key
+// name, walk tokens until the first '[' delimiter and stream that array's
+// elements — this handles a wrapped export and a bare top-level array alike.
+func (s *Source) fetchBulkFile(ctx context.Context, filter ports.BulkFilter, emit func(types.FoodMatch) error) error {
+	// #nosec G304 -- path is host-configured at startup, not user input
+	f, err := os.Open(s.bulkFilePath)
+	if err != nil {
+		return fmt.Errorf("usda: open bulk file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	allow := make(map[string]bool)
+	for _, dt := range bulkDataTypes(filter.DataTypes) {
+		allow[dt] = true
+	}
+
+	dec := json.NewDecoder(f)
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("usda: bulk file: %w", err)
+		}
+		if tok == json.Delim('[') {
+			break
+		}
+	}
+
+	n := 0
+	for dec.More() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if filter.MaxRows > 0 && n >= filter.MaxRows {
+			return nil
+		}
+
+		var item food
+		if err := dec.Decode(&item); err != nil {
+			return fmt.Errorf("usda: bulk file decode: %w", err)
+		}
+		if !allow[item.DataType] {
+			continue
+		}
+		fm, ok := foodToMatch(item)
+		if !ok {
+			continue
+		}
+		if err := emit(fm); err != nil {
+			return err
+		}
+		n++
+	}
+	return nil
 }

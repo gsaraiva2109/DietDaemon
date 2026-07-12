@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,21 @@ type Config struct {
 	NutritionSources []string
 	USDAFDCAPIKey    string
 	TacoDataPath     string
+
+	// --- Bulk import (opt-in; disabled by default so there's no surprise startup traffic) ---
+	FoodImportEnabled  bool          // FOOD_IMPORT_ENABLED, default false
+	FoodImportSources  []string      // FOOD_IMPORT_SOURCES, comma-separated, default "" (empty = disabled)
+	FoodImportInterval time.Duration // FOOD_IMPORT_INTERVAL, default 24h
+
+	USDABulkFile      string   // USDA_BULK_FILE — if set, adapter uses file mode instead of live API
+	USDABulkDataTypes []string // USDA_BULK_DATA_TYPES, comma-separated, default "Foundation,SR Legacy"
+	USDABulkMaxRows   int      // USDA_BULK_MAX_ROWS, default 0 (unlimited)
+
+	OFFBulkFile          string // OFF_BULK_FILE — if set, adapter uses file mode instead of live API
+	OFFBulkMinPopularity int    // OFF_BULK_MIN_POPULARITY, default 0
+	OFFBulkMaxRows       int    // OFF_BULK_MAX_ROWS, default 0
+
+	TacoBulkMaxRows int // TACO_BULK_MAX_ROWS, default 0 (safety valve; TACO's dataset is already small)
 
 	EmbedAdapter      string
 	CompletionAdapter string
@@ -186,6 +202,16 @@ func Load() (*Config, error) {
 		NutritionSources:        splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
 		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
 		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
+		FoodImportEnabled:       getBool("FOOD_IMPORT_ENABLED", false),
+		FoodImportSources:       splitCSV(getStr("FOOD_IMPORT_SOURCES", "")),
+		FoodImportInterval:      getDuration("FOOD_IMPORT_INTERVAL", 24*time.Hour),
+		USDABulkFile:            getStr("USDA_BULK_FILE", ""),
+		USDABulkDataTypes:       splitCSV(getStr("USDA_BULK_DATA_TYPES", "Foundation,SR Legacy")),
+		USDABulkMaxRows:         getInt("USDA_BULK_MAX_ROWS", 0),
+		OFFBulkFile:             getStr("OFF_BULK_FILE", ""),
+		OFFBulkMinPopularity:    getInt("OFF_BULK_MIN_POPULARITY", 0),
+		OFFBulkMaxRows:          getInt("OFF_BULK_MAX_ROWS", 0),
+		TacoBulkMaxRows:         getInt("TACO_BULK_MAX_ROWS", 0),
 		EmbedAdapter:            getStr("EMBED_ADAPTER", "ollama"),
 		CompletionAdapter:       getStr("COMPLETION_ADAPTER", ""),
 		OllamaURL:               getStr("OLLAMA_URL", ""),
@@ -358,6 +384,25 @@ func (c *Config) validate(tierErr error) error {
 	if contains(c.NutritionSources, "taco") && c.TacoDataPath != "" {
 		if _, err := os.Stat(c.TacoDataPath); err != nil {
 			add("TACO_DATA_PATH %q not found: %v", c.TacoDataPath, err)
+		}
+	}
+
+	if c.FoodImportEnabled {
+		if len(c.FoodImportSources) == 0 {
+			add("FOOD_IMPORT_SOURCES must list at least one source when FOOD_IMPORT_ENABLED=true")
+		}
+		if contains(c.FoodImportSources, "usda") && c.USDAFDCAPIKey == "" {
+			add("USDA_FDC_API_KEY is required when 'usda' is in FOOD_IMPORT_SOURCES")
+		}
+		if c.USDABulkFile != "" {
+			if _, err := os.Stat(c.USDABulkFile); err != nil {
+				add("USDA_BULK_FILE %q not found: %v", c.USDABulkFile, err)
+			}
+		}
+		if c.OFFBulkFile != "" {
+			if _, err := os.Stat(c.OFFBulkFile); err != nil {
+				add("OFF_BULK_FILE %q not found: %v", c.OFFBulkFile, err)
+			}
 		}
 	}
 
@@ -569,7 +614,7 @@ func getBool(key string, def bool) bool {
 
 func splitCSV(s string) []string {
 	var out []string
-	for _, p := range strings.Split(s, ",") {
+	for p := range strings.SplitSeq(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
@@ -608,12 +653,7 @@ func decodeKey(raw string) ([]byte, error) {
 }
 
 func contains(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, target)
 }
 
 // loadDotEnv reads simple KEY=VALUE lines from path into the environment without

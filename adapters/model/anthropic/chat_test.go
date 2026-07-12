@@ -29,7 +29,7 @@ func TestExtractArgsEmptyValue(t *testing.T) {
 func TestStreamChatHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"message":"invalid model"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid model"}}`))
 	}))
 	defer srv.Close()
 

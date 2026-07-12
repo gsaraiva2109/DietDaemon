@@ -54,7 +54,11 @@ func run(ollamaURL, embedModel, dbPath string) error {
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
-	defer st.Close()
+	defer func() {
+		if cerr := st.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "tune: close store: %v\n", cerr)
+		}
+	}()
 
 	src, err := taco.New("")
 	if err != nil {

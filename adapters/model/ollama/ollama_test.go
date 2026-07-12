@@ -30,7 +30,7 @@ func TestEmbed(t *testing.T) {
 		if req.Prompt != "hello" {
 			t.Errorf("prompt = %q, want hello", req.Prompt)
 		}
-		json.NewEncoder(w).Encode(embedResponse{Embedding: []float64{0.1, 0.2, 0.3}})
+		_ = json.NewEncoder(w).Encode(embedResponse{Embedding: []float64{0.1, 0.2, 0.3}})
 	}))
 	defer srv.Close()
 
@@ -63,7 +63,7 @@ func TestComplete(t *testing.T) {
 		if req.Format != "json" {
 			t.Errorf("format = %q, want json", req.Format)
 		}
-		json.NewEncoder(w).Encode(generateResponse{Response: "42 grams"})
+		_ = json.NewEncoder(w).Encode(generateResponse{Response: "42 grams"})
 	}))
 	defer srv.Close()
 
@@ -104,10 +104,7 @@ func TestCompleteHTTPError(t *testing.T) {
 func TestContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Slow response — context should cancel before it arrives.
-		select {
-		case <-r.Context().Done():
-			return
-		}
+		<-r.Context().Done()
 	}))
 	defer srv.Close()
 

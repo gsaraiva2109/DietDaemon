@@ -59,7 +59,7 @@ func (n *Notifier) Notify(ctx context.Context, msg types.Notification) error {
 	if err != nil {
 		return fmt.Errorf("ntfy: post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("ntfy: unexpected status %d", resp.StatusCode)

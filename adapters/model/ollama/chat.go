@@ -172,7 +172,7 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 		return nil, fmt.Errorf("ollama chat: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("ollama chat: status %d", resp.StatusCode)
 	}
 
@@ -200,7 +200,7 @@ func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEve
 
 func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

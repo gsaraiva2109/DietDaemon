@@ -142,19 +142,19 @@ func (h *Handler) handleStreamLinkCode(w http.ResponseWriter, r *http.Request, u
 			return
 		case <-deadline.C:
 			// Code expired without being consumed.
-			fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
+			_, _ = fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
 			flusher.Flush()
 			return
 		case <-ticker.C:
 			current, err := h.store.LookupLinkingCodeAny(r.Context(), code)
 			if err != nil {
 				// Code no longer exists — treat as expired.
-				fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
+				_, _ = fmt.Fprintf(w, "event: expired\ndata: {}\n\n")
 				flusher.Flush()
 				return
 			}
 			if current.UsedAt != "" {
-				fmt.Fprintf(w, "event: linked\ndata: {}\n\n")
+				_, _ = fmt.Fprintf(w, "event: linked\ndata: {}\n\n")
 				flusher.Flush()
 				return
 			}

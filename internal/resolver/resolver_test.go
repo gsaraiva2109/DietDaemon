@@ -110,7 +110,7 @@ func (e *fakeEmbedder) EmbedFood(_ context.Context, userID, foodID, name string)
 }
 
 func chicken() types.FoodMatch {
-	return types.FoodMatch{FoodID: "off:1", Name: "chicken breast", Source: "openfoodfacts",
+	return types.FoodMatch{FoodID: "off:1", Name: "frango grelhado", Source: "openfoodfacts",
 		Per100g: types.Macros{Calories: 165, Protein: 31, Carbs: 0, Fat: 3.6}}
 }
 
@@ -156,6 +156,71 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 	}
 	if got := res[0].Macros.Calories; got != 165 {
 		t.Errorf("calories = %v, want 165", got)
+	}
+}
+
+// TestExternalIrrelevantMatchIsRejected reproduces a real production bug: a
+// query for "white rice" hit OpenFoodFacts' loose free-text search and got
+// back "Tortitas de arroz con chocolate blanco" (a Spanish snack product with
+// no relation to rice beyond OFF's own search returning it first) — the
+// resolver accepted it unconditionally and permanently aliased it. The first
+// source's irrelevant result must be rejected and fall through to the next
+// source instead of being written back as ground truth.
+func TestExternalIrrelevantMatchIsRejected(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{}}
+	bad := &fakeSource{name: "openfoodfacts", phr: "white rice", match: types.FoodMatch{
+		FoodID: "off:bad", Name: "Tortitas de arroz con chocolate blanco", Source: "openfoodfacts",
+		Per100g: types.Macros{Calories: 467, Protein: 7.3, Carbs: 63, Fat: 20},
+	}}
+	good := &fakeSource{name: "usda", phr: "white rice", match: types.FoodMatch{
+		FoodID: "usda:1", Name: "Rice, white, long-grain, cooked", Source: "usda",
+		Per100g: types.Macros{Calories: 130, Protein: 2.7, Carbs: 28, Fat: 0.3},
+	}}
+	r := New(st, nil, nil, 0.92, st, bad, good)
+
+	items := []types.ParsedItem{{RawPhrase: "white rice", NormalizedGrams: 200}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0", need)
+	}
+	if bad.calls != 1 {
+		t.Errorf("irrelevant source called %d times, want 1 (tried, then rejected)", bad.calls)
+	}
+	if good.calls != 1 {
+		t.Errorf("relevant source called %d times, want 1 (should be tried after rejection)", good.calls)
+	}
+	if res[0].Match.FoodID != "usda:1" {
+		t.Errorf("resolved via %q, want usda:1 (irrelevant off:bad must be rejected)", res[0].Match.FoodID)
+	}
+	if len(st.upserts) != 1 || st.upserts[0].FoodID != "usda:1" {
+		t.Errorf("write-back upserts = %v, want exactly one usda:1 (bad match must never be aliased)", st.upserts)
+	}
+}
+
+// TestExternalAllIrrelevantNeedsClarification covers the case where every
+// configured source's match is rejected: the item must fall through to
+// needing clarification rather than the resolver keeping the first bad match
+// as a last resort.
+func TestExternalAllIrrelevantNeedsClarification(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{}}
+	bad := &fakeSource{name: "openfoodfacts", phr: "white rice", match: types.FoodMatch{
+		FoodID: "off:bad", Name: "Tortitas de arroz con chocolate blanco", Source: "openfoodfacts",
+		Per100g: types.Macros{Calories: 467},
+	}}
+	r := New(st, nil, nil, 0.92, st, bad)
+
+	items := []types.ParsedItem{{RawPhrase: "white rice", NormalizedGrams: 200}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 1 {
+		t.Fatalf("need=%d, want 1 (no relevant match anywhere)", need)
+	}
+	if res[0].Match.FoodID != "" {
+		t.Errorf("expected no match, got %+v", res[0].Match)
+	}
+	if len(st.upserts) != 0 {
+		t.Errorf("expected no upsert, got %v", st.upserts)
 	}
 }
 
@@ -293,8 +358,8 @@ func TestEmbeddingOnWrite(t *testing.T) {
 	if len(emb.embeds) != 1 {
 		t.Fatalf("embed called %d times, want 1", len(emb.embeds))
 	}
-	if emb.embeds[0].foodID != "off:1" || emb.embeds[0].name != "chicken breast" {
-		t.Errorf("embed args = %+v, want foodID=off:1 name='chicken breast'", emb.embeds[0])
+	if emb.embeds[0].foodID != "off:1" || emb.embeds[0].name != "frango grelhado" {
+		t.Errorf("embed args = %+v, want foodID=off:1 name='frango grelhado'", emb.embeds[0])
 	}
 }
 

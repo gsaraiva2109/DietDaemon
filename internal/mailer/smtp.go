@@ -74,10 +74,18 @@ func (m *smtpMailer) Send(ctx context.Context, to string, msg Message) error {
 	if err != nil {
 		return fmt.Errorf("mailer/smtp: data: %w", err)
 	}
-	defer wc.Close()
 
 	if _, err := fmt.Fprint(wc, sb.String()); err != nil {
+		_ = wc.Close()
 		return fmt.Errorf("mailer/smtp: write: %w", err)
+	}
+
+	// Close finalizes the DATA command (sends the terminating "." and reads
+	// the server's response) — a failure here means the message was not
+	// actually accepted, so it must not be swallowed like a plain resource
+	// cleanup would be.
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("mailer/smtp: close: %w", err)
 	}
 
 	return nil

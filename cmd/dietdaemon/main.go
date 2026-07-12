@@ -26,6 +26,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/adapters/notifier/ntfy"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/openfoodfacts"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
+	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/usda"
 	"github.com/gsaraiva2109/dietdaemon/adapters/stt/whisper"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -37,6 +38,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/backup/s3dest"
 	"github.com/gsaraiva2109/dietdaemon/internal/commands"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
+	"github.com/gsaraiva2109/dietdaemon/internal/foodimport"
 	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
 	"github.com/gsaraiva2109/dietdaemon/internal/i18n/locales"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
@@ -301,6 +303,23 @@ func run() error {
 	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
 	slog.Info("chat session purge runner running", "retention", "30d")
 
+	// Scheduled bulk food import: opt-in, disabled by default so there's no
+	// surprise startup traffic against USDA/OpenFoodFacts.
+	if cfg.FoodImportEnabled && len(cfg.FoodImportSources) > 0 {
+		var srcs []ports.BulkSource
+		filters := map[string]ports.BulkFilter{}
+		for _, name := range cfg.FoodImportSources {
+			src, filter, err := foodimport.BuildSource(name, cfg)
+			if err != nil {
+				return fmt.Errorf("food import: %w", err)
+			}
+			srcs = append(srcs, src)
+			filters[src.Name()] = filter
+		}
+		go foodimport.New(st, srcs, filters, cfg.FoodImportInterval, slog.Default()).Run(ctx)
+		slog.Info("food import runner running", "sources", cfg.FoodImportSources, "interval", cfg.FoodImportInterval.String())
+	}
+
 	// --- Dashboard API server ---
 	if cfg.EnableDashboard {
 		authCfg := api.AuthConfig{
@@ -509,6 +528,8 @@ func buildSources(cfg *config.Config) ([]resolver.Source, error) {
 				return nil, fmt.Errorf("taco source: %w", err)
 			}
 			sources = append(sources, src)
+		case "usda":
+			sources = append(sources, usda.New(cfg.USDAFDCAPIKey))
 		default:
 			return nil, fmt.Errorf("unsupported NUTRITION_SOURCE %q", name)
 		}

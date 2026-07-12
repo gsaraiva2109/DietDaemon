@@ -28,8 +28,11 @@ import (
 //go:embed taco.csv
 var defaultTacoCSV []byte
 
-// Compile-time interface check.
-var _ ports.NutritionSource = (*Source)(nil)
+// Compile-time interface checks.
+var (
+	_ ports.NutritionSource = (*Source)(nil)
+	_ ports.BulkSource      = (*Source)(nil)
+)
 
 // Source resolves foods from an in-memory TACO dataset.
 type Source struct {
@@ -90,6 +93,26 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 	return fm, nil
 }
 
+// FetchBulk emits every loaded TACO food. filter.DataTypes and
+// filter.MinPopularity are ignored — TACO has no dataType/popularity concept;
+// it's a small, already-curated common-foods list imported whole by design.
+func (s *Source) FetchBulk(ctx context.Context, filter ports.BulkFilter, emit func(types.FoodMatch) error) error {
+	n := 0
+	for _, fm := range s.foods {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if filter.MaxRows > 0 && n >= filter.MaxRows {
+			break
+		}
+		if err := emit(fm); err != nil {
+			return err
+		}
+		n++
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Loaders
 // ---------------------------------------------------------------------------
@@ -113,7 +136,7 @@ func loadCSV(path string) ([][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("taco: open csv: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	r := csv.NewReader(f)
 	r.TrimLeadingSpace = true
@@ -132,7 +155,7 @@ func loadXLSX(path string) ([][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("taco: open xlsx: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read the first sheet.
 	sheet := f.GetSheetName(0)

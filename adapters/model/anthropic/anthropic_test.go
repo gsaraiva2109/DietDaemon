@@ -45,7 +45,7 @@ func TestComplete(t *testing.T) {
 			t.Errorf("prompt missing JSON instruction: %q", content)
 		}
 
-		json.NewEncoder(w).Encode(messagesResponse{
+		_ = json.NewEncoder(w).Encode(messagesResponse{
 			Content: []contentBlock{{Type: "text", Text: "```json\n{\"food\":\"egg\"}\n```"}},
 		})
 	}))
@@ -64,7 +64,7 @@ func TestComplete(t *testing.T) {
 func TestCompleteHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"message":"invalid model"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid model"}}`))
 	}))
 	defer srv.Close()
 
@@ -80,7 +80,7 @@ func TestCompleteHTTPError(t *testing.T) {
 
 func TestCompleteEmptyContent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(messagesResponse{Content: nil})
+		_ = json.NewEncoder(w).Encode(messagesResponse{Content: nil})
 	}))
 	defer srv.Close()
 

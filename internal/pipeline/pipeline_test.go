@@ -329,7 +329,9 @@ func TestTargetCommandSetsGoals(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	reg := commands.NewRegistry()
-	reg.Register(commands.NewTargetCommand(st))
+	if err := reg.Register(commands.NewTargetCommand(st)); err != nil {
+		t.Fatalf("Register error = %v", err)
+	}
 	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, reg, nil)
 
 	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90", ChannelMeta: map[string]string{"chat_id": "42"}}
