@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
@@ -67,14 +69,30 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 
-	// Persist user message before streaming — also doubles as the session
-	// ownership check (AppendChatMessage no-ops and returns ErrNotFound if
-	// sessionID doesn't belong to userID), so a foreign/bogus session ID is
-	// rejected before any SSE headers go out or the LLM gets called.
+	// Persist user message before streaming. If the session doesn't exist yet
+	// (client-generated UUID from chatThreadListAdapter), auto-create it now.
+	// This also doubles as the ownership check — a foreign/bogus session ID
+	// that doesn't belong to userID will still fail with ErrNotFound after the
+	// lazy-create path because CreateChatSession writes the caller's userID,
+	// so a retry on a stolen ID would hit the ownership guard.
 	if h.chatStore != nil {
-		if err := h.chatStore.AppendChatMessage(r.Context(), newHandlerID(), userID, sessionID, "user", req.Text, ""); err != nil {
-			h.writeErr(w, err)
-			return
+		msgID := newHandlerID()
+		if err := h.chatStore.AppendChatMessage(r.Context(), msgID, userID, sessionID, "user", req.Text, ""); err != nil {
+			if errors.Is(err, types.ErrNotFound) {
+				// Lazy-create session on first message.
+				if err := h.chatStore.CreateChatSession(r.Context(), sessionID, userID, ""); err != nil {
+					h.writeErr(w, err)
+					return
+				}
+				// Retry append into the now-existing session.
+				if err := h.chatStore.AppendChatMessage(r.Context(), msgID, userID, sessionID, "user", req.Text, ""); err != nil {
+					h.writeErr(w, err)
+					return
+				}
+			} else {
+				h.writeErr(w, err)
+				return
+			}
 		}
 	}
 
@@ -221,32 +239,6 @@ func (h *Handler) persistAssistantMessages(ctx context.Context, userID, sessionI
 // ---------------------------------------------------------------------------
 // Session CRUD
 // ---------------------------------------------------------------------------
-
-// handleCreateChatSession creates a new chat session.
-// POST /api/v1/chat/sessions
-func (h *Handler) handleCreateChatSession(w http.ResponseWriter, r *http.Request, userID string) {
-	if h.chatStore == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
-		return
-	}
-
-	var body struct {
-		Title string `json:"title"`
-	}
-	// Body is optional — empty body is fine, creates with default empty title.
-	if r.ContentLength > 0 {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}
-
-	id := newHandlerID()
-	if err := h.chatStore.CreateChatSession(r.Context(), id, userID, body.Title); err != nil {
-		h.writeErr(w, err)
-		return
-	}
-
-	_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
-}
 
 // handleListChatSessions returns all sessions for the authenticated user.
 // GET /api/v1/chat/sessions

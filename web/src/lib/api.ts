@@ -630,7 +630,7 @@ export const api = {
 
   // --- AI chat assistant -------------------------------------------
   chat: {
-    createSession: () => request<ChatSession>('/chat/sessions', { method: 'POST' }),
+    // Session creation is now lazy: the backend auto-creates on first message.
     listSessions: () => request<ChatSession[]>('/chat/sessions'),
     // Soft-delete (30-day retention, backend purges after that) + restore.
     // See .context/prompts/chat-assistant-v2/08c-chat-session-soft-delete.md.

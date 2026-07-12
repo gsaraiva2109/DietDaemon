@@ -181,7 +181,7 @@ function useChatThreadRuntime() {
   )
 
   return useLocalRuntime(adapters.modelAdapter, {
-    initialMessages,
+    initialMessages: data.length > 0 ? initialMessages : undefined,
     adapters: { suggestion: adapters.suggestionAdapter },
   })
 }
