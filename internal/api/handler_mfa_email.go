@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
@@ -79,7 +78,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 		_ = h.mailer.Send(ctx, u.Email, mailer.MFAEmailCodeEmail(code))
 	} else {
 		// Log the code for dev/homelab (mirrors forgot-password pattern).
-		h.logCode(ctx, u.Email, code)
+		h.logCode(u.Email, code)
 	}
 
 	h.writeAudit(ctx, u.AccountID, chUserID, "mfa.email_code_sent", ip, r.UserAgent(), "")
@@ -186,7 +185,7 @@ func generateMFAEmailCode() string {
 }
 
 // logCode writes the code to the server log. Only used when emailProvider == "none".
-func (h *Handler) logCode(ctx context.Context, email, code string) {
+func (h *Handler) logCode(email, code string) {
 	// Structured log so the operator can grep for it.
 	fmt.Printf("[MFA-EMAIL-CODE] to=%s code=%s expires=%s\n", email, code, time.Now().UTC().Add(mfaEmailTTL).Format(time.RFC3339))
 }

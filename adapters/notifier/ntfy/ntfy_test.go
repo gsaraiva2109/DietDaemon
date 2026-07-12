@@ -94,7 +94,7 @@ func TestNotifyWithoutAuthToken(t *testing.T) {
 	defer srv.Close()
 
 	n := New(srv.URL, "t", "")
-	n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
+	_ = n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
 }
 
 func TestPriorityMapping(t *testing.T) {
@@ -155,7 +155,7 @@ func TestTrailingSlashTrim(t *testing.T) {
 	defer srv.Close()
 
 	n := New(srv.URL+"/", "topic", "")
-	n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
+	_ = n.Notify(context.Background(), types.Notification{Title: "x", Body: "x"})
 }
 
 // ---------------------------------------------------------------------------

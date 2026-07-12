@@ -30,14 +30,14 @@ func newMagicTestAuthStore() *magicTestAuthStore {
 		magicCodes:         make(map[string]magicCode),
 	}
 	// Pre-register a test user with email and password.
-	s.emailTestAuthStore.fakeAuthStore.userByEmail["test@example.com"] = types.User{
+	s.userByEmail["test@example.com"] = types.User{
 		ID:        "test-user",
 		Email:     "test@example.com",
 		AccountID: "acct-1",
 		Status:    "active",
 		CreatedAt: time.Now().UTC(),
 	}
-	s.emailTestAuthStore.fakeAuthStore.users["test-user"] = types.User{
+	s.users["test-user"] = types.User{
 		ID:        "test-user",
 		Email:     "test@example.com",
 		AccountID: "acct-1",

@@ -119,7 +119,7 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	if err != nil {
 		return fmt.Errorf("discord: send: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -214,7 +214,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	br := bufio.NewReader(conn)
 
@@ -349,7 +349,7 @@ func (a *Adapter) fetchGatewayURL(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		URL string `json:"url"`
@@ -471,13 +471,14 @@ func readWSFrame(br *bufio.Reader) ([]byte, error) {
 	}
 
 	length := int64(b1 & 0x7f)
-	if length == 126 {
+	switch length {
+	case 126:
 		var buf [2]byte
 		if _, err := io.ReadFull(br, buf[:]); err != nil {
 			return nil, err
 		}
 		length = int64(buf[0])<<8 | int64(buf[1])
-	} else if length == 127 {
+	case 127:
 		var buf [8]byte
 		if _, err := io.ReadFull(br, buf[:]); err != nil {
 			return nil, err

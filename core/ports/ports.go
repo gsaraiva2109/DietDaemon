@@ -52,6 +52,31 @@ type NutritionSource interface {
 	Name() string
 }
 
+// BulkFilter narrows what a BulkSource emits during a bulk import. All fields
+// are host-configured (env vars, see internal/config), never derived from
+// in-app usage data — a fresh install has none. Zero value means "no filter"
+// for that dimension.
+type BulkFilter struct {
+	DataTypes     []string // e.g. USDA dataType allowlist {"Foundation","SR Legacy"}
+	MinPopularity int      // e.g. OpenFoodFacts unique_scans_n / popularity floor
+	MaxRows       int      // 0 = unlimited; hard safety cap on rows emitted
+}
+
+// BulkSource performs a bulk catalog fetch for import into the global foods
+// table, as opposed to NutritionSource's single-item Resolve. Whether a given
+// implementation fetches from a live paginated API or streams a locally
+// supplied bulk-export file is an adapter-internal concern selected at
+// construction time (see each adapter's NewBulk constructor) — callers never
+// need to choose a mode. Implementations: usda, openfoodfacts, taco.
+type BulkSource interface {
+	// FetchBulk streams results to emit until the source is exhausted, ctx is
+	// cancelled, filter.MaxRows is reached, or emit returns an error (which
+	// aborts and propagates up). Implementations must not buffer an entire
+	// source in memory — file-backed implementations must stream-parse.
+	FetchBulk(ctx context.Context, filter BulkFilter, emit func(types.FoodMatch) error) error
+	Name() string
+}
+
 // ModelAdapter exposes embedding and completion calls to an inference backend
 // (Ollama over HTTP). Optional; only used by Tier-1/Tier-2 parsers when
 // PARSER_TIER > 0.

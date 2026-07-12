@@ -206,7 +206,7 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 		return nil, fmt.Errorf("openai chat: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, fmt.Errorf("openai chat: status %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
 	}
@@ -235,7 +235,7 @@ func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEve
 
 func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

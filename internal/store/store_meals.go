@@ -344,7 +344,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	items := make([]item, len(itemRows))
 	var oldTotal types.Macros
 	for i, r := range itemRows {
-		items[i] = item{id: r.ID, ri: r.resolvedItemRow.toResolvedItem()}
+		items[i] = item{id: r.ID, ri: r.toResolvedItem()}
 		oldTotal = oldTotal.Add(items[i].ri.Macros)
 	}
 	if itemIndex < 0 || itemIndex >= len(items) {

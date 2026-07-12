@@ -98,7 +98,7 @@ func (a *Adapter) Complete(ctx context.Context, prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("anthropic: messages: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))

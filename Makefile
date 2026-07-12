@@ -37,6 +37,8 @@ build-go:
 	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/dietdaemon ./cmd/dietdaemon
 	@echo ">> building tune..."
 	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/tune ./cmd/tune
+	@echo ">> building import-foods..."
+	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/import-foods ./cmd/import-foods
 
 # Run the Vite dev server (proxies /api to a locally running daemon on :8080).
 dev-web:

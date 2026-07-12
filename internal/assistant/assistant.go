@@ -91,7 +91,7 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	messages = append(messages, history...)
 	messages = append(messages, ports.ChatMessage{Role: "user", Content: userMessage})
 
-	for round := 0; round < maxToolRounds; round++ {
+	for range maxToolRounds {
 		req := ports.ChatRequest{
 			System:   systemPrompt,
 			Messages: messages,
@@ -200,7 +200,9 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	// Exceeded max tool rounds.
 	sendOut(ctx, out, ports.ChatEvent{
 		Kind: "error",
-		Err:  errors.New(suggestFallback),
+		//nolint:staticcheck // ST1005: suggestFallback is user-facing display copy, not a Go error meant for further %w wrapping.
+		//lint:ignore ST1005 suggestFallback is user-facing display copy, not a Go error meant for further %w wrapping.
+		Err: errors.New(suggestFallback),
 	})
 }
 

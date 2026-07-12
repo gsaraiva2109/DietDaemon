@@ -12,7 +12,7 @@ func TestTranscribe(t *testing.T) {
 		if r.URL.Path != "/inference" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(inferenceResponse{
+		_ = json.NewEncoder(w).Encode(inferenceResponse{
 			Text:     "duzentos gramas de frango",
 			Language: "pt",
 		})
@@ -34,7 +34,7 @@ func TestTranscribe(t *testing.T) {
 
 func TestTranscribeEmptyAudio(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(inferenceResponse{Text: ""})
+		_ = json.NewEncoder(w).Encode(inferenceResponse{Text: ""})
 	}))
 	defer srv.Close()
 

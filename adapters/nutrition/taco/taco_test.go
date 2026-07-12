@@ -2,12 +2,14 @@ package taco
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
 
+	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
@@ -87,15 +89,15 @@ func TestXLSXLoadAndResolve(t *testing.T) {
 
 	f := excelize.NewFile()
 	// Header row.
-	f.SetCellValue("Sheet1", "A1", "food_id")
-	f.SetCellValue("Sheet1", "B1", "name")
-	f.SetCellValue("Sheet1", "C1", "kcal")
-	f.SetCellValue("Sheet1", "D1", "protein")
-	f.SetCellValue("Sheet1", "E1", "carb")
-	f.SetCellValue("Sheet1", "F1", "fat")
-	f.SetCellValue("Sheet1", "G1", "fiber")
+	_ = f.SetCellValue("Sheet1", "A1", "food_id")
+	_ = f.SetCellValue("Sheet1", "B1", "name")
+	_ = f.SetCellValue("Sheet1", "C1", "kcal")
+	_ = f.SetCellValue("Sheet1", "D1", "protein")
+	_ = f.SetCellValue("Sheet1", "E1", "carb")
+	_ = f.SetCellValue("Sheet1", "F1", "fat")
+	_ = f.SetCellValue("Sheet1", "G1", "fiber")
 	// Data rows — subset of the CSV fixture.
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"TACO005", "Frango grelhado", 165, 31.0, 0.0, 3.6, 0.0},
 		{"TACO003", "Feijão carioca cozido", 76, 4.8, 13.6, 0.5, 8.5},
 		{"TACO007", "Ovo de galinha cozido", 155, 13.0, 1.1, 10.6, 0.0},
@@ -103,13 +105,13 @@ func TestXLSXLoadAndResolve(t *testing.T) {
 	for i, row := range rows {
 		for j, val := range row {
 			cell, _ := excelize.CoordinatesToCellName(j+1, i+2)
-			f.SetCellValue("Sheet1", cell, val)
+			_ = f.SetCellValue("Sheet1", cell, val)
 		}
 	}
 	if err := f.SaveAs(path); err != nil {
 		t.Fatalf("save xlsx: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	src, err := New(path)
 	if err != nil {
@@ -149,24 +151,24 @@ func TestTinySyntheticXLSX(t *testing.T) {
 	path := filepath.Join(dir, "mini.xlsx")
 
 	f := excelize.NewFile()
-	f.SetCellValue("Sheet1", "A1", "food_id")
-	f.SetCellValue("Sheet1", "B1", "name")
-	f.SetCellValue("Sheet1", "C1", "kcal")
-	f.SetCellValue("Sheet1", "D1", "protein")
-	f.SetCellValue("Sheet1", "E1", "carb")
-	f.SetCellValue("Sheet1", "F1", "fat")
-	f.SetCellValue("Sheet1", "G1", "fiber")
-	f.SetCellValue("Sheet1", "A2", "Y001")
-	f.SetCellValue("Sheet1", "B2", "Synthetic Food")
-	f.SetCellValue("Sheet1", "C2", 200)
-	f.SetCellValue("Sheet1", "D2", 15)
-	f.SetCellValue("Sheet1", "E2", 10)
-	f.SetCellValue("Sheet1", "F2", 5)
-	f.SetCellValue("Sheet1", "G2", 3)
+	_ = f.SetCellValue("Sheet1", "A1", "food_id")
+	_ = f.SetCellValue("Sheet1", "B1", "name")
+	_ = f.SetCellValue("Sheet1", "C1", "kcal")
+	_ = f.SetCellValue("Sheet1", "D1", "protein")
+	_ = f.SetCellValue("Sheet1", "E1", "carb")
+	_ = f.SetCellValue("Sheet1", "F1", "fat")
+	_ = f.SetCellValue("Sheet1", "G1", "fiber")
+	_ = f.SetCellValue("Sheet1", "A2", "Y001")
+	_ = f.SetCellValue("Sheet1", "B2", "Synthetic Food")
+	_ = f.SetCellValue("Sheet1", "C2", 200)
+	_ = f.SetCellValue("Sheet1", "D2", 15)
+	_ = f.SetCellValue("Sheet1", "E2", 10)
+	_ = f.SetCellValue("Sheet1", "F2", 5)
+	_ = f.SetCellValue("Sheet1", "G2", 3)
 	if err := f.SaveAs(path); err != nil {
 		t.Fatalf("save xlsx: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	src, err := New(path)
 	if err != nil {
@@ -198,6 +200,75 @@ func TestUnsupportedExtension(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for .json extension")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// FetchBulk
+// ---------------------------------------------------------------------------
+
+func TestFetchBulk(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "testdata", "taco_sample.csv")
+	src, err := New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	const wantRows = 15 // data rows in testdata/taco_sample.csv
+
+	t.Run("no filter emits everything", func(t *testing.T) {
+		var got []types.FoodMatch
+		err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
+			got = append(got, fm)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("FetchBulk: %v", err)
+		}
+		if len(got) != wantRows {
+			t.Errorf("got %d rows, want %d", len(got), wantRows)
+		}
+
+		names := make(map[string]bool, len(got))
+		for _, fm := range got {
+			names[fm.Name] = true
+		}
+		for _, want := range []string{"Frango grelhado", "Feijão carioca cozido"} {
+			if !names[want] {
+				t.Errorf("expected %q among emitted foods", want)
+			}
+		}
+	})
+
+	t.Run("MaxRows truncates", func(t *testing.T) {
+		n := 0
+		err := src.FetchBulk(context.Background(), ports.BulkFilter{MaxRows: 3}, func(fm types.FoodMatch) error {
+			n++
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("FetchBulk: %v", err)
+		}
+		if n != 3 {
+			t.Errorf("got %d rows, want 3 (MaxRows)", n)
+		}
+	})
+
+	t.Run("emit error aborts early", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		n := 0
+		err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
+			n++
+			if n == 2 {
+				return wantErr
+			}
+			return nil
+		})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("FetchBulk error = %v, want %v", err, wantErr)
+		}
+		if n != 2 {
+			t.Errorf("emitted %d items after error, want exactly 2 (stop on error)", n)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

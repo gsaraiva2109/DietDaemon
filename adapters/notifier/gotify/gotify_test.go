@@ -120,7 +120,7 @@ func TestJSONBodyFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var raw map[string]interface{}
-		json.Unmarshal(b, &raw)
+		_ = json.Unmarshal(b, &raw)
 
 		// Only the three expected fields.
 		if len(raw) != 3 {
@@ -141,5 +141,5 @@ func TestJSONBodyFields(t *testing.T) {
 	defer srv.Close()
 
 	n := New(srv.URL, "t")
-	n.Notify(context.Background(), types.Notification{Title: "T", Body: "B"})
+	_ = n.Notify(context.Background(), types.Notification{Title: "T", Body: "B"})
 }

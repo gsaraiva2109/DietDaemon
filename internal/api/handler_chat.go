@@ -392,7 +392,7 @@ func writeSSE(w http.ResponseWriter, event string, data any) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}

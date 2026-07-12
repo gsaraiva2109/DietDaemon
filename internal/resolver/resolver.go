@@ -15,8 +15,10 @@ package resolver
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 )
 
 // FoodStore is the subset of ports.Store the resolver needs. Declaring it here
@@ -161,6 +163,14 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 		if err != nil { // ErrNoMatch or transient: skip to the next source.
 			continue
 		}
+		if !nameMatchesQuery(item.RawPhrase, match.Name) {
+			// The source's own free-text search returned something with no
+			// textual relation to what was asked for (e.g. OFF's fuzzy search
+			// for "white rice" returning an unrelated Spanish snack product).
+			// Reject rather than permanently write a bad alias — try the next
+			// source instead of trusting this one's ranking blindly.
+			continue
+		}
 		// Write back into the personal library so the next lookup is local, and
 		// record this query so frequency ranking improves over time.
 		_ = r.store.UpsertFood(ctx, userID, match, []string{item.RawPhrase})
@@ -177,6 +187,32 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 
 	// 4. Nothing matched: unresolved, needs clarification.
 	return types.ResolvedItem{Parsed: item}, false
+}
+
+// nameMatchesQuery reports whether name shares at least one meaningful
+// (3+ char) word with query, after normalization — substring rather than
+// exact equality so "egg"/"eggs" or "chicken"/"chickens" still match. This is
+// the one shared relevance gate every external source's Resolve result passes
+// through before being accepted: an external source's own free-text search
+// has no relevance guarantee of its own (e.g. a fuzzy OFF search for "white
+// rice" can return an unrelated Spanish snack product as its first hit), and
+// a false accept here gets permanently written into the user's personal
+// alias index by the caller, so it needs to be caught before that write.
+func nameMatchesQuery(query, name string) bool {
+	for qt := range strings.FieldsSeq(normalize.Normalize(query)) {
+		if len(qt) < 3 {
+			continue
+		}
+		for nt := range strings.FieldsSeq(normalize.Normalize(name)) {
+			if len(nt) < 3 {
+				continue
+			}
+			if strings.Contains(nt, qt) || strings.Contains(qt, nt) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // finalize attaches a matched food and scales its per-100g macros to the

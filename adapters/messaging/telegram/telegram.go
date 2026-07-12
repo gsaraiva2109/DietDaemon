@@ -205,7 +205,7 @@ func (a *Adapter) fetchUpdates(ctx context.Context, pollURL string, offset int) 
 	if err != nil {
 		return nil, offset, fmt.Errorf("telegram: getUpdates: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body getUpdatesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -291,7 +291,7 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 	if err != nil {
 		return fmt.Errorf("telegram: sendMessage: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var r sendMessageResponse
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
@@ -330,7 +330,7 @@ func (a *Adapter) answerCallbackQuery(ctx context.Context, callbackID string) er
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var r struct {
 		OK bool `json:"ok"`

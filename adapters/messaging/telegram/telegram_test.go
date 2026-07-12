@@ -115,7 +115,7 @@ func TestReceiveEmitsMessages(t *testing.T) {
 			resp = getUpdatesResponse{OK: true, Result: nil}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -181,7 +181,7 @@ func TestSend(t *testing.T) {
 			t.Errorf("request = %+v", req)
 		}
 
-		json.NewEncoder(w).Encode(sendMessageResponse{OK: true})
+		_ = json.NewEncoder(w).Encode(sendMessageResponse{OK: true})
 	}))
 	defer srv.Close()
 
@@ -212,7 +212,7 @@ func TestSendMissingChatID(t *testing.T) {
 
 func TestSendErrorResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(sendMessageResponse{OK: false})
+		_ = json.NewEncoder(w).Encode(sendMessageResponse{OK: false})
 	}))
 	defer srv.Close()
 

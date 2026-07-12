@@ -70,7 +70,7 @@ func (a *Adapter) Embed(ctx context.Context, text string) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ollama: embeddings: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ollama: embeddings status %d", resp.StatusCode)
@@ -124,7 +124,7 @@ func (a *Adapter) Complete(ctx context.Context, prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ollama: generate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("ollama: generate status %d", resp.StatusCode)

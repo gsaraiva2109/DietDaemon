@@ -156,11 +156,17 @@ func (m Macros) Sub(o Macros) Macros {
 // library. Per100g holds macros per 100 grams; the resolver scales them to the
 // portion actually eaten.
 type FoodMatch struct {
-	FoodID     string  // stable id within Source
-	Name       string  // canonical display name
-	Source     string  // "foods" (global catalog cache hit), "openfoodfacts", "taco", "usda", …
-	Per100g    Macros  // macros per 100 grams
-	MatchScore float64 // 0..1 confidence of the name match
+	FoodID      string  // stable id within Source
+	Name        string  // canonical display name
+	Source      string  // "foods" (global catalog cache hit), "openfoodfacts", "taco", "usda", …
+	Per100g     Macros  // macros per 100 grams
+	MatchScore  float64 // 0..1 confidence of the name match
+	Category    string
+	Brand       string
+	Barcode     string
+	ImageURL    string
+	ServingSize float64
+	ServingUnit string
 }
 
 // ResolvedItem couples an extracted item with the food it resolved to and the

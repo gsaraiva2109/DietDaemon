@@ -95,21 +95,7 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	const foodQ = `
-		INSERT INTO foods
-			(food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
-		VALUES (:food_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g, :now, :now)
-		ON CONFLICT(food_id) DO UPDATE SET
-			name         = excluded.name,
-			source       = excluded.source,
-			kcal_100g    = excluded.kcal_100g,
-			protein_100g = excluded.protein_100g,
-			carbs_100g   = excluded.carbs_100g,
-			fat_100g     = excluded.fat_100g,
-			fiber_100g   = excluded.fiber_100g,
-			updated_at   = excluded.updated_at
-	`
-	foodQuery, foodArgs, err := sqlx.Named(foodQ, foodNamedArgs(match))
+	foodQuery, foodArgs, err := sqlx.Named(foodUpsertQuery, foodNamedArgs(match))
 	if err != nil {
 		return fmt.Errorf("store: bind upsert food: %w", err)
 	}
@@ -159,8 +145,34 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 	return err
 }
 
+// foodUpsertQuery is the shared global-catalog upsert used by UpsertFood
+// (per-user transaction) and BulkUpsertFoods (store_food_bulk.go, global-only
+// batches). Keeping it package-level lets both reuse identical SQL.
+const foodUpsertQuery = `
+	INSERT INTO foods
+		(food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+		 category, brand, barcode, image_url, serving_size, serving_unit, created_at, updated_at)
+	VALUES (:food_id, :name, :source, :kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :fiber_100g,
+	        :category, :brand, :barcode, :image_url, :serving_size, :serving_unit, :now, :now)
+	ON CONFLICT(food_id) DO UPDATE SET
+		name         = excluded.name,
+		source       = excluded.source,
+		kcal_100g    = excluded.kcal_100g,
+		protein_100g = excluded.protein_100g,
+		carbs_100g   = excluded.carbs_100g,
+		fat_100g     = excluded.fat_100g,
+		fiber_100g   = excluded.fiber_100g,
+		category     = excluded.category,
+		brand        = excluded.brand,
+		barcode      = excluded.barcode,
+		image_url    = excluded.image_url,
+		serving_size = excluded.serving_size,
+		serving_unit = excluded.serving_unit,
+		updated_at   = excluded.updated_at
+`
+
 // foodNamedArgs builds the named-parameter map for every upsert of a global
-// foods row (UpsertFood, CorrectMealItem's cache refresh).
+// foods row (UpsertFood, BulkUpsertFoods, CorrectMealItem's cache refresh).
 func foodNamedArgs(match types.FoodMatch) map[string]any {
 	return map[string]any{
 		"food_id":      match.FoodID,
@@ -171,6 +183,12 @@ func foodNamedArgs(match types.FoodMatch) map[string]any {
 		"carbs_100g":   match.Per100g.Carbs,
 		"fat_100g":     match.Per100g.Fat,
 		"fiber_100g":   match.Per100g.Fiber,
+		"category":     match.Category,
+		"brand":        match.Brand,
+		"barcode":      match.Barcode,
+		"image_url":    match.ImageURL,
+		"serving_size": match.ServingSize,
+		"serving_unit": match.ServingUnit,
 		"now":          utcNow(),
 	}
 }

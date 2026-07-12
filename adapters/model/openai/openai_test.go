@@ -38,7 +38,7 @@ func TestCompleteHappyPath(t *testing.T) {
 			t.Errorf("response_format = %+v, want json_object", req.ResponseFormat)
 		}
 
-		json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
 		}{{Message: chatMessage{Role: "assistant", Content: `{"food":"egg"}`}}}})
 	}))
@@ -59,7 +59,7 @@ func TestCompleteEmptyAPIKeyOmitsHeader(t *testing.T) {
 		if _, ok := r.Header["Authorization"]; ok {
 			t.Errorf("Authorization header should not be set, got %q", r.Header.Get("Authorization"))
 		}
-		json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
 		}{{Message: chatMessage{Role: "assistant", Content: `{"food":"egg"}`}}}})
 	}))
@@ -73,7 +73,7 @@ func TestCompleteEmptyAPIKeyOmitsHeader(t *testing.T) {
 
 func TestCompleteStripsFence(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
 		}{{Message: chatMessage{Role: "assistant", Content: "```json\n{\"food\":\"egg\"}\n```"}}}})
 	}))
@@ -92,7 +92,7 @@ func TestCompleteStripsFence(t *testing.T) {
 func TestCompleteHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"message":"model does not support tools"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"model does not support tools"}}`))
 	}))
 	defer srv.Close()
 
@@ -108,7 +108,7 @@ func TestCompleteHTTPError(t *testing.T) {
 
 func TestCompleteEmptyChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(chatResponse{Choices: nil})
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: nil})
 	}))
 	defer srv.Close()
 
