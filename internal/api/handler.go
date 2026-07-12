@@ -528,7 +528,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// AI chat assistant.
 	mux.HandleFunc("POST /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleChatMessage))
-	mux.HandleFunc("POST /api/v1/chat/sessions", h.wrap(h.handleCreateChatSession))
 	mux.HandleFunc("GET /api/v1/chat/sessions/deleted", h.wrap(h.handleListDeletedChatSessions))
 	mux.HandleFunc("GET /api/v1/chat/sessions", h.wrap(h.handleListChatSessions))
 	mux.HandleFunc("GET /api/v1/chat/sessions/{id}/messages", h.wrap(h.handleGetChatMessages))
