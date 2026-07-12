@@ -35,9 +35,10 @@ export const chatThreadListAdapter: RemoteThreadListAdapter = {
     }
   },
 
+  // ponytail: no backend call — session created lazily on first message
+  // in handleChatMessage (AppendChatMessage → ErrNotFound → auto-create).
   async initialize() {
-    const session = await api.chat.createSession()
-    return { remoteId: session.id, externalId: undefined }
+    return { remoteId: crypto.randomUUID(), externalId: undefined }
   },
 
   async archive(remoteId) {
