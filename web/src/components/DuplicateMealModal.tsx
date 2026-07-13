@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { Meal } from '@/lib/types'
 import { useMeals, useDuplicateMeal } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
@@ -19,14 +20,14 @@ function dayKey(iso: string): string {
   return new Date(iso).toDateString()
 }
 
-function dayLabel(iso: string): string {
+function dayLabel(iso: string, t: (key: string) => string, locale: string): string {
   const d = new Date(iso)
   const today = new Date()
   const yest = new Date()
   yest.setDate(today.getDate() - 1)
-  if (d.toDateString() === today.toDateString()) return 'Today'
-  if (d.toDateString() === yest.toDateString()) return 'Yesterday'
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+  if (d.toDateString() === today.toDateString()) return t('duplicateMealModal.today')
+  if (d.toDateString() === yest.toDateString()) return t('duplicateMealModal.yesterday')
+  return d.toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
 function mealKcal(meal: Meal): number {
@@ -34,6 +35,7 @@ function mealKcal(meal: Meal): number {
 }
 
 export function DuplicateMealModal({ onClose }: Props) {
+  const { t, i18n } = useTranslation()
   const meals = useMeals(50)
   const duplicate = useDuplicateMeal()
   const { demo } = useDemo()
@@ -85,7 +87,7 @@ export function DuplicateMealModal({ onClose }: Props) {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Duplicate a past meal"
+          aria-label={t('duplicateMealModal.ariaDialog')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -96,13 +98,13 @@ export function DuplicateMealModal({ onClose }: Props) {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                Duplicate meal
+                {t('duplicateMealModal.eyebrow')}
               </p>
               <h2 className="mt-1 text-xl font-bold text-ink">
-                {day ? 'Pick a meal' : 'Pick a day'}
+                {day ? t('duplicateMealModal.titlePickMeal') : t('duplicateMealModal.titlePickDay')}
               </h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('duplicateMealModal.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
@@ -112,21 +114,21 @@ export function DuplicateMealModal({ onClose }: Props) {
               onClick={() => setDay(null)}
               className="mb-3 inline-flex items-center gap-1 self-start text-sm text-muted hover:text-ink"
             >
-              <ChevronLeft width={18} height={18} /> Back to days
+              <ChevronLeft width={18} height={18} /> {t('duplicateMealModal.backToDays')}
             </button>
           )}
 
           {demo && (
-            <p className="mb-3 text-xs text-muted">Duplicating is currently unavailable.</p>
+            <p className="mb-3 text-xs text-muted">{t('duplicateMealModal.demoUnavailable')}</p>
           )}
 
           <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
             {meals.isLoading ? (
-              <Spinner label="Loading meals" />
+              <Spinner label={t('duplicateMealModal.loadingMeals')} />
             ) : !groups.length ? (
               <EmptyState
-                title="No meals to duplicate"
-                hint="Log a meal first, then you can re-use it any day."
+                title={t('duplicateMealModal.noMealsTitle')}
+                hint={t('duplicateMealModal.noMealsHint')}
                 icon={<CopyIcon />}
               />
             ) : !day ? (
@@ -144,9 +146,9 @@ export function DuplicateMealModal({ onClose }: Props) {
                     className="group flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left shadow-soft transition hover:shadow-lift"
                   >
                     <div className="min-w-0">
-                      <p className="font-semibold text-ink">{dayLabel(dayMeals[0].At)}</p>
+                      <p className="font-semibold text-ink">{dayLabel(dayMeals[0].At, t, i18n.language)}</p>
                       <p className="mt-0.5 text-xs text-muted">
-                        {dayMeals.length} meal{dayMeals.length === 1 ? '' : 's'}
+                        {t('duplicateMealModal.mealCount', { count: dayMeals.length })}
                       </p>
                     </div>
                     <span className="text-muted transition group-hover:translate-x-0.5 group-hover:text-ink">
@@ -172,9 +174,9 @@ export function DuplicateMealModal({ onClose }: Props) {
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-semibold text-ink">
-                        {m.RawText || 'Logged meal'}
+                        {m.RawText || t('duplicateMealModal.loggedMealFallback')}
                       </p>
-                      <p className="mt-0.5 text-xs text-muted">{clockTime(m.At)}</p>
+                      <p className="mt-0.5 text-xs text-muted">{clockTime(m.At, i18n.language)}</p>
                     </div>
                     <div className="text-right">
                       <div className="text-base font-bold text-ink tnum">
@@ -192,13 +194,13 @@ export function DuplicateMealModal({ onClose }: Props) {
             <p className="mt-3 text-sm font-medium text-accent" role="alert">
               {duplicate.error instanceof Error
                 ? duplicate.error.message
-                : 'Failed to duplicate meal'}
+                : t('duplicateMealModal.duplicateFailed')}
             </p>
           )}
 
           {duplicate.isPending && (
             <div className="mt-3">
-              <Pill tone="primary">Duplicating…</Pill>
+              <Pill tone="primary">{t('duplicateMealModal.duplicating')}</Pill>
             </div>
           )}
         </motion.div>

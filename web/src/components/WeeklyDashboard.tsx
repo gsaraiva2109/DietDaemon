@@ -4,6 +4,7 @@
 // (DESIGN.md: never nest a Card in a Card).
 
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Bar,
   BarChart,
@@ -27,10 +28,10 @@ function isoDaysAgo(n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-function niceDate(iso: string): string {
+function niceDate(iso: string, locale: string): string {
   // iso is YYYY-MM-DD; parse as local date to avoid TZ drift.
   const [y, m, d] = iso.split('-').map(Number)
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+  return new Date(y, m - 1, d).toLocaleDateString(locale, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -40,15 +41,17 @@ function niceDate(iso: string): string {
 // up arrow = accent (intake rising), down arrow = primary (good on a cut),
 // flat = muted. Glyphs kept text-only and tasteful.
 function TrendArrow({ dir }: { dir: TrendDirection }) {
-  const map: Record<TrendDirection, { glyph: string; cls: string; label: string }> = {
-    up: { glyph: '▲', cls: 'text-accent', label: 'trending up' },
-    down: { glyph: '▼', cls: 'text-primary', label: 'trending down' },
-    flat: { glyph: '→', cls: 'text-muted', label: 'flat' },
+  const { t } = useTranslation()
+  const map: Record<TrendDirection, { glyph: string; cls: string; labelKey: string }> = {
+    up: { glyph: '▲', cls: 'text-accent', labelKey: 'weeklyDashboard.trend.up' },
+    down: { glyph: '▼', cls: 'text-primary', labelKey: 'weeklyDashboard.trend.down' },
+    flat: { glyph: '→', cls: 'text-muted', labelKey: 'weeklyDashboard.trend.flat' },
   }
-  const t = map[dir]
+  const m = map[dir]
+  const label = t(m.labelKey)
   return (
-    <span className={`text-sm ${t.cls}`} aria-label={t.label} title={t.label}>
-      {t.glyph}
+    <span className={`text-sm ${m.cls}`} aria-label={label} title={label}>
+      {m.glyph}
     </span>
   )
 }
@@ -80,22 +83,23 @@ function StatTile({
   )
 }
 
-function DayCard({ title, day }: { title: string; day: DailyRollup }) {
+function DayCard({ title, day, locale }: { title: string; day: DailyRollup; locale: string }) {
   const consumed = Math.round(day.Consumed.Calories)
   const target = Math.round(day.Targets.Calories)
   return (
     <Card className="p-4">
       <Eyebrow>{title}</Eyebrow>
-      <p className="mt-1.5 text-sm font-semibold text-ink">{niceDate(day.Date)}</p>
+      <p className="mt-1.5 text-sm font-semibold text-ink">{niceDate(day.Date, locale)}</p>
       <p className="mt-1 text-sm text-muted tnum">
-        {consumed.toLocaleString()} kcal
-        {target > 0 && <span className="text-muted"> / {target.toLocaleString()} target</span>}
+        {consumed.toLocaleString(locale)} kcal
+        {target > 0 && <span className="text-muted"> / {target.toLocaleString(locale)} target</span>}
       </p>
     </Card>
   )
 }
 
 export function WeeklyDashboard() {
+  const { t, i18n } = useTranslation()
   const range = useRange(isoDaysAgo(6), isoDaysAgo(0))
   const days = useMemo(() => range.data ?? [], [range.data])
   const stats = useMemo(() => weeklyStats(days), [days])
@@ -115,7 +119,7 @@ export function WeeklyDashboard() {
   if (range.isLoading) {
     return (
       <Card className="p-5">
-        <Spinner label="Loading week" />
+        <Spinner label={t('weeklyDashboard.loadingWeek')} />
       </Card>
     )
   }
@@ -123,8 +127,8 @@ export function WeeklyDashboard() {
   if (stats.loggedDays === 0) {
     return (
       <EmptyState
-        title="No data this week"
-        hint="Log meals across a few days to see your weekly overview."
+        title={t('weeklyDashboard.emptyTitle')}
+        hint={t('weeklyDashboard.emptyHint')}
       />
     )
   }
@@ -134,23 +138,23 @@ export function WeeklyDashboard() {
       {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatTile
-          label="Avg calories"
+          label={t('weeklyDashboard.avgCalories')}
           value={Math.round(stats.avg.Calories)}
           unit="kcal"
           trend={stats.calorieTrend}
         />
         <StatTile
-          label="Avg protein"
+          label={t('weeklyDashboard.avgProtein')}
           value={Math.round(stats.avg.Protein)}
           unit="g"
           trend={stats.proteinTrend}
         />
-        <StatTile label="Adherence" value={Math.round(stats.adherence * 100)} unit="%" />
+        <StatTile label={t('weeklyDashboard.adherence')} value={Math.round(stats.adherence * 100)} unit="%" />
       </div>
 
       {/* Daily calories chart */}
       <Card className="p-5">
-        <Eyebrow>Last 7 days · calories</Eyebrow>
+        <Eyebrow>{t('weeklyDashboard.last7DaysCalories')}</Eyebrow>
         <div className="mt-4 h-56 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
@@ -182,7 +186,7 @@ export function WeeklyDashboard() {
               {targetLine > 0 && (
                 <ReferenceLine y={targetLine} stroke="var(--color-muted)" strokeDasharray="4 4" />
               )}
-              <Bar dataKey="calories" fill={calColor} radius={[6, 6, 0, 0]} name="Calories" />
+              <Bar dataKey="calories" fill={calColor} radius={[6, 6, 0, 0]} name={t('weeklyDashboard.calories')} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -191,14 +195,14 @@ export function WeeklyDashboard() {
       {/* Best / worst day */}
       <div className="grid gap-4 sm:grid-cols-2">
         {stats.bestDay ? (
-          <DayCard title="Best day" day={stats.bestDay} />
+          <DayCard title={t('weeklyDashboard.bestDay')} day={stats.bestDay} locale={i18n.language} />
         ) : (
-          <EmptyState title="Not enough data" />
+          <EmptyState title={t('weeklyDashboard.notEnoughData')} />
         )}
         {stats.worstDay ? (
-          <DayCard title="Worst day" day={stats.worstDay} />
+          <DayCard title={t('weeklyDashboard.worstDay')} day={stats.worstDay} locale={i18n.language} />
         ) : (
-          <EmptyState title="Not enough data" />
+          <EmptyState title={t('weeklyDashboard.notEnoughData')} />
         )}
       </div>
     </div>

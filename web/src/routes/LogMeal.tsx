@@ -4,6 +4,7 @@
 import { useState, type FormEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useLogMeal, useTemplates, useLogTemplate } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -16,6 +17,7 @@ import { fadeUp } from '@/lib/motion'
 const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
 
 export function LogMeal() {
+  const { t } = useTranslation()
   const [params] = useSearchParams()
   // Pre-fill from a deep link (e.g. "Log this" on a food / frequent-food pill).
   const [text, setText] = useState(() => params.get('text') ?? '')
@@ -35,21 +37,21 @@ export function LogMeal() {
 
   return (
     <div>
-      <PageHeader eyebrow="Log" title="What did you eat?" />
+      <PageHeader eyebrow={t('logMeal.eyebrow')} title={t('logMeal.title')} />
       <Card className="p-5">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={3}
-            placeholder="e.g. 200g chicken, 2 eggs, 150g rice"
-            aria-label="Meal description"
+            placeholder={t('logMeal.placeholder')}
+            aria-label={t('logMeal.mealDescriptionAria')}
             className="w-full resize-none rounded-lg border border-line bg-bg px-4 py-3 text-lg text-ink outline-none transition focus:border-primary"
           />
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-muted">Plain language. The parser handles quantities &amp; units.</p>
+            <p className="text-xs text-muted">{t('logMeal.parserHint')}</p>
             <Button type="submit" disabled={log.isPending || !text.trim()}>
-              {log.isPending ? 'Sending…' : 'Log meal'}
+              {log.isPending ? t('logMeal.sending') : t('logMeal.logMealButton')}
             </Button>
           </div>
         </form>
@@ -61,12 +63,12 @@ export function LogMeal() {
             animate="show"
             className="mt-4 rounded-lg bg-primary-soft px-4 py-3 text-sm font-medium text-primary"
           >
-            Logged, processing now. It'll appear on Today in a moment.
+            {t('logMeal.loggedSuccess')}
           </motion.p>
         )}
         {log.isError && (
           <p className="mt-4 text-sm font-medium text-accent" role="alert">
-            {log.error instanceof Error ? log.error.message : 'Failed to log meal'}
+            {log.error instanceof Error ? log.error.message : t('logMeal.logFailed')}
           </p>
         )}
       </Card>
@@ -74,9 +76,9 @@ export function LogMeal() {
       {/* Quick actions: log a saved template, or copy a meal from a past day. */}
       <div className="mt-6 flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">From template</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('logMeal.fromTemplate')}</p>
           <Button variant="ghost" onClick={() => setDuplicating(true)} className="px-3 py-1.5 text-xs">
-            <CopyIcon width={15} height={15} /> Copy from day
+            <CopyIcon width={15} height={15} /> {t('logMeal.copyFromDay')}
           </Button>
         </div>
         {recentTemplates.length ? (
@@ -94,15 +96,15 @@ export function LogMeal() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted">No templates yet. Save one from a meal's detail page.</p>
+          <p className="text-sm text-muted">{t('logMeal.noTemplates')}</p>
         )}
         {logTemplate.isSuccess && (
-          <p className="text-sm font-medium text-primary">Template logged, appearing on Today shortly.</p>
+          <p className="text-sm font-medium text-primary">{t('logMeal.templateLoggedSuccess')}</p>
         )}
       </div>
 
       <div className="mt-6">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">Examples</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('logMeal.examplesHeading')}</p>
         <div className="flex flex-wrap gap-2">
           {EXAMPLES.map((ex) => (
             <button

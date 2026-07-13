@@ -11,6 +11,18 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split rarely-changing vendor code out of the main entry chunk so
+        // it caches independently and stays under the 500kB warning.
+        manualChunks(id) {
+          if (id.includes('node_modules/framer-motion')) return 'motion'
+          if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) return 'i18n'
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {

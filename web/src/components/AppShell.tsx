@@ -3,6 +3,7 @@
 
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   TodayIcon,
   LogIcon,
@@ -23,49 +24,49 @@ import { demoAvailable } from '@/lib/demo'
 
 interface NavItem {
   to: string
-  label: string
+  labelKey: string
   Icon: typeof TodayIcon
   end?: boolean
 }
 
 // Desktop sidebar, grouped into sections. Mobile keeps a curated 5-item bar;
 // the rest stay reachable via the ⌘K palette.
-const NAV_GROUPS: { heading?: string; items: NavItem[] }[] = [
+const NAV_GROUPS: { headingKey?: string; items: NavItem[] }[] = [
   {
     items: [
-      { to: '/', label: 'Today', Icon: TodayIcon, end: true },
-      { to: '/chat', label: 'Chat', Icon: ChatIcon },
-      { to: '/log', label: 'Log', Icon: LogIcon },
-      { to: '/history', label: 'History', Icon: HistoryIcon },
+      { to: '/', labelKey: 'today', Icon: TodayIcon, end: true },
+      { to: '/chat', labelKey: 'chat', Icon: ChatIcon },
+      { to: '/log', labelKey: 'log', Icon: LogIcon },
+      { to: '/history', labelKey: 'history', Icon: HistoryIcon },
     ],
   },
   {
-    heading: 'Discover',
+    headingKey: 'discover',
     items: [
-      { to: '/foods', label: 'Foods', Icon: FoodsIcon },
-      { to: '/templates', label: 'Templates', Icon: TemplateIcon },
+      { to: '/foods', labelKey: 'foods', Icon: FoodsIcon },
+      { to: '/templates', labelKey: 'templates', Icon: TemplateIcon },
     ],
   },
   {
-    heading: 'Track',
+    headingKey: 'track',
     items: [
-      { to: '/body', label: 'Body', Icon: BodyIcon },
-      { to: '/goals', label: 'Goals', Icon: GoalIcon },
-      { to: '/trends', label: 'Trends', Icon: TrendsIcon },
-      { to: '/summary', label: 'Summary', Icon: SummaryIcon },
+      { to: '/body', labelKey: 'body', Icon: BodyIcon },
+      { to: '/goals', labelKey: 'goals', Icon: GoalIcon },
+      { to: '/trends', labelKey: 'trends', Icon: TrendsIcon },
+      { to: '/summary', labelKey: 'summary', Icon: SummaryIcon },
     ],
   },
   {
-    items: [{ to: '/settings', label: 'Settings', Icon: SettingsIcon }],
+    items: [{ to: '/settings', labelKey: 'settings', Icon: SettingsIcon }],
   },
 ]
 
 const MOBILE_NAV: NavItem[] = [
-  { to: '/', label: 'Today', Icon: TodayIcon, end: true },
-  { to: '/log', label: 'Log', Icon: LogIcon },
-  { to: '/foods', label: 'Foods', Icon: FoodsIcon },
-  { to: '/body', label: 'Body', Icon: BodyIcon },
-  { to: '/settings', label: 'More', Icon: SettingsIcon },
+  { to: '/', labelKey: 'today', Icon: TodayIcon, end: true },
+  { to: '/log', labelKey: 'log', Icon: LogIcon },
+  { to: '/foods', labelKey: 'foods', Icon: FoodsIcon },
+  { to: '/body', labelKey: 'body', Icon: BodyIcon },
+  { to: '/settings', labelKey: 'more', Icon: SettingsIcon },
 ]
 
 function Brand() {
@@ -80,6 +81,7 @@ function Brand() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { t } = useTranslation()
   return (
     <div className="relative min-h-[100dvh]">
       {/* Calm gradient-mesh backdrop, sage glows, fixed behind everything. */}
@@ -94,12 +96,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="mt-6 flex flex-col gap-4">
           {NAV_GROUPS.map((group, gi) => (
             <div key={gi} className="flex flex-col gap-1">
-              {group.heading && (
+              {group.headingKey && (
                 <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted/70">
-                  {group.heading}
+                  {t(`nav.${group.headingKey}`)}
                 </p>
               )}
-              {group.items.map(({ to, label, Icon, end }) => (
+              {group.items.map(({ to, labelKey, Icon, end }) => (
                 <NavLink
                   key={to}
                   to={to}
@@ -114,7 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   }
                 >
                   <Icon />
-                  {label}
+                  {t(`nav.${labelKey}`)}
                 </NavLink>
               ))}
             </div>
@@ -134,7 +136,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Bottom bar, mobile */}
       <nav className="fixed inset-x-0 bottom-0 z-[1100] flex items-stretch justify-around border-t border-line bg-surface/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        {MOBILE_NAV.map(({ to, label, Icon, end }) => (
+        {MOBILE_NAV.map(({ to, labelKey, Icon, end }) => (
           <NavLink
             key={to}
             to={to}
@@ -147,7 +149,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             }
           >
             <Icon width={20} height={20} />
-            {label}
+            {t(`nav.${labelKey}`)}
           </NavLink>
         ))}
       </nav>

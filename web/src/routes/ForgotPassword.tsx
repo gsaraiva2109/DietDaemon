@@ -4,11 +4,13 @@
 
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useForgotPassword } from '@/lib/queries'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Button, Field } from '@/components/ui'
 
 export function ForgotPassword() {
+  const { t } = useTranslation()
   const forgot = useForgotPassword()
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
@@ -31,11 +33,11 @@ export function ForgotPassword() {
   if (sent) {
     return (
       <AuthLayout
-        title="Check your email"
-        subtitle="If an account exists for that address, we've sent a link to reset your password."
+        title={t('forgotPassword.checkEmailTitle')}
+        subtitle={t('forgotPassword.checkEmailSubtitle')}
         footer={
           <Link to="/login" className="font-medium text-primary hover:underline">
-            Back to sign in
+            {t('forgotPassword.backToSignIn')}
           </Link>
         }
       >
@@ -46,27 +48,27 @@ export function ForgotPassword() {
 
   return (
     <AuthLayout
-      title="Reset your password"
-      subtitle="Enter your email and we'll send a reset link."
+      title={t('forgotPassword.title')}
+      subtitle={t('forgotPassword.subtitle')}
       footer={
         <Link to="/login" className="font-medium text-primary hover:underline">
-          Back to sign in
+          {t('forgotPassword.backToSignIn')}
         </Link>
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field
-          label="Email"
+          label={t('forgotPassword.emailLabel')}
           type="email"
           autoComplete="email"
           autoFocus
           value={email}
           disabled={busy}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
+          placeholder={t('forgotPassword.emailPlaceholder')}
         />
         <Button type="submit" disabled={busy || !email.trim()}>
-          {busy ? 'Sending…' : 'Send reset link'}
+          {busy ? t('forgotPassword.sending') : t('forgotPassword.sendLink')}
         </Button>
       </form>
     </AuthLayout>

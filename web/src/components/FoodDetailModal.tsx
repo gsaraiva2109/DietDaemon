@@ -4,11 +4,12 @@
 import { useEffect } from 'react'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useFood } from '@/lib/queries'
 import { Button, Pill, Spinner } from './ui'
 import { CloseIcon, LogIcon } from './icons'
 import { sourceLabel } from './FoodCard'
-import { MACRO_KEYS, MACRO_META, type FoodAlias } from '@/lib/types'
+import { MACRO_KEYS, type FoodAlias } from '@/lib/types'
 import { formatNumber, round } from '@/lib/format'
 import { easeOut } from '@/lib/motion'
 
@@ -18,6 +19,7 @@ const scaleInDialog: Variants = {
 }
 
 export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: () => void }) {
+  const { t } = useTranslation()
   const food = useFood(foodID)
   const navigate = useNavigate()
 
@@ -54,7 +56,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label={f ? f.name : 'Food detail'}
+          aria-label={f ? f.name : t('foodDetailModal.ariaLabelFallback')}
           variants={scaleInDialog}
           initial="hidden"
           animate="show"
@@ -64,7 +66,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
         >
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('foodDetailModal.close')}
             className="absolute right-4 top-4 text-muted hover:text-ink"
           >
             <CloseIcon />
@@ -72,14 +74,14 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
 
           {food.isLoading || !f ? (
             <div className="py-10">
-              <Spinner label="Loading food" />
+              <Spinner label={t('foodDetailModal.loading')} />
             </div>
           ) : (
             <>
               <h2 className="pr-8 text-xl font-bold text-ink">{f.name}</h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Pill tone={f.source === 'food_library' ? 'primary' : 'neutral'}>
-                  {sourceLabel(f.source)}
+                  {sourceLabel(f.source, t)}
                 </Pill>
                 {f.category && <Pill tone="muted">{f.category}</Pill>}
               </div>
@@ -88,7 +90,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                 {MACRO_KEYS.map((k) => (
                   <div key={k}>
                     <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">
-                      {MACRO_META[k].label}
+                      {t(`common.macro.${k}`)}
                     </dt>
                     <dd className="font-semibold text-ink tnum">
                       {k === 'Calories' ? formatNumber(f.per_100g[k]) : round(f.per_100g[k])}
@@ -96,12 +98,12 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                   </div>
                 ))}
               </dl>
-              <p className="mt-1 text-[11px] text-muted">per 100g</p>
+              <p className="mt-1 text-[11px] text-muted">{t('foodDetailModal.per100g')}</p>
 
               <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
                 {f.serving_size > 0 && (
                   <span>
-                    Serving:{' '}
+                    {t('foodDetailModal.serving')}{' '}
                     <span className="text-ink">
                       {round(f.serving_size)}
                       {f.serving_unit}
@@ -110,12 +112,12 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                 )}
                 {f.brand && (
                   <span>
-                    Brand: <span className="text-ink">{f.brand}</span>
+                    {t('foodDetailModal.brand')} <span className="text-ink">{f.brand}</span>
                   </span>
                 )}
                 {f.barcode && (
                   <span>
-                    Barcode: <span className="text-ink tnum">{f.barcode}</span>
+                    {t('foodDetailModal.barcode')} <span className="text-ink tnum">{f.barcode}</span>
                   </span>
                 )}
               </div>
@@ -123,7 +125,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
               {f.aliases && f.aliases.length > 0 && (
                 <div className="mt-4">
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                    Aliases
+                    {t('foodDetailModal.aliases')}
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {f.aliases.map((a: FoodAlias) => (
@@ -137,7 +139,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
 
               <div className="mt-6 flex justify-end">
                 <Button onClick={logit}>
-                  <LogIcon width={16} height={16} /> Log this
+                  <LogIcon width={16} height={16} /> {t('foodDetailModal.logThis')}
                 </Button>
               </div>
             </>

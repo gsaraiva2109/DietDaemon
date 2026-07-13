@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill } from '@/components/ui'
 import { CopyIcon, LinkIcon } from '@/components/icons'
@@ -26,6 +27,7 @@ type Platform = (typeof PLATFORMS)[number]['id']
 const CODE_TTL_S = 10 * 60 // codes expire after 10 minutes
 
 export function LinkBot() {
+  const { t } = useTranslation()
   const [platform, setPlatform] = useState<Platform>('telegram')
   const [code, setCode] = useState<string | null>(null)
   const [remaining, setRemaining] = useState(0)
@@ -66,7 +68,7 @@ export function LinkBot() {
     es.addEventListener('linked', () => {
       setLinked(true)
       closeStream()
-      toast.success('Bot connected! Your account is now linked.')
+      toast.success(t('linkBot.botConnectedToast'))
     })
 
     es.addEventListener('expired', () => {
@@ -96,16 +98,15 @@ export function LinkBot() {
 
   return (
     <div>
-      <PageHeader eyebrow="Settings" title="Link Bot" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('linkBot.title')} />
 
       <Card className="mb-5 p-5">
-        <h2 className="mb-1 font-semibold text-ink">Connect a chat bot</h2>
+        <h2 className="mb-1 font-semibold text-ink">{t('linkBot.connectHeading')}</h2>
         <p className="mb-5 text-sm text-muted">
-          Log meals and check your day from {platformLabel}. Pick a platform, generate a
-          one-time code, then send it to the DietDaemon bot.
+          {t('linkBot.introText', { platform: platformLabel })}
         </p>
 
-        <p className="mb-2 text-xs font-medium uppercase tracking-[0.1em] text-muted">Platform</p>
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.1em] text-muted">{t('linkBot.platformLabel')}</p>
         <div className="mb-6 flex flex-wrap gap-2">
           {PLATFORMS.map((p) => {
             const active = p.id === platform
@@ -130,7 +131,7 @@ export function LinkBot() {
           <SuccessPanel platformLabel={platformLabel} onLinkAnother={() => { setCode(null); setLinked(false); closeStream() }} />
         ) : code === null ? (
           <Button onClick={generate} disabled={createCode.isPending}>
-            {createCode.isPending ? 'Generating…' : 'Generate code'}
+            {createCode.isPending ? t('linkBot.generating') : t('linkBot.generateCode')}
           </Button>
         ) : (
           <CodePanel
@@ -145,20 +146,20 @@ export function LinkBot() {
 
         {createCode.isError && (
           <p className="mt-3 text-sm font-medium text-accent" role="alert">
-            {createCode.error instanceof Error ? createCode.error.message : 'Could not generate a code'}
+            {createCode.error instanceof Error ? createCode.error.message : t('linkBot.generateCodeFailed')}
           </p>
         )}
       </Card>
 
       <Card className="p-5">
-        <h2 className="mb-1 font-semibold text-ink">How it works</h2>
+        <h2 className="mb-1 font-semibold text-ink">{t('linkBot.howItWorks')}</h2>
         <ol className="ml-4 list-decimal space-y-1 text-sm text-muted">
-          <li>Generate a code above.</li>
+          <li>{t('linkBot.step1')}</li>
           <li>
-            Open the DietDaemon bot on {platformLabel} and send{' '}
+            {t('linkBot.step2', { platform: platformLabel })}{' '}
             <code className="rounded bg-surface-2 px-1">/link CODE</code>.
           </li>
-          <li>The bot confirms and your account is linked. The code works once.</li>
+          <li>{t('linkBot.step3')}</li>
         </ol>
       </Card>
     </div>
@@ -172,18 +173,19 @@ function SuccessPanel({
   platformLabel: string
   onLinkAnother: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div>
       <div className="mb-4 flex items-center gap-3 rounded-xl border border-green-500/30 bg-green-500/10 px-5 py-4">
         <div>
-          <p className="font-semibold text-ink">Connected!</p>
+          <p className="font-semibold text-ink">{t('linkBot.connectedHeading')}</p>
           <p className="text-sm text-muted">
-            Your {platformLabel} account is now linked. You can start logging meals from the bot.
+            {t('linkBot.connectedDesc', { platform: platformLabel })}
           </p>
         </div>
       </div>
       <Button variant="ghost" onClick={onLinkAnother}>
-        Link another platform
+        {t('linkBot.linkAnother')}
       </Button>
     </div>
   )
@@ -204,15 +206,16 @@ function CodePanel({
   onRegenerate: () => void
   regenerating: boolean
 }) {
+  const { t } = useTranslation()
   const mm = Math.floor(remaining / 60)
   const ss = String(remaining % 60).padStart(2, '0')
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(code)
-      toast.success('Code copied to clipboard.')
+      toast.success(t('linkBot.codeCopiedToast'))
     } catch {
-      toast.error('Could not copy, select the code manually.')
+      toast.error(t('linkBot.codeCopyFailed'))
     }
   }
 
@@ -220,10 +223,10 @@ function CodePanel({
     return (
       <div>
         <p className="mb-3 text-sm font-medium text-accent" role="alert">
-          Code expired, generate a new one.
+          {t('linkBot.codeExpired')}
         </p>
         <Button onClick={onRegenerate} disabled={regenerating}>
-          {regenerating ? 'Generating…' : 'Generate new code'}
+          {regenerating ? t('linkBot.generating') : t('linkBot.generateNewCode')}
         </Button>
       </div>
     )
@@ -233,24 +236,24 @@ function CodePanel({
     <div>
       <button
         onClick={copy}
-        title="Click to copy"
+        title={t('linkBot.clickToCopy')}
         className="group flex w-full items-center justify-between gap-4 rounded-xl border border-line bg-surface-2 px-5 py-4 text-left transition hover:border-primary"
       >
         <span className="font-mono text-3xl font-bold tracking-[0.3em] text-ink tnum">{code}</span>
         <span className="flex items-center gap-1.5 text-sm text-muted transition group-hover:text-primary">
           <CopyIcon width={18} height={18} />
-          Copy
+          {t('linkBot.copy')}
         </span>
       </button>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
         <span>
-          Send <code className="rounded bg-surface-2 px-1 font-mono">/link {code}</code> to the
-          bot on {platformLabel}.
+          {t('linkBot.sendCodePrefix')} <code className="rounded bg-surface-2 px-1 font-mono">/link {code}</code>{' '}
+          {t('linkBot.sendCodeSuffix', { platform: platformLabel })}
         </span>
         <Pill tone="muted">
           <LinkIcon width={13} height={13} />
-          expires in {mm}:{ss}
+          {t('linkBot.expiresIn', { time: `${mm}:${ss}` })}
         </Pill>
       </div>
     </div>

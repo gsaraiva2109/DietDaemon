@@ -33,6 +33,7 @@ import {
   AuiIf,
   groupPartByType,
 } from '@assistant-ui/react'
+import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { useDemo } from '@/lib/demo'
 import { createChatAdapters } from '@/lib/chatRuntime'
@@ -56,11 +57,7 @@ import {
 import { fadeUp, stagger, easeOut } from '@/lib/motion'
 import type { ChatMessageRecord } from '@/lib/types'
 
-const EXAMPLES = [
-  "I skipped breakfast, what should I eat?",
-  'Log 200g grilled chicken and a banana',
-  'How much protein do I have left today?',
-]
+const EXAMPLE_KEYS = ['exampleSkippedBreakfast', 'exampleLogChicken', 'exampleProteinLeft'] as const
 
 function toInitialMessages(records: ChatMessageRecord[]): ThreadMessageLike[] {
   return records
@@ -69,6 +66,7 @@ function toInitialMessages(records: ChatMessageRecord[]): ThreadMessageLike[] {
 }
 
 export function Chat() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [railOpen, setRailOpen] = useState(false)
   // Distinct from the thread-list runtime's own (silent) list() failures —
@@ -79,11 +77,11 @@ export function Chat() {
   if (demo) {
     return (
       <div>
-        <PageHeader eyebrow="Assistant" title="Chat" />
+        <PageHeader eyebrow={t('chat.eyebrow')} title={t('chat.title')} />
         <EmptyState
           icon={<ChatIcon width={28} height={28} />}
-          title="Chat needs a real account"
-          hint="This talks to a live AI provider, so sample data can't stand in for it. Turn off demo mode to try it."
+          title={t('chat.demoTitle')}
+          hint={t('chat.demoHint')}
         />
       </div>
     )
@@ -92,11 +90,11 @@ export function Chat() {
   if (health.isError) {
     return (
       <div>
-        <PageHeader eyebrow="Assistant" title="Chat" />
+        <PageHeader eyebrow={t('chat.eyebrow')} title={t('chat.title')} />
         <EmptyState
           icon={<ChatIcon width={28} height={28} />}
-          title="Assistant unavailable"
-          hint={health.error instanceof Error ? health.error.message : 'Could not reach the chat backend.'}
+          title={t('chat.unavailableTitle')}
+          hint={health.error instanceof Error ? health.error.message : t('chat.unavailableHint')}
         />
       </div>
     )
@@ -104,16 +102,16 @@ export function Chat() {
 
   return (
     <div className="flex h-[calc(100dvh-8.5rem)] flex-col md:h-[calc(100dvh-7rem)]">
-      <PageHeader eyebrow="Assistant" title="Chat">
+      <PageHeader eyebrow={t('chat.eyebrow')} title={t('chat.title')}>
         <Button variant="ghost" className="px-3 py-1.5 text-xs md:hidden" onClick={() => setRailOpen((o) => !o)}>
-          History
+          {t('chat.historyButton')}
         </Button>
       </PageHeader>
 
       <Suspense
         fallback={
           <div className="grid flex-1 place-items-center">
-            <Spinner label="Loading conversation" />
+            <Spinner label={t('chat.loadingConversation')} />
           </div>
         }
       >
@@ -134,6 +132,7 @@ export function Chat() {
 // reaching the app-level route-transition AnimatePresence in App.tsx, whose
 // interrupted opacity animation was otherwise getting stuck at 0.
 function ChatApp({ railOpen, onCloseRail }: { railOpen: boolean; onCloseRail: () => void }) {
+  const { t } = useTranslation()
   const runtime = useRemoteThreadListRuntime({
     runtimeHook: useChatThreadRuntime,
     adapter: chatThreadListAdapter,
@@ -148,7 +147,7 @@ function ChatApp({ railOpen, onCloseRail }: { railOpen: boolean; onCloseRail: ()
           <Suspense
             fallback={
               <div className="grid flex-1 place-items-center">
-                <Spinner label="Loading conversation" />
+                <Spinner label={t('chat.loadingConversation')} />
               </div>
             }
           >
@@ -189,6 +188,7 @@ function useChatThreadRuntime() {
 // --- Session rail: desktop-persistent, mobile-overlay --------------------
 
 function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation()
   const isLoading = useAuiState((s) => s.threads.isLoading)
   const count = useAuiState((s) => s.threads.threadIds.length)
 
@@ -199,11 +199,11 @@ function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) 
           onClick={onClose}
           className="mb-1 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-primary transition hover:bg-primary-soft"
         >
-          <LogIcon width={16} height={16} /> New chat
+          <LogIcon width={16} height={16} /> {t('chat.newChat')}
         </button>
       </ThreadListPrimitive.New>
-      {isLoading && <Spinner label="Loading chats" />}
-      {!isLoading && count === 0 && <p className="px-3 py-2 text-xs text-muted">No conversations yet.</p>}
+      {isLoading && <Spinner label={t('chat.loadingChats')} />}
+      {!isLoading && count === 0 && <p className="px-3 py-2 text-xs text-muted">{t('chat.noConversations')}</p>}
       <ThreadListPrimitive.Items>{() => <SessionRow onSelect={onClose} />}</ThreadListPrimitive.Items>
     </div>
   )
@@ -238,6 +238,7 @@ function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) 
 }
 
 function SessionRow({ onSelect }: { onSelect: () => void }) {
+  const { t } = useTranslation()
   const aui = useAui()
   const [confirming, setConfirming] = useState(false)
 
@@ -247,11 +248,11 @@ function SessionRow({ onSelect }: { onSelect: () => void }) {
         onClick={onSelect}
         className="min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm text-muted transition group-data-active:text-primary hover:bg-surface-2 hover:text-ink group-data-active:hover:bg-transparent"
       >
-        <ThreadListItemPrimitive.Title fallback="New conversation" />
+        <ThreadListItemPrimitive.Title fallback={t('chat.newConversationFallback')} />
       </ThreadListItemPrimitive.Trigger>
       <button
         type="button"
-        aria-label="Delete conversation"
+        aria-label={t('chat.deleteConversation')}
         onClick={() => setConfirming(true)}
         className="mr-1 shrink-0 rounded p-1.5 text-muted opacity-0 transition hover:text-ink group-hover:opacity-100"
       >
@@ -273,6 +274,7 @@ function SessionRow({ onSelect }: { onSelect: () => void }) {
 // --- Thread ----------------------------------------------------------------
 
 function ChatThread() {
+  const { t } = useTranslation()
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col overflow-hidden">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
@@ -287,7 +289,7 @@ function ChatThread() {
       <div className="relative">
         <ThreadPrimitive.ScrollToBottom asChild>
           <button
-            aria-label="Scroll to latest"
+            aria-label={t('chat.scrollToLatest')}
             className="absolute -top-11 right-4 grid size-8 place-items-center rounded-full border border-line bg-surface text-muted shadow-soft transition hover:text-ink disabled:hidden"
           >
             <ChevronDown width={16} height={16} />
@@ -301,6 +303,7 @@ function ChatThread() {
 }
 
 function ChatEmptyState() {
+  const { t } = useTranslation()
   const aui = useAui()
   return (
     <motion.div
@@ -311,22 +314,25 @@ function ChatEmptyState() {
     >
       <div className="max-w-md">
         <motion.p variants={fadeUp} className="text-lg font-semibold text-ink">
-          What do you need?
+          {t('chat.emptyTitle')}
         </motion.p>
         <motion.p variants={fadeUp} className="mt-1.5 text-sm text-muted">
-          Ask for a meal suggestion, log something, or check where you stand today.
+          {t('chat.emptyHint')}
         </motion.p>
         <motion.div variants={fadeUp} className="mt-5 flex flex-wrap justify-center gap-2">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex}
-              type="button"
-              onClick={() => aui.thread().append(ex)}
-              className="rounded-full border border-line bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
-            >
-              {ex}
-            </button>
-          ))}
+          {EXAMPLE_KEYS.map((key) => {
+            const ex = t(`chat.${key}`)
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => aui.thread().append(ex)}
+                className="rounded-full border border-line bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
+              >
+                {ex}
+              </button>
+            )
+          })}
         </motion.div>
       </div>
     </motion.div>
@@ -362,6 +368,7 @@ function Suggestions() {
 }
 
 function UserMessage() {
+  const { t } = useTranslation()
   return (
     <MessagePrimitive.Root className="group mb-4 flex flex-col items-end">
       <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-ink">
@@ -372,7 +379,7 @@ function UserMessage() {
         className="mt-1 flex items-center gap-1 pr-1 text-muted opacity-0 transition group-hover:opacity-100"
       >
         <BranchPickerPrimitive.Previous asChild>
-          <button aria-label="Previous version" className="hover:text-ink">
+          <button aria-label={t('chat.previousVersion')} className="hover:text-ink">
             <ChevronDown width={12} height={12} className="rotate-90" />
           </button>
         </BranchPickerPrimitive.Previous>
@@ -380,7 +387,7 @@ function UserMessage() {
           <BranchPickerPrimitive.Number />/<BranchPickerPrimitive.Count />
         </span>
         <BranchPickerPrimitive.Next asChild>
-          <button aria-label="Next version" className="hover:text-ink">
+          <button aria-label={t('chat.nextVersion')} className="hover:text-ink">
             <ChevronDown width={12} height={12} className="-rotate-90" />
           </button>
         </BranchPickerPrimitive.Next>
@@ -395,6 +402,7 @@ function UserMessage() {
 const toolGroupBy = groupPartByType({ 'tool-call': ['group-tools'] })
 
 function AssistantMessage() {
+  const { t } = useTranslation()
   const status = useAuiState((s) => s.message.status)
   const hasError = status?.type === 'incomplete' && status.reason === 'error'
   const timing = useMessageTiming()
@@ -437,7 +445,7 @@ function AssistantMessage() {
           autohide="not-last"
           className="flex gap-2 opacity-0 transition group-hover:opacity-100"
         >
-          <ActionBarPrimitive.Copy className="hover:text-ink" aria-label="Copy reply">
+          <ActionBarPrimitive.Copy className="hover:text-ink" aria-label={t('chat.copyReply')}>
             <AuiIf condition={(s) => s.message.isCopied}>
               <CheckIcon width={13} height={13} />
             </AuiIf>
@@ -445,7 +453,7 @@ function AssistantMessage() {
               <CopyIcon width={13} height={13} />
             </AuiIf>
           </ActionBarPrimitive.Copy>
-          <ActionBarPrimitive.Reload className="hover:text-ink" aria-label="Regenerate reply">
+          <ActionBarPrimitive.Reload className="hover:text-ink" aria-label={t('chat.regenerateReply')}>
             <RefreshIcon width={13} height={13} />
           </ActionBarPrimitive.Reload>
         </ActionBarPrimitive.Root>
@@ -470,6 +478,7 @@ const LOGMEAL_RESULT_RE =
   /^Logged: (.+)\n([\d.]+) kcal(?:\D+([\d.]+)g protein)?(?:\D+([\d.]+)g carbs)?(?:\D+([\d.]+)g fat)?/
 
 function LogMealToolCard(props: ToolCallMessagePartProps) {
+  const { t } = useTranslation()
   const { result } = props
   const parsed = typeof result === 'string' ? LOGMEAL_RESULT_RE.exec(result) : null
   const aui = useAui()
@@ -496,25 +505,26 @@ function LogMealToolCard(props: ToolCallMessagePartProps) {
         onClick={() => aui.thread().composer().setText(`Actually, log "${rawText}" as `)}
         className="mt-2 text-xs font-medium text-primary hover:underline"
       >
-        Log a different amount
+        {t('chat.logDifferentAmount')}
       </button>
     </motion.div>
   )
 }
 
 function Composer() {
+  const { t } = useTranslation()
   return (
     <ComposerPrimitive.Root className="flex items-end gap-2 border-t border-line bg-surface p-3">
       <ComposerPrimitive.Input
         rows={1}
         autoFocus
-        placeholder="Ask anything, or tell me what you ate…"
+        placeholder={t('chat.composerPlaceholder')}
         className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-ink outline-none placeholder:text-muted/70"
       />
       <AuiIf condition={(s) => !s.thread.isRunning}>
         <ComposerPrimitive.Send asChild>
           <button
-            aria-label="Send"
+            aria-label={t('chat.send')}
             className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-ink transition hover:brightness-105 disabled:opacity-40"
           >
             <SendIcon width={16} height={16} />
@@ -524,7 +534,7 @@ function Composer() {
       <AuiIf condition={(s) => s.thread.isRunning}>
         <ComposerPrimitive.Cancel asChild>
           <button
-            aria-label="Stop"
+            aria-label={t('chat.stop')}
             className="grid size-9 shrink-0 place-items-center rounded-full border border-line bg-surface text-ink transition hover:bg-surface-2"
           >
             <span className="size-3 rounded-sm bg-ink" />

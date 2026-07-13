@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useMeal, useDeleteItem } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -18,11 +19,12 @@ import {
   formatNumber,
   tierLabel,
 } from '@/lib/format'
-import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
+import { MACRO_KEYS, type Macros } from '@/lib/types'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
 export function MealDetail() {
+  const { t, i18n } = useTranslation()
   const { mealID } = useParams()
   const meal = useMeal(mealID)
   const del = useDeleteItem(mealID ?? '')
@@ -33,12 +35,12 @@ export function MealDetail() {
   const [sharing, setSharing] = useState(false)
   const [traceOpen, setTraceOpen] = useState(false)
 
-  if (meal.isLoading) return <Spinner label="Loading meal" />
+  if (meal.isLoading) return <Spinner label={t('mealDetail.loadingMeal')} />
   if (meal.isError || !meal.data) {
     return (
       <div>
         <BackLink />
-        <p className="mt-6 text-muted">Meal not found.</p>
+        <p className="mt-6 text-muted">{t('mealDetail.notFound')}</p>
       </div>
     )
   }
@@ -59,10 +61,10 @@ export function MealDetail() {
   return (
     <div>
       <BackLink />
-      <PageHeader eyebrow={clockTime(m.At)} title={m.RawText || 'Logged meal'}>
+      <PageHeader eyebrow={clockTime(m.At, i18n.language)} title={m.RawText || t('mealDetail.loggedMealFallback')}>
         <div className="flex items-center gap-2">
-          <Pill tone={m.ParserTier === 2 ? 'accent' : 'primary'}>{tierLabel(m.ParserTier)}</Pill>
-          <Pill tone="muted">{confidenceLabel(m.Confidence)} confidence</Pill>
+          <Pill tone={m.ParserTier === 2 ? 'accent' : 'primary'}>{tierLabel(m.ParserTier, t)}</Pill>
+          <Pill tone="muted">{t('mealDetail.confidenceLabel', { level: confidenceLabel(m.Confidence) })}</Pill>
         </div>
       </PageHeader>
 
@@ -72,19 +74,21 @@ export function MealDetail() {
           onClick={() => setTraceOpen(true)}
           title={
             (() => {
-              const t = confidenceTier(m.Confidence)
-              return t === 'high' ? undefined : `${t.charAt(0).toUpperCase() + t.slice(1)} confidence — tap for details`
+              const tier = confidenceTier(m.Confidence)
+              return tier === 'high'
+                ? undefined
+                : t('mealDetail.confidenceTooltip', { tier: tier.charAt(0).toUpperCase() + tier.slice(1) })
             })()
           }
           className="text-sm text-muted text-left"
         >
           <span className={`text-2xl font-bold tnum ${confidenceColor(m.Confidence) || 'text-ink'}`}>
             {formatNumber(total)}
-          </span>{' '}kcal total
+          </span>{' '}{t('mealDetail.kcalTotal')}
         </button>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" onClick={() => setSharing(true)} className="px-3 py-1.5 text-xs">
-            <ShareIcon width={15} height={15} /> Share
+            <ShareIcon width={15} height={15} /> {t('mealDetail.share')}
           </Button>
           {!demo && (
             <>
@@ -94,10 +98,10 @@ export function MealDetail() {
                 disabled={!m.Items.length}
                 className="px-3 py-1.5 text-xs"
               >
-                <TemplateIcon width={15} height={15} /> Save as template
+                <TemplateIcon width={15} height={15} /> {t('mealDetail.saveAsTemplate')}
               </Button>
               <Button variant="ghost" onClick={() => setEditing(-1)} className="px-3 py-1.5 text-xs">
-                <LogIcon width={15} height={15} /> Add item
+                <LogIcon width={15} height={15} /> {t('mealDetail.addItem')}
               </Button>
             </>
           )}
@@ -117,12 +121,12 @@ export function MealDetail() {
               {!demo && (
                 <div className="flex shrink-0 items-center gap-1">
                   <Button variant="ghost" onClick={() => setEditing(i)} className="px-3 py-1.5 text-xs">
-                    Correct
+                    {t('mealDetail.correct')}
                   </Button>
                   <button
                     onClick={() => del.mutate(i)}
                     disabled={del.isPending}
-                    aria-label={`Remove ${it.Match.Name || it.Parsed.RawPhrase}`}
+                    aria-label={t('mealDetail.removeItem', { name: it.Match.Name || it.Parsed.RawPhrase })}
                     className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent disabled:opacity-50"
                   >
                     <CloseIcon width={16} height={16} />
@@ -133,14 +137,14 @@ export function MealDetail() {
             <dl className="mt-3 grid grid-cols-5 gap-2 border-t border-line pt-3">
               {MACRO_KEYS.map((k) => (
                 <div key={k}>
-                  <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">{MACRO_META[k].label}</dt>
+                  <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">{t(`common.macro.${k}`)}</dt>
                   <dd className={`font-semibold tnum ${confidenceColor(it.Match.MatchScore) || 'text-ink'}`}>{Math.round(it.Macros[k])}</dd>
                 </div>
               ))}
             </dl>
           </Card>
         ))}
-        {!m.Items.length && <p className="text-muted">No items in this meal.</p>}
+        {!m.Items.length && <p className="text-muted">{t('mealDetail.noItems')}</p>}
       </div>
 
       {editing !== null && (
@@ -155,8 +159,8 @@ export function MealDetail() {
       )}
       {sharing && (
         <ShareCard
-          heading={m.RawText || 'Logged meal'}
-          subtitle={clockTime(m.At)}
+          heading={m.RawText || t('mealDetail.loggedMealFallback')}
+          subtitle={clockTime(m.At, i18n.language)}
           consumed={mealMacros}
           onClose={() => setSharing(false)}
         />
@@ -169,9 +173,10 @@ export function MealDetail() {
 }
 
 function BackLink() {
+  const { t } = useTranslation()
   return (
     <Link to="/history" prefetch="intent" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
-      <ChevronLeft width={18} height={18} /> History
+      <ChevronLeft width={18} height={18} /> {t('mealDetail.backToHistory')}
     </Link>
   )
 }

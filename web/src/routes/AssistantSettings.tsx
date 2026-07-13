@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useAssistantSettings, useSetAssistantSettings } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -15,6 +16,7 @@ import { ChevronLeft } from '@/components/icons'
 const MAX_LEN = 2000
 
 export function AssistantSettings() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const query = useAssistantSettings()
   const setSettings = useSetAssistantSettings()
@@ -29,34 +31,32 @@ export function AssistantSettings() {
   return (
     <div>
       <Link to="/settings" prefetch="intent" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
-        <ChevronLeft width={18} height={18} /> Settings
+        <ChevronLeft width={18} height={18} /> {t('nav.settings')}
       </Link>
 
-      <PageHeader eyebrow="Settings" title="Assistant" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('assistantSettings.title')} />
 
       {demo && (
         <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-muted">
-          Assistant settings are read only here.
+          {t('assistantSettings.demoNotice')}
         </p>
       )}
 
       {query.isLoading ? (
-        <Spinner label="Loading assistant settings" />
+        <Spinner label={t('assistantSettings.loading')} />
       ) : (
         <Card className="mb-5 p-5">
-          <h2 className="mb-1 font-semibold text-ink">Base instructions</h2>
+          <h2 className="mb-1 font-semibold text-ink">{t('assistantSettings.baseInstructionsTitle')}</h2>
           <p className="mb-2 text-sm text-muted">
-            Always active, for every conversation, on every model (cloud or self-hosted). Read
-            only — your custom instructions below are added to this, not a replacement for it.
+            {t('assistantSettings.baseInstructionsDesc')}
           </p>
           <p className="mb-4 whitespace-pre-wrap rounded-lg border border-line bg-surface-2 px-4 py-3 text-sm text-muted">
             {query.data?.base_prompt}
           </p>
 
-          <h2 className="mb-1 font-semibold text-ink">Custom instructions</h2>
+          <h2 className="mb-1 font-semibold text-ink">{t('assistantSettings.customInstructionsTitle')}</h2>
           <p className="mb-4 text-sm text-muted">
-            Added to the assistant's base instructions for every conversation — tone, dietary
-            preferences, units, anything you want it to always keep in mind.
+            {t('assistantSettings.customInstructionsDesc')}
           </p>
           <textarea
             value={instructions}
@@ -64,7 +64,7 @@ export function AssistantSettings() {
             maxLength={MAX_LEN}
             onChange={(e) => setDraft(e.target.value)}
             rows={6}
-            placeholder="e.g. Keep replies short. I count macros in metric. I'm vegetarian."
+            placeholder={t('assistantSettings.placeholder')}
             className="w-full resize-none rounded-lg border border-line bg-bg px-4 py-3 text-sm text-ink outline-none transition focus:border-primary disabled:opacity-60"
           />
           <div className="mt-2 flex items-center justify-between text-xs text-muted">
@@ -75,16 +75,16 @@ export function AssistantSettings() {
               onClick={() => setSettings.mutate({ custom_instructions: instructions })}
               disabled={demo || !dirty || setSettings.isPending}
             >
-              {setSettings.isPending ? 'Saving…' : 'Save'}
+              {setSettings.isPending ? t('assistantSettings.saving') : t('assistantSettings.save')}
             </Button>
             {setSettings.isSuccess && !dirty && (
               <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm font-medium text-primary">
-                Saved.
+                {t('assistantSettings.saved')}
               </motion.span>
             )}
             {setSettings.isError && (
               <span className="text-sm font-medium text-accent" role="alert">
-                {setSettings.error instanceof Error ? setSettings.error.message : 'Failed to save'}
+                {setSettings.error instanceof Error ? setSettings.error.message : t('assistantSettings.saveFailed')}
               </span>
             )}
           </div>
@@ -92,16 +92,14 @@ export function AssistantSettings() {
       )}
 
       <Card className="p-5">
-        <h2 className="mb-1 font-semibold text-ink">Using a local model (Ollama)</h2>
+        <h2 className="mb-1 font-semibold text-ink">{t('assistantSettings.ollamaTitle')}</h2>
         <p className="text-sm text-muted">
-          The chat assistant calls DietDaemon commands (like <code className="rounded bg-surface-2 px-1">/suggest</code>{' '}
-          or logging a meal) as tools mid-conversation. Tool-calling is model-dependent — if your
-          self-hosted Ollama model doesn't support it, the assistant still chats normally, it just
-          won't be able to act on your data. Known-good models: <code className="rounded bg-surface-2 px-1">llama3.1</code>,{' '}
+          {t('assistantSettings.ollamaDescPart1')} <code className="rounded bg-surface-2 px-1">/suggest</code>{' '}
+          {t('assistantSettings.ollamaDescPart2')} <code className="rounded bg-surface-2 px-1">llama3.1</code>,{' '}
           <code className="rounded bg-surface-2 px-1">qwen2.5</code>,{' '}
           <code className="rounded bg-surface-2 px-1">mistral-nemo</code>,{' '}
-          <code className="rounded bg-surface-2 px-1">firefunction-v2</code>. See{' '}
-          <code className="rounded bg-surface-2 px-1">docs/CHAT_ASSISTANT.md</code> for details.
+          <code className="rounded bg-surface-2 px-1">firefunction-v2</code>. {t('assistantSettings.ollamaDescPart3')}{' '}
+          <code className="rounded bg-surface-2 px-1">docs/CHAT_ASSISTANT.md</code> {t('assistantSettings.ollamaDescPart4')}
         </p>
       </Card>
     </div>

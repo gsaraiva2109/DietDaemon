@@ -4,11 +4,13 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { useResetPassword } from '@/lib/queries'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Button, Field, FormError } from '@/components/ui'
 
 export function ResetPassword() {
+  const { t } = useTranslation()
   const reset = useResetPassword()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -23,24 +25,24 @@ export function ResetPassword() {
     e.preventDefault()
     setError(null)
     if (!token) {
-      setError('This reset link is invalid or has expired.')
+      setError(t('resetPassword.invalidLink'))
       return
     }
     if (password.length < 8) {
-      setError('Use 8 or more characters.')
+      setError(t('resetPassword.passwordHint'))
       return
     }
     if (password !== confirm) {
-      setError('Passwords do not match.')
+      setError(t('resetPassword.passwordMismatch'))
       return
     }
     setBusy(true)
     try {
       await reset.mutateAsync({ token, password })
-      toast.success('Password updated. Please sign in.')
+      toast.success(t('resetPassword.successToast'))
       navigate('/login', { replace: true })
     } catch {
-      setError('Could not reset your password. The link may have expired.')
+      setError(t('resetPassword.resetFailed'))
     } finally {
       setBusy(false)
     }
@@ -48,27 +50,27 @@ export function ResetPassword() {
 
   return (
     <AuthLayout
-      title="Choose a new password"
-      subtitle="Enter a new password for your account."
+      title={t('resetPassword.title')}
+      subtitle={t('resetPassword.subtitle')}
       footer={
         <Link to="/login" className="font-medium text-primary hover:underline">
-          Back to sign in
+          {t('resetPassword.backToSignIn')}
         </Link>
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field
-          label="New password"
+          label={t('resetPassword.newPasswordLabel')}
           type="password"
           autoComplete="new-password"
           autoFocus
           value={password}
           disabled={busy}
           onChange={(e) => setPassword(e.target.value)}
-          hint="Use 8 or more characters."
+          hint={t('resetPassword.passwordHint')}
         />
         <Field
-          label="Confirm new password"
+          label={t('resetPassword.confirmPasswordLabel')}
           type="password"
           autoComplete="new-password"
           value={confirm}
@@ -77,7 +79,7 @@ export function ResetPassword() {
         />
         <FormError>{error}</FormError>
         <Button type="submit" disabled={busy || !password || !confirm}>
-          {busy ? 'Updating…' : 'Update password'}
+          {busy ? t('resetPassword.updating') : t('resetPassword.updatePassword')}
         </Button>
       </form>
     </AuthLayout>

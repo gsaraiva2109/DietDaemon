@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { MealTemplate } from '@/lib/types'
 import { useTemplates, useLogTemplate, useDeleteTemplate } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
@@ -17,16 +18,17 @@ function templateKcal(t: MealTemplate): number {
 }
 
 export function Templates() {
+  const { t } = useTranslation()
   const templates = useTemplates()
   const { demo } = useDemo()
   const [composing, setComposing] = useState(false)
 
   return (
     <div>
-      <PageHeader eyebrow="Templates" title="Saved meals">
+      <PageHeader eyebrow={t('templates.eyebrow')} title={t('templates.title')}>
         {!demo && (
           <Button onClick={() => setComposing(true)} className="px-4 py-2 text-sm">
-            New from scratch
+            {t('templates.newFromScratch')}
           </Button>
         )}
       </PageHeader>
@@ -34,11 +36,11 @@ export function Templates() {
       {composing && <ComposeTemplateModal onClose={() => setComposing(false)} />}
 
       {templates.isLoading ? (
-        <Spinner label="Loading templates" />
+        <Spinner label={t('templates.loading')} />
       ) : !templates.data?.length ? (
         <EmptyState
-          title="No templates yet"
-          hint="Save a meal as a template from any meal's detail page."
+          title={t('templates.emptyTitle')}
+          hint={t('templates.emptyHint')}
           icon={<TemplateIcon />}
         />
       ) : (
@@ -60,6 +62,7 @@ export function Templates() {
 }
 
 function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean }) {
+  const { t, i18n } = useTranslation()
   const log = useLogTemplate()
   const del = useDeleteTemplate()
   const [confirming, setConfirming] = useState<null | 'log' | 'delete'>(null)
@@ -89,8 +92,9 @@ function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold text-ink">{template.name}</p>
           <p className="mt-0.5 text-sm text-muted">
-            {itemCount} item{itemCount === 1 ? '' : 's'} · {formatNumber(kcal)} kcal · used{' '}
-            {relativeTime(template.last_used)}
+            {itemCount} {itemCount === 1 ? t('templates.item') : t('templates.items')} ·{' '}
+            {formatNumber(kcal)} kcal ·{' '}
+            {t('templates.usedAt', { time: relativeTime(template.last_used, t, i18n.language) })}
           </p>
         </div>
 
@@ -98,19 +102,19 @@ function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean
           <div className="flex shrink-0 items-center gap-1.5">
             {logged ? (
               <Pill tone="primary">
-                <CheckIcon width={14} height={14} /> Logged
+                <CheckIcon width={14} height={14} /> {t('templates.logged')}
               </Pill>
             ) : confirming === 'log' ? (
               <div className="flex items-center gap-1">
                 <Button onClick={doLog} disabled={log.isPending} className="px-3 py-1.5 text-xs">
-                  {log.isPending ? 'Logging…' : 'Confirm'}
+                  {log.isPending ? t('templates.logging') : t('templates.confirm')}
                 </Button>
                 <Button
                   variant="ghost"
                   onClick={() => setConfirming(null)}
                   className="px-3 py-1.5 text-xs"
                 >
-                  Cancel
+                  {t('templates.cancel')}
                 </Button>
               </div>
             ) : confirming === 'delete' ? (
@@ -120,14 +124,14 @@ function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean
                   disabled={del.isPending}
                   className="bg-accent px-3 py-1.5 text-xs text-white hover:brightness-[1.05]"
                 >
-                  {del.isPending ? 'Deleting…' : 'Delete'}
+                  {del.isPending ? t('templates.deleting') : t('templates.delete')}
                 </Button>
                 <Button
                   variant="ghost"
                   onClick={() => setConfirming(null)}
                   className="px-3 py-1.5 text-xs"
                 >
-                  Cancel
+                  {t('templates.cancel')}
                 </Button>
               </div>
             ) : (
@@ -137,12 +141,12 @@ function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean
                   disabled={log.isPending}
                   className="px-3 py-1.5 text-xs"
                 >
-                  <LogIcon width={15} height={15} /> Log
+                  <LogIcon width={15} height={15} /> {t('templates.log')}
                 </Button>
                 <button
                   onClick={() => setConfirming('delete')}
                   disabled={del.isPending}
-                  aria-label={`Delete ${template.name}`}
+                  aria-label={t('templates.deleteAria', { name: template.name })}
                   className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent disabled:opacity-50"
                 >
                   <TrashIcon width={16} height={16} />
@@ -159,7 +163,7 @@ function TemplateRow({ template, demo }: { template: MealTemplate; demo: boolean
             ? log.error.message
             : del.error instanceof Error
               ? del.error.message
-              : 'Something went wrong'}
+              : t('templates.genericError')}
         </p>
       )}
     </Card>

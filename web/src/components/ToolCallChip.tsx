@@ -5,10 +5,12 @@
 
 import { motion } from 'framer-motion'
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
+import { useTranslation } from 'react-i18next'
 import { SparkleIcon } from './icons'
 import { fadeUp } from '@/lib/motion'
 
 export function ToolCallChip({ toolName, argsText, result, status }: ToolCallMessagePartProps) {
+  const { t } = useTranslation()
   const running = status.type === 'running' && result === undefined
 
   return (
@@ -18,7 +20,7 @@ export function ToolCallChip({ toolName, argsText, result, status }: ToolCallMes
           <SparkleIcon width={14} height={14} />
         </span>
         <span className={running ? 'chat-shimmer' : undefined}>
-          {running ? 'Running' : 'Ran'} <code className="rounded bg-surface px-1 py-0.5 text-ink">/{toolName}</code>
+          {running ? t('toolCallChip.running') : t('toolCallChip.ran')} <code className="rounded bg-surface px-1 py-0.5 text-ink">/{toolName}</code>
           {argsText ? <span className="text-muted"> {argsText}</span> : null}
         </span>
       </div>

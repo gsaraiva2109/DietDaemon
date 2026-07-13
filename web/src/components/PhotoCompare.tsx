@@ -3,20 +3,21 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { AuthedImage } from './PhotoGrid'
 import { CloseIcon } from './icons'
 import { scaleIn } from '@/lib/motion'
 import type { ProgressPhoto } from '@/lib/types'
 
-function relativeCaption(date: string): string {
+function relativeCaption(t: (key: string, opts?: Record<string, unknown>) => string, date: string): string {
   const then = new Date(date + 'T00:00:00').getTime()
   const days = Math.round((Date.now() - then) / 86_400_000)
-  if (days <= 0) return 'today'
-  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  if (days <= 0) return t('photoCompare.today')
+  if (days < 7) return t('photoCompare.daysAgo', { count: days })
   const weeks = Math.round(days / 7)
-  if (weeks < 9) return `${weeks} week${weeks === 1 ? '' : 's'} ago`
+  if (weeks < 9) return t('photoCompare.weeksAgo', { count: weeks })
   const months = Math.round(days / 30)
-  return `${months} month${months === 1 ? '' : 's'} ago`
+  return t('photoCompare.monthsAgo', { count: months })
 }
 
 function PhotoPane({
@@ -30,6 +31,7 @@ function PhotoPane({
   onChange: (id: string) => void
   label: string
 }) {
+  const { t } = useTranslation()
   const photo = photos.find((p) => p.id === value)
   return (
     <div className="flex flex-1 flex-col gap-3">
@@ -57,7 +59,7 @@ function PhotoPane({
       {photo && (
         <div className="text-center">
           <p className="text-sm font-semibold text-ink">{photo.date}</p>
-          <p className="text-xs text-muted">{relativeCaption(photo.date)}</p>
+          <p className="text-xs text-muted">{relativeCaption(t, photo.date)}</p>
         </div>
       )}
     </div>
@@ -71,6 +73,7 @@ export function PhotoCompare({
   photos: ProgressPhoto[]
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   // Oldest -> newest for sensible "before" / "after" defaults.
   const ordered = useMemo(
     () => [...photos].sort((a, b) => (a.date < b.date ? -1 : 1)),
@@ -104,7 +107,7 @@ export function PhotoCompare({
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Compare progress photos"
+          aria-label={t('photoCompare.ariaLabel')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -115,11 +118,11 @@ export function PhotoCompare({
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                Compare
+                {t('photoCompare.compare')}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-ink">Before / after</h2>
+              <h2 className="mt-1 text-xl font-bold text-ink">{t('photoCompare.title')}</h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('photoCompare.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
@@ -129,13 +132,13 @@ export function PhotoCompare({
               photos={ordered}
               value={beforeId}
               onChange={setBeforeId}
-              label="Before photo"
+              label={t('photoCompare.beforePhoto')}
             />
             <PhotoPane
               photos={ordered}
               value={afterId}
               onChange={setAfterId}
-              label="After photo"
+              label={t('photoCompare.afterPhoto')}
             />
           </div>
         </motion.div>

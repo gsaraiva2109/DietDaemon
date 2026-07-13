@@ -4,12 +4,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useVerifyEmail } from '@/lib/queries'
 import { AuthLayout } from '@/components/AuthLayout'
 import { Spinner } from '@/components/ui'
 
 export function VerifyEmail() {
+  const { t } = useTranslation()
   const verify = useVerifyEmail()
   const { refresh } = useAuth()
   const navigate = useNavigate()
@@ -27,7 +29,7 @@ export function VerifyEmail() {
       .mutateAsync(token)
       .then(async () => {
         await refresh()
-        toast.success('Email verified.')
+        toast.success(t('verifyEmail.verified'))
         navigate('/', { replace: true })
       })
       .catch(() => setState('error'))
@@ -37,11 +39,11 @@ export function VerifyEmail() {
   if (state === 'error') {
     return (
       <AuthLayout
-        title="Verification failed"
-        subtitle="That link is invalid or has expired."
+        title={t('verifyEmail.failedTitle')}
+        subtitle={t('verifyEmail.failedSubtitle')}
         footer={
           <Link to="/" className="font-medium text-primary hover:underline">
-            Go to dashboard
+            {t('verifyEmail.goToDashboard')}
           </Link>
         }
       >
@@ -51,9 +53,9 @@ export function VerifyEmail() {
   }
 
   return (
-    <AuthLayout title="Verifying your email" subtitle="One moment…">
+    <AuthLayout title={t('verifyEmail.verifyingTitle')} subtitle={t('verifyEmail.oneMoment')}>
       <div className="grid place-items-center py-4">
-        <Spinner label="Verifying" />
+        <Spinner label={t('verifyEmail.verifying')} />
       </div>
     </AuthLayout>
   )

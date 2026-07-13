@@ -6,6 +6,7 @@ import type {
   ReactNode,
 } from 'react'
 import { useId } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export function Card({
   children,
@@ -124,11 +125,12 @@ export function EmptyState({
   )
 }
 
-export function Spinner({ label = 'Loading' }: { label?: string }) {
+export function Spinner({ label }: { label?: string }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 text-sm text-muted" role="status">
       <span className="size-4 animate-spin rounded-full border-2 border-line border-t-primary" />
-      {label}…
+      {label ?? t('common.loading')}…
     </div>
   )
 }

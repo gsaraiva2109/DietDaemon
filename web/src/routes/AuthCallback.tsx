@@ -6,26 +6,26 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { AuthLayout } from '@/components/AuthLayout'
 import { OIDC_INTENT_KEY } from '@/components/ProviderButtons'
 import { Spinner } from '@/components/ui'
 
-// Maps the backend's ?error= codes (handler_oidc.go) to a human reason. The
+// Maps the backend's ?error= codes (handler_oidc.go) to an i18n key. The
 // callback is shared by sign-in and sign-up, so we surface *why* it failed
 // rather than guessing the verb, far more useful than a generic "cancelled".
-const OIDC_ERRORS: Record<string, string> = {
-  registration_closed:
-    'No account is linked to this provider yet, and registration is closed. Link it from Settings → Security, or ask for an invite.',
-  email_unverified:
-    "Your provider account doesn't have a verified email, so an account couldn't be created.",
-  already_linked: 'That provider account is already linked to a different user.',
-  provider_error: 'The identity provider rejected the sign-in. Please try again.',
-  invalid_state: 'The sign-in session expired or was interrupted. Please try again.',
-  unknown_provider: 'Unknown sign-in provider.',
+const OIDC_ERROR_KEYS: Record<string, string> = {
+  registration_closed: 'authCallback.errors.registrationClosed',
+  email_unverified: 'authCallback.errors.emailUnverified',
+  already_linked: 'authCallback.errors.alreadyLinked',
+  provider_error: 'authCallback.errors.providerError',
+  invalid_state: 'authCallback.errors.invalidState',
+  unknown_provider: 'authCallback.errors.unknownProvider',
 }
 
 export function AuthCallback() {
+  const { t } = useTranslation()
   const { refresh } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -42,20 +42,24 @@ export function AuthCallback() {
     // Which verb the user clicked (set in ProviderButtons); words the toast.
     const signingUp = sessionStorage.getItem(OIDC_INTENT_KEY) === 'signup'
     sessionStorage.removeItem(OIDC_INTENT_KEY)
-    const verb = signingUp ? 'sign-up' : 'sign-in'
+    const verb = signingUp ? t('authCallback.signUpVerb') : t('authCallback.signInVerb')
 
     if (error) {
-      toast.error(OIDC_ERRORS[error] ?? `Could not complete ${verb}. Please try again.`)
+      toast.error(
+        error in OIDC_ERROR_KEYS
+          ? t(OIDC_ERROR_KEYS[error])
+          : t('authCallback.errors.generic', { verb }),
+      )
       navigate('/login', { replace: true })
       return
     }
 
     refresh().then(() => {
       if (linking) {
-        toast.success('Account linked.')
+        toast.success(t('authCallback.accountLinked'))
         navigate('/settings/security', { replace: true })
       } else {
-        toast.success(signingUp ? 'Account created. Welcome!' : 'Signed in.')
+        toast.success(signingUp ? t('authCallback.accountCreated') : t('authCallback.signedIn'))
         navigate(next, { replace: true })
       }
     })
@@ -63,9 +67,9 @@ export function AuthCallback() {
   }, [])
 
   return (
-    <AuthLayout title="Signing you in" subtitle="One moment…">
+    <AuthLayout title={t('authCallback.signingInTitle')} subtitle={t('authCallback.oneMoment')}>
       <div className="grid place-items-center py-4">
-        <Spinner label="Completing sign-in" />
+        <Spinner label={t('authCallback.completingSignIn')} />
       </div>
     </AuthLayout>
   )

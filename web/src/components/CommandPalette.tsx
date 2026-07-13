@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/lib/theme'
 import { useDemo, demoAvailable } from '@/lib/demo'
 import {
@@ -38,6 +39,7 @@ export function CommandPalette() {
   const { theme, toggle } = useTheme()
   const { demo, setDemo } = useDemo()
   const inputRef = useRef<HTMLInputElement>(null)
+  const { t } = useTranslation()
 
   const commands = useMemo<Command[]>(() => {
     const go = (to: string) => () => {
@@ -45,16 +47,16 @@ export function CommandPalette() {
       setOpen(false)
     }
     return [
-      { id: 'today', label: 'Go to Today', Icon: TodayIcon, run: go('/') },
-      { id: 'chat', label: 'Open Chat', Icon: ChatIcon, run: go('/chat') },
-      { id: 'log', label: 'Log a meal', Icon: LogIcon, run: go('/log') },
-      { id: 'history', label: 'Go to History', Icon: HistoryIcon, run: go('/history') },
-      { id: 'trends', label: 'Go to Trends', Icon: TrendsIcon, run: go('/trends') },
-      { id: 'summary', label: 'Go to Summary', Icon: SummaryIcon, run: go('/summary') },
-      { id: 'settings', label: 'Go to Settings', Icon: SettingsIcon, run: go('/settings') },
+      { id: 'today', label: t('commandPalette.goToToday'), Icon: TodayIcon, run: go('/') },
+      { id: 'chat', label: t('commandPalette.openChat'), Icon: ChatIcon, run: go('/chat') },
+      { id: 'log', label: t('commandPalette.logMeal'), Icon: LogIcon, run: go('/log') },
+      { id: 'history', label: t('commandPalette.goToHistory'), Icon: HistoryIcon, run: go('/history') },
+      { id: 'trends', label: t('commandPalette.goToTrends'), Icon: TrendsIcon, run: go('/trends') },
+      { id: 'summary', label: t('commandPalette.goToSummary'), Icon: SummaryIcon, run: go('/summary') },
+      { id: 'settings', label: t('commandPalette.goToSettings'), Icon: SettingsIcon, run: go('/settings') },
       {
         id: 'theme',
-        label: `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`,
+        label: t('commandPalette.switchTheme', { theme: theme === 'dark' ? 'light' : 'dark' }),
         Icon: theme === 'dark' ? SunIcon : MoonIcon,
         run: () => {
           toggle()
@@ -65,7 +67,7 @@ export function CommandPalette() {
         ? [
             {
               id: 'demo' as const,
-              label: demo ? 'Turn sample data off' : 'Turn sample data on',
+              label: demo ? t('commandPalette.demoOff') : t('commandPalette.demoOn'),
               Icon: SparkleIcon,
               run: () => {
                 setDemo(!demo)
@@ -75,7 +77,7 @@ export function CommandPalette() {
           ]
         : []),
     ]
-  }, [navigate, theme, toggle, demo, setDemo])
+  }, [navigate, theme, toggle, demo, setDemo, t])
 
   const results = useMemo(() => {
     const n = q.trim().toLowerCase()
@@ -131,7 +133,7 @@ export function CommandPalette() {
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label="Command palette"
+            aria-label={t('commandPalette.ariaLabel')}
             initial={{ opacity: 0, scale: 0.98, y: -8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98, y: -8 }}
@@ -146,13 +148,13 @@ export function CommandPalette() {
                 ref={inputRef}
                 value={q}
                 onChange={(e) => { setQ(e.target.value); setActive(0) }}
-                placeholder="Type a command…"
+                placeholder={t('commandPalette.placeholder')}
                 className="flex-1 bg-transparent text-ink outline-none placeholder:text-muted"
               />
               <kbd className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted">ESC</kbd>
             </div>
             <ul className="max-h-80 overflow-y-auto p-2">
-              {results.length === 0 && <li className="px-3 py-6 text-center text-sm text-muted">No commands</li>}
+              {results.length === 0 && <li className="px-3 py-6 text-center text-sm text-muted">{t('commandPalette.noResults')}</li>}
               {results.map((c, i) => (
                 <li key={c.id}>
                   <button

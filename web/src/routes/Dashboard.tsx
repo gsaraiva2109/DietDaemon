@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useToday, useMeals, useRange, useBodySummary, useStreak, useWeeklyBudget } from '@/lib/queries'
 import { MACRO_META, type Macros, type MacroKey } from '@/lib/types'
 import { MacroRing } from '@/components/MacroRing'
@@ -36,6 +37,7 @@ function isoDaysAgo(n: number): string {
 }
 
 export function Dashboard() {
+  const { t, i18n } = useTranslation()
   const today = useToday()
   const meals = useMeals(6)
   const week = useRange(isoDaysAgo(6), isoDaysAgo(0))
@@ -47,7 +49,7 @@ export function Dashboard() {
 
   const consumed = today.data?.Consumed ?? ZERO
   const targets = today.data?.Targets ?? ZERO
-  const tips = useMemo(() => insights(today.data ?? null), [today.data])
+  const tips = useMemo(() => insights(today.data ?? null, t), [today.data, t])
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
   const dayStreak = streakQuery.data?.current_days ?? 0
 
@@ -57,7 +59,7 @@ export function Dashboard() {
     : 0
   const budgetActive = Math.abs(budgetDelta) >= 1
 
-  const todayLabel = new Date().toLocaleDateString(undefined, {
+  const todayLabel = new Date().toLocaleDateString(i18n.language, {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -69,12 +71,12 @@ export function Dashboard() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <Eyebrow>{todayLabel}</Eyebrow>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-ink">{greeting()}</h1>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-ink">{greeting(t)}</h1>
         </div>
         <div className="flex items-center gap-2">
           {dayStreak > 0 && (
             <Pill tone="primary">
-              <FlameIcon width={14} height={14} /> {dayStreak}-day streak
+              <FlameIcon width={14} height={14} /> {t('dashboard.streakDays', { count: dayStreak })}
             </Pill>
           )}
           <div className="flex gap-1 rounded-full border border-line bg-surface p-1">
@@ -86,23 +88,23 @@ export function Dashboard() {
                   view === v ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
                 }`}
               >
-                {v}
+                {t(`dashboard.view.${v}`)}
               </button>
             ))}
           </div>
           <Button
             variant="ghost"
             onClick={() => setSharing(true)}
-            aria-label="Share today's macros"
+            aria-label={t('dashboard.shareAria')}
             className="px-3 py-1.5 text-xs"
           >
-            <ShareIcon width={15} height={15} /> Share
+            <ShareIcon width={15} height={15} /> {t('dashboard.share')}
           </Button>
         </div>
       </header>
 
       {today.isLoading ? (
-        <Spinner label="Loading today" />
+        <Spinner label={t('dashboard.loadingToday')} />
       ) : (
         <>
           {/* Hero ring + side stats */}
@@ -111,7 +113,7 @@ export function Dashboard() {
               <MacroRing
                 consumed={consumed.Calories}
                 target={targets.Calories}
-                label="Calories"
+                label={t('dashboard.calories')}
                 unit="kcal"
                 color={cssVar('--color-cal')}
                 size={232}
@@ -123,13 +125,13 @@ export function Dashboard() {
                     <MacroRing
                       consumed={consumed[k]}
                       target={targets[k]}
-                      label={MACRO_META[k].label}
+                      label={t(`common.macro.${k}`)}
                       unit={MACRO_META[k].unit}
                       color={cssVar(MACRO_META[k].colorVar)}
                       size={96}
                       thickness={8}
                     />
-                    <span className="text-sm font-medium text-muted">{MACRO_META[k].label}</span>
+                    <span className="text-sm font-medium text-muted">{t(`common.macro.${k}`)}</span>
                   </div>
                 ))}
               </div>
@@ -137,33 +139,33 @@ export function Dashboard() {
 
             <div className="flex flex-col gap-5">
               <Card className="p-5">
-                <Eyebrow>Streak</Eyebrow>
+                <Eyebrow>{t('dashboard.streak')}</Eyebrow>
                 <div className="mt-2 flex items-center gap-2">
                   <span className="text-primary">
                     <FlameIcon width={28} height={28} />
                   </span>
                   <span className="text-4xl font-extrabold text-ink tnum">{dayStreak}</span>
-                  <span className="mb-1 self-end text-sm text-muted">days on target</span>
+                  <span className="mb-1 self-end text-sm text-muted">{t('dashboard.daysOnTarget')}</span>
                 </div>
               </Card>
               {budgetActive && budget.data && (
                 <Card className="p-5">
-                  <Eyebrow>Weekly budget</Eyebrow>
+                  <Eyebrow>{t('dashboard.weeklyBudget')}</Eyebrow>
                   <div className="mt-2 space-y-2">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-sm text-muted">Calories</span>
+                      <span className="text-sm text-muted">{t('dashboard.calories')}</span>
                       <span className="text-sm font-semibold text-ink tnum">
                         {formatNumber(round(budget.data.calories.effective, 0))}
                       </span>
                     </div>
                     <div className="flex items-baseline justify-between">
-                      <span className="text-xs text-muted">vs plain</span>
+                      <span className="text-xs text-muted">{t('dashboard.vsPlain')}</span>
                       <span className={`text-xs font-medium tnum ${budgetDelta > 0 ? 'text-accent' : 'text-primary'}`}>
                         {budgetDelta > 0 ? '+' : ''}{formatNumber(round(budgetDelta, 0))} kcal
                       </span>
                     </div>
                     <div className="flex items-baseline justify-between">
-                      <span className="text-sm text-muted">Protein</span>
+                      <span className="text-sm text-muted">{t('dashboard.protein')}</span>
                       <span className="text-sm font-semibold text-ink tnum">
                         {formatNumber(round(budget.data.protein.effective, 0))}g
                       </span>
@@ -173,12 +175,12 @@ export function Dashboard() {
               )}
               <WeightMiniCard body={body.data} />
               <Card className="flex flex-1 flex-col p-5">
-                <Eyebrow>Last 7 days · calories</Eyebrow>
+                <Eyebrow>{t('dashboard.last7DaysCalories')}</Eyebrow>
                 <div className="mt-auto pt-3">
                   {calorieSeries.length ? (
                     <Sparkline data={calorieSeries} color={cssVar('--color-cal')} />
                   ) : (
-                    <p className="text-sm text-muted">No history yet.</p>
+                    <p className="text-sm text-muted">{t('dashboard.noHistoryYet')}</p>
                   )}
                 </div>
               </Card>
@@ -192,13 +194,13 @@ export function Dashboard() {
               {/* Energy split + insights */}
               <div className="grid gap-5 lg:grid-cols-3">
                 <Card className="p-5">
-                  <Eyebrow>Energy split</Eyebrow>
+                  <Eyebrow>{t('dashboard.energySplit')}</Eyebrow>
                   <div className="mt-4">
                     <MacroDonut consumed={consumed} />
                   </div>
                 </Card>
                 <Card className="p-5 lg:col-span-2">
-                  <Eyebrow>Insights</Eyebrow>
+                  <Eyebrow>{t('dashboard.insights')}</Eyebrow>
                   <ul className="mt-3 flex flex-col gap-2.5">
                     {tips.map((t, i) => (
                       <li key={i} className="flex items-start gap-2.5 text-sm">
@@ -224,7 +226,7 @@ export function Dashboard() {
         <>
           {/* Health, quiet secondary section, subordinate to the macro hero. */}
           <section>
-            <Eyebrow>Health</Eyebrow>
+            <Eyebrow>{t('dashboard.health')}</Eyebrow>
             <motion.div
               variants={stagger}
               initial="hidden"
@@ -243,13 +245,13 @@ export function Dashboard() {
 
           {/* Today's meals */}
           <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">Today's meals</h2>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">{t('dashboard.todaysMeals')}</h2>
             {meals.isLoading ? (
               <Spinner />
             ) : !meals.data?.length ? (
               <EmptyState
-                title="Nothing logged yet"
-                hint="Use Quick log above, or send a meal through your chat bot."
+                title={t('dashboard.emptyTitle')}
+                hint={t('dashboard.emptyHint')}
               />
             ) : (
               <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2.5">
@@ -266,7 +268,7 @@ export function Dashboard() {
 
       {sharing && (
         <ShareCard
-          heading="Today"
+          heading={t('dashboard.today')}
           subtitle={todayLabel}
           consumed={consumed}
           onClose={() => setSharing(false)}
@@ -278,6 +280,7 @@ export function Dashboard() {
 
 // WeightMiniCard shows the latest weight + recent change, linking to /body.
 function WeightMiniCard({ body }: { body?: import('@/lib/types').BodyCompositionSummary }) {
+  const { t } = useTranslation()
   if (!body || body.current_weight_kg <= 0) return null
   const arrow = body.trend_direction === 'up' ? '↑' : body.trend_direction === 'down' ? '↓' : '→'
   const tone = body.trend_direction === 'down' ? 'text-primary' : body.trend_direction === 'up' ? 'text-accent' : 'text-muted'
@@ -285,7 +288,7 @@ function WeightMiniCard({ body }: { body?: import('@/lib/types').BodyComposition
     <Link to="/body" className="block">
       <Card className="p-5 transition hover:shadow-lift">
         <div className="flex items-center justify-between">
-          <Eyebrow>Weight</Eyebrow>
+          <Eyebrow>{t('dashboard.weight')}</Eyebrow>
           <span className="text-muted"><BodyIcon width={18} height={18} /></span>
         </div>
         <div className="mt-2 flex items-baseline gap-2">

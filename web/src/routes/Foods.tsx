@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useFoods, useSearchFoods } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, Spinner } from '@/components/ui'
@@ -13,15 +14,17 @@ import type { FoodDetail } from '@/lib/types'
 import { FoodsIcon, SearchIcon } from '@/components/icons'
 import { stagger } from '@/lib/motion'
 
-const SOURCES: { label: string; value: string }[] = [
-  { label: 'All', value: '' },
-  { label: 'Library', value: 'food_library' },
+// OpenFoodFacts/TACO/USDA are proper nouns, not translated.
+const SOURCES: { labelKey?: string; label?: string; value: string }[] = [
+  { labelKey: 'foods.sourceAll', value: '' },
+  { labelKey: 'foods.sourceLibrary', value: 'food_library' },
   { label: 'OpenFoodFacts', value: 'openfoodfacts' },
   { label: 'TACO', value: 'taco' },
   { label: 'USDA', value: 'usda' },
 ]
 
 export function Foods() {
+  const { t } = useTranslation()
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [source, setSource] = useState('')
@@ -45,7 +48,7 @@ export function Foods() {
 
   return (
     <div>
-      <PageHeader eyebrow="Foods" title="Browser" />
+      <PageHeader eyebrow={t('foods.eyebrow')} title={t('foods.title')} />
 
       <div className="mb-5">
         <FrequentFoods />
@@ -58,8 +61,8 @@ export function Foods() {
         <input
           value={rawQuery}
           onChange={(e) => setRawQuery(e.target.value)}
-          placeholder="Search foods or aliases"
-          aria-label="Search foods"
+          placeholder={t('foods.searchPlaceholder')}
+          aria-label={t('foods.searchAriaLabel')}
           className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-4 text-ink outline-none transition focus:border-primary"
         />
       </div>
@@ -76,23 +79,19 @@ export function Foods() {
                   : 'border-line bg-surface text-muted hover:text-ink'
               }`}
             >
-              {s.label}
+              {s.labelKey ? t(s.labelKey) : s.label}
             </button>
           ))}
         </div>
       )}
 
       {isLoading ? (
-        <Spinner label="Loading foods" />
+        <Spinner label={t('foods.loadingLabel')} />
       ) : !foods.length ? (
         <EmptyState
           icon={<FoodsIcon />}
-          title={searching ? 'No matches' : 'No foods yet'}
-          hint={
-            searching
-              ? "This only searches foods you've already logged — try a different name/alias, or log the meal directly."
-              : 'Foods appear here as you log meals — there is no preloaded database, each food gets added the first time you log it.'
-          }
+          title={searching ? t('foods.noMatchesTitle') : t('foods.emptyTitle')}
+          hint={searching ? t('foods.noMatchesHint') : t('foods.emptyHint')}
         />
       ) : (
         <motion.div

@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { isMfaChallenge } from '@/lib/types'
@@ -14,6 +15,7 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { Spinner } from '@/components/ui'
 
 export function MagicLink() {
+  const { t } = useTranslation()
   const { refresh } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -37,7 +39,7 @@ export function MagicLink() {
           return
         }
         await refresh()
-        toast.success('Signed in.')
+        toast.success(t('magicLink.signedIn'))
         navigate('/', { replace: true })
       })
       .catch(() => setState('error'))
@@ -47,11 +49,11 @@ export function MagicLink() {
   if (state === 'error') {
     return (
       <AuthLayout
-        title="Sign-in link expired"
-        subtitle="That link is invalid or has already been used."
+        title={t('magicLink.expiredTitle')}
+        subtitle={t('magicLink.expiredSubtitle')}
         footer={
           <Link to="/login" className="font-medium text-primary hover:underline">
-            Back to sign in
+            {t('magicLink.backToSignIn')}
           </Link>
         }
       >
@@ -66,7 +68,7 @@ export function MagicLink() {
         challengeToken={challengeToken}
         onVerified={async () => {
           await refresh()
-          toast.success('Signed in.')
+          toast.success(t('magicLink.signedIn'))
           navigate('/', { replace: true })
         }}
         onBack={() => {
@@ -77,9 +79,9 @@ export function MagicLink() {
   }
 
   return (
-    <AuthLayout title="Signing you in" subtitle="One moment…">
+    <AuthLayout title={t('magicLink.signingInTitle')} subtitle={t('magicLink.oneMoment')}>
       <div className="grid place-items-center py-4">
-        <Spinner label="Completing sign-in" />
+        <Spinner label={t('magicLink.completingSignIn')} />
       </div>
     </AuthLayout>
   )

@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useFoods, useSearchFoods, useAddAlias, useDeleteAlias } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -14,6 +15,7 @@ import type { FoodDetail } from '@/lib/types'
 import { stagger, fadeUp } from '@/lib/motion'
 
 export function Aliases() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
@@ -37,14 +39,14 @@ export function Aliases() {
         prefetch="intent"
         className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink"
       >
-        <ChevronLeft width={18} height={18} /> Settings
+        <ChevronLeft width={18} height={18} /> {t('nav.settings')}
       </Link>
 
-      <PageHeader eyebrow="Settings" title="Food aliases" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('aliases.title')} />
 
       {demo && (
         <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-muted">
-          Aliases are read only here.
+          {t('aliases.readOnly')}
         </p>
       )}
 
@@ -55,16 +57,16 @@ export function Aliases() {
         <input
           value={rawQuery}
           onChange={(e) => setRawQuery(e.target.value)}
-          placeholder="Search foods to edit aliases"
-          aria-label="Search foods"
+          placeholder={t('aliases.searchPlaceholder')}
+          aria-label={t('aliases.searchAriaLabel')}
           className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-4 text-ink outline-none transition focus:border-primary"
         />
       </div>
 
       {isLoading ? (
-        <Spinner label="Loading foods" />
+        <Spinner label={t('aliases.loading')} />
       ) : !foods.length ? (
-        <EmptyState title="No foods found" hint="Try a different search." />
+        <EmptyState title={t('aliases.emptyTitle')} hint={t('aliases.emptyHint')} />
       ) : (
         <motion.div
           variants={stagger}
@@ -84,6 +86,7 @@ export function Aliases() {
 }
 
 function AliasRow({ food, demo }: { food: FoodDetail; demo: boolean }) {
+  const { t } = useTranslation()
   const add = useAddAlias(food.food_id)
   const del = useDeleteAlias(food.food_id)
   const [value, setValue] = useState('')
@@ -101,7 +104,7 @@ function AliasRow({ food, demo }: { food: FoodDetail; demo: boolean }) {
       <p className="font-semibold text-ink">{food.name}</p>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {aliases.length === 0 && <span className="text-sm text-muted">No aliases yet.</span>}
+        {aliases.length === 0 && <span className="text-sm text-muted">{t('aliases.noAliases')}</span>}
         {aliases.map((a) => (
           <span
             key={a.alias}
@@ -112,7 +115,7 @@ function AliasRow({ food, demo }: { food: FoodDetail; demo: boolean }) {
               <button
                 onClick={() => del.mutate(a.alias)}
                 disabled={del.isPending}
-                aria-label={`Remove alias ${a.alias}`}
+                aria-label={t('aliases.removeAlias', { alias: a.alias })}
                 className="grid size-5 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent disabled:opacity-50"
               >
                 <CloseIcon width={12} height={12} />
@@ -130,12 +133,12 @@ function AliasRow({ food, demo }: { food: FoodDetail; demo: boolean }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit()
             }}
-            placeholder="Add an alias"
-            aria-label={`Add alias for ${food.name}`}
+            placeholder={t('aliases.addPlaceholder')}
+            aria-label={t('aliases.addAriaLabel', { food: food.name })}
             className="min-w-0 flex-1 rounded-full border border-line bg-bg px-3.5 py-2 text-sm text-ink outline-none transition focus:border-primary"
           />
           <Button onClick={submit} disabled={!value.trim() || add.isPending} className="px-4 py-2 text-sm">
-            Add
+            {t('aliases.add')}
           </Button>
         </div>
       )}

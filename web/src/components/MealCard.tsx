@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { Meal } from '@/lib/types'
 import { Pill } from './ui'
 import { ChevronRight } from './icons'
@@ -12,6 +13,7 @@ import { clockTime, confidenceLabel, confidenceColor, confidenceTier, formatNumb
 import { MacroTrace } from './MacroTrace'
 
 export function MealCard({ meal, linkTo }: { meal: Meal; linkTo?: string }) {
+  const { t, i18n } = useTranslation()
   const [traceOpen, setTraceOpen] = useState(false)
   const total = meal.Items.reduce((s, it) => s + (it.Macros?.Calories ?? 0), 0)
   const conf = confidenceLabel(meal.Confidence)
@@ -19,22 +21,22 @@ export function MealCard({ meal, linkTo }: { meal: Meal; linkTo?: string }) {
   const calTooltip =
     calTier === 'high'
       ? undefined
-      : `${calTier.charAt(0).toUpperCase() + calTier.slice(1)} confidence — tap for details`
+      : t('mealCard.confidenceTooltip', { tier: calTier.charAt(0).toUpperCase() + calTier.slice(1) })
   const body = (
     <motion.div
       variants={fadeUp}
       className="group flex items-center gap-4 rounded-xl border border-line bg-surface px-4 py-3.5 shadow-soft transition hover:shadow-lift"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-ink">{meal.RawText || 'Logged meal'}</p>
+        <p className="truncate font-semibold text-ink">{meal.RawText || t('mealCard.loggedMealFallback')}</p>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-muted">{clockTime(meal.At)}</span>
+          <span className="text-muted">{clockTime(meal.At, i18n.language)}</span>
           <span className="text-line">·</span>
           <span className="text-muted">
-            {meal.Items.length} item{meal.Items.length === 1 ? '' : 's'}
+            {t('mealCard.itemCount', { count: meal.Items.length })}
           </span>
-          <Pill tone={meal.ParserTier === 2 ? 'accent' : 'primary'}>{tierLabel(meal.ParserTier)}</Pill>
-          {conf !== 'high' && <Pill tone="muted">{conf} confidence</Pill>}
+          <Pill tone={meal.ParserTier === 2 ? 'accent' : 'primary'}>{tierLabel(meal.ParserTier, t)}</Pill>
+          {conf !== 'high' && <Pill tone="muted">{t('mealCard.confidenceLabel', { level: conf })}</Pill>}
         </div>
       </div>
       <button

@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { useTranslation } from 'react-i18next'
 import { useRange } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, EmptyState, Spinner } from '@/components/ui'
@@ -26,6 +27,7 @@ function isoDaysAgo(n: number): string {
 }
 
 export function Trends() {
+  const { t } = useTranslation()
   const [days, setDays] = useState(14)
   const [macro, setMacro] = useState<MacroKey>('Calories')
   const start = isoDaysAgo(days - 1)
@@ -46,7 +48,7 @@ export function Trends() {
 
   return (
     <div>
-      <PageHeader eyebrow="Trends" title="Over time">
+      <PageHeader eyebrow={t('trends.eyebrow')} title={t('trends.title')}>
         <div className="flex gap-1 rounded-full border border-line bg-surface p-1">
           {[7, 14, 30].map((d) => (
             <button
@@ -73,7 +75,7 @@ export function Trends() {
                 : 'border-line bg-surface text-muted hover:text-ink'
             }`}
           >
-            {MACRO_META[k].label}
+            {t(`common.macro.${k}`)}
           </button>
         ))}
       </div>
@@ -82,7 +84,7 @@ export function Trends() {
         {range.isLoading ? (
           <Spinner />
         ) : !data.length ? (
-          <EmptyState title="No data in range" hint="Log meals across a few days to see trends." />
+          <EmptyState title={t('trends.noDataTitle')} hint={t('trends.noDataHint')} />
         ) : (
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -113,9 +115,9 @@ export function Trends() {
                   stroke={color}
                   strokeWidth={2.5}
                   fill="url(#fill)"
-                  name={MACRO_META[macro].label}
+                  name={t(`common.macro.${macro}`)}
                 />
-                <Line type="monotone" dataKey="target" stroke="var(--color-muted)" strokeWidth={1} dot={false} name="Target" />
+                <Line type="monotone" dataKey="target" stroke="var(--color-muted)" strokeWidth={1} dot={false} name={t('trends.target')} />
               </AreaChart>
             </ResponsiveContainer>
           </div>

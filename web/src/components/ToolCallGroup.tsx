@@ -4,6 +4,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { SparkleIcon, ChevronDown } from './icons'
 import { fadeUp } from '@/lib/motion'
 
@@ -14,6 +15,7 @@ interface ToolCallGroupProps {
 }
 
 export function ToolCallGroup({ running, count, children }: ToolCallGroupProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(running)
   const [prevRunning, setPrevRunning] = useState(running)
   if (running !== prevRunning) {
@@ -37,7 +39,7 @@ export function ToolCallGroup({ running, count, children }: ToolCallGroupProps) 
           <SparkleIcon width={14} height={14} />
         </span>
         <span className={`flex-1 text-left ${running ? 'chat-shimmer' : ''}`}>
-          {running ? 'Running' : 'Ran'} {count} tool{count === 1 ? '' : 's'}
+          {running ? t('toolCallGroup.running', { count }) : t('toolCallGroup.ran', { count })}
         </span>
         {running && <span className="size-3 animate-spin rounded-full border-2 border-line border-t-primary" />}
         <ChevronDown width={14} height={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />

@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useGoalSuggestions, useSetTargets, useTargets } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { formatNumber } from '@/lib/format'
@@ -28,6 +29,7 @@ function Stat({ label, current, target, unit }: { label: string; current: number
 }
 
 export function GoalSuggestion() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const { data } = useGoalSuggestions()
   const targets = useTargets()
@@ -57,18 +59,18 @@ export function GoalSuggestion() {
           <SparkleIcon />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="font-semibold text-ink">Suggested adjustment</h2>
-          <p className="mt-1 text-sm text-muted">{data.message}</p>
+          <h2 className="font-semibold text-ink">{t('goalSuggestion.title')}</h2>
+          <p className="mt-1 text-sm text-muted">{t('goalSuggestion.message')}</p>
 
           <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Stat
-              label="Weekly loss"
+              label={t('goalSuggestion.weeklyLoss')}
               current={data.current_loss_kg}
               target={data.target_loss_kg}
-              unit="kg/wk"
+              unit={t('goalSuggestion.weeklyUnit')}
             />
             <Stat
-              label="Daily intake"
+              label={t('goalSuggestion.dailyIntake')}
               current={data.current_intake_kcal}
               target={data.recommended_kcal}
               unit="kcal"
@@ -79,15 +81,15 @@ export function GoalSuggestion() {
             <Button onClick={apply} disabled={demo || setTargets.isPending || applied}>
               {applied ? (
                 <>
-                  <CheckIcon width={16} height={16} /> Applied
+                  <CheckIcon width={16} height={16} /> {t('goalSuggestion.applied')}
                 </>
               ) : setTargets.isPending ? (
-                'Applying…'
+                t('goalSuggestion.applying')
               ) : (
-                'Apply'
+                t('goalSuggestion.apply')
               )}
             </Button>
-            {demo && <span className="text-xs text-muted">unavailable</span>}
+            {demo && <span className="text-xs text-muted">{t('goalSuggestion.unavailable')}</span>}
             {setTargets.isError && (
               <motion.span
                 initial={{ opacity: 0 }}
@@ -95,7 +97,7 @@ export function GoalSuggestion() {
                 className="text-sm font-medium text-accent"
                 role="alert"
               >
-                {setTargets.error instanceof Error ? setTargets.error.message : 'Failed to apply'}
+                {setTargets.error instanceof Error ? setTargets.error.message : t('goalSuggestion.failedToApply')}
               </motion.span>
             )}
           </div>

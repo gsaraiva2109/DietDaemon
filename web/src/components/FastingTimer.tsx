@@ -4,6 +4,7 @@
 // 'dd.fast.goal' the chosen goal in hours. No backend, no external deps.
 
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card, Eyebrow, Pill, Button } from './ui'
 import { ClockIcon } from './icons'
 
@@ -36,6 +37,7 @@ function formatElapsed(ms: number): string {
 }
 
 export function FastingTimer() {
+  const { t } = useTranslation()
   const [start, setStart] = useState<number | null>(readStart)
   const [goal, setGoal] = useState<number>(readGoal)
   const [now, setNow] = useState(() => Date.now())
@@ -78,10 +80,10 @@ export function FastingTimer() {
   return (
     <Card className="flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between gap-3">
-        <Eyebrow>Fasting</Eyebrow>
+        <Eyebrow>{t('fastingTimer.title')}</Eyebrow>
         {running ? (
           reached ? (
-            <Pill tone="primary">Goal reached</Pill>
+            <Pill tone="primary">{t('fastingTimer.goalReached')}</Pill>
           ) : (
             <Pill tone="muted">
               {Math.floor(elapsedHours)}h / {goal}h
@@ -109,13 +111,13 @@ export function FastingTimer() {
           </div>
 
           <Button variant="ghost" onClick={handleStop} className="self-start">
-            Stop &amp; reset
+            {t('fastingTimer.stopReset')}
           </Button>
         </>
       ) : (
         <>
           <p className="text-sm text-muted">
-            Start a fast to track your eating window. Pick a goal, then begin whenever you finish eating.
+            {t('fastingTimer.intro')}
           </p>
 
           <div className="flex flex-wrap gap-1.5">
@@ -136,7 +138,7 @@ export function FastingTimer() {
           </div>
 
           <Button onClick={handleStart} className="self-start">
-            <ClockIcon width={16} height={16} /> Start fast
+            <ClockIcon width={16} height={16} /> {t('fastingTimer.startFast')}
           </Button>
         </>
       )}

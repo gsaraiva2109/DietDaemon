@@ -1,6 +1,7 @@
 // Small presentation helpers for macros, dates, and parser provenance.
 
 import type { Macros, MacroKey, ParserTier } from './types'
+import type { TFunction } from 'i18next'
 
 export function round(n: number, places = 0): number {
   const f = 10 ** places
@@ -38,13 +39,8 @@ export function formatGrams(n: number): string {
   return `${round(n)}g`
 }
 
-const TIER_LABEL: Record<ParserTier, string> = {
-  0: 'Exact',
-  1: 'Matched',
-  2: 'AI',
-}
-export function tierLabel(t: ParserTier): string {
-  return TIER_LABEL[t] ?? 'Unknown'
+export function tierLabel(tier: ParserTier, t: TFunction): string {
+  return t(`history.tier${({ 0: 'Exact', 1: 'Matched', 2: 'AI' } as const)[tier] ?? 'Unknown'}`)
 }
 
 export function confidenceLabel(c: number): 'high' | 'medium' | 'low' {
@@ -65,18 +61,18 @@ export function confidenceColor(c: number): string {
   return 'text-red-500 dark:text-red-400'
 }
 
-export function relativeTime(iso: string): string {
+export function relativeTime(iso: string, t: TFunction, locale: string): string {
   const then = new Date(iso).getTime()
   const diffMin = Math.round((Date.now() - then) / 60000)
-  if (diffMin < 1) return 'just now'
-  if (diffMin < 60) return `${diffMin}m ago`
+  if (diffMin < 1) return t('common.justNow')
+  if (diffMin < 60) return t('common.minutesAgo', { count: diffMin })
   const h = Math.round(diffMin / 60)
-  if (h < 24) return `${h}h ago`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  if (h < 24) return t('common.hoursAgo', { count: h })
+  return new Date(iso).toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
-export function clockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+export function clockTime(iso: string, locale: string): string {
+  return new Date(iso).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })
 }
 
 /** Read a DESIGN.md macro color token off the document for inline SVG fills. */

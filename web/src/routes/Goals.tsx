@@ -4,6 +4,7 @@
 
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import {
   useProfile,
   useTargets,
@@ -34,6 +35,7 @@ function openWizard() {
 }
 
 export function Goals() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const profile = useProfile()
   const targets = useTargets()
@@ -77,7 +79,7 @@ export function Goals() {
   if (profile.isLoading) {
     return (
       <div>
-        <PageHeader eyebrow="Goals" title="Your plan" />
+        <PageHeader eyebrow={t('goals.eyebrow')} title={t('goals.title')} />
         <Spinner />
       </div>
     )
@@ -87,10 +89,10 @@ export function Goals() {
 
   return (
     <div>
-      <PageHeader eyebrow="Goals" title="Your plan">
+      <PageHeader eyebrow={t('goals.eyebrow')} title={t('goals.title')}>
         {prof && (
           <Button variant="ghost" onClick={openWizard}>
-            Edit profile
+            {t('goals.editProfile')}
           </Button>
         )}
       </PageHeader>
@@ -99,14 +101,14 @@ export function Goals() {
         {/* Current targets */}
         <Card className="p-5">
           <div className="mb-4 flex items-center justify-between">
-            <Eyebrow>Daily targets</Eyebrow>
+            <Eyebrow>{t('goals.dailyTargets')}</Eyebrow>
             {recommended && (
               <Button
                 variant="ghost"
                 onClick={() => recommended && setTargets.mutate(recommended)}
                 disabled={demo || setTargets.isPending}
               >
-                {setTargets.isPending ? 'Saving…' : 'Recalculate targets'}
+                {setTargets.isPending ? t('goals.saving') : t('goals.recalculateTargets')}
               </Button>
             )}
           </div>
@@ -117,7 +119,7 @@ export function Goals() {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
               {MACRO_KEYS.map((k) => (
                 <div key={k}>
-                  <div className="text-xs uppercase tracking-[0.1em] text-muted">{MACRO_META[k].label}</div>
+                  <div className="text-xs uppercase tracking-[0.1em] text-muted">{t(`common.macro.${k}`)}</div>
                   <div className="mt-1 flex items-baseline gap-1">
                     <span className="text-2xl font-bold text-ink tnum">
                       {formatNumber(targets.data![k])}
@@ -130,14 +132,14 @@ export function Goals() {
           ) : (
             <EmptyState
               icon={<GoalIcon width={28} height={28} />}
-              title="No targets set yet"
-              hint="Set up your profile to calculate a personalized calorie and macro plan."
+              title={t('goals.noTargetsTitle')}
+              hint={t('goals.noTargetsHint')}
             />
           )}
 
           {!hasTargets && !targets.isLoading && (
             <div className="mt-4">
-              <Button onClick={openWizard}>Set up your profile</Button>
+              <Button onClick={openWizard}>{t('goals.setupProfile')}</Button>
             </div>
           )}
         </Card>
@@ -149,11 +151,11 @@ export function Goals() {
           <Card className="p-5">
             <EmptyState
               icon={<GoalIcon width={28} height={28} />}
-              title="Tell us about yourself"
-              hint="Add your height, weight, age, and goal to see your energy budget."
+              title={t('goals.tellUsTitle')}
+              hint={t('goals.tellUsHint')}
             />
             <div className="mt-4">
-              <Button onClick={openWizard}>Set up your profile</Button>
+              <Button onClick={openWizard}>{t('goals.setupProfile')}</Button>
             </div>
           </Card>
         ) : null}

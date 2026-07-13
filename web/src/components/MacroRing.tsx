@@ -3,6 +3,7 @@
 // label everywhere it's used, never carrying meaning alone.
 
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { easeOut } from '@/lib/motion'
 import { AnimatedNumber } from './AnimatedNumber'
 import { progress, isOverTarget } from '@/lib/format'
@@ -32,12 +33,13 @@ export function MacroRing({
   thickness = 14,
   center = 'remaining',
 }: Props) {
+  const { t } = useTranslation()
   const r = (size - thickness) / 2
   const circ = 2 * Math.PI * r
   const p = progress(consumed, target)
   const over = isOverTarget(consumed, target)
   const centerValue = center === 'remaining' ? Math.max(0, target - consumed) : consumed
-  const centerLabel = center === 'remaining' ? (over ? 'over' : 'left') : 'eaten'
+  const centerLabel = center === 'remaining' ? (over ? t('macroRing.over') : t('macroRing.left')) : t('macroRing.eaten')
   const gid = `ring-${label}-${Math.round(size)}`
 
   return (
@@ -45,9 +47,13 @@ export function MacroRing({
       className="relative inline-grid place-items-center"
       style={{ width: size, height: size }}
       role="img"
-      aria-label={`${label}: ${Math.round(consumed)} of ${Math.round(target)} ${unit}, ${Math.round(
-        p * 100,
-      )} percent`}
+      aria-label={t('macroRing.ariaLabel', {
+        label,
+        consumed: Math.round(consumed),
+        target: Math.round(target),
+        unit,
+        percent: Math.round(p * 100),
+      })}
     >
       <svg width={size} height={size} className="-rotate-90">
         <defs>
