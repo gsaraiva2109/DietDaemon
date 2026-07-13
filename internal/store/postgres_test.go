@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -253,6 +254,44 @@ func TestPostgresDualDriverSmoke(t *testing.T) {
 			}
 			if gotRollup.Targets.Calories != 2000 {
 				t.Errorf("Targets.Calories = %f, want 2000", gotRollup.Targets.Calories)
+			}
+		})
+	}
+}
+
+func TestFoodImportFingerprintStore(t *testing.T) {
+	drivers := map[string]func(*testing.T) (*Store, func()){
+		"sqlite":   func(t *testing.T) (*Store, func()) { return tempDB(t) },
+		"postgres": func(t *testing.T) (*Store, func()) { return postgresDB(t) },
+	}
+
+	for name, factory := range drivers {
+		t.Run(name, func(t *testing.T) {
+			s, cleanup := factory(t)
+			defer cleanup()
+
+			var migrations int
+			if err := s.db.Get(&migrations, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "004_food_import_fingerprints.sql"); err != nil {
+				t.Fatalf("query migration: %v", err)
+			}
+			if migrations != 1 {
+				t.Fatalf("migration count = %d, want 1", migrations)
+			}
+
+			if _, err := s.GetFoodImportFingerprint(ctx(), "usda"); !errors.Is(err, types.ErrNotFound) {
+				t.Fatalf("empty fingerprint error = %v, want ErrNotFound", err)
+			}
+			if err := s.SetFoodImportFingerprint(ctx(), "usda", "first"); err != nil {
+				t.Fatalf("set first fingerprint: %v", err)
+			}
+			if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "first" {
+				t.Fatalf("get first fingerprint = (%q, %v)", got, err)
+			}
+			if err := s.SetFoodImportFingerprint(ctx(), "usda", "second"); err != nil {
+				t.Fatalf("update fingerprint: %v", err)
+			}
+			if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "second" {
+				t.Fatalf("get updated fingerprint = (%q, %v)", got, err)
 			}
 		})
 	}

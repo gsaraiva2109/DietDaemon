@@ -315,6 +315,8 @@ func run() error {
 	if cfg.FoodImportEnabled && len(cfg.FoodImportSources) > 0 {
 		var srcs []ports.BulkSource
 		filters := map[string]ports.BulkFilter{}
+		localPaths := foodimport.LocalPaths(cfg)
+		refresh := map[string]foodimport.SourceFactory{}
 		for _, name := range cfg.FoodImportSources {
 			src, filter, err := foodimport.BuildSource(name, cfg)
 			if err != nil {
@@ -322,8 +324,15 @@ func run() error {
 			}
 			srcs = append(srcs, src)
 			filters[src.Name()] = filter
+			if localPaths[src.Name()] != "" {
+				sourceName := name
+				refresh[src.Name()] = func() (ports.BulkSource, error) {
+					source, _, err := foodimport.BuildSource(sourceName, cfg)
+					return source, err
+				}
+			}
 		}
-		go foodimport.New(st, srcs, filters, cfg.FoodImportInterval, slog.Default()).Run(ctx)
+		go foodimport.NewWithLocalPaths(st, srcs, filters, cfg.FoodImportInterval, slog.Default(), localPaths, refresh).Run(ctx)
 		slog.Info("food import runner running", "sources", cfg.FoodImportSources, "interval", cfg.FoodImportInterval.String())
 	}
 
