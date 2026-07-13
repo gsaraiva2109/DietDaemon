@@ -1,15 +1,16 @@
 // Full food detail in a modal, fetched fresh by id. Shows the complete
 // per-100g breakdown, serving info, provenance, aliases, and a shortcut to log.
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useFood } from '@/lib/queries'
+import { useFood, useAddAlias, useDeleteAlias, useRemoveFromLibrary, useAddToLibrary } from '@/lib/queries'
+import { useDemo } from '@/lib/demo'
 import { Button, Pill, Spinner } from './ui'
 import { CloseIcon, LogIcon } from './icons'
 import { sourceLabel } from './FoodCard'
-import { MACRO_KEYS, type FoodAlias } from '@/lib/types'
+import { MACRO_KEYS } from '@/lib/types'
 import { formatNumber, round } from '@/lib/format'
 import { easeOut } from '@/lib/motion'
 
@@ -20,8 +21,15 @@ const scaleInDialog: Variants = {
 
 export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: () => void }) {
   const { t } = useTranslation()
+  const { demo } = useDemo()
   const food = useFood(foodID)
   const navigate = useNavigate()
+  const addAlias = useAddAlias(foodID)
+  const deleteAlias = useDeleteAlias(foodID)
+  const removeFromLibrary = useRemoveFromLibrary(foodID)
+  const addToLibrary = useAddToLibrary(foodID)
+  const [aliasValue, setAliasValue] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -37,6 +45,13 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
     if (!f) return
     navigate(`/log?text=${encodeURIComponent(f.name)}`)
     onClose()
+  }
+
+  function submitAlias() {
+    const v = aliasValue.trim()
+    if (!v || demo) return
+    addAlias.mutate(v)
+    setAliasValue('')
   }
 
   return (
@@ -122,22 +137,99 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                 )}
               </div>
 
-              {f.aliases && f.aliases.length > 0 && (
+              {f.in_library ? (
                 <div className="mt-4">
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                    {t('foodDetailModal.aliases')}
+                    {t('foodDetailModal.manageAliasesTitle')}
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {f.aliases.map((a: FoodAlias) => (
-                      <Pill key={a.alias} tone="neutral">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(f.aliases ?? []).length === 0 && (
+                      <span className="text-sm text-muted">{t('aliases.noAliases')}</span>
+                    )}
+                    {(f.aliases ?? []).map((a) => (
+                      <span
+                        key={a.alias}
+                        className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-2 py-0.5 pl-2.5 pr-1 text-xs font-medium text-ink"
+                      >
                         {a.alias}
-                      </Pill>
+                        {!demo && (
+                          <button
+                            onClick={() => deleteAlias.mutate(a.alias)}
+                            disabled={deleteAlias.isPending}
+                            aria-label={t('aliases.removeAlias', { alias: a.alias })}
+                            className="grid size-5 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent disabled:opacity-50"
+                          >
+                            <CloseIcon width={12} height={12} />
+                          </button>
+                        )}
+                      </span>
                     ))}
                   </div>
+
+                  {!demo && (
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        value={aliasValue}
+                        onChange={(e) => setAliasValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') submitAlias()
+                        }}
+                        placeholder={t('aliases.addPlaceholder')}
+                        aria-label={t('aliases.addAriaLabel', { food: f.name })}
+                        className="min-w-0 flex-1 rounded-full border border-line bg-bg px-3.5 py-2 text-sm text-ink outline-none transition focus:border-primary"
+                      />
+                      <Button
+                        onClick={submitAlias}
+                        disabled={!aliasValue.trim() || addAlias.isPending}
+                        className="px-4 py-2 text-sm"
+                      >
+                        {t('aliases.add')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
+              ) : (
+                <p className="mt-4 text-sm text-muted">{t('foodDetailModal.notInLibraryHint')}</p>
               )}
 
-              <div className="mt-6 flex justify-end">
+              <div className="mt-6 flex items-center justify-end gap-2">
+                {!f.in_library && !demo && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => addToLibrary.mutate()}
+                    disabled={addToLibrary.isPending}
+                  >
+                    {t('foodDetailModal.addToLibrary')}
+                  </Button>
+                )}
+                {f.in_library && !demo && (
+                  <>
+                    {confirmRemove ? (
+                      <span className="flex items-center gap-2 text-sm text-muted">
+                        {t('foodDetailModal.removeConfirmTitle')}
+                        <button
+                          onClick={() =>
+                            removeFromLibrary.mutate(undefined, { onSuccess: onClose })
+                          }
+                          disabled={removeFromLibrary.isPending}
+                          className="font-semibold text-accent hover:underline disabled:opacity-50"
+                        >
+                          {t('foodDetailModal.removeConfirmYes')}
+                        </button>
+                        <button
+                          onClick={() => setConfirmRemove(false)}
+                          className="font-medium text-ink hover:underline"
+                        >
+                          {t('foodDetailModal.removeConfirmNo')}
+                        </button>
+                      </span>
+                    ) : (
+                      <Button variant="ghost" onClick={() => setConfirmRemove(true)}>
+                        {t('foodDetailModal.removeFromLibrary')}
+                      </Button>
+                    )}
+                  </>
+                )}
                 <Button onClick={logit}>
                   <LogIcon width={16} height={16} /> {t('foodDetailModal.logThis')}
                 </Button>

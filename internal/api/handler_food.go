@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -88,13 +89,86 @@ func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID s
 	foodID := r.PathValue("foodID")
 	fd, err := h.store.GetFoodDetail(r.Context(), userID, foodID)
 	if err != nil {
-		h.writeErr(w, err)
-		return
+		if !errors.Is(err, types.ErrNotFound) {
+			h.writeErr(w, err)
+			return
+		}
+		// Not in this user's library — fall back to the global catalog so
+		// catalog-only foods (bulk-imported, never logged) are still openable.
+		match, matchErr := h.store.GetFood(r.Context(), foodID)
+		if matchErr != nil {
+			h.writeErr(w, matchErr)
+			return
+		}
+		fd = types.FoodDetail{
+			FoodID:      match.FoodID,
+			UserID:      userID,
+			Name:        match.Name,
+			Source:      match.Source,
+			Per100g:     match.Per100g,
+			Category:    match.Category,
+			Brand:       match.Brand,
+			Barcode:     match.Barcode,
+			ImageURL:    match.ImageURL,
+			ServingSize: match.ServingSize,
+			ServingUnit: match.ServingUnit,
+			InLibrary:   false,
+			QueryCount:  0,
+			LastUsed:    "",
+			Aliases:     []types.FoodAlias{},
+		}
 	}
 	if fd.Aliases == nil {
 		fd.Aliases = []types.FoodAlias{}
 	}
 	_ = json.NewEncoder(w).Encode(fd)
+}
+
+// handleSearchCatalog browses the full global food catalog, unscoped to the
+// user's personal library (unlike handleSearchFoods, q is optional here).
+func (h *Handler) handleSearchCatalog(w http.ResponseWriter, r *http.Request, userID string) {
+	q := r.URL.Query().Get("q")
+	source := r.URL.Query().Get("source")
+	limit := 20
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	offset := 0
+	if s := r.URL.Query().Get("offset"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	foods, err := h.store.SearchCatalog(r.Context(), userID, q, source, limit, offset)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if foods == nil {
+		foods = []types.FoodDetail{}
+	}
+	_ = json.NewEncoder(w).Encode(foods)
+}
+
+func (h *Handler) handleRemoveFromLibrary(w http.ResponseWriter, r *http.Request, userID string) {
+	foodID := r.PathValue("foodID")
+	if err := h.store.RemoveFromLibrary(r.Context(), userID, foodID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleAddToLibrary(w http.ResponseWriter, r *http.Request, userID string) {
+	foodID := r.PathValue("foodID")
+	if err := h.store.AddToLibrary(r.Context(), userID, foodID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "created"})
 }
 
 func (h *Handler) handleAddAlias(w http.ResponseWriter, r *http.Request, userID string) {

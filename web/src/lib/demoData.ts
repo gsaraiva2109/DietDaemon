@@ -81,6 +81,7 @@ function fd(name: string, source: string, p100g: Macros, cat = '', brand = ''): 
   return {
     food_id: `${source}:${name}`, name, source, per_100g: p100g, category: cat, brand, barcode: '',
     image_url: '', serving_size: 100, serving_unit: 'g', query_count: 3, last_used: hoursAgo(24),
+    in_library: true,
   }
 }
 

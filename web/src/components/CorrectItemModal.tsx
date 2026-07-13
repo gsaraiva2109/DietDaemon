@@ -2,14 +2,16 @@
 // ResolvedItem; correct targets a zero-based index, add appends. Keeps the
 // product's "honest about uncertainty" principle: fixing/adding is easy.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import type { Meal, MacroKey, ResolvedItem } from '@/lib/types'
+import type { Meal, MacroKey, ResolvedItem, FoodDetail, Macros } from '@/lib/types'
 import { MACRO_KEYS, MACRO_META } from '@/lib/types'
-import { useCorrectItem, useAddItem } from '@/lib/queries'
-import { Button } from './ui'
+import { useCorrectItem, useAddItem, useCatalogSearch } from '@/lib/queries'
+import { Button, Spinner } from './ui'
 import { CloseIcon } from './icons'
+import { sourceLabel } from './FoodCard'
+import { round } from '@/lib/format'
 
 interface Props {
   meal: Meal
@@ -37,8 +39,40 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
   const [grams, setGrams] = useState(base.Parsed.NormalizedGrams)
   const [macros, setMacros] = useState({ ...base.Macros })
 
+  const [showCatalog, setShowCatalog] = useState(false)
+  const [rawCatalogQuery, setRawCatalogQuery] = useState('')
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [preview, setPreview] = useState<FoodDetail | null>(null)
+  const catalog = useCatalogSearch(catalogQuery)
+
+  useEffect(() => {
+    const id = setTimeout(() => setCatalogQuery(rawCatalogQuery.trim()), 250)
+    return () => clearTimeout(id)
+  }, [rawCatalogQuery])
+
   function setMacro(key: MacroKey, v: number) {
     setMacros((m) => ({ ...m, [key]: v }))
+  }
+
+  function scaledMacros(f: FoodDetail): Macros {
+    const factor = grams / 100
+    return {
+      Calories: f.per_100g.Calories * factor,
+      Protein: f.per_100g.Protein * factor,
+      Carbs: f.per_100g.Carbs * factor,
+      Fat: f.per_100g.Fat * factor,
+      Fiber: f.per_100g.Fiber * factor,
+    }
+  }
+
+  function confirmReplace() {
+    if (!preview) return
+    setName(preview.name)
+    setMacros(scaledMacros(preview))
+    setPreview(null)
+    setShowCatalog(false)
+    setRawCatalogQuery('')
+    setCatalogQuery('')
   }
 
   function submit() {
@@ -94,6 +128,73 @@ export function CorrectItemModal({ meal, index, onClose }: Props) {
               className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none focus:border-primary"
             />
           </label>
+
+          <button
+            type="button"
+            onClick={() => setShowCatalog((v) => !v)}
+            className="mb-3 text-sm font-medium text-primary hover:underline"
+          >
+            {t('correctItemModal.searchCatalogToggle')}
+          </button>
+
+          {showCatalog && (
+            <div className="mb-4 rounded-lg border border-line bg-surface-2 p-3">
+              <input
+                value={rawCatalogQuery}
+                autoFocus
+                onChange={(e) => setRawCatalogQuery(e.target.value)}
+                placeholder={t('correctItemModal.catalogSearchPlaceholder')}
+                className="mb-2 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-primary"
+              />
+
+              {catalog.isLoading ? (
+                <Spinner label={t('foods.loadingLabel')} />
+              ) : !catalog.data?.length ? (
+                <p className="py-2 text-sm text-muted">{t('correctItemModal.catalogNoResults')}</p>
+              ) : (
+                <div className="max-h-40 space-y-1 overflow-y-auto">
+                  {catalog.data.map((r: FoodDetail) => (
+                    <button
+                      key={r.food_id}
+                      type="button"
+                      onClick={() => setPreview(r)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface"
+                    >
+                      <span className="min-w-0 truncate text-ink">{r.name}</span>
+                      <span className="shrink-0 text-xs text-muted">
+                        {sourceLabel(r.source, t)} · {round(r.per_100g.Calories)} kcal
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {preview && (
+                <div className="mt-3 rounded-lg border border-primary/30 bg-bg p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
+                    {t('correctItemModal.previewTitle')}
+                  </p>
+                  <p className="mb-2 font-semibold text-ink">{preview.name}</p>
+                  <div className="grid grid-cols-5 gap-2 text-xs">
+                    {MACRO_KEYS.map((k) => (
+                      <div key={k}>
+                        <p className="text-muted">{t(`common.macro.${k}`)}</p>
+                        <p className="font-semibold text-ink tnum">{round(scaledMacros(preview)[k])}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <Button variant="ghost" onClick={() => setPreview(null)} className="px-3 py-1.5 text-sm">
+                      {t('correctItemModal.cancelReplace')}
+                    </Button>
+                    <Button onClick={confirmReplace} className="px-3 py-1.5 text-sm">
+                      {t('correctItemModal.confirmReplace')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="mb-4 block">
             <span className="mb-1 block text-xs font-medium text-muted">{t('correctItemModal.gramsLabel')}</span>

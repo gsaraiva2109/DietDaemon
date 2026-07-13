@@ -270,6 +270,37 @@ export function useDeleteAlias(foodID: string) {
   })
 }
 
+export function useCatalogSearch(query: string, source = '', limit = 20) {
+  const { demo } = useDemo()
+  return useQuery({
+    // limit is in the key (not in the original spec) so "load more" actually
+    // refetches instead of hitting a stale cache entry.
+    queryKey: ['catalog', 'search', query, source, limit, demo],
+    queryFn: () =>
+      demo
+        ? demoFoodSearch(query)
+            .filter((f: FoodDetail) => !source || f.source === source)
+            .slice(0, limit)
+        : api.foods.searchCatalog(query, source, limit),
+  })
+}
+
+export function useRemoveFromLibrary(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.foods.removeFromLibrary(foodID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
+export function useAddToLibrary(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.foods.addToLibrary(foodID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Pending Aliases
 // ---------------------------------------------------------------------------
