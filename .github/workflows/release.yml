@@ -110,7 +110,11 @@ jobs:
           TAG="${GITHUB_REF_NAME}"          # e.g. v1.2.3
           SHORT_SHA="${GITHUB_SHA::7}"
           echo "version=${TAG#v}"           >> "$GITHUB_OUTPUT"  # 1.2.3
-          echo "tags=${{ env.IMAGE_NAME }}:${TAG},${{ env.IMAGE_NAME }}:latest,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          TAGS="${{ env.IMAGE_NAME }}:${TAG},${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}"
+          if [[ ! "$TAG" =~ -(alpha|beta|rc) ]]; then
+            TAGS+=",${{ env.IMAGE_NAME }}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v7.3.0
