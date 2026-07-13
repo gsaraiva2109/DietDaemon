@@ -131,11 +131,12 @@ export function createChatAdapters(getSessionID: () => string | null): ChatAdapt
           } else if (event === 'suggestions') {
             const payload = JSON.parse(data) as { options: string[] }
             latestSuggestions = payload.options ?? []
+            if (currentText) currentText.text = currentText.text.replace(/\n```suggestions\s*\n[\s\S]*?```\s*$/, '')
+            yield snapshot()
           } else if (event === 'error') {
             const payload = JSON.parse(data) as { message: string }
             throw new Error(payload.message)
           }
-          // "done" carries no payload of interest; the stream simply ends.
         }
       }
     },

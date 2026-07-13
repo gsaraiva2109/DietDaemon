@@ -38,6 +38,7 @@ BLUEPRINT.md
 graphify-out/cache
 AGENTS.md
 .codex/
+claudedocs/
 
 # Logs & cache
 .logs/
