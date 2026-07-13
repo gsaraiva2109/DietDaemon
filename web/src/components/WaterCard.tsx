@@ -3,6 +3,7 @@
 // Phase 4: a 404 collapses to the empty state, and quick-adds light it up once
 // the endpoint ships.
 
+import { useTranslation } from 'react-i18next'
 import { useWaterToday, useLogWater } from '@/lib/queries'
 import { Card, Eyebrow, Pill, Spinner } from '@/components/ui'
 import { AnimatedNumber } from '@/components/AnimatedNumber'
@@ -12,6 +13,7 @@ const QUICK_ADDS = [200, 500, 1000] // ml
 const BLUE = 'var(--color-protein)'
 
 export function WaterCard() {
+  const { t, i18n } = useTranslation()
   const water = useWaterToday()
   const logWater = useLogWater()
 
@@ -26,9 +28,9 @@ export function WaterCard() {
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2" style={{ color: BLUE }}>
           <DropletIcon width={18} height={18} />
-          <Eyebrow>Water</Eyebrow>
+          <Eyebrow>{t('waterCard.title')}</Eyebrow>
         </div>
-        {hit && <Pill tone="primary">Goal met</Pill>}
+        {hit && <Pill tone="primary">{t('waterCard.goalMet')}</Pill>}
       </header>
 
       {water.isLoading ? (
@@ -38,7 +40,7 @@ export function WaterCard() {
           onClick={() => water.refetch()}
           className="self-start text-sm font-medium text-accent hover:underline"
         >
-          Couldn't load, retry
+          {t('waterCard.retry')}
         </button>
       ) : (
         <>
@@ -47,7 +49,7 @@ export function WaterCard() {
               <AnimatedNumber value={todayMl} />
             </span>
             <span className="text-sm text-muted">
-              {goalMl > 0 ? `/ ${goalMl.toLocaleString()} ml` : 'ml today'}
+              {goalMl > 0 ? `/ ${goalMl.toLocaleString(i18n.language)} ml` : t('waterCard.mlToday')}
             </span>
           </div>
 
@@ -58,7 +60,7 @@ export function WaterCard() {
               aria-valuenow={pct}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="Water toward daily goal"
+              aria-label={t('waterCard.ariaGoal')}
             >
               <div
                 className="h-full rounded-full transition-[width] duration-500"
@@ -66,7 +68,7 @@ export function WaterCard() {
               />
             </div>
           ) : (
-            <p className="text-sm text-muted">No water logged today. Add a glass to start.</p>
+            <p className="text-sm text-muted">{t('waterCard.empty')}</p>
           )}
 
           <div className="mt-auto flex flex-wrap gap-2 pt-1">
@@ -83,7 +85,7 @@ export function WaterCard() {
           </div>
           {logWater.isError && (
             <p className="text-xs font-medium text-accent" role="alert">
-              Couldn't log water, try again.
+              {t('waterCard.logError')}
             </p>
           )}
         </>

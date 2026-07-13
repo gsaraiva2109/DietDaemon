@@ -3,11 +3,13 @@
 // or a Link button that begins the OIDC flow in link mode.
 
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { useProviders, useIdentities, useUnlinkIdentity } from '@/lib/queries'
 import { Button, Spinner } from './ui'
 
 export function LinkedAccounts() {
+  const { t } = useTranslation()
   const providers = useProviders()
   const identities = useIdentities()
   const unlink = useUnlinkIdentity()
@@ -15,7 +17,7 @@ export function LinkedAccounts() {
   const list = providers.data?.providers ?? []
   if (providers.isLoading || identities.isLoading) return <Spinner />
   if (list.length === 0) {
-    return <p className="text-sm text-muted">No sign-in providers are configured.</p>
+    return <p className="text-sm text-muted">{t('linkedAccounts.noProviders')}</p>
   }
 
   const linkedBy = new Map((identities.data ?? []).map((i) => [i.provider, i]))
@@ -23,9 +25,9 @@ export function LinkedAccounts() {
   async function onUnlink(id: string) {
     try {
       await unlink.mutateAsync(id)
-      toast.success('Account unlinked.')
+      toast.success(t('linkedAccounts.unlinkedToast'))
     } catch {
-      toast.error('Could not unlink. Try again.')
+      toast.error(t('linkedAccounts.unlinkFailed'))
     }
   }
 
@@ -38,7 +40,7 @@ export function LinkedAccounts() {
             <div className="min-w-0">
               <p className="text-sm font-medium text-ink">{p.name}</p>
               <p className="truncate text-xs text-muted">
-                {linked ? linked.email || 'Connected' : 'Not connected'}
+                {linked ? linked.email || t('linkedAccounts.connected') : t('linkedAccounts.notConnected')}
               </p>
             </div>
             {linked ? (
@@ -48,7 +50,7 @@ export function LinkedAccounts() {
                 disabled={unlink.isPending}
                 className="shrink-0"
               >
-                Unlink
+                {t('linkedAccounts.unlink')}
               </Button>
             ) : (
               <Button
@@ -56,7 +58,7 @@ export function LinkedAccounts() {
                 onClick={() => window.location.assign(api.auth.oidcStartUrl(p.id, true))}
                 className="shrink-0"
               >
-                Link
+                {t('linkedAccounts.link')}
               </Button>
             )}
           </li>

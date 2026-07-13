@@ -3,6 +3,7 @@
 // fetches the blob, object-URLs it, and revokes on unmount.
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { EmptyState, Eyebrow } from './ui'
 import { CameraIcon } from './icons'
 import { api } from '@/lib/api'
@@ -62,13 +63,14 @@ export function PhotoGrid({
   photos: ProgressPhoto[]
   onSelect?: (p: ProgressPhoto) => void
 }) {
+  const { t } = useTranslation()
   const groups = useMemo(() => groupByDate(photos), [photos])
 
   if (!photos.length) {
     return (
       <EmptyState
-        title="No progress photos yet"
-        hint="Upload a front, side, or back photo above to start your timeline."
+        title={t('photoGrid.emptyTitle')}
+        hint={t('photoGrid.emptyHint')}
         icon={<CameraIcon />}
       />
     )
@@ -82,24 +84,27 @@ export function PhotoGrid({
             <Eyebrow>{date}</Eyebrow>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {items.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onSelect?.(p)}
-                className="group relative aspect-square overflow-hidden rounded-lg border border-line bg-surface-2"
-                aria-label={`${p.view} photo, ${p.date}`}
-              >
-                <AuthedImage
-                  id={p.id}
-                  alt={`${p.view}, ${p.date}`}
-                  className="size-full object-cover transition group-hover:brightness-105"
-                />
-                <span className="absolute bottom-1 left-1 rounded-full bg-ink/60 px-2 py-0.5 text-[10px] font-medium capitalize text-surface">
-                  {p.view}
-                </span>
-              </button>
-            ))}
+            {items.map((p) => {
+              const viewLabel = t(`photoGrid.views.${p.view}`)
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onSelect?.(p)}
+                  className="group relative aspect-square overflow-hidden rounded-lg border border-line bg-surface-2"
+                  aria-label={t('photoGrid.photoAriaLabel', { view: viewLabel, date: p.date })}
+                >
+                  <AuthedImage
+                    id={p.id}
+                    alt={t('photoGrid.photoAlt', { view: viewLabel, date: p.date })}
+                    className="size-full object-cover transition group-hover:brightness-105"
+                  />
+                  <span className="absolute bottom-1 left-1 rounded-full bg-ink/60 px-2 py-0.5 text-[10px] font-medium capitalize text-surface">
+                    {viewLabel}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       ))}

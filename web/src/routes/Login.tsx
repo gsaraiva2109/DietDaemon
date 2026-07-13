@@ -4,6 +4,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useDemo, demoAvailable } from '@/lib/demo'
 import { useProviders, useMagicRequest } from '@/lib/queries'
@@ -16,6 +17,7 @@ import { MagicCodeEntry } from '@/components/MagicCodeEntry'
 import { Button, Field, FormError } from '@/components/ui'
 
 export function Login() {
+  const { t } = useTranslation()
   const { login, refresh } = useAuth()
   const { setDemo } = useDemo()
   const navigate = useNavigate()
@@ -52,9 +54,7 @@ export function Login() {
       if (err instanceof RateLimitError) {
         const n = err.retryAfter
         setError(
-          n
-            ? `Too many attempts. Try again in ${n} second${n === 1 ? '' : 's'}.`
-            : 'Too many attempts. Try again shortly.',
+          n ? t('login.tooManyAttemptsSeconds', { count: n }) : t('login.tooManyAttempts'),
         )
       } else {
         setError(AUTH_ERROR)
@@ -81,7 +81,7 @@ export function Login() {
       await refresh()
       navigate(next, { replace: true })
     } catch (err) {
-      if (!isWebAuthnCancel(err)) setError('Passkey sign-in failed. Try another method.')
+      if (!isWebAuthnCancel(err)) setError(t('login.passkeyFailed'))
     } finally {
       setBusy(false)
     }
@@ -90,7 +90,7 @@ export function Login() {
   async function emailMeCode() {
     const addr = email.trim().toLowerCase()
     if (!addr) {
-      setError('Enter your email first.')
+      setError(t('login.enterEmailFirst'))
       return
     }
     setError(null)
@@ -105,8 +105,8 @@ export function Login() {
   if (magicEmail) {
     return (
       <AuthLayout
-        title="Check your email"
-        subtitle="We sent a sign-in code. Enter it below, or use the link in the email."
+        title={t('login.checkEmailTitle')}
+        subtitle={t('login.checkEmailSubtitle')}
       >
         <MagicCodeEntry
           email={magicEmail}
@@ -132,14 +132,14 @@ export function Login() {
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in to your DietDaemon dashboard."
+      title={t('login.welcomeBackTitle')}
+      subtitle={t('login.welcomeBackSubtitle')}
       footer={
         canRegister && (
           <>
-            New here?{' '}
+            {t('login.newHere')}{' '}
             <Link to="/register" className="font-medium text-primary hover:underline">
-              Create an account
+              {t('login.createAccount')}
             </Link>
           </>
         )
@@ -149,17 +149,17 @@ export function Login() {
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
-              label="Email"
+              label={t('login.emailLabel')}
               type="email"
               autoComplete="email"
               autoFocus
               value={email}
               disabled={busy}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t('login.emailPlaceholder')}
             />
             <Field
-              label="Password"
+              label={t('login.passwordLabel')}
               type="password"
               autoComplete="current-password"
               value={password}
@@ -176,18 +176,18 @@ export function Login() {
                   onChange={(e) => setRemember(e.target.checked)}
                   className="size-4 rounded border-line accent-primary"
                 />
-                Keep me signed in
+                {t('login.keepSignedIn')}
               </label>
               <Link
                 to="/forgot-password"
                 className="text-sm font-medium text-primary hover:underline"
               >
-                Forgot password?
+                {t('login.forgotPassword')}
               </Link>
             </div>
             <FormError>{error}</FormError>
             <Button type="submit" disabled={busy || !email.trim() || !password}>
-              {busy ? 'Signing in…' : 'Sign in'}
+              {busy ? t('login.signingIn') : t('login.signIn')}
             </Button>
             <Button
               type="button"
@@ -195,19 +195,19 @@ export function Login() {
               onClick={emailMeCode}
               disabled={busy || magicRequest.isPending}
             >
-              {magicRequest.isPending ? 'Sending…' : 'Email me a sign-in code'}
+              {magicRequest.isPending ? t('login.sendingCode') : t('login.emailMeCode')}
             </Button>
           </form>
         )}
-        <ProviderButtons verb="Sign in" />
+        <ProviderButtons verb="signin" />
         {browserSupportsWebAuthn() && (
           <Button type="button" variant="ghost" onClick={signInWithPasskey} disabled={busy}>
-            Sign in with a passkey
+            {t('login.signInWithPasskey')}
           </Button>
         )}
         {demoAvailable() && (
           <Button type="button" variant="ghost" onClick={viewDemo} disabled={busy}>
-            View demo
+            {t('login.viewDemo')}
           </Button>
         )}
       </div>
@@ -225,6 +225,7 @@ export function MfaChallenge({
   onVerified: () => void
   onBack: () => void
 }) {
+  const { t } = useTranslation()
   const { verifyTotp, verifyMfaPasskey, verifyMfaEmail } = useAuth()
   const [code, setCode] = useState('')
   const [recovery, setRecovery] = useState(false)
@@ -247,9 +248,7 @@ export function MfaChallenge({
       onVerified()
     } catch (err) {
       setError(
-        err instanceof RateLimitError
-          ? 'Too many attempts. Try again shortly.'
-          : 'That code did not match. Try again.',
+        err instanceof RateLimitError ? t('login.tooManyAttempts') : t('login.codeMismatch'),
       )
     } finally {
       setBusy(false)
@@ -263,7 +262,7 @@ export function MfaChallenge({
       await verifyMfaPasskey(challengeToken)
       onVerified()
     } catch (err) {
-      if (!isWebAuthnCancel(err)) setError('Passkey verification failed. Try another method.')
+      if (!isWebAuthnCancel(err)) setError(t('login.passkeyVerifyFailed'))
     } finally {
       setBusy(false)
     }
@@ -277,7 +276,7 @@ export function MfaChallenge({
       setEmailOtp('sent')
       setCode('')
     } catch {
-      setError('Could not send code. Try another method.')
+      setError(t('login.sendCodeFailed'))
     } finally {
       setBusy(false)
     }
@@ -287,11 +286,11 @@ export function MfaChallenge({
   if (emailOtp === 'entering' || (emailOtp === 'sent')) {
     return (
       <AuthLayout
-        title="Email verification"
-        subtitle="Enter the 6-digit code we just sent to your verified email address."
+        title={t('login.emailVerificationTitle')}
+        subtitle={t('login.emailVerificationSubtitle')}
         footer={
           <button type="button" onClick={onBack} className="font-medium text-primary hover:underline">
-            Back to sign in
+            {t('login.backToSignIn')}
           </button>
         }
       >
@@ -306,12 +305,12 @@ export function MfaChallenge({
             }}
             disabled={busy}
           >
-            {emailOtp === 'sent' ? 'Enter the code →' : 'Resend code'}
+            {emailOtp === 'sent' ? t('login.enterCode') : t('login.resendCode')}
           </Button>
           {emailOtp === 'entering' && (
             <>
               <Field
-                label="Verification code"
+                label={t('login.verificationCodeLabel')}
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 autoFocus
@@ -323,7 +322,7 @@ export function MfaChallenge({
               />
               <FormError>{error}</FormError>
               <Button type="submit" disabled={busy || code.length < 6}>
-                {busy ? 'Verifying…' : 'Verify'}
+                {busy ? t('login.verifying') : t('login.verify')}
               </Button>
             </>
           )}
@@ -332,7 +331,7 @@ export function MfaChallenge({
             onClick={() => setEmailOtp(null)}
             className="text-sm font-medium text-muted hover:text-ink"
           >
-            Back to two-factor options
+            {t('login.backToTwoFactor')}
           </button>
         </form>
       </AuthLayout>
@@ -341,21 +340,19 @@ export function MfaChallenge({
 
   return (
     <AuthLayout
-      title="Two-factor verification"
+      title={t('login.twoFactorTitle')}
       subtitle={
-        recovery
-          ? 'Enter one of your recovery codes.'
-          : 'Enter the 6-digit code from your authenticator app.'
+        recovery ? t('login.recoveryCodeSubtitle') : t('login.authenticatorSubtitle')
       }
       footer={
         <button type="button" onClick={onBack} className="font-medium text-primary hover:underline">
-          Back to sign in
+          {t('login.backToSignIn')}
         </button>
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field
-          label={recovery ? 'Recovery code' : 'Authentication code'}
+          label={recovery ? t('login.recoveryCodeLabel') : t('login.authCodeLabel')}
           inputMode={recovery ? 'text' : 'numeric'}
           autoComplete="one-time-code"
           autoFocus
@@ -369,7 +366,7 @@ export function MfaChallenge({
         />
         <FormError>{error}</FormError>
         <Button type="submit" disabled={busy || !code.trim()}>
-          {busy ? 'Verifying…' : 'Verify'}
+          {busy ? t('login.verifying') : t('login.verify')}
         </Button>
         <button
           type="button"
@@ -380,16 +377,16 @@ export function MfaChallenge({
           }}
           className="text-sm font-medium text-muted hover:text-ink"
         >
-          {recovery ? 'Use authenticator code instead' : 'Use a recovery code instead'}
+          {recovery ? t('login.useAuthenticatorInstead') : t('login.useRecoveryInstead')}
         </button>
         <hr className="border-line" />
         {browserSupportsWebAuthn() && (
           <Button type="button" variant="ghost" onClick={usePasskey} disabled={busy}>
-            Use a passkey instead
+            {t('login.usePasskeyInstead')}
           </Button>
         )}
         <Button type="button" variant="ghost" onClick={sendEmailCode} disabled={busy}>
-          Email me a code
+          {t('login.emailMeACode')}
         </Button>
       </form>
     </AuthLayout>

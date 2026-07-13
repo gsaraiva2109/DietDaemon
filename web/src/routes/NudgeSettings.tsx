@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useNudgeRules, useSetNudgeRule, useResetNudgeRule } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -19,27 +20,30 @@ import { stagger, fadeUp } from '@/lib/motion'
 // rule "group" (macro rules; health rules further split by Domain; digest).
 // Fields not listed here (Message, ID, MaxGapHours — currently unused by the
 // scheduler) stay hidden rather than offering controls that do nothing.
-const EDITABLE_FIELDS: Record<string, { key: string; label: string; min?: number; max?: number; step?: number }[]> = {
+// labelKey is looked up under nudgeSettings.fields.<labelKey> at render time
+// (this object is module scope, outside any component, so it can't call
+// useTranslation() itself).
+const EDITABLE_FIELDS: Record<string, { key: string; labelKey: string; min?: number; max?: number; step?: number }[]> = {
   macro: [
-    { key: 'AfterHour', label: 'After hour', min: 0, max: 23 },
-    { key: 'MinFraction', label: 'Min fraction met', min: 0, max: 1, step: 0.05 },
+    { key: 'AfterHour', labelKey: 'afterHour', min: 0, max: 23 },
+    { key: 'MinFraction', labelKey: 'minFractionMet', min: 0, max: 1, step: 0.05 },
   ],
   water: [
-    { key: 'CheckHour', label: 'Check hour', min: 0, max: 23 },
-    { key: 'MinDailyAmount', label: 'Min daily amount (ml)', min: 0, step: 50 },
+    { key: 'CheckHour', labelKey: 'checkHour', min: 0, max: 23 },
+    { key: 'MinDailyAmount', labelKey: 'minDailyAmount', min: 0, step: 50 },
   ],
   workout: [
-    { key: 'CheckHour', label: 'Check hour', min: 0, max: 23 },
-    { key: 'MaxGapDays', label: 'Max gap (days)', min: 1, max: 14 },
+    { key: 'CheckHour', labelKey: 'checkHour', min: 0, max: 23 },
+    { key: 'MaxGapDays', labelKey: 'maxGapDays', min: 1, max: 14 },
   ],
-  sleep: [{ key: 'CheckHour', label: 'Check hour', min: 0, max: 23 }],
+  sleep: [{ key: 'CheckHour', labelKey: 'checkHour', min: 0, max: 23 }],
   fasting: [],
-  digest: [{ key: 'CheckHour', label: 'Check hour', min: 0, max: 23 }],
+  digest: [{ key: 'CheckHour', labelKey: 'checkHour', min: 0, max: 23 }],
   'weekly-budget': [
-    { key: 'CheckHour', label: 'Check hour', min: 0, max: 23 },
-    { key: 'WeeklyTargetOverride', label: 'Weekly target override', min: 0, step: 50 },
-    { key: 'ClampFloorPct', label: 'Clamp floor (%)', min: 0.1, max: 1.5, step: 0.05 },
-    { key: 'ClampCeilPct', label: 'Clamp ceiling (%)', min: 0.1, max: 2.0, step: 0.05 },
+    { key: 'CheckHour', labelKey: 'checkHour', min: 0, max: 23 },
+    { key: 'WeeklyTargetOverride', labelKey: 'weeklyTargetOverride', min: 0, step: 50 },
+    { key: 'ClampFloorPct', labelKey: 'clampFloorPct', min: 0.1, max: 1.5, step: 0.05 },
+    { key: 'ClampCeilPct', labelKey: 'clampCeilPct', min: 0.1, max: 2.0, step: 0.05 },
   ],
   'smart-meal': [],
 }
@@ -52,6 +56,7 @@ function titleFromID(id: string): string {
 }
 
 export function NudgeSettings() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const { data, isLoading } = useNudgeRules()
 
@@ -68,32 +73,32 @@ export function NudgeSettings() {
         to="/settings"
         className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink"
       >
-        <ChevronLeft width={18} height={18} /> Settings
+        <ChevronLeft width={18} height={18} /> {t('nav.settings')}
       </Link>
 
-      <PageHeader eyebrow="Settings" title="Nudges" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('nudgeSettings.title')} />
 
       {demo && (
         <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-muted">
-          Nudge rules are read only here.
+          {t('nudgeSettings.readOnly')}
         </p>
       )}
 
       {isLoading ? (
-        <Spinner label="Loading nudge rules" />
+        <Spinner label={t('nudgeSettings.loading')} />
       ) : !rules.length ? (
         <EmptyState
           icon={<GoalIcon width={28} height={28} />}
-          title="No nudge rules found"
-          hint="Nudge rules ship with sensible defaults and appear here once the scheduler is configured."
+          title={t('nudgeSettings.emptyTitle')}
+          hint={t('nudgeSettings.emptyHint')}
         />
       ) : (
         <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
-          <RuleGroup title="Macro nudges" rules={macro} demo={demo} />
-          <RuleGroup title="Health nudges" rules={health} demo={demo} />
-          <RuleGroup title="Weekly budget" rules={weeklyBudget} demo={demo} />
-          <RuleGroup title="Smart meal reminders" rules={smartMeal} demo={demo} />
-          <RuleGroup title="Weekly digest" rules={digest} demo={demo} />
+          <RuleGroup title={t('nudgeSettings.groups.macro')} rules={macro} demo={demo} />
+          <RuleGroup title={t('nudgeSettings.groups.health')} rules={health} demo={demo} />
+          <RuleGroup title={t('nudgeSettings.groups.weeklyBudget')} rules={weeklyBudget} demo={demo} />
+          <RuleGroup title={t('nudgeSettings.groups.smartMeal')} rules={smartMeal} demo={demo} />
+          <RuleGroup title={t('nudgeSettings.groups.digest')} rules={digest} demo={demo} />
         </motion.div>
       )}
     </div>
@@ -117,6 +122,7 @@ function RuleGroup({ title, rules, demo }: { title: string; rules: NudgeRuleView
 }
 
 function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
+  const { t } = useTranslation()
   const setRule = useSetNudgeRule()
   const resetRule = useResetNudgeRule()
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
@@ -162,7 +168,7 @@ function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
           checked={view.enabled}
           onChange={toggle}
           disabled={demo || setRule.isPending}
-          label={`Enable ${titleFromID(view.rule_id)}`}
+          label={t('nudgeSettings.enableRule', { rule: titleFromID(view.rule_id) })}
         />
       </div>
 
@@ -171,7 +177,7 @@ function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
           {fields.map((f) => (
             <label key={f.key} className="block">
               <span className="mb-1 block text-xs uppercase tracking-[0.1em] text-muted">
-                {f.label}
+                {t(`nudgeSettings.fields.${f.labelKey}`)}
               </span>
               <input
                 type="number"
@@ -197,7 +203,7 @@ function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
               onClick={save}
               disabled={!dirty || setRule.isPending}
             >
-              {setRule.isPending ? 'Saving…' : 'Save'}
+              {setRule.isPending ? t('nudgeSettings.saving') : t('nudgeSettings.save')}
             </Button>
           )}
           <Button
@@ -206,7 +212,7 @@ function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
             onClick={reset}
             disabled={resetRule.isPending}
           >
-            Reset to default
+            {t('nudgeSettings.resetToDefault')}
           </Button>
         </div>
       )}

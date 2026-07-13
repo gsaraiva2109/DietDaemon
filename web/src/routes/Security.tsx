@@ -5,6 +5,7 @@
 import { useState, type SubmitEvent } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import {
   useApiKeys,
   useCreateApiKey,
@@ -27,11 +28,12 @@ import { scaleIn } from '@/lib/motion'
 import type { NewApiKey } from '@/lib/types'
 
 export function Security() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
 
   return (
     <div>
-      <PageHeader eyebrow="Settings" title="Security" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('security.title')} />
       <TwoFactorCard demo={demo} />
       <PasskeysCard demo={demo} />
       <LinkedAccountsCard demo={demo} />
@@ -43,6 +45,7 @@ export function Security() {
 }
 
 function ChangeEmailCard({ demo }: { demo: boolean }) {
+  const { t } = useTranslation()
   const { user, refresh } = useAuth()
   const change = useChangeEmail()
   const [email, setEmail] = useState('')
@@ -53,42 +56,43 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
     setError(null)
     const next = email.trim().toLowerCase()
     if (!next || next === user?.email) {
-      setError('Enter a new email address.')
+      setError(t('security.emailEnterNew'))
       return
     }
     try {
       await change.mutateAsync(next)
       await refresh()
-      toast.success('Verification sent to your new address.')
+      toast.success(t('security.emailVerificationSent'))
       setEmail('')
     } catch {
-      setError('Could not change your email. Try again.')
+      setError(t('security.emailChangeFailed'))
     }
   }
 
   return (
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">Email address</h2>
-        {demo && <Pill tone="muted">read only</Pill>}
+        <h2 className="font-semibold text-ink">{t('security.emailAddress')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Current: <span className="font-medium text-ink">{user?.email ?? 'n/a'}</span>. Changing it
-        requires verifying the new address.
+        {t('security.emailCurrentLabel')}{' '}
+        <span className="font-medium text-ink">{user?.email ?? t('security.notAvailable')}</span>.{' '}
+        {t('security.emailChangeNote')}
       </p>
       <form onSubmit={onSubmit} className="flex max-w-sm flex-col gap-3">
         <Field
-          label="New email"
+          label={t('security.newEmailLabel')}
           type="email"
           autoComplete="email"
           value={email}
           disabled={demo || change.isPending}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
+          placeholder={t('security.emailPlaceholder')}
           error={error ?? undefined}
         />
         <Button type="submit" disabled={demo || change.isPending || !email.trim()} className="self-start">
-          {change.isPending ? 'Saving…' : 'Change email'}
+          {change.isPending ? t('security.saving') : t('security.changeEmailButton')}
         </Button>
       </form>
     </Card>
@@ -96,17 +100,18 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
 }
 
 function PasskeysCard({ demo }: { demo: boolean }) {
+  const { t } = useTranslation()
   return (
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">Passkeys</h2>
-        {demo && <Pill tone="muted">read only</Pill>}
+        <h2 className="font-semibold text-ink">{t('security.passkeysTitle')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Sign in with Face ID, Touch ID, or a security key, no password needed.
+        {t('security.passkeysDesc')}
       </p>
       {demo ? (
-        <p className="text-sm text-muted">Connect a real backend to manage passkeys.</p>
+        <p className="text-sm text-muted">{t('security.passkeysDemoNote')}</p>
       ) : (
         <PasskeyManager />
       )}
@@ -115,17 +120,18 @@ function PasskeysCard({ demo }: { demo: boolean }) {
 }
 
 function LinkedAccountsCard({ demo }: { demo: boolean }) {
+  const { t } = useTranslation()
   return (
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">Linked accounts</h2>
-        {demo && <Pill tone="muted">read only</Pill>}
+        <h2 className="font-semibold text-ink">{t('security.linkedAccountsTitle')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Connect a provider to sign in without a password.
+        {t('security.linkedAccountsDesc')}
       </p>
       {demo ? (
-        <p className="text-sm text-muted">Connect a real backend to manage linked accounts.</p>
+        <p className="text-sm text-muted">{t('security.linkedAccountsDemoNote')}</p>
       ) : (
         <LinkedAccounts />
       )}
@@ -134,6 +140,7 @@ function LinkedAccountsCard({ demo }: { demo: boolean }) {
 }
 
 function TwoFactorCard({ demo }: { demo: boolean }) {
+  const { t } = useTranslation()
   const { user, refresh } = useAuth()
   const disable = useTotpDisable()
   const regen = useRegenerateRecovery()
@@ -145,16 +152,16 @@ function TwoFactorCard({ demo }: { demo: boolean }) {
     setEnrolling(false)
     setRecovery(null)
     await refresh()
-    toast.success('Two-factor authentication enabled.')
+    toast.success(t('security.twoFactorEnabledToast'))
   }
 
   async function onDisable() {
     try {
       await disable.mutateAsync()
       await refresh()
-      toast.success('Two-factor authentication disabled.')
+      toast.success(t('security.twoFactorDisabledToast'))
     } catch {
-      toast.error('Could not disable two-factor. Try again.')
+      toast.error(t('security.twoFactorDisableFailed'))
     }
   }
 
@@ -163,26 +170,26 @@ function TwoFactorCard({ demo }: { demo: boolean }) {
       const res = await regen.mutateAsync()
       setRecovery(res.recovery_codes)
     } catch {
-      toast.error('Could not regenerate recovery codes.')
+      toast.error(t('security.recoveryRegenFailed'))
     }
   }
 
   return (
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">Two-factor authentication</h2>
+        <h2 className="font-semibold text-ink">{t('security.twoFactorTitle')}</h2>
         {demo ? (
-          <Pill tone="muted">read only</Pill>
+          <Pill tone="muted">{t('security.readOnly')}</Pill>
         ) : (
-          <Pill tone={enabled ? 'primary' : 'muted'}>{enabled ? 'On' : 'Off'}</Pill>
+          <Pill tone={enabled ? 'primary' : 'muted'}>{enabled ? t('security.twoFactorOn') : t('security.twoFactorOff')}</Pill>
         )}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Require a time-based code from your authenticator app at sign-in.
+        {t('security.twoFactorDesc')}
       </p>
 
       {demo ? (
-        <p className="text-sm text-muted">Connect a real backend to manage two-factor.</p>
+        <p className="text-sm text-muted">{t('security.twoFactorDemoNote')}</p>
       ) : enrolling ? (
         <TotpEnroll onComplete={onEnrolled} onCancel={() => setEnrolling(false)} />
       ) : recovery ? (
@@ -190,20 +197,21 @@ function TwoFactorCard({ demo }: { demo: boolean }) {
       ) : enabled ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="ghost" onClick={onRegenerate} disabled={regen.isPending}>
-            {regen.isPending ? 'Generating…' : 'Regenerate recovery codes'}
+            {regen.isPending ? t('security.generating') : t('security.regenerateRecoveryCodes')}
           </Button>
           <Button variant="ghost" onClick={onDisable} disabled={disable.isPending}>
-            {disable.isPending ? 'Disabling…' : 'Disable two-factor'}
+            {disable.isPending ? t('security.disabling') : t('security.disableTwoFactor')}
           </Button>
         </div>
       ) : (
-        <Button onClick={() => setEnrolling(true)}>Enable two-factor</Button>
+        <Button onClick={() => setEnrolling(true)}>{t('security.enableTwoFactor')}</Button>
       )}
     </Card>
   )
 }
 
 function ApiKeysCard({ demo }: { demo: boolean }) {
+  const { t, i18n } = useTranslation()
   const keys = useApiKeys()
   const create = useCreateApiKey()
   const revoke = useRevokeApiKey()
@@ -221,9 +229,9 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
   async function copyKey(value: string) {
     try {
       await navigator.clipboard.writeText(value)
-      toast.success('API key copied to clipboard.')
+      toast.success(t('security.copyKeySuccess'))
     } catch {
-      toast.error('Could not copy, select and copy it manually.')
+      toast.error(t('security.copyKeyFailed'))
     }
   }
 
@@ -233,11 +241,11 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
   return (
     <Card className="mb-5 p-5">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">API keys</h2>
-        {demo && <Pill tone="muted">read only</Pill>}
+        <h2 className="font-semibold text-ink">{t('security.apiKeysTitle')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
       </div>
       <p className="mb-4 text-sm text-muted">
-        Machine keys for scripts and integrations. Send as{' '}
+        {t('security.apiKeysDesc')}{' '}
         <code className="rounded bg-surface-2 px-1 tnum">Authorization: Bearer ddk_…</code>
       </p>
 
@@ -249,21 +257,21 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
           className="mb-4 rounded-xl border border-primary/40 bg-primary-soft/50 p-4"
         >
           <p className="text-sm font-medium text-ink">
-            Copy your new key now, it won't be shown again.
+            {t('security.apiKeyCopyNowNote')}
           </p>
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink tnum">
               {fresh.key}
             </code>
             <Button type="button" onClick={() => copyKey(fresh.key)} className="shrink-0">
-              <CopyIcon width={16} height={16} /> Copy
+              <CopyIcon width={16} height={16} /> {t('security.copy')}
             </Button>
           </div>
           <button
             onClick={() => setFresh(null)}
             className="mt-3 text-xs font-medium text-muted hover:text-ink"
           >
-            I've saved it, dismiss
+            {t('security.dismissSavedKey')}
           </button>
         </motion.div>
       )}
@@ -273,18 +281,18 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
           value={label}
           disabled={demo || create.isPending}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="Key label (e.g. “Home server”)"
-          aria-label="API key label"
+          placeholder={t('security.keyLabelPlaceholder')}
+          aria-label={t('security.apiKeyLabelAria')}
         />
         <Button type="submit" disabled={demo || create.isPending || !label.trim()} className="shrink-0">
-          {create.isPending ? 'Creating…' : 'Create key'}
+          {create.isPending ? t('security.creating') : t('security.createKeyButton')}
         </Button>
       </form>
 
       {keys.isLoading ? (
         <Spinner />
       ) : active.length === 0 ? (
-        <p className="text-sm text-muted">No API keys yet.</p>
+        <p className="text-sm text-muted">{t('security.noApiKeysYet')}</p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {active.map((k) => (
@@ -292,15 +300,15 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-ink">{k.label}</p>
                 <p className="text-xs text-muted">
-                  Created {new Date(k.created_at).toLocaleDateString()}
-                  {k.last_used_at && ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`}
+                  {t('security.createdOn')} {new Date(k.created_at).toLocaleDateString(i18n.language)}
+                  {k.last_used_at && ` · ${t('security.lastUsedOn')} ${new Date(k.last_used_at).toLocaleDateString(i18n.language)}`}
                 </p>
               </div>
               <button
                 onClick={() => revoke.mutate(k.id)}
                 disabled={revoke.isPending}
                 className="grid size-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-accent disabled:opacity-50"
-                aria-label={`Revoke ${k.label}`}
+                aria-label={t('security.revokeAria', { label: k.label })}
               >
                 <TrashIcon width={18} height={18} />
               </button>
@@ -313,6 +321,7 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
 }
 
 function ChangePasswordCard({ demo }: { demo: boolean }) {
+  const { t } = useTranslation()
   const change = useChangePassword()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -323,33 +332,33 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
     e.preventDefault()
     setError(null)
     if (next !== confirm) {
-      setError('New passwords do not match.')
+      setError(t('security.passwordsMismatch'))
       return
     }
     if (next.length < 8) {
-      setError('Use 8 or more characters.')
+      setError(t('security.newPasswordHint'))
       return
     }
     try {
       await change.mutateAsync({ current, next })
-      toast.success('Password changed.')
+      toast.success(t('security.passwordChanged'))
       setCurrent('')
       setNext('')
       setConfirm('')
     } catch {
-      setError('Could not change password. Check your current password.')
+      setError(t('security.passwordChangeFailed'))
     }
   }
 
   return (
     <Card className="p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-semibold text-ink">Change password</h2>
-        {demo && <Pill tone="muted">read only</Pill>}
+        <h2 className="font-semibold text-ink">{t('security.changePasswordTitle')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
       </div>
       <form onSubmit={onSubmit} className="flex max-w-sm flex-col gap-4">
         <Field
-          label="Current password"
+          label={t('security.currentPasswordLabel')}
           type="password"
           autoComplete="current-password"
           value={current}
@@ -357,16 +366,16 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
           onChange={(e) => setCurrent(e.target.value)}
         />
         <Field
-          label="New password"
+          label={t('security.newPasswordLabel')}
           type="password"
           autoComplete="new-password"
           value={next}
           disabled={demo || change.isPending}
           onChange={(e) => setNext(e.target.value)}
-          hint="Use 8 or more characters."
+          hint={t('security.newPasswordHint')}
         />
         <Field
-          label="Confirm new password"
+          label={t('security.confirmNewPasswordLabel')}
           type="password"
           autoComplete="new-password"
           value={confirm}
@@ -379,7 +388,7 @@ function ChangePasswordCard({ demo }: { demo: boolean }) {
           disabled={demo || change.isPending || !current || !next}
           className="self-start"
         >
-          {change.isPending ? 'Saving…' : 'Update password'}
+          {change.isPending ? t('security.saving') : t('security.updatePasswordButton')}
         </Button>
       </form>
     </Card>

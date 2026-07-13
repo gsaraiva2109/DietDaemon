@@ -5,12 +5,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import QRCode from 'qrcode'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useTotpEnroll, useTotpVerify } from '@/lib/queries'
 import { Button, Field, FormError, Spinner } from './ui'
 import { RecoveryCodes } from './RecoveryCodes'
 import { fadeUp } from '@/lib/motion'
 
 export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; onCancel: () => void }) {
+  const { t } = useTranslation()
   const enroll = useTotpEnroll()
   const verify = useTotpVerify()
   const [secret, setSecret] = useState('')
@@ -33,7 +35,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
           /* QR render failed, manual secret entry still works. */
         }
       })
-      .catch(() => alive && setError('Could not start enrollment. Try again.'))
+      .catch(() => alive && setError(t('totpEnroll.startFailed')))
     return () => {
       alive = false
     }
@@ -48,7 +50,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
       const res = await verify.mutateAsync(code.trim())
       setRecovery(res.recovery_codes)
     } catch {
-      setError('That code did not match. Check your authenticator and try again.')
+      setError(t('totpEnroll.verifyFailed'))
     }
   }
 
@@ -57,7 +59,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
   }
 
   if (enroll.isPending && !secret) {
-    return <Spinner label="Preparing your authenticator" />
+    return <Spinner label={t('totpEnroll.preparing')} />
   }
 
   if (error && !secret) {
@@ -65,7 +67,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
       <div className="flex flex-col gap-3">
         <FormError>{error}</FormError>
         <Button variant="ghost" onClick={onCancel} className="self-start">
-          Close
+          {t('totpEnroll.close')}
         </Button>
       </div>
     )
@@ -77,15 +79,15 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
         {qr && (
           <img
             src={qr}
-            alt="TOTP QR code"
+            alt={t('totpEnroll.qrAlt')}
             width={160}
             height={160}
             className="rounded-lg border border-line bg-white p-2"
           />
         )}
         <div className="text-sm text-muted">
-          <p>Scan this with your authenticator app (1Password, Authy, Google Authenticator).</p>
-          <p className="mt-2">Or enter this key manually:</p>
+          <p>{t('totpEnroll.scanInstructions')}</p>
+          <p className="mt-2">{t('totpEnroll.manualEntry')}</p>
           <code className="mt-1 block break-all rounded bg-surface-2 px-2 py-1 text-ink tnum">
             {secret}
           </code>
@@ -94,7 +96,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
 
       <form onSubmit={onVerify} className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <Field
-          label="6-digit code"
+          label={t('totpEnroll.codeLabel')}
           inputMode="numeric"
           autoComplete="one-time-code"
           maxLength={6}
@@ -105,10 +107,10 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
           className="sm:max-w-[10rem]"
         />
         <Button type="submit" disabled={verify.isPending || code.length < 6} className="shrink-0">
-          {verify.isPending ? 'Verifying…' : 'Verify & enable'}
+          {verify.isPending ? t('totpEnroll.verifying') : t('totpEnroll.verifyAndEnable')}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel} className="shrink-0">
-          Cancel
+          {t('totpEnroll.cancel')}
         </Button>
       </form>
       <FormError>{error}</FormError>

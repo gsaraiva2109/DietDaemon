@@ -3,9 +3,11 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useToday, useSetTargets } from '@/lib/queries'
 import { useAuth } from '@/lib/auth'
 import { useDemo } from '@/lib/demo'
+import { languages } from '@/lib/i18n'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, Pill, Spinner } from '@/components/ui'
 import { ExportModal } from '@/components/ExportModal'
@@ -21,6 +23,7 @@ import {
   SparkleIcon,
   ClockIcon,
   TrashIcon,
+  GlobeIcon,
 } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
@@ -29,6 +32,7 @@ const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 export function Settings() {
   const today = useToday()
   const setTargets = useSetTargets()
+  const { i18n, t } = useTranslation()
   const { logout } = useAuth()
   const { demo, setDemo } = useDemo()
   const navigate = useNavigate()
@@ -62,12 +66,12 @@ export function Settings() {
 
   return (
     <div>
-      <PageHeader eyebrow="Settings" title="Preferences" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('settings.preferencesTitle')} />
 
       <Card className="mb-5 p-5">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-semibold text-ink">Daily targets</h2>
-          {demo && <Pill tone="muted">read only</Pill>}
+          <h2 className="font-semibold text-ink">{t('settings.dailyTargetsTitle')}</h2>
+          {demo && <Pill tone="muted">{t('settings.readOnly')}</Pill>}
         </div>
 
         {today.isLoading ? (
@@ -78,7 +82,7 @@ export function Settings() {
               {MACRO_KEYS.map((k) => (
                 <label key={k} className="block">
                   <span className="mb-1 block text-xs uppercase tracking-[0.1em] text-muted">
-                    {MACRO_META[k].label}
+                    {t(`common.macro.${k}`)}
                   </span>
                   <div className="flex items-baseline gap-1">
                     <input
@@ -100,58 +104,87 @@ export function Settings() {
                 onClick={() => setTargets.mutate(values)}
                 disabled={demo || setTargets.isPending}
               >
-                {setTargets.isPending ? 'Saving…' : 'Save targets'}
+                {setTargets.isPending ? t('settings.saving') : t('settings.saveTargets')}
               </Button>
               {setTargets.isSuccess && (
                 <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm font-medium text-primary">
-                  Saved.
+                  {t('settings.saved')}
                 </motion.span>
               )}
               {setTargets.isError && (
                 <span className="text-sm font-medium text-accent" role="alert">
-                  {setTargets.error instanceof Error ? setTargets.error.message : 'Failed to save'}
+                  {setTargets.error instanceof Error ? setTargets.error.message : t('settings.saveFailed')}
                 </span>
               )}
             </div>
             <p className="mt-3 text-xs text-muted">
-              Targets also accept the <code className="rounded bg-surface-2 px-1">/target</code> chat command.
+              {t('settings.targetsHintPrefix')} <code className="rounded bg-surface-2 px-1">/target</code> {t('settings.targetsHintSuffix')}
             </p>
           </>
         )}
       </Card>
 
+      <Card className="mb-5 p-2">
+        <div className="flex flex-wrap items-center gap-3 px-3 py-3">
+          <span className="text-muted"><GlobeIcon width={20} height={20} /></span>
+          <span className="flex-1">
+            <span className="block text-sm font-medium text-ink">{t('settings.language')}</span>
+            <span className="block text-xs text-muted">{t('settings.languageHint')}</span>
+          </span>
+          <div className="flex items-center gap-1 rounded-full border border-line bg-surface-2 p-1">
+            {languages.map(({ code, label }) => (
+              <button
+                key={code}
+                type="button"
+                title={label}
+                aria-label={label}
+                aria-pressed={i18n.resolvedLanguage === code}
+                onClick={() => i18n.changeLanguage(code)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                  i18n.resolvedLanguage === code
+                    ? 'bg-primary text-primary-ink'
+                    : 'text-muted hover:text-ink'
+                }`}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
       {/* Manage, links to the new feature surfaces. */}
       <Card className="mb-5 p-2">
-        <RowLink to="/settings/security" Icon={SettingsIcon} label="Security" hint="API keys & password" />
-        <RowLink to="/settings/link-bot" Icon={LinkIcon} label="Link Bot" hint="Connect Telegram, Discord, or Matrix" />
-        <RowLink to="/goals" Icon={GoalIcon} label="Body profile & goals" hint="TDEE, targets, onboarding" />
-        <RowLink to="/settings/aliases" Icon={FoodsIcon} label="Food aliases" hint="Manage learned names" />
+        <RowLink to="/settings/security" Icon={SettingsIcon} label={t('settings.securityLabel')} hint={t('settings.securityHint')} />
+        <RowLink to="/settings/link-bot" Icon={LinkIcon} label={t('settings.linkBotLabel')} hint={t('settings.linkBotHint')} />
+        <RowLink to="/goals" Icon={GoalIcon} label={t('settings.bodyGoalsLabel')} hint={t('settings.bodyGoalsHint')} />
+        <RowLink to="/settings/aliases" Icon={FoodsIcon} label={t('settings.foodAliasesLabel')} hint={t('settings.foodAliasesHint')} />
         <RowLink
           to="/settings/aliases/pending"
           Icon={CheckIcon}
-          label="Pending aliases"
-          hint="Confirm or reject near-miss matches"
+          label={t('settings.pendingAliasesLabel')}
+          hint={t('settings.pendingAliasesHint')}
         />
         <RowLink
           to="/settings/precedence"
           Icon={SparkleIcon}
-          label="Nutrition source order"
-          hint="Choose which source is tried first"
+          label={t('settings.precedenceLabel')}
+          hint={t('settings.precedenceHint')}
         />
-        <RowLink to="/settings/nudges" Icon={ClockIcon} label="Nudges" hint="Macro, health & digest reminders" />
-        <RowLink to="/settings/backup" Icon={ClockIcon} label="Backup" hint="Scheduled export to local disk or S3" />
-        <RowLink to="/settings/ai-key" Icon={SettingsIcon} label="AI API Key" hint="Bring your own LLM provider key" />
-        <RowLink to="/settings/assistant" Icon={SparkleIcon} label="Assistant" hint="Custom instructions for the chat assistant" />
-        <RowLink to="/settings/deleted-chats" Icon={TrashIcon} label="Recently deleted" hint="Restore chat conversations deleted in the last 30 days" />
-        <RowLink to="/settings/hevy-import" Icon={DownloadIcon} label="Hevy Import" hint="Import workouts from Hevy" />
+        <RowLink to="/settings/nudges" Icon={ClockIcon} label={t('settings.nudgesLabel')} hint={t('settings.nudgesHint')} />
+        <RowLink to="/settings/backup" Icon={ClockIcon} label={t('settings.backupLabel')} hint={t('settings.backupHint')} />
+        <RowLink to="/settings/ai-key" Icon={SettingsIcon} label={t('settings.aiKeyLabel')} hint={t('settings.aiKeyHint')} />
+        <RowLink to="/settings/assistant" Icon={SparkleIcon} label={t('settings.assistantLabel')} hint={t('settings.assistantHint')} />
+        <RowLink to="/settings/deleted-chats" Icon={TrashIcon} label={t('settings.deletedChatsLabel')} hint={t('settings.deletedChatsHint')} />
+        <RowLink to="/settings/hevy-import" Icon={DownloadIcon} label={t('settings.hevyImportLabel')} hint={t('settings.hevyImportHint')} />
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('dd:onboarding'))}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-surface-2"
         >
           <span className="text-muted"><BodyIcon width={20} height={20} /></span>
           <span className="flex-1">
-            <span className="block text-sm font-medium text-ink">Edit body profile</span>
-            <span className="block text-xs text-muted">Re-run the setup wizard</span>
+            <span className="block text-sm font-medium text-ink">{t('settings.editBodyProfileLabel')}</span>
+            <span className="block text-xs text-muted">{t('settings.editBodyProfileHint')}</span>
           </span>
           <ChevronRight width={18} height={18} className="text-muted" />
         </button>
@@ -161,20 +194,20 @@ export function Settings() {
         >
           <span className="text-muted"><DownloadIcon width={20} height={20} /></span>
           <span className="flex-1">
-            <span className="block text-sm font-medium text-ink">Export data</span>
-            <span className="block text-xs text-muted">Download meals or rollups as CSV / JSON</span>
+            <span className="block text-sm font-medium text-ink">{t('settings.exportDataLabel')}</span>
+            <span className="block text-xs text-muted">{t('settings.exportDataHint')}</span>
           </span>
           <ChevronRight width={18} height={18} className="text-muted" />
         </button>
       </Card>
 
       <Card className="p-5">
-        <h2 className="mb-1 font-semibold text-ink">Session</h2>
+        <h2 className="mb-1 font-semibold text-ink">{t('settings.sessionTitle')}</h2>
         <p className="mb-4 text-sm text-muted">
-          You're signed in with a secure server session. Sign out to end it on this device.
+          {t('settings.sessionDesc')}
         </p>
         <Button variant="ghost" onClick={signOut} disabled={signingOut}>
-          {signingOut ? 'Signing out…' : 'Sign out'}
+          {signingOut ? t('settings.signingOut') : t('settings.signOut')}
         </Button>
       </Card>
 

@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { useTranslation } from 'react-i18next'
 import { EmptyState } from './ui'
 import { cssVar } from '@/lib/format'
 import type { WeightTrend } from '@/lib/types'
@@ -29,6 +30,7 @@ export function WeightChart({
   trend: WeightTrend[]
   intake?: IntakePoint[]
 }) {
+  const { t } = useTranslation()
   const data = useMemo(() => {
     const kcalByDate = new Map<string, number>(
       (intake ?? []).map((p) => [p.date, p.calories]),
@@ -44,8 +46,8 @@ export function WeightChart({
   if (!data.length) {
     return (
       <EmptyState
-        title="No weight logged yet"
-        hint="Log a weigh-in above to start charting your trend."
+        title={t('weightChart.emptyTitle')}
+        hint={t('weightChart.emptyHint')}
       />
     )
   }
@@ -102,7 +104,7 @@ export function WeightChart({
               fill={calColor}
               fillOpacity={0.14}
               radius={[3, 3, 0, 0]}
-              name="Calories"
+              name={t('weightChart.calories')}
               isAnimationActive={false}
             />
           )}
@@ -114,7 +116,7 @@ export function WeightChart({
             strokeWidth={1}
             dot={{ r: 1.5, fill: 'var(--color-muted)' }}
             activeDot={{ r: 3 }}
-            name="Weight"
+            name={t('weightChart.weight')}
           />
           <Line
             yAxisId="kg"
@@ -123,7 +125,7 @@ export function WeightChart({
             stroke={primary}
             strokeWidth={2.5}
             dot={false}
-            name="Trend"
+            name={t('weightChart.trend')}
           />
         </ComposedChart>
       </ResponsiveContainer>

@@ -3,6 +3,7 @@
 
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useRange } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'
 import { MacroBar } from '@/components/MacroBar'
@@ -22,15 +23,16 @@ function isoDaysAgo(n: number): string {
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
 export function Summary() {
+  const { t, i18n } = useTranslation()
   const [days, setDays] = useState(7)
   const [exporting, setExporting] = useState(false)
   const range = useRange(isoDaysAgo(days - 1), isoDaysAgo(0))
 
-  const stats = useMemo(() => compute(range.data ?? []), [range.data])
+  const stats = useMemo(() => compute(range.data ?? [], i18n.language), [range.data, i18n.language])
 
   return (
     <div>
-      <PageHeader eyebrow="Summary" title="Your period">
+      <PageHeader eyebrow={t('summary.eyebrow')} title={t('summary.title')}>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 rounded-full border border-line bg-surface p-1">
             {[7, 14, 30].map((d) => (
@@ -46,7 +48,7 @@ export function Summary() {
             ))}
           </div>
           <Button variant="ghost" onClick={() => setExporting(true)} className="px-3 py-1.5 text-xs">
-            <DownloadIcon width={15} height={15} /> Export
+            <DownloadIcon width={15} height={15} /> {t('summary.export')}
           </Button>
         </div>
       </PageHeader>
@@ -56,27 +58,27 @@ export function Summary() {
       {range.isLoading ? (
         <Spinner />
       ) : !stats ? (
-        <EmptyState title="No data in range" hint="Log meals across a few days to see your rollup." />
+        <EmptyState title={t('summary.noDataTitle')} hint={t('summary.noDataHint')} />
       ) : (
         <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-5">
           {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Tile label="Avg calories / day" value={formatNumber(stats.avg.Calories)} unit="kcal" />
-            <Tile label="Avg protein / day" value={formatNumber(stats.avg.Protein)} unit="g" />
-            <Tile label="Days on target" value={`${stats.onTarget}`} unit={`of ${stats.logged}`} />
-            <Tile label="Calorie adherence" value={`${stats.adherence}`} unit="%" />
+            <Tile label={t('summary.avgCaloriesPerDay')} value={formatNumber(stats.avg.Calories)} unit="kcal" />
+            <Tile label={t('summary.avgProteinPerDay')} value={formatNumber(stats.avg.Protein)} unit="g" />
+            <Tile label={t('summary.daysOnTarget')} value={`${stats.onTarget}`} unit={t('summary.of', { count: stats.logged })} />
+            <Tile label={t('summary.calorieAdherence')} value={`${stats.adherence}`} unit="%" />
           </div>
 
           {/* Per-macro avg vs target */}
           <Card className="p-5">
-            <Eyebrow>Average vs target</Eyebrow>
+            <Eyebrow>{t('summary.avgVsTarget')}</Eyebrow>
             <div className="mt-4 flex flex-col gap-5">
               {MACRO_KEYS.map((k) => (
                 <MacroBar
                   key={k}
                   consumed={stats.avg[k]}
                   target={stats.target[k]}
-                  label={MACRO_META[k].label}
+                  label={t(`common.macro.${k}`)}
                   unit={MACRO_META[k].unit}
                   color={cssVar(MACRO_META[k].colorVar)}
                 />
@@ -88,16 +90,16 @@ export function Summary() {
           <div className="grid gap-4 sm:grid-cols-2">
             <motion.div variants={fadeUp}>
               <Card className="p-5">
-                <Eyebrow>Closest to target</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? 'n/a'}</p>
-                <p className="text-sm text-muted">{stats.best ? `${formatNumber(stats.best.kcal)} kcal` : 'No data'}</p>
+                <Eyebrow>{t('summary.closestToTarget')}</Eyebrow>
+                <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? t('summary.na')}</p>
+                <p className="text-sm text-muted">{stats.best ? `${formatNumber(stats.best.kcal)} kcal` : t('summary.noData')}</p>
               </Card>
             </motion.div>
             <motion.div variants={fadeUp}>
               <Card className="p-5">
-                <Eyebrow>Furthest from target</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? 'n/a'}</p>
-                <p className="text-sm text-muted">{stats.worst ? `${formatNumber(stats.worst.kcal)} kcal` : 'No data'}</p>
+                <Eyebrow>{t('summary.furthestFromTarget')}</Eyebrow>
+                <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? t('summary.na')}</p>
+                <p className="text-sm text-muted">{stats.worst ? `${formatNumber(stats.worst.kcal)} kcal` : t('summary.noData')}</p>
               </Card>
             </motion.div>
           </div>
@@ -131,7 +133,7 @@ interface Stats {
   worst?: { label: string; kcal: number }
 }
 
-function compute(rollups: DailyRollup[]): Stats | null {
+function compute(rollups: DailyRollup[], locale: string): Stats | null {
   const logged = rollups.filter((r) => r.Consumed.Calories > 0)
   if (!logged.length) return null
 
@@ -169,7 +171,7 @@ function compute(rollups: DailyRollup[]): Stats | null {
   const adherence = Math.round((adherenceSum / n) * 100)
 
   const dayLabel = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    new Date(iso).toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' })
 
   const scored = logged
     .filter((r) => r.Targets.Calories > 0)

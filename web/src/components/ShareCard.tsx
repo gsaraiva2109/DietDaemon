@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { toPng } from 'html-to-image'
 import type { Macros } from '@/lib/types'
 import { triggerDownload } from '@/lib/api'
@@ -42,6 +43,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
 }
 
 export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
+  const { t } = useTranslation()
   const captureRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -63,15 +65,15 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
   const calColor = cssVar('--color-cal') || ink
 
   const chips: MacroChip[] = [
-    { label: 'Protein', value: consumed.Protein, color: cssVar('--color-protein') || ink },
-    { label: 'Carbs', value: consumed.Carbs, color: cssVar('--color-carbs') || ink },
-    { label: 'Fat', value: consumed.Fat, color: cssVar('--color-fat') || ink },
-    { label: 'Fiber', value: consumed.Fiber, color: cssVar('--color-fiber') || ink },
+    { label: t('shareCard.protein'), value: consumed.Protein, color: cssVar('--color-protein') || ink },
+    { label: t('shareCard.carbs'), value: consumed.Carbs, color: cssVar('--color-carbs') || ink },
+    { label: t('shareCard.fat'), value: consumed.Fat, color: cssVar('--color-fat') || ink },
+    { label: t('shareCard.fiber'), value: consumed.Fiber, color: cssVar('--color-fiber') || ink },
   ]
 
   async function render(): Promise<Blob> {
     const node = captureRef.current
-    if (!node) throw new Error('Nothing to capture')
+    if (!node) throw new Error(t('shareCard.nothingToCapture'))
     const dataUrl = await toPng(node, { pixelRatio: 2, backgroundColor: surface })
     return dataUrlToBlob(dataUrl)
   }
@@ -84,7 +86,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
       const blob = await render()
       triggerDownload(blob, 'dietdaemon-share.png')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not render image')
+      setError(e instanceof Error ? e.message : t('shareCard.renderError'))
     } finally {
       setBusy(false)
     }
@@ -110,7 +112,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
         triggerDownload(blob, 'dietdaemon-share.png')
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not copy image')
+      setError(e instanceof Error ? e.message : t('shareCard.copyError'))
     } finally {
       setBusy(false)
     }
@@ -133,7 +135,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Share card"
+          aria-label={t('shareCard.dialogLabel')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -144,11 +146,11 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                Share
+                {t('shareCard.eyebrow')}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-ink">Share your day</h2>
+              <h2 className="mt-1 text-xl font-bold text-ink">{t('shareCard.title')}</h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('shareCard.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
@@ -229,18 +231,18 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
               {copied ? (
                 <>
                   <CheckIcon width={18} height={18} />
-                  Copied
+                  {t('shareCard.copied')}
                 </>
               ) : (
                 <>
                   <CopyIcon width={18} height={18} />
-                  Copy
+                  {t('shareCard.copy')}
                 </>
               )}
             </Button>
             <Button onClick={downloadPng} disabled={busy}>
               <DownloadIcon width={18} height={18} />
-              Download PNG
+              {t('shareCard.downloadPng')}
             </Button>
           </div>
         </motion.div>

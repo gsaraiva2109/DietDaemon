@@ -3,10 +3,12 @@
 // label + percent (never color alone).
 
 import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts'
+import { useTranslation } from 'react-i18next'
 import type { Macros } from '@/lib/types'
 import { cssVar } from '@/lib/format'
 
 export function MacroDonut({ consumed }: { consumed: Macros }) {
+  const { t } = useTranslation()
   const slices = [
     { key: 'Protein', kcal: consumed.Protein * 4, color: cssVar('--color-protein') },
     { key: 'Carbs', kcal: consumed.Carbs * 4, color: cssVar('--color-carbs') },
@@ -38,7 +40,7 @@ export function MacroDonut({ consumed }: { consumed: Macros }) {
         {slices.map((s) => (
           <li key={s.key} className="flex items-center gap-2 text-sm">
             <span className="size-2.5 rounded-full" style={{ background: s.color }} />
-            <span className="font-medium text-ink">{s.key}</span>
+            <span className="font-medium text-ink">{t(`macroDonut.macro.${s.key}`)}</span>
             <span className="text-muted tnum">{total > 0 ? Math.round((s.kcal / total) * 100) : 0}%</span>
           </li>
         ))}

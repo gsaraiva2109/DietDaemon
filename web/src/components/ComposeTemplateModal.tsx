@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { FoodDetail, Macros } from '@/lib/types'
 import { useSearchFoods, useComposeTemplate } from '@/lib/queries'
 import { Button } from './ui'
@@ -26,6 +27,7 @@ function scale(m: Macros, grams: number): Macros {
 }
 
 export function ComposeTemplateModal({ onClose }: Props) {
+  const { t } = useTranslation()
   const compose = useComposeTemplate()
   const [name, setName] = useState('')
   const [rawQuery, setRawQuery] = useState('')
@@ -104,7 +106,7 @@ export function ComposeTemplateModal({ onClose }: Props) {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Compose a template from your food library"
+          aria-label={t('composeTemplateModal.ariaLabel')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -115,22 +117,22 @@ export function ComposeTemplateModal({ onClose }: Props) {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                New from scratch
+                {t('composeTemplateModal.eyebrow')}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-ink">Compose a template</h2>
+              <h2 className="mt-1 text-xl font-bold text-ink">{t('composeTemplateModal.title')}</h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('composeTemplateModal.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
 
           <label className="mb-4 block">
-            <span className="mb-1 block text-xs font-medium text-muted">Template name</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('composeTemplateModal.nameLabel')}</span>
             <input
               value={name}
               autoFocus
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Post-workout breakfast"
+              placeholder={t('composeTemplateModal.namePlaceholder')}
               className="w-full rounded-full border border-line bg-bg px-4 py-2 text-ink outline-none transition focus:border-primary"
             />
           </label>
@@ -142,8 +144,8 @@ export function ComposeTemplateModal({ onClose }: Props) {
             <input
               value={rawQuery}
               onChange={(e) => setRawQuery(e.target.value)}
-              placeholder="Search your food library"
-              aria-label="Search foods to add"
+              placeholder={t('composeTemplateModal.searchPlaceholder')}
+              aria-label={t('composeTemplateModal.searchAriaLabel')}
               className="w-full rounded-full border border-line bg-bg py-2 pl-9 pr-4 text-sm text-ink outline-none transition focus:border-primary"
             />
           </div>
@@ -151,9 +153,9 @@ export function ComposeTemplateModal({ onClose }: Props) {
           {query.length > 0 && (
             <ul className="mb-3 max-h-40 divide-y divide-line overflow-y-auto rounded-lg border border-line">
               {search.isLoading ? (
-                <li className="px-3 py-2 text-sm text-muted">Searching…</li>
+                <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.searching')}</li>
               ) : results.length === 0 ? (
-                <li className="px-3 py-2 text-sm text-muted">No matching foods.</li>
+                <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.noMatches')}</li>
               ) : (
                 results.map((f) => (
                   <li key={f.food_id}>
@@ -173,7 +175,7 @@ export function ComposeTemplateModal({ onClose }: Props) {
           )}
 
           <div className="mb-2 text-xs font-medium text-muted">
-            {picked.length} item{picked.length === 1 ? '' : 's'}
+            {picked.length} {picked.length === 1 ? t('composeTemplateModal.item') : t('composeTemplateModal.items')}
           </div>
           <ul className="mb-3 flex-1 divide-y divide-line overflow-y-auto rounded-lg border border-line">
             {picked.map((p) => {
@@ -190,14 +192,14 @@ export function ComposeTemplateModal({ onClose }: Props) {
                       min={1}
                       value={p.grams}
                       onChange={(e) => setGrams(p.food.food_id, Number(e.target.value) || 0)}
-                      aria-label={`Grams of ${p.food.name}`}
+                      aria-label={t('composeTemplateModal.gramsOfAria', { name: p.food.name })}
                       className="w-16 rounded-full border border-line bg-bg px-2 py-1 text-right text-sm text-ink outline-none transition focus:border-primary"
                     />
                     <span className="text-xs text-muted">g</span>
                   </label>
                   <button
                     onClick={() => removeFood(p.food.food_id)}
-                    aria-label={`Remove ${p.food.name}`}
+                    aria-label={t('composeTemplateModal.removeAria', { name: p.food.name })}
                     className="grid size-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-accent/12 hover:text-accent"
                   >
                     <CloseIcon width={13} height={13} />
@@ -207,14 +209,14 @@ export function ComposeTemplateModal({ onClose }: Props) {
             })}
             {!picked.length && (
               <li className="px-3 py-4 text-center text-sm text-muted">
-                Search above to add foods.
+                {t('composeTemplateModal.emptyPicked')}
               </li>
             )}
           </ul>
 
           {picked.length > 0 && (
             <div className="mb-3 flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm">
-              <span className="font-medium text-ink">Total</span>
+              <span className="font-medium text-ink">{t('composeTemplateModal.total')}</span>
               <span className="tnum text-muted">
                 {formatNumber(total.Calories)} kcal · {formatNumber(total.Protein)}P ·{' '}
                 {formatNumber(total.Carbs)}C · {formatNumber(total.Fat)}F
@@ -224,16 +226,16 @@ export function ComposeTemplateModal({ onClose }: Props) {
 
           {error && (
             <p className="mb-2 text-sm font-medium text-accent" role="alert">
-              {error instanceof Error ? error.message : 'Failed to save template'}
+              {error instanceof Error ? error.message : t('composeTemplateModal.failedToSave')}
             </p>
           )}
 
           <div className="mt-1 flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
-              Cancel
+              {t('composeTemplateModal.cancel')}
             </Button>
             <Button onClick={submit} disabled={disabled}>
-              {compose.isPending ? 'Saving…' : 'Save template'}
+              {compose.isPending ? t('composeTemplateModal.saving') : t('composeTemplateModal.saveTemplate')}
             </Button>
           </div>
         </motion.div>

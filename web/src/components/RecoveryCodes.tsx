@@ -4,6 +4,7 @@
 
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { Button } from './ui'
 import { CopyIcon, DownloadIcon } from './icons'
 import { scaleIn } from '@/lib/motion'
@@ -15,12 +16,14 @@ export function RecoveryCodes({
   codes: string[]
   onDone: () => void
 }) {
+  const { t } = useTranslation()
+
   async function copy() {
     try {
       await navigator.clipboard.writeText(codes.join('\n'))
-      toast.success('Recovery codes copied.')
+      toast.success(t('recoveryCodes.copiedToast'))
     } catch {
-      toast.error('Could not copy, select and copy them manually.')
+      toast.error(t('recoveryCodes.copyFailed'))
     }
   }
 
@@ -44,10 +47,10 @@ export function RecoveryCodes({
       className="rounded-xl border border-primary/40 bg-primary-soft/50 p-4"
     >
       <p className="text-sm font-medium text-ink">
-        Save these recovery codes somewhere safe, they won't be shown again.
+        {t('recoveryCodes.saveWarning')}
       </p>
       <p className="mt-1 text-xs text-muted">
-        Each code works once if you lose access to your authenticator.
+        {t('recoveryCodes.eachCodeOnce')}
       </p>
       <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink tnum">
         {codes.map((c) => (
@@ -56,13 +59,13 @@ export function RecoveryCodes({
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button type="button" variant="ghost" onClick={copy}>
-          <CopyIcon width={16} height={16} /> Copy
+          <CopyIcon width={16} height={16} /> {t('recoveryCodes.copy')}
         </Button>
         <Button type="button" variant="ghost" onClick={download}>
-          <DownloadIcon width={16} height={16} /> Download
+          <DownloadIcon width={16} height={16} /> {t('recoveryCodes.download')}
         </Button>
         <Button type="button" onClick={onDone} className="ml-auto">
-          I've saved them
+          {t('recoveryCodes.savedThem')}
         </Button>
       </div>
     </motion.div>

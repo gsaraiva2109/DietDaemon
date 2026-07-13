@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, EmptyState, Eyebrow, Pill, Spinner } from '@/components/ui'
 import { WeightChart } from '@/components/WeightChart'
@@ -47,27 +48,26 @@ function isoDaysAgo(n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-const DEMO_NOTE = 'Logging is disabled here.'
-
 export function Body() {
+  const { t } = useTranslation()
   const { tab } = useParams<{ tab?: string }>()
   const navigate = useNavigate()
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : 'weight'
 
   return (
     <div>
-      <PageHeader eyebrow="Body" title="Composition" />
+      <PageHeader eyebrow={t('body.eyebrow')} title={t('body.title')} />
 
       <div className="mb-6 inline-flex gap-1 rounded-full border border-line bg-surface p-1">
-        {TABS.map((t) => (
+        {TABS.map((tabId) => (
           <button
-            key={t}
-            onClick={() => navigate(`/body/${t}`)}
+            key={tabId}
+            onClick={() => navigate(`/body/${tabId}`)}
             className={`rounded-full px-4 py-1.5 text-sm font-medium capitalize transition ${
-              active === t ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
+              active === tabId ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
             }`}
           >
-            {t}
+            {t(`body.tabs.${tabId}`)}
           </button>
         ))}
       </div>
@@ -95,6 +95,7 @@ function trendArrow(dir: string): string {
 }
 
 function WeightTab() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [days, setDays] = useState(90)
   const [date, setDate] = useState(today())
@@ -129,15 +130,15 @@ function WeightTab() {
       {s && (
         <Card className="flex flex-wrap items-center gap-6 p-5">
           <div>
-            <Eyebrow>Current</Eyebrow>
+            <Eyebrow>{t('body.current')}</Eyebrow>
             <p className="mt-1 text-2xl font-bold text-ink tnum">{round(s.current_weight_kg, 1)} kg</p>
           </div>
           <div>
-            <Eyebrow>Start</Eyebrow>
+            <Eyebrow>{t('body.start')}</Eyebrow>
             <p className="mt-1 text-2xl font-bold text-ink tnum">{round(s.start_weight_kg, 1)} kg</p>
           </div>
           <div>
-            <Eyebrow>Change</Eyebrow>
+            <Eyebrow>{t('body.change')}</Eyebrow>
             <p className="mt-1 flex items-center gap-1.5 text-2xl font-bold text-ink tnum">
               <span className="text-primary">{trendArrow(s.trend_direction)}</span>
               {s.change_kg > 0 ? '+' : ''}{round(s.change_kg, 1)} kg
@@ -148,7 +149,7 @@ function WeightTab() {
 
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <Eyebrow>Trend</Eyebrow>
+          <Eyebrow>{t('body.trend')}</Eyebrow>
           <div className="inline-flex gap-1 rounded-full border border-line bg-surface p-1">
             {RANGES.map((r) => (
               <button
@@ -158,7 +159,7 @@ function WeightTab() {
                   days === r.days ? 'bg-primary-soft text-primary' : 'text-muted hover:text-ink'
                 }`}
               >
-                {r.label}
+                {r.label === 'All' ? t('body.rangeAll') : r.label}
               </button>
             ))}
           </div>
@@ -167,10 +168,10 @@ function WeightTab() {
       </Card>
 
       <Card className="p-5">
-        <Eyebrow>Log a weigh-in</Eyebrow>
+        <Eyebrow>{t('body.logWeighIn')}</Eyebrow>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">Date</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.date')}</span>
             <input
               type="date"
               value={date}
@@ -181,7 +182,7 @@ function WeightTab() {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">Weight (kg)</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.weightKg')}</span>
             <input
               type="number"
               step="0.1"
@@ -193,28 +194,28 @@ function WeightTab() {
             />
           </label>
           <label className="block flex-1">
-            <span className="mb-1 block text-xs font-medium text-muted">Note (optional)</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.noteOptional')}</span>
             <input
               value={note}
-              placeholder="e.g. after morning run"
+              placeholder={t('body.notePlaceholder')}
               onChange={(e) => setNote(e.target.value)}
               disabled={demo}
               className="w-full rounded-full border border-line bg-bg px-4 py-2 text-sm text-ink outline-none focus:border-primary disabled:opacity-50"
             />
           </label>
           <Button onClick={submit} disabled={demo || logWeight.isPending || !weight}>
-            {logWeight.isPending ? 'Saving…' : 'Log'}
+            {logWeight.isPending ? t('body.saving') : t('body.log')}
           </Button>
         </div>
-        {demo && <p className="mt-3 text-sm text-muted">{DEMO_NOTE}</p>}
+        {demo && <p className="mt-3 text-sm text-muted">{t('body.demoNote')}</p>}
       </Card>
 
       <Card className="p-5">
-        <Eyebrow>History</Eyebrow>
+        <Eyebrow>{t('body.history')}</Eyebrow>
         {log.isLoading ? (
           <div className="mt-3"><Spinner /></div>
         ) : !(log.data ?? []).length ? (
-          <div className="mt-3"><EmptyState title="No weigh-ins yet" /></div>
+          <div className="mt-3"><EmptyState title={t('body.noWeighIns')} /></div>
         ) : (
           <ul className="mt-3 divide-y divide-line">
             {[...(log.data ?? [])].reverse().map((e) => (
@@ -227,7 +228,7 @@ function WeightTab() {
                 <button
                   onClick={() => deleteWeight.mutate(e.id)}
                   disabled={demo || deleteWeight.isPending}
-                  aria-label="Delete weigh-in"
+                  aria-label={t('body.deleteWeighIn')}
                   className="text-muted transition hover:text-accent disabled:opacity-30"
                 >
                   <TrashIcon width={18} height={18} />
@@ -246,6 +247,7 @@ function WeightTab() {
 type CmFields = Record<string, string>
 
 function MeasurementsTab() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [date, setDate] = useState(today())
   const [fields, setFields] = useState<CmFields>({})
@@ -275,16 +277,16 @@ function MeasurementsTab() {
   return (
     <div className="space-y-6">
       <Card className="p-5">
-        <Eyebrow>Trend</Eyebrow>
+        <Eyebrow>{t('body.trend')}</Eyebrow>
         <div className="mt-3">
           {measurements.isLoading ? <Spinner /> : <MeasurementChart data={measurements.data ?? []} />}
         </div>
       </Card>
 
       <Card className="p-5">
-        <Eyebrow>Log measurements</Eyebrow>
+        <Eyebrow>{t('body.logMeasurements')}</Eyebrow>
         <label className="mt-3 block w-48">
-          <span className="mb-1 block text-xs font-medium text-muted">Date</span>
+          <span className="mb-1 block text-xs font-medium text-muted">{t('body.date')}</span>
           <input
             type="date"
             value={date}
@@ -297,7 +299,7 @@ function MeasurementsTab() {
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {MEASUREMENT_FIELDS.map((f) => (
             <label key={f.key} className="block">
-              <span className="mb-1 block text-xs font-medium text-muted">{f.label} (cm)</span>
+              <span className="mb-1 block text-xs font-medium text-muted">{t(`common.measurement.${f.key}`)} (cm)</span>
               <input
                 type="number"
                 step="0.1"
@@ -311,18 +313,18 @@ function MeasurementsTab() {
         </div>
         <div className="mt-4 flex items-center gap-3">
           <Button onClick={submit} disabled={demo || logMeasurements.isPending}>
-            {logMeasurements.isPending ? 'Saving…' : 'Log measurements'}
+            {logMeasurements.isPending ? t('body.saving') : t('body.logMeasurements')}
           </Button>
-          {demo && <p className="text-sm text-muted">{DEMO_NOTE}</p>}
+          {demo && <p className="text-sm text-muted">{t('body.demoNote')}</p>}
         </div>
       </Card>
 
       <Card className="p-5">
-        <Eyebrow>History</Eyebrow>
+        <Eyebrow>{t('body.history')}</Eyebrow>
         {measurements.isLoading ? (
           <div className="mt-3"><Spinner /></div>
         ) : !(measurements.data ?? []).length ? (
-          <div className="mt-3"><EmptyState title="No measurements yet" /></div>
+          <div className="mt-3"><EmptyState title={t('body.noMeasurements')} /></div>
         ) : (
           <ul className="mt-3 divide-y divide-line">
             {[...(measurements.data ?? [])].reverse().map((e) => (
@@ -331,14 +333,14 @@ function MeasurementsTab() {
                   <span className="text-sm font-semibold text-ink">{e.date}</span>
                   {MEASUREMENT_FIELDS.filter((f) => e[f.key] > 0).map((f) => (
                     <Pill key={f.key} tone="muted">
-                      {f.label} {round(e[f.key], 1)}
+                      {t(`common.measurement.${f.key}`)} {round(e[f.key], 1)}
                     </Pill>
                   ))}
                 </div>
                 <button
                   onClick={() => deleteMeasurement.mutate(e.id)}
                   disabled={demo || deleteMeasurement.isPending}
-                  aria-label="Delete measurements"
+                  aria-label={t('body.deleteMeasurements')}
                   className="text-muted transition hover:text-accent disabled:opacity-30"
                 >
                   <TrashIcon width={18} height={18} />
@@ -355,6 +357,7 @@ function MeasurementsTab() {
 // --- Photos ----------------------------------------------------------------
 
 function PhotosTab() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [view, setView] = useState<string>('front')
   const [date, setDate] = useState(today())
@@ -378,7 +381,7 @@ function PhotosTab() {
   function onSelect(p: ProgressPhoto) {
     // Selecting a thumbnail offers a quick delete; comparison is its own button.
     if (demo) return
-    if (window.confirm(`Delete the ${p.view} photo from ${p.date}?`)) {
+    if (window.confirm(t('body.confirmDeletePhoto', { view: t(`body.views.${p.view}`), date: p.date }))) {
       deletePhoto.mutate(p.id)
     }
   }
@@ -387,18 +390,18 @@ function PhotosTab() {
     <div className="space-y-6">
       <Card className="p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <Eyebrow>Upload a photo</Eyebrow>
+          <Eyebrow>{t('body.uploadPhoto')}</Eyebrow>
           <Button
             variant="ghost"
             onClick={() => setComparing(true)}
             disabled={list.length < 2}
           >
-            Compare
+            {t('body.compare')}
           </Button>
         </div>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">View</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.view')}</span>
             <select
               value={view}
               onChange={(e) => setView(e.target.value)}
@@ -406,12 +409,12 @@ function PhotosTab() {
               className="rounded-full border border-line bg-bg px-4 py-2 text-sm capitalize text-ink outline-none focus:border-primary disabled:opacity-50"
             >
               {PHOTO_VIEWS.map((v) => (
-                <option key={v} value={v}>{v}</option>
+                <option key={v} value={v}>{t(`body.views.${v}`)}</option>
               ))}
             </select>
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">Date</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.date')}</span>
             <input
               type="date"
               value={date}
@@ -422,7 +425,7 @@ function PhotosTab() {
             />
           </label>
           <label className="block flex-1">
-            <span className="mb-1 block text-xs font-medium text-muted">Image</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('body.image')}</span>
             <input
               type="file"
               accept="image/*"
@@ -432,17 +435,17 @@ function PhotosTab() {
             />
           </label>
           <Button onClick={submit} disabled={demo || uploadPhoto.isPending || !file}>
-            {uploadPhoto.isPending ? 'Uploading…' : 'Upload'}
+            {uploadPhoto.isPending ? t('body.uploading') : t('body.upload')}
           </Button>
         </div>
-        {demo && <p className="mt-3 text-sm text-muted">{DEMO_NOTE}</p>}
+        {demo && <p className="mt-3 text-sm text-muted">{t('body.demoNote')}</p>}
         {!demo && list.length > 0 && (
-          <p className="mt-3 text-sm text-muted">Tap a photo to delete it.</p>
+          <p className="mt-3 text-sm text-muted">{t('body.tapToDelete')}</p>
         )}
       </Card>
 
       <Card className="p-5">
-        <Eyebrow>Timeline</Eyebrow>
+        <Eyebrow>{t('body.timeline')}</Eyebrow>
         <div className="mt-4">
           {photos.isLoading ? <Spinner /> : <PhotoGrid photos={list} onSelect={onSelect} />}
         </div>

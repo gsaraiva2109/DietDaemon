@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { ResolvedItem } from '@/lib/types'
 import { useCreateTemplate } from '@/lib/queries'
 import { Button } from './ui'
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function SaveTemplateModal({ items, onClose }: Props) {
+  const { t } = useTranslation()
   const create = useCreateTemplate()
   const [name, setName] = useState('')
   const error = create.error
@@ -51,7 +53,7 @@ export function SaveTemplateModal({ items, onClose }: Props) {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Save meal as template"
+          aria-label={t('saveTemplateModal.ariaLabel')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -62,29 +64,29 @@ export function SaveTemplateModal({ items, onClose }: Props) {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                Save template
+                {t('saveTemplateModal.eyebrow')}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-ink">Name this meal</h2>
+              <h2 className="mt-1 text-xl font-bold text-ink">{t('saveTemplateModal.title')}</h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('saveTemplateModal.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
 
           <label className="mb-4 block">
-            <span className="mb-1 block text-xs font-medium text-muted">Template name</span>
+            <span className="mb-1 block text-xs font-medium text-muted">{t('saveTemplateModal.nameLabel')}</span>
             <input
               value={name}
               autoFocus
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
-              placeholder="e.g. Post-workout breakfast"
+              placeholder={t('saveTemplateModal.namePlaceholder')}
               className="w-full rounded-full border border-line bg-bg px-4 py-2 text-ink outline-none transition focus:border-primary"
             />
           </label>
 
           <div className="mb-2 text-xs font-medium text-muted">
-            {items.length} item{items.length === 1 ? '' : 's'}
+            {items.length} {items.length === 1 ? t('saveTemplateModal.item') : t('saveTemplateModal.items')}
           </div>
           <ul className="mb-2 max-h-56 divide-y divide-line overflow-y-auto rounded-lg border border-line">
             {items.map((it, i) => (
@@ -101,22 +103,22 @@ export function SaveTemplateModal({ items, onClose }: Props) {
               </li>
             ))}
             {!items.length && (
-              <li className="px-3 py-4 text-center text-sm text-muted">No items to save.</li>
+              <li className="px-3 py-4 text-center text-sm text-muted">{t('saveTemplateModal.emptyItems')}</li>
             )}
           </ul>
 
           {error && (
             <p className="mt-3 text-sm font-medium text-accent" role="alert">
-              {error instanceof Error ? error.message : 'Failed to save template'}
+              {error instanceof Error ? error.message : t('saveTemplateModal.failedToSave')}
             </p>
           )}
 
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
-              Cancel
+              {t('saveTemplateModal.cancel')}
             </Button>
             <Button onClick={submit} disabled={disabled}>
-              {create.isPending ? 'Saving…' : 'Save template'}
+              {create.isPending ? t('saveTemplateModal.saving') : t('saveTemplateModal.saveTemplate')}
             </Button>
           </div>
         </motion.div>

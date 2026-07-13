@@ -3,6 +3,7 @@
 // is Phase 4 (404 → empty state). Chart styling mirrors WeightChart.
 
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Bar,
   BarChart,
@@ -27,6 +28,7 @@ const QUALITY_TONE: Record<SleepQuality, 'primary' | 'neutral' | 'accent' | 'mut
 }
 
 export function SleepCard() {
+  const { t } = useTranslation()
   const sleep = useSleep(7)
   const logs = useMemo(() => sleep.data ?? [], [sleep.data])
 
@@ -48,7 +50,7 @@ export function SleepCard() {
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2" style={{ color: INDIGO }}>
           <MoonIcon width={18} height={18} />
-          <Eyebrow>Sleep</Eyebrow>
+          <Eyebrow>{t('sleepCard.title')}</Eyebrow>
         </div>
         {last && <Pill tone={QUALITY_TONE[last.quality]}>{last.quality}</Pill>}
       </header>
@@ -60,15 +62,15 @@ export function SleepCard() {
           onClick={() => sleep.refetch()}
           className="self-start text-sm font-medium text-accent hover:underline"
         >
-          Couldn't load, retry
+          {t('sleepCard.retry')}
         </button>
       ) : logs.length === 0 ? (
-        <p className="text-sm text-muted">No sleep data yet. Log a night from your chat bot.</p>
+        <p className="text-sm text-muted">{t('sleepCard.empty')}</p>
       ) : (
         <>
           <div className="flex items-baseline gap-1.5">
             <span className="text-3xl font-bold text-ink tnum">{last.duration_hours.toFixed(1)}</span>
-            <span className="text-sm text-muted">hrs last night</span>
+            <span className="text-sm text-muted">{t('sleepCard.hrsLastNight')}</span>
           </div>
 
           <div className="mt-auto h-28 w-full">
@@ -103,7 +105,7 @@ export function SleepCard() {
                   fill={INDIGO}
                   fillOpacity={0.7}
                   radius={[3, 3, 0, 0]}
-                  name="Hours"
+                  name={t('sleepCard.hours')}
                   isAnimationActive={false}
                 />
               </BarChart>

@@ -5,6 +5,7 @@
 // hand off to <MfaChallenge> which issues the session on success.
 
 import { useEffect, useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useMagicRequest, useMagicVerifyCode } from '@/lib/queries'
 import { isMfaChallenge } from '@/lib/types'
@@ -22,6 +23,7 @@ export function MagicCodeEntry({
   onVerified: () => void
   onBack: () => void
 }) {
+  const { t } = useTranslation()
   const { refresh } = useAuth()
   const verify = useMagicVerifyCode()
   const resend = useMagicRequest()
@@ -49,7 +51,7 @@ export function MagicCodeEntry({
       await refresh()
       onVerified()
     } catch {
-      setError('That code is invalid or expired. Try again.')
+      setError(t('magicCodeEntry.invalidCode'))
     }
   }
 
@@ -80,7 +82,7 @@ export function MagicCodeEntry({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <Field
-        label="Sign-in code"
+        label={t('magicCodeEntry.codeLabel')}
         inputMode="numeric"
         autoComplete="one-time-code"
         autoFocus
@@ -89,15 +91,15 @@ export function MagicCodeEntry({
         disabled={verify.isPending}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
         placeholder="000000"
-        hint={`Sent to ${email}.`}
+        hint={t('magicCodeEntry.sentTo', { email })}
       />
       <FormError>{error}</FormError>
       <Button type="submit" disabled={verify.isPending || code.length < 6}>
-        {verify.isPending ? 'Verifying…' : 'Sign in'}
+        {verify.isPending ? t('magicCodeEntry.verifying') : t('magicCodeEntry.signIn')}
       </Button>
       <div className="flex items-center justify-between text-sm">
         <button type="button" onClick={onBack} className="font-medium text-muted hover:text-ink">
-          Use a different email
+          {t('magicCodeEntry.useDifferentEmail')}
         </button>
         <button
           type="button"
@@ -105,7 +107,7 @@ export function MagicCodeEntry({
           disabled={cooldown > 0 || resend.isPending}
           className="font-medium text-primary hover:underline disabled:text-muted disabled:no-underline"
         >
-          {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
+          {cooldown > 0 ? t('magicCodeEntry.resendIn', { seconds: cooldown }) : t('magicCodeEntry.resendCode')}
         </button>
       </div>
     </form>

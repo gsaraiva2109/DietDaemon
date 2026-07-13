@@ -3,17 +3,19 @@
 // matched child route. Demo mode reports as authed, so it passes through.
 
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { Spinner } from './ui'
 
 export function ProtectedRoute() {
+  const { t } = useTranslation()
   const { status } = useAuth()
   const location = useLocation()
 
   if (status === 'checking') {
     return (
       <div className="grid min-h-[100dvh] place-items-center">
-        <Spinner label="Connecting" />
+        <Spinner label={t('protectedRoute.connecting')} />
       </div>
     )
   }

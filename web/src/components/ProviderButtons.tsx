@@ -7,6 +7,7 @@
 // a generic key for providers we don't have a mark for.
 
 import type { ReactElement, SVGProps } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { useProviders } from '@/lib/queries'
 import { Button } from './ui'
@@ -55,17 +56,23 @@ function providerIcon(id: string): Icon {
 // same origin) and AuthCallback reads it to word its toast correctly.
 export const OIDC_INTENT_KEY = 'dd.oidc_intent'
 
-function startOIDC(id: string, verb: string) {
-  sessionStorage.setItem(OIDC_INTENT_KEY, verb === 'Sign up' ? 'signup' : 'signin')
+// Intent key, not display text, callers pass 'signin' | 'signup' | 'continue'
+// and the label is translated here so it stays decoupled from the locale.
+type Verb = 'continue' | 'signin' | 'signup'
+
+function startOIDC(id: string, verb: Verb) {
+  sessionStorage.setItem(OIDC_INTENT_KEY, verb === 'signup' ? 'signup' : 'signin')
   window.location.assign(api.auth.oidcStartUrl(id))
 }
 
-export function ProviderButtons({ verb = 'Continue' }: { verb?: string }) {
+export function ProviderButtons({ verb = 'continue' }: { verb?: Verb }) {
+  const { t } = useTranslation()
   const providers = useProviders()
   const list = providers.data?.providers ?? []
   if (list.length === 0) return null
 
   const oidcOnly = providers.data?.registration_mode === 'oidc-only'
+  const verbLabel = t(`providerButtons.${verb}`)
 
   return (
     <div className="flex flex-col gap-3">
@@ -73,7 +80,7 @@ export function ProviderButtons({ verb = 'Continue' }: { verb?: string }) {
       {!oidcOnly && (
         <div className="flex items-center gap-3 text-xs text-muted">
           <span className="h-px flex-1 bg-line" />
-          or
+          {t('providerButtons.or')}
           <span className="h-px flex-1 bg-line" />
         </div>
       )}
@@ -88,7 +95,7 @@ export function ProviderButtons({ verb = 'Continue' }: { verb?: string }) {
               onClick={() => startOIDC(p.id, verb)}
             >
               <Icon width={18} height={18} aria-hidden />
-              {verb} with {p.name}
+              {t('providerButtons.withProvider', { verb: verbLabel, name: p.name })}
             </Button>
           )
         })}

@@ -2,6 +2,7 @@
 // Always pairs color with a text label + numbers (a11y: never color alone).
 
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { easeOut } from '@/lib/motion'
 import { AnimatedNumber } from './AnimatedNumber'
 import { progress, isOverTarget, remaining, confidenceTier } from '@/lib/format'
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function MacroBar({ consumed, target, label, unit, color, confidence }: Props) {
+  const { t } = useTranslation()
   const p = progress(consumed, target)
   const over = isOverTarget(consumed, target)
   const left = remaining(consumed, target)
@@ -39,7 +41,7 @@ export function MacroBar({ consumed, target, label, unit, color, confidence }: P
         aria-valuenow={Math.round(p * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`${label} progress`}
+        aria-label={t('macroBar.progressAria', { label })}
       >
         <motion.div
           className={`h-full rounded-full ${opacityClass}`}
@@ -51,10 +53,10 @@ export function MacroBar({ consumed, target, label, unit, color, confidence }: P
       </div>
       <div className="mt-1 text-xs text-muted">
         {over ? (
-          <span className="font-medium text-accent">{Math.round(consumed - target)} {unit} over</span>
+          <span className="font-medium text-accent">{Math.round(consumed - target)} {unit} {t('macroBar.over')}</span>
         ) : (
           <span>
-            <span className="font-medium text-ink">{Math.round(left)} {unit}</span> left
+            <span className="font-medium text-ink">{Math.round(left)} {unit}</span> {t('macroBar.left')}
           </span>
         )}
       </div>

@@ -2,6 +2,7 @@
 // day. "Pace" compares consumed vs the fraction of the day elapsed, so a nudge
 // only fires when you're genuinely behind, matching the product's nudge model.
 
+import type { TFunction } from 'i18next'
 import type { DailyRollup, Macros, MacroKey, TrendDirection, WeeklyStats } from './types'
 
 export interface Insight {
@@ -15,41 +16,41 @@ function dayFraction(now = new Date()): number {
   return Math.min(1, Math.max(0, (h - 8) / 14))
 }
 
-export function greeting(now = new Date()): string {
+export function greeting(t: TFunction, now = new Date()): string {
   const h = now.getHours()
-  if (h < 12) return 'Good morning'
-  if (h < 18) return 'Good afternoon'
-  return 'Good evening'
+  if (h < 12) return t('insights.goodMorning')
+  if (h < 18) return t('insights.goodAfternoon')
+  return t('insights.goodEvening')
 }
 
-export function insights(rollup: DailyRollup | null): Insight[] {
-  if (!rollup) return [{ tone: 'info', text: 'No data yet today, log a meal to get started.' }]
+export function insights(rollup: DailyRollup | null, t: TFunction): Insight[] {
+  if (!rollup) return [{ tone: 'info', text: t('insights.noData') }]
   const out: Insight[] = []
   const frac = dayFraction()
-  const { Consumed: c, Targets: t } = rollup
+  const { Consumed: c, Targets: targets } = rollup
 
-  const protPct = t.Protein > 0 ? c.Protein / t.Protein : 1
-  if (t.Protein > 0 && protPct < frac - 0.15) {
-    out.push({ tone: 'warn', text: `Protein is behind pace, ${Math.round(t.Protein - c.Protein)}g to go.` })
+  const protPct = targets.Protein > 0 ? c.Protein / targets.Protein : 1
+  if (targets.Protein > 0 && protPct < frac - 0.15) {
+    out.push({ tone: 'warn', text: t('insights.proteinBehind', { grams: Math.round(targets.Protein - c.Protein) }) })
   } else if (protPct >= 1) {
-    out.push({ tone: 'good', text: 'Protein target hit. Nice.' })
+    out.push({ tone: 'good', text: t('insights.proteinTargetHit') })
   }
 
-  const calPct = t.Calories > 0 ? c.Calories / t.Calories : 0
-  if (t.Calories > 0) {
-    if (calPct > 1) out.push({ tone: 'warn', text: `${Math.round(c.Calories - t.Calories)} kcal over target.` })
-    else if (calPct >= frac - 0.1 && calPct < 1) out.push({ tone: 'good', text: 'On track for calories.' })
-    else if (calPct < frac - 0.2) out.push({ tone: 'info', text: `${Math.round(t.Calories - c.Calories)} kcal left to hit your goal.` })
+  const calPct = targets.Calories > 0 ? c.Calories / targets.Calories : 0
+  if (targets.Calories > 0) {
+    if (calPct > 1) out.push({ tone: 'warn', text: t('insights.caloriesOver', { calories: Math.round(c.Calories - targets.Calories) }) })
+    else if (calPct >= frac - 0.1 && calPct < 1) out.push({ tone: 'good', text: t('insights.caloriesOnTrack') })
+    else if (calPct < frac - 0.2) out.push({ tone: 'info', text: t('insights.caloriesLeft', { calories: Math.round(targets.Calories - c.Calories) }) })
   }
 
   const biggestGap = (['Protein', 'Carbs', 'Fat'] as MacroKey[])
-    .map((k) => ({ k, gap: t[k] > 0 ? 1 - c[k] / t[k] : 0 }))
+    .map((k) => ({ k, gap: targets[k] > 0 ? 1 - c[k] / targets[k] : 0 }))
     .sort((a, b) => b.gap - a.gap)[0]
   if (biggestGap && biggestGap.gap > 0.5 && out.length < 3) {
-    out.push({ tone: 'info', text: `${biggestGap.k} is your biggest gap today.` })
+    out.push({ tone: 'info', text: t('insights.biggestGap', { macro: t(`common.macro.${biggestGap.k}`) }) })
   }
 
-  return out.length ? out.slice(0, 3) : [{ tone: 'good', text: "You're tracking well today." }]
+  return out.length ? out.slice(0, 3) : [{ tone: 'good', text: t('insights.trackingWell') }]
 }
 
 /** Consecutive days (ending today/most-recent) with any calories logged. */

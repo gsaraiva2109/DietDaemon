@@ -3,19 +3,21 @@
 // the Dashboard and the Foods browser, so it stays fully self-contained.
 
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useFrequentFoods } from '@/lib/queries'
 import type { FoodDetail } from '@/lib/types'
 import { Eyebrow } from './ui'
 import { formatNumber } from '@/lib/format'
 
 export function FrequentFoods() {
+  const { t } = useTranslation()
   const { data } = useFrequentFoods(12)
   const foods = data ?? []
   if (!foods.length) return null
 
   return (
     <section>
-      <Eyebrow>Frequent foods</Eyebrow>
+      <Eyebrow>{t('frequentFoods.heading')}</Eyebrow>
       <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
         {foods.map((f: FoodDetail) => (
           <Link

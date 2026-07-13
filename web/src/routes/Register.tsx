@@ -4,6 +4,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useProviders } from '@/lib/queries'
 import { RateLimitError } from '@/lib/api'
@@ -11,9 +12,8 @@ import { AuthLayout } from '@/components/AuthLayout'
 import { ProviderButtons } from '@/components/ProviderButtons'
 import { Button, Field, FormError } from '@/components/ui'
 
-const REGISTER_ERROR = 'Could not create your account. Check your details and try again.'
-
 export function Register() {
+  const { t } = useTranslation()
   const { register } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -37,7 +37,7 @@ export function Register() {
       await register(email, password, displayName)
       navigate(next, { replace: true })
     } catch (err) {
-      setError(err instanceof RateLimitError ? 'Too many attempts. Try again shortly.' : REGISTER_ERROR)
+      setError(err instanceof RateLimitError ? t('register.tooManyAttempts') : t('register.genericError'))
     } finally {
       setBusy(false)
     }
@@ -45,13 +45,13 @@ export function Register() {
 
   return (
     <AuthLayout
-      title="Create your account"
-      subtitle={oidcOnly ? 'Sign up with a connected provider.' : 'Start tracking with DietDaemon.'}
+      title={t('register.title')}
+      subtitle={oidcOnly ? t('register.oidcSubtitle') : t('register.subtitle')}
       footer={
         <>
-          Already have an account?{' '}
+          {t('register.alreadyHaveAccount')}{' '}
           <Link to="/login" className="font-medium text-primary hover:underline">
-            Sign in
+            {t('register.signIn')}
           </Link>
         </>
       }
@@ -60,42 +60,42 @@ export function Register() {
         {!oidcOnly && (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <Field
-              label="Display name"
+              label={t('register.displayNameLabel')}
               type="text"
               autoComplete="name"
               autoFocus
               value={displayName}
               disabled={busy}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Your name"
-              hint="Optional, what we'll call you."
+              placeholder={t('register.displayNamePlaceholder')}
+              hint={t('register.displayNameHint')}
             />
             <Field
-              label="Email"
+              label={t('register.emailLabel')}
               type="email"
               autoComplete="email"
               value={email}
               disabled={busy}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t('register.emailPlaceholder')}
             />
             <Field
-              label="Password"
+              label={t('register.passwordLabel')}
               type="password"
               autoComplete="new-password"
               value={password}
               disabled={busy}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
-              hint="Use 8 or more characters."
+              placeholder={t('register.passwordPlaceholder')}
+              hint={t('register.passwordHint')}
             />
             <FormError>{error}</FormError>
             <Button type="submit" disabled={busy || !email.trim() || !password}>
-              {busy ? 'Creating account…' : 'Create account'}
+              {busy ? t('register.creating') : t('register.createAccount')}
             </Button>
           </form>
         )}
-        <ProviderButtons verb="Sign up" />
+        <ProviderButtons verb="signup" />
       </div>
     </AuthLayout>
   )

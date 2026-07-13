@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import {
   useProfile,
   useUpsertProfile,
@@ -106,6 +107,7 @@ function NumberField({
 }
 
 export function OnboardingWizard() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const { data: profile, isLoading } = useProfile()
   const upsert = useUpsertProfile()
@@ -229,7 +231,7 @@ export function OnboardingWizard() {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Set up your plan"
+          aria-label={t('onboardingWizard.dialogLabel')}
           initial={{ opacity: 0, scale: 0.97, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 8 }}
@@ -240,17 +242,17 @@ export function OnboardingWizard() {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                {editMode ? 'Edit profile' : 'Welcome'}
+                {editMode ? t('onboardingWizard.editProfileEyebrow') : t('onboardingWizard.welcomeEyebrow')}
               </p>
               <h2 className="mt-1 text-xl font-bold text-ink">
-                {step === 0 && 'A few body stats'}
-                {step === 1 && 'How active are you?'}
-                {step === 2 && "What's your goal?"}
-                {step === 3 && 'Your plan'}
+                {step === 0 && t('onboardingWizard.stepBodyStats')}
+                {step === 1 && t('onboardingWizard.stepActivity')}
+                {step === 2 && t('onboardingWizard.stepGoal')}
+                {step === 3 && t('onboardingWizard.stepPlan')}
               </h2>
             </div>
             {editMode && (
-              <button onClick={close} aria-label="Close" className="text-muted hover:text-ink">
+              <button onClick={close} aria-label={t('onboardingWizard.close')} className="text-muted hover:text-ink">
                 <CloseIcon />
               </button>
             )}
@@ -281,20 +283,20 @@ export function OnboardingWizard() {
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <NumberField
-                        label="Height"
+                        label={t('onboardingWizard.height')}
                         value={draft.height_cm}
                         unit="cm"
                         onChange={(v) => set('height_cm', v)}
                       />
                       <NumberField
-                        label="Current weight"
+                        label={t('onboardingWizard.currentWeight')}
                         value={draft.weight_kg}
                         unit="kg"
                         onChange={(v) => set('weight_kg', v)}
                       />
                     </div>
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-muted">Date of birth</span>
+                      <span className="mb-1 block text-xs font-medium text-muted">{t('onboardingWizard.dateOfBirth')}</span>
                       <input
                         type="date"
                         value={draft.birth_date}
@@ -303,7 +305,7 @@ export function OnboardingWizard() {
                       />
                     </label>
                     <div>
-                      <span className="mb-1.5 block text-xs font-medium text-muted">Gender</span>
+                      <span className="mb-1.5 block text-xs font-medium text-muted">{t('onboardingWizard.gender')}</span>
                       <div className="flex gap-2">
                         {(['male', 'female'] as const).map((g) => (
                           <button
@@ -315,7 +317,7 @@ export function OnboardingWizard() {
                                 : 'border-line bg-surface text-ink hover:bg-surface-2'
                             }`}
                           >
-                            {g}
+                            {g === 'male' ? t('onboardingWizard.male') : t('onboardingWizard.female')}
                           </button>
                         ))}
                       </div>
@@ -379,13 +381,13 @@ export function OnboardingWizard() {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <NumberField
-                        label="Target weight"
+                        label={t('onboardingWizard.targetWeight')}
                         value={draft.target_weight_kg}
                         unit="kg"
                         onChange={(v) => set('target_weight_kg', v)}
                       />
                       <NumberField
-                        label="Weekly rate"
+                        label={t('onboardingWizard.weeklyRate')}
                         value={draft.weekly_rate}
                         unit="kg/wk"
                         onChange={(v) => set('weekly_rate', v)}
@@ -399,7 +401,7 @@ export function OnboardingWizard() {
                     {tdee ? (
                       <TDEECard result={tdee} goal={draft.goal} />
                     ) : (
-                      <p className="py-12 text-center text-sm text-muted">Crunching your numbers…</p>
+                      <p className="py-12 text-center text-sm text-muted">{t('onboardingWizard.crunchingNumbers')}</p>
                     )}
                   </div>
                 )}
@@ -411,21 +413,21 @@ export function OnboardingWizard() {
             <div>
               {step > 0 && (
                 <Button variant="ghost" onClick={() => setStep((s) => s - 1)}>
-                  <ChevronLeft width={16} height={16} /> Back
+                  <ChevronLeft width={16} height={16} /> {t('onboardingWizard.back')}
                 </Button>
               )}
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" onClick={skipOrCancel} disabled={upsert.isPending}>
-                {editMode ? 'Cancel' : 'Skip'}
+                {editMode ? t('onboardingWizard.cancel') : t('onboardingWizard.skip')}
               </Button>
               {step < TOTAL_STEPS - 1 ? (
                 <Button onClick={() => setStep((s) => s + 1)} disabled={!stepValid}>
-                  Next <ChevronRight width={16} height={16} />
+                  {t('onboardingWizard.next')} <ChevronRight width={16} height={16} />
                 </Button>
               ) : (
                 <Button onClick={save} disabled={upsert.isPending}>
-                  {upsert.isPending ? 'Saving…' : 'Save plan'}
+                  {upsert.isPending ? t('onboardingWizard.saving') : t('onboardingWizard.savePlan')}
                 </Button>
               )}
             </div>

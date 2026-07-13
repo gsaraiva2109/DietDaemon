@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { useTranslation } from 'react-i18next'
 import { EmptyState } from './ui'
 import { cssVar } from '@/lib/format'
 import { MEASUREMENT_FIELDS, type MeasurementEntry, type MeasurementField } from '@/lib/types'
@@ -27,6 +28,7 @@ const COLOR_VARS = [
 ] as const
 
 export function MeasurementChart({ data }: { data: MeasurementEntry[] }) {
+  const { t } = useTranslation()
   const [visible, setVisible] = useState<Set<MeasurementField>>(
     () => new Set(MEASUREMENT_FIELDS.map((f) => f.key)),
   )
@@ -53,8 +55,8 @@ export function MeasurementChart({ data }: { data: MeasurementEntry[] }) {
   if (!rows.length) {
     return (
       <EmptyState
-        title="No measurements yet"
-        hint="Log a set of measurements above to track them over time."
+        title={t('measurementChart.emptyTitle')}
+        hint={t('measurementChart.emptyHint')}
       />
     )
   }
@@ -79,7 +81,7 @@ export function MeasurementChart({ data }: { data: MeasurementEntry[] }) {
                 className="size-2.5 rounded-full"
                 style={{ background: on ? color : 'var(--color-muted)' }}
               />
-              {f.label}
+              {t(`common.measurement.${f.key}`)}
             </button>
           )
         })}
@@ -119,7 +121,7 @@ export function MeasurementChart({ data }: { data: MeasurementEntry[] }) {
                   key={f.key}
                   type="monotone"
                   dataKey={f.key}
-                  name={f.label}
+                  name={t(`common.measurement.${f.key}`)}
                   stroke={cssVar(COLOR_VARS[i % COLOR_VARS.length])}
                   strokeWidth={2}
                   dot={false}

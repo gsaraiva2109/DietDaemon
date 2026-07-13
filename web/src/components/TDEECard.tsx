@@ -3,6 +3,7 @@
 // goal so the wizard's final step and the Goals page read the same.
 
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import type { TDEEResult } from '@/lib/types'
 import { GOALS } from '@/lib/types'
 import { formatNumber, cssVar } from '@/lib/format'
@@ -36,9 +37,10 @@ function Bar({ label, value, max, tone }: { label: string; value: number; max: n
 }
 
 export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }) {
+  const { t } = useTranslation()
   const goalCals: Array<{ value: string; label: string; cal: number }> = GOALS.map((g) => ({
     value: g.value,
-    label: g.label,
+    label: t(`tdeeCard.goal.${g.value}`),
     cal: result[GOAL_CAL[g.value]] ?? 0,
   }))
   const maxBar = Math.max(result.tdee, result.bmr, ...goalCals.map((g) => g.cal), 1)
@@ -52,15 +54,15 @@ export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }
 
   return (
     <Card className="p-5">
-      <Eyebrow>Energy budget</Eyebrow>
+      <Eyebrow>{t('tdeeCard.title')}</Eyebrow>
 
       <div className="mt-4 space-y-3.5">
-        <Bar label="BMR, at rest" value={result.bmr} max={maxBar} tone="muted" />
-        <Bar label="TDEE, maintenance" value={result.tdee} max={maxBar} tone="primary" />
+        <Bar label={t('tdeeCard.bmr')} value={result.bmr} max={maxBar} tone="muted" />
+        <Bar label={t('tdeeCard.tdee')} value={result.tdee} max={maxBar} tone="primary" />
       </div>
 
       <div className="mt-5">
-        <p className="mb-2 text-xs font-medium text-muted">Daily target by goal</p>
+        <p className="mb-2 text-xs font-medium text-muted">{t('tdeeCard.dailyTargetByGoal')}</p>
         <div className="grid grid-cols-3 gap-2">
           {goalCals.map((g) => {
             const active = g.value === goal
@@ -93,7 +95,7 @@ export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }
       </div>
 
       <div className="mt-5">
-        <p className="mb-2 text-xs font-medium text-muted">Recommended macros</p>
+        <p className="mb-2 text-xs font-medium text-muted">{t('tdeeCard.recommendedMacros')}</p>
         <div className="mb-2 flex h-2.5 overflow-hidden rounded-full bg-surface-2">
           {macros.map((mc) => {
             const kcal = mc.key === 'Fat' ? mc.g * 9 : mc.g * 4
@@ -105,7 +107,7 @@ export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }
           {macros.map((mc) => (
             <div key={mc.key} className="flex items-center gap-1.5 text-sm">
               <span className="size-2.5 shrink-0 rounded-full" style={{ background: mc.color }} />
-              <span className="font-medium text-ink">{mc.key}</span>
+              <span className="font-medium text-ink">{t(`tdeeCard.macro.${mc.key}`)}</span>
               <span className="text-muted tnum">{Math.round(mc.g)}g</span>
             </div>
           ))}

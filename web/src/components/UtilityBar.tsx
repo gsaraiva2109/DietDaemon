@@ -5,10 +5,12 @@ import { motion } from 'framer-motion'
 import { useTheme } from '@/lib/theme'
 import { useDemo, demoAvailable } from '@/lib/demo'
 import { SunIcon, MoonIcon, SparkleIcon } from './icons'
+import { useTranslation } from 'react-i18next'
 
 export function UtilityBar() {
   const { theme, toggle } = useTheme()
   const { demo, setDemo } = useDemo()
+  const { t } = useTranslation()
 
   return (
     <div className="mb-2 flex items-center justify-end gap-2">
@@ -23,12 +25,12 @@ export function UtilityBar() {
           }`}
         >
           <SparkleIcon width={15} height={15} />
-          Demo {demo ? 'on' : 'off'}
+          {demo ? t('utility.demoOn') : t('utility.demoOff')}
         </button>
       )}
       <button
         onClick={toggle}
-        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        aria-label={t('utility.switchTheme', { theme: theme === 'dark' ? 'light' : 'dark' })}
         className="grid size-9 place-items-center rounded-full border border-line bg-surface text-muted transition hover:text-ink"
       >
         <motion.span key={theme} initial={{ rotate: -30, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }}>
@@ -41,15 +43,16 @@ export function UtilityBar() {
 
 export function DemoBanner() {
   const { demo, setDemo } = useDemo()
+  const { t } = useTranslation()
   if (!demo) return null
   return (
     <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-transparent bg-primary-soft px-4 py-2.5 text-sm text-primary">
       <span className="flex items-center gap-2 font-medium">
         <SparkleIcon width={16} height={16} />
-        Sample data, no backend needed.
+        {t('utility.demoBannerText')}
       </span>
       <button onClick={() => setDemo(false)} className="font-semibold underline-offset-2 hover:underline">
-        Turn off
+        {t('utility.demoBannerOff')}
       </button>
     </div>
   )

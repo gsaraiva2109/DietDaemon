@@ -3,7 +3,8 @@
 
 import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MACRO_KEYS, MACRO_META, type ResolvedItem } from '@/lib/types'
+import { useTranslation } from 'react-i18next'
+import { MACRO_KEYS, type ResolvedItem } from '@/lib/types'
 import { confidenceTier, confidenceColor } from '@/lib/format'
 import { Pill } from '@/components/ui'
 import { CloseIcon } from '@/components/icons'
@@ -16,6 +17,7 @@ export function MacroTrace({
   items: ResolvedItem[]
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -41,7 +43,7 @@ export function MacroTrace({
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Macro trace"
+          aria-label={t('macroTrace.title')}
           className="absolute bottom-0 left-0 right-0 max-h-[80vh] rounded-t-2xl border border-b-0 border-line bg-surface p-5 shadow-lift"
           style={{ zIndex: 1500 }}
           initial={{ y: '100%' }}
@@ -50,15 +52,15 @@ export function MacroTrace({
           transition={{ duration: 0.4, ease: easeOut }}
         >
           <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-ink">Macro trace</h2>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <h2 className="text-lg font-bold text-ink">{t('macroTrace.title')}</h2>
+            <button onClick={onClose} aria-label={t('macroTrace.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
 
           <div className="flex flex-col gap-3 overflow-y-auto pr-1">
             {items.length === 0 && (
-              <p className="py-6 text-center text-sm text-muted">No items to trace.</p>
+              <p className="py-6 text-center text-sm text-muted">{t('macroTrace.noItems')}</p>
             )}
             {items.map((item, i) => {
               const tier = confidenceTier(item.Match.MatchScore)
@@ -78,7 +80,7 @@ export function MacroTrace({
                     {MACRO_KEYS.map((k) => (
                       <div key={k}>
                         <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">
-                          {MACRO_META[k].label}
+                          {t(`common.macro.${k}`)}
                         </dt>
                         <dd className="font-semibold text-ink tnum">
                           {Math.round(item.Macros[k])}

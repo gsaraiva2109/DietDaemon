@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useActiveFast, useFastHistory, useStartFast, useEndFast } from '@/lib/queries'
 import { Card, Eyebrow, Pill, Spinner } from '@/components/ui'
 import { ClockIcon } from '@/components/icons'
@@ -18,6 +19,7 @@ const SIZE = 168
 const THICK = 12
 
 export function FastingCard() {
+  const { t } = useTranslation()
   const active = useActiveFast()
   const history = useFastHistory(1)
   const startFast = useStartFast()
@@ -38,9 +40,9 @@ export function FastingCard() {
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-primary">
           <ClockIcon width={18} height={18} />
-          <Eyebrow>Fasting</Eyebrow>
+          <Eyebrow>{t('fastingCard.title')}</Eyebrow>
         </div>
-        {fast && <Pill tone="primary">In progress</Pill>}
+        {fast && <Pill tone="primary">{t('fastingCard.inProgress')}</Pill>}
       </header>
 
       {active.isLoading ? (
@@ -50,7 +52,7 @@ export function FastingCard() {
           onClick={() => active.refetch()}
           className="self-start text-sm font-medium text-accent hover:underline"
         >
-          Couldn't load, retry
+          {t('fastingCard.retry')}
         </button>
       ) : fast ? (
         <ActiveFast
@@ -86,6 +88,7 @@ function ActiveFast({
   onEnd: () => void
   ending: boolean
 }) {
+  const { t } = useTranslation()
   const elapsedMs = Math.max(0, now - startMs)
   const elapsedH = elapsedMs / 3_600_000
   const pct = targetHours > 0 ? Math.min(1, elapsedH / targetHours) : 0
@@ -102,20 +105,20 @@ function ActiveFast({
               {hh}:{String(mm).padStart(2, '0')}
             </div>
             <div className="mt-1 text-xs font-medium uppercase tracking-[0.14em] text-muted">
-              of {targetHours}h
+              {t('fastingCard.ofTarget', { hours: targetHours })}
             </div>
           </div>
         </Ring>
       </div>
       {reached && (
-        <p className="text-center text-sm font-medium text-primary">Target reached, nice work.</p>
+        <p className="text-center text-sm font-medium text-primary">{t('fastingCard.targetReached')}</p>
       )}
       <button
         onClick={onEnd}
         disabled={ending}
         className="mt-auto self-center rounded-full border border-line bg-surface px-5 py-2 text-sm font-semibold text-ink transition hover:bg-surface-2 disabled:opacity-50"
       >
-        {ending ? 'Ending…' : 'End fast'}
+        {ending ? t('fastingCard.ending') : t('fastingCard.endFast')}
       </button>
     </>
   )
@@ -134,15 +137,16 @@ function Idle({
   onStart: () => void
   starting: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <>
       {lastDurationH !== null ? (
         <p className="text-sm text-muted">
-          Last fast: <span className="font-medium text-ink tnum">{lastDurationH.toFixed(1)}h</span>.
-          Ready for another?
+          {t('fastingCard.lastFast')} <span className="font-medium text-ink tnum">{lastDurationH.toFixed(1)}h</span>.{' '}
+          {t('fastingCard.readyAgain')}
         </p>
       ) : (
-        <p className="text-sm text-muted">No active fast. Pick a window and start.</p>
+        <p className="text-sm text-muted">{t('fastingCard.noActiveFast')}</p>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -170,7 +174,7 @@ function Idle({
         disabled={starting}
         className="mt-auto self-start rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-ink transition hover:brightness-105 disabled:opacity-50"
       >
-        {starting ? 'Starting…' : `Start ${target}h fast`}
+        {starting ? t('fastingCard.starting') : t('fastingCard.startFast', { hours: target })}
       </button>
     </>
   )

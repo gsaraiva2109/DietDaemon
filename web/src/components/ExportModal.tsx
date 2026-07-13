@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { api, triggerDownload } from '@/lib/api'
 import { useDemo } from '@/lib/demo'
 import { scaleIn } from '@/lib/motion'
@@ -54,6 +55,7 @@ function SegmentedPills<T extends string>({
 }
 
 export function ExportModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const [dataType, setDataType] = useState<DataType>('meals')
   const [format, setFormat] = useState<Format>('csv')
@@ -81,7 +83,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           : await api.export.rollups(format, start, end)
       triggerDownload(blob, `dietdaemon-${dataType}-${start}_${end}.${format}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Export failed')
+      setError(e instanceof Error ? e.message : t('exportModal.exportFailed'))
     } finally {
       setPending(false)
     }
@@ -104,7 +106,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         <motion.div
           role="dialog"
           aria-modal="true"
-          aria-label="Export data"
+          aria-label={t('exportModal.dialogLabel')}
           variants={scaleIn}
           initial="hidden"
           animate="show"
@@ -115,33 +117,33 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           <div className="mb-5 flex items-start justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                Export
+                {t('exportModal.eyebrow')}
               </p>
-              <h2 className="mt-1 text-xl font-bold text-ink">Download your data</h2>
+              <h2 className="mt-1 text-xl font-bold text-ink">{t('exportModal.title')}</h2>
             </div>
-            <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+            <button onClick={onClose} aria-label={t('exportModal.close')} className="text-muted hover:text-ink">
               <CloseIcon />
             </button>
           </div>
 
           <div className="space-y-5">
             <div>
-              <span className="mb-2 block text-xs font-medium text-muted">Data</span>
+              <span className="mb-2 block text-xs font-medium text-muted">{t('exportModal.dataLabel')}</span>
               <SegmentedPills<DataType>
-                label="Data type"
+                label={t('exportModal.dataTypeLabel')}
                 value={dataType}
                 onChange={setDataType}
                 options={[
-                  { value: 'meals', label: 'Meals' },
-                  { value: 'rollups', label: 'Rollups' },
+                  { value: 'meals', label: t('exportModal.meals') },
+                  { value: 'rollups', label: t('exportModal.rollups') },
                 ]}
               />
             </div>
 
             <div>
-              <span className="mb-2 block text-xs font-medium text-muted">Format</span>
+              <span className="mb-2 block text-xs font-medium text-muted">{t('exportModal.formatLabel')}</span>
               <SegmentedPills<Format>
-                label="Format"
+                label={t('exportModal.formatLabel')}
                 value={format}
                 onChange={setFormat}
                 options={[
@@ -153,7 +155,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
 
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-muted">Start</span>
+                <span className="mb-1 block text-xs font-medium text-muted">{t('exportModal.startLabel')}</span>
                 <input
                   type="date"
                   value={start}
@@ -163,7 +165,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-muted">End</span>
+                <span className="mb-1 block text-xs font-medium text-muted">{t('exportModal.endLabel')}</span>
                 <input
                   type="date"
                   value={end}
@@ -183,24 +185,24 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
 
           {demo && (
             <p className="mt-4 text-sm text-muted">
-              Export is unavailable here. Connect a real account to download your data.
+              {t('exportModal.demoUnavailable')}
             </p>
           )}
 
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
-              Cancel
+              {t('exportModal.cancel')}
             </Button>
             <Button onClick={download} disabled={demo || pending}>
               {pending ? (
                 <>
                   <span className="size-4 animate-spin rounded-full border-2 border-primary-ink/40 border-t-primary-ink" />
-                  Exporting…
+                  {t('exportModal.exporting')}
                 </>
               ) : (
                 <>
                   <DownloadIcon width={18} height={18} />
-                  Download
+                  {t('exportModal.download')}
                 </>
               )}
             </Button>

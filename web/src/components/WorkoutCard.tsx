@@ -3,6 +3,7 @@
 // never the only cue. Backend is Phase 4 (404 → empty state).
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWorkouts, useLogWorkout } from '@/lib/queries'
 import { Card, Eyebrow, Pill, Spinner } from '@/components/ui'
 import { DumbbellIcon } from '@/components/icons'
@@ -17,6 +18,7 @@ const INTENSITY_TONE: Record<WorkoutIntensity, 'primary' | 'neutral' | 'accent'>
 }
 
 export function WorkoutCard() {
+  const { t } = useTranslation()
   const workouts = useWorkouts(5)
   const logWorkout = useLogWorkout()
   const [open, setOpen] = useState(false)
@@ -47,13 +49,13 @@ export function WorkoutCard() {
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2" style={{ color: AMBER }}>
           <DumbbellIcon width={18} height={18} />
-          <Eyebrow>Workout</Eyebrow>
+          <Eyebrow>{t('workoutCard.title')}</Eyebrow>
         </div>
         <button
           onClick={() => setOpen((o) => !o)}
           className="text-sm font-medium text-primary hover:underline"
         >
-          {open ? 'Cancel' : 'Log'}
+          {open ? t('workoutCard.cancel') : t('workoutCard.log')}
         </button>
       </header>
 
@@ -64,7 +66,7 @@ export function WorkoutCard() {
           onClick={() => workouts.refetch()}
           className="self-start text-sm font-medium text-accent hover:underline"
         >
-          Couldn't load, retry
+          {t('workoutCard.retry')}
         </button>
       ) : (
         <>
@@ -73,7 +75,7 @@ export function WorkoutCard() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Upper body"
+                placeholder={t('workoutCard.namePlaceholder')}
                 className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
               />
               <div className="flex gap-2">
@@ -82,7 +84,7 @@ export function WorkoutCard() {
                   onChange={(e) => setMinutes(e.target.value)}
                   type="number"
                   min={1}
-                  placeholder="min"
+                  placeholder={t('workoutCard.minutesPlaceholder')}
                   className="w-20 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary tnum"
                 />
                 <select
@@ -90,23 +92,23 @@ export function WorkoutCard() {
                   onChange={(e) => setIntensity(e.target.value as WorkoutIntensity)}
                   className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
                 >
-                  <option value="light">Light</option>
-                  <option value="moderate">Moderate</option>
-                  <option value="heavy">Heavy</option>
+                  <option value="light">{t('workoutCard.light')}</option>
+                  <option value="moderate">{t('workoutCard.moderate')}</option>
+                  <option value="heavy">{t('workoutCard.heavy')}</option>
                 </select>
                 <button
                   onClick={submit}
                   disabled={logWorkout.isPending}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-ink transition hover:brightness-105 disabled:opacity-50"
                 >
-                  Save
+                  {t('workoutCard.save')}
                 </button>
               </div>
             </div>
           )}
 
           {list.length === 0 ? (
-            <p className="text-sm text-muted">No workouts logged this week. Log one above.</p>
+            <p className="text-sm text-muted">{t('workoutCard.empty')}</p>
           ) : (
             <ul className="flex flex-col gap-2.5">
               {list.map((w: Workout) => (

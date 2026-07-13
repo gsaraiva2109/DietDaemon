@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 import { useDemo } from '@/lib/demo'
 import { usePrecedence, useSetPrecedence } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'
@@ -15,6 +16,7 @@ import { ChevronLeft, ChevronDown } from '@/components/icons'
 import { NUTRITION_SOURCES, SOURCE_LABELS } from '@/lib/types'
 
 export function SourcePrecedence() {
+  const { t } = useTranslation()
   const { demo } = useDemo()
   const { data, isLoading } = usePrecedence()
   const setPrecedence = useSetPrecedence()
@@ -50,24 +52,23 @@ export function SourcePrecedence() {
         prefetch="intent"
         className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink"
       >
-        <ChevronLeft width={18} height={18} /> Settings
+        <ChevronLeft width={18} height={18} /> {t('nav.settings')}
       </Link>
 
-      <PageHeader eyebrow="Settings" title="Nutrition source order" />
+      <PageHeader eyebrow={t('nav.settings')} title={t('sourcePrecedence.title')} />
 
       <p className="mb-6 max-w-prose text-sm text-muted">
-        When a food isn't already in your library, these sources are tried in order until one has
-        a match. Move your preferred source to the top.
+        {t('sourcePrecedence.description')}
       </p>
 
       {demo && (
         <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-muted">
-          Source order is read only here.
+          {t('sourcePrecedence.readOnly')}
         </p>
       )}
 
       {isLoading ? (
-        <Spinner label="Loading source order" />
+        <Spinner label={t('sourcePrecedence.loading')} />
       ) : (
         <>
           <Card className="p-2">
@@ -81,7 +82,7 @@ export function SourcePrecedence() {
                     <button
                       onClick={() => move(i, -1)}
                       disabled={i === 0}
-                      aria-label={`Move ${SOURCE_LABELS[source] ?? source} up`}
+                      aria-label={t('sourcePrecedence.moveUp', { source: SOURCE_LABELS[source] ?? source })}
                       className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-surface-2 hover:text-ink disabled:opacity-30"
                     >
                       <ChevronDown width={16} height={16} className="rotate-180" />
@@ -89,7 +90,7 @@ export function SourcePrecedence() {
                     <button
                       onClick={() => move(i, 1)}
                       disabled={i === order.length - 1}
-                      aria-label={`Move ${SOURCE_LABELS[source] ?? source} down`}
+                      aria-label={t('sourcePrecedence.moveDown', { source: SOURCE_LABELS[source] ?? source })}
                       className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-surface-2 hover:text-ink disabled:opacity-30"
                     >
                       <ChevronDown width={16} height={16} />
@@ -106,7 +107,7 @@ export function SourcePrecedence() {
                 onClick={() => setPrecedence.mutate(order)}
                 disabled={!dirty || setPrecedence.isPending}
               >
-                {setPrecedence.isPending ? 'Saving…' : 'Save order'}
+                {setPrecedence.isPending ? t('sourcePrecedence.saving') : t('sourcePrecedence.saveOrder')}
               </Button>
               {setPrecedence.isSuccess && !dirty && (
                 <motion.span
@@ -114,12 +115,12 @@ export function SourcePrecedence() {
                   animate={{ opacity: 1 }}
                   className="text-sm font-medium text-primary"
                 >
-                  Saved.
+                  {t('sourcePrecedence.saved')}
                 </motion.span>
               )}
               {setPrecedence.isError && (
                 <span className="text-sm font-medium text-accent" role="alert">
-                  {setPrecedence.error instanceof Error ? setPrecedence.error.message : 'Failed to save'}
+                  {setPrecedence.error instanceof Error ? setPrecedence.error.message : t('sourcePrecedence.saveFailed')}
                 </span>
               )}
             </div>
