@@ -34,6 +34,7 @@ var (
 	_ scheduler.ChatRouteStore    = (*Store)(nil)
 	_ scheduler.SentNudgeStore    = (*Store)(nil)
 	_ scheduler.WeeklyBudgetStore = (*Store)(nil)
+	_ scheduler.MealHistoryStore  = (*Store)(nil)
 	_ backup.Store                = (*Store)(nil)
 	_ assistant.Store             = (*Store)(nil)
 	_ assistant.PurgeStore        = (*Store)(nil)

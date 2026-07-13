@@ -922,6 +922,56 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCorrectionFeedbackAliases(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+	old := types.FoodMatch{FoodID: "old", Name: "Old", Source: "test", Per100g: types.Macros{Calories: 100}}
+	newFood := types.FoodMatch{FoodID: "new", Name: "New", Source: "test", Per100g: types.Macros{Calories: 200}}
+	if err := s.UpsertFood(ctx(), "u1", old, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertFood(ctx(), "u1", newFood, nil); err != nil {
+		t.Fatal(err)
+	}
+	meal := types.Meal{ID: "m1", UserID: "u1", At: time.Now().UTC(), CreatedAt: time.Now().UTC(), Items: []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "usual", NormalizedGrams: 100}, Match: old, Macros: old.Per100g}}}
+	if err := s.SaveMeal(ctx(), meal); err != nil {
+		t.Fatal(err)
+	}
+	corrected := types.ResolvedItem{Parsed: types.ParsedItem{RawPhrase: "new food", NormalizedGrams: 100}, Match: newFood, Macros: newFood.Per100g}
+	feedback, err := s.CorrectMealItemWithFeedback(ctx(), "u1", "m1", 0, corrected)
+	if err != nil || feedback.PendingAliasID != "" {
+		t.Fatalf("direct alias feedback=%+v err=%v", feedback, err)
+	}
+	if got, err := s.LookupFood(ctx(), "u1", "usual"); err != nil || got.FoodID != "new" {
+		t.Fatalf("learned alias = %+v, %v", got, err)
+	}
+
+	meal.ID = "m2"
+	meal.Items[0].Parsed.RawPhrase = "usual"
+	meal.Items[0].Match = old
+	meal.Items[0].Macros = old.Per100g
+	if err := s.SaveMeal(ctx(), meal); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteFoodAlias(ctx(), "u1", "new", "usual"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddFoodAlias(ctx(), "u1", "old", "usual"); err != nil {
+		t.Fatal(err)
+	}
+	feedback, err = s.CorrectMealItemWithFeedback(ctx(), "u1", "m2", 0, corrected)
+	if err != nil || feedback.PendingAliasID == "" {
+		t.Fatalf("conflict feedback=%+v err=%v", feedback, err)
+	}
+	if err := s.ConfirmPendingAlias(ctx(), "u1", feedback.PendingAliasID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.LookupFood(ctx(), "u1", "usual"); err != nil || got.FoodID != "new" {
+		t.Fatalf("replaced alias = %+v, %v", got, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Source precedence
 // ---------------------------------------------------------------------------

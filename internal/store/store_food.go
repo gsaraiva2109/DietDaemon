@@ -356,10 +356,10 @@ func (s *Store) DeleteFoodAlias(ctx context.Context, userID, foodID, alias strin
 // instead of writing it straight into food_aliases.
 func (s *Store) AddPendingAlias(ctx context.Context, userID, phrase, foodID string, matchScore float64) error {
 	const q = `
-		INSERT INTO pending_aliases (id, user_id, phrase, food_id, match_score, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO pending_aliases (id, user_id, phrase, food_id, match_score, replacement, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := s.db.ExecContext(ctx, s.rewrite(q), newID(), userID, phrase, foodID, matchScore, utcStr(time.Now()))
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), newID(), userID, phrase, foodID, matchScore, false, utcStr(time.Now()))
 	if err != nil {
 		return fmt.Errorf("store: add pending alias: %w", err)
 	}
@@ -369,7 +369,7 @@ func (s *Store) AddPendingAlias(ctx context.Context, userID, phrase, foodID stri
 // ListPendingAliases returns every alias candidate awaiting confirmation for a user.
 func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error) {
 	const q = `
-		SELECT id, user_id, phrase, food_id, match_score, created_at
+		SELECT id, user_id, phrase, food_id, match_score, replacement, created_at
 		FROM pending_aliases
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -380,6 +380,7 @@ func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.
 		Phrase     string  `db:"phrase"`
 		FoodID     string  `db:"food_id"`
 		MatchScore float64 `db:"match_score"`
+		Replace    bool    `db:"replacement"`
 		CreatedAt  string  `db:"created_at"`
 	}
 	var rows []pendingAliasRow
@@ -391,7 +392,7 @@ func (s *Store) ListPendingAliases(ctx context.Context, userID string) ([]types.
 	for _, r := range rows {
 		out = append(out, types.PendingAlias{
 			ID: r.ID, UserID: r.UserID, Phrase: r.Phrase, FoodID: r.FoodID,
-			MatchScore: r.MatchScore, CreatedAt: parseUTC(r.CreatedAt),
+			MatchScore: r.MatchScore, Replace: r.Replace, CreatedAt: parseUTC(r.CreatedAt),
 		})
 	}
 	return out, nil
@@ -407,10 +408,11 @@ func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	const selectQ = `SELECT phrase, food_id FROM pending_aliases WHERE id = ? AND user_id = ?`
+	const selectQ = `SELECT phrase, food_id, replacement FROM pending_aliases WHERE id = ? AND user_id = ?`
 	var pending struct {
-		Phrase string `db:"phrase"`
-		FoodID string `db:"food_id"`
+		Phrase  string `db:"phrase"`
+		FoodID  string `db:"food_id"`
+		Replace bool   `db:"replacement"`
 	}
 	if err := tx.GetContext(ctx, &pending, s.rewrite(selectQ), id, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -419,7 +421,10 @@ func (s *Store) ConfirmPendingAlias(ctx context.Context, userID, id string) erro
 		return fmt.Errorf("store: load pending alias: %w", err)
 	}
 
-	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	aliasQ := `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	if pending.Replace {
+		aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT(user_id, alias_normalized) DO UPDATE SET food_id = excluded.food_id`
+	}
 	normalized := normalize.Normalize(pending.Phrase)
 	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, pending.FoodID); err != nil {
 		return fmt.Errorf("store: insert alias: %w", err)

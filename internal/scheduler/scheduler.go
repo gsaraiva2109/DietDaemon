@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -25,6 +26,11 @@ type Store interface {
 	ListUsers(ctx context.Context) ([]types.User, error)
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
+}
+
+// MealHistoryStore supplies the timestamps used to learn smart meal reminders.
+type MealHistoryStore interface {
+	RecentMealTimes(ctx context.Context, userID string, since time.Time) ([]time.Time, error)
 }
 
 // NudgeStore persists which nudges have already fired, keyed by user, local
@@ -129,6 +135,8 @@ type Scheduler struct {
 	chatSender        ChatSender
 	weeklyBudgetStore WeeklyBudgetStore
 	weeklyBudgetRules []WeeklyBudgetRule
+	mealHistory       MealHistoryStore
+	smartMealRules    []SmartMealRule
 	sentNudges        SentNudgeStore
 	defaultLoc        *time.Location
 	interval          time.Duration
@@ -221,6 +229,10 @@ func WithWeeklyBudgetRules(wbs WeeklyBudgetStore, budgetRules []WeeklyBudgetRule
 		s.weeklyBudgetStore = wbs
 		s.weeklyBudgetRules = budgetRules
 	}
+}
+
+func WithSmartMealRules(history MealHistoryStore, rules []SmartMealRule) Option {
+	return func(s *Scheduler) { s.mealHistory, s.smartMealRules = history, rules }
 }
 
 // EffectiveWeeklyTarget computes the rolling effective daily target for a
@@ -358,6 +370,92 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	// Weekly rolling budget (self-correcting targets).
 	if s.weeklyBudgetStore != nil {
 		s.evalWeeklyBudgetRules(ctx, now, user, overrides)
+	}
+	if s.mealHistory != nil {
+		s.evalSmartMealRules(ctx, now, user, overrides)
+	}
+}
+
+func learnedMealHours(times []time.Time, loc *time.Location) []int {
+	days, hours := map[string]bool{}, map[int]map[string]bool{}
+	for _, at := range times {
+		local := at.In(loc)
+		day := local.Format("2006-01-02")
+		days[day] = true
+		if hours[local.Hour()] == nil {
+			hours[local.Hour()] = map[string]bool{}
+		}
+		hours[local.Hour()][day] = true
+	}
+	if len(days) < 7 {
+		return nil
+	}
+	var out []int
+	for hour, seen := range hours {
+		if len(seen) >= 3 {
+			out = append(out, hour)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(hours[out[i]]) == len(hours[out[j]]) {
+			return out[i] < out[j]
+		}
+		return len(hours[out[i]]) > len(hours[out[j]])
+	})
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
+
+func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	base := DefaultSmartMealRules()[0]
+	rule, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	loc := s.locFor(user)
+	times, err := s.mealHistory.RecentMealTimes(ctx, user.ID, now.AddDate(0, 0, -28))
+	if err != nil {
+		s.log.Error("scheduler: recent meal times", "user", user.ID, "err", err)
+		return
+	}
+	hours := learnedMealHours(times, loc)
+	sort.Ints(hours) // ranking selects slots; chronological order finds each predecessor.
+	for slot, hour := range hours {
+		local := now.In(loc)
+		for _, offset := range []int{0, 1} {
+			target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
+			reminder := target.Add(-30 * time.Minute)
+			if now.Before(reminder) || !now.Before(reminder.Add(s.interval)) {
+				continue
+			}
+			previousHour := hours[(slot+len(hours)-1)%len(hours)]
+			previousDay := target.Day()
+			if slot == 0 {
+				previousDay--
+			}
+			previous := time.Date(target.Year(), target.Month(), previousDay, previousHour, 0, 0, 0, loc)
+			skipped := false
+			for _, at := range times {
+				if !at.Before(previous) && !at.After(now) {
+					skipped = true
+					break
+				}
+			}
+			if skipped {
+				continue
+			}
+			date, id := target.Format("2006-01-02"), fmt.Sprintf("%s-%02d", rule.ID, hour)
+			done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
+			if err != nil || done {
+				continue
+			}
+			n := types.Notification{UserID: user.ID, Title: "DietDaemon", Body: rule.Message, Priority: types.PriorityHigh}
+			if err := s.deliver(ctx, user, id, n, nil, nil); err == nil {
+				_ = s.nudges.MarkNudged(ctx, user.ID, date, id)
+			}
+		}
 	}
 }
 

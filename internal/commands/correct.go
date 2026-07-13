@@ -17,6 +17,9 @@ var gramsRe = regexp.MustCompile(`^\d+(\.\d+)?g$`)
 type CorrectStore interface {
 	RecentMeals(ctx context.Context, userID string, limit int) ([]types.Meal, error)
 	CorrectMealItem(ctx context.Context, userID, mealID string, itemIndex int, corrected types.ResolvedItem) error
+	CorrectMealItemWithFeedback(ctx context.Context, userID, mealID string, itemIndex int, corrected types.ResolvedItem) (types.CorrectionFeedback, error)
+	ConfirmPendingAlias(ctx context.Context, userID, id string) error
+	RejectPendingAlias(ctx context.Context, userID, id string) error
 }
 
 // CorrectResolver is the subset of resolver methods needed by /correct.
@@ -41,6 +44,9 @@ func (c *CorrectCommand) Help() types.I18nKey { return "cmd.correct.usage" }
 
 func (c *CorrectCommand) Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	args = strings.TrimSpace(args)
+	if parts := strings.Fields(args); len(parts) == 3 && parts[0] == "alias" {
+		return c.handleAlias(ctx, msg, parts[1], parts[2])
+	}
 	parts := strings.SplitN(args, " ", 3)
 	if len(parts) < 3 {
 		return types.Reply{
@@ -106,7 +112,8 @@ func (c *CorrectCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 		}, nil
 	}
 
-	if err := c.store.CorrectMealItem(ctx, msg.UserID, meal.ID, itemIndex, item); err != nil {
+	feedback, err := c.store.CorrectMealItemWithFeedback(ctx, msg.UserID, meal.ID, itemIndex, item)
+	if err != nil {
 		if err == types.ErrNotFound {
 			return types.Reply{
 				Text:        "Could not find that item on your most recent meal.",
@@ -117,9 +124,40 @@ func (c *CorrectCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 	}
 
 	m := item.Macros
-	return types.Reply{
+	reply := types.Reply{
 		Text: fmt.Sprintf("Corrected item %d to \"%s\": %.0f kcal | P %.0fg . C %.0fg . F %.0fg",
 			itemIndex, item.Match.Name, m.Calories, m.Protein, m.Carbs, m.Fat),
 		ChannelMeta: msg.ChannelMeta,
-	}, nil
+	}
+	if feedback.PendingAliasID != "" {
+		reply.Text += "\n\nThis replaces an existing learned name. Update it?"
+		reply.Markup = &types.ReplyMarkup{InlineKeyboard: [][]types.InlineButton{{
+			{Text: "Replace", CallbackData: "/correct alias accept " + feedback.PendingAliasID},
+			{Text: "Keep existing", CallbackData: "/correct alias reject " + feedback.PendingAliasID},
+		}}}
+	}
+	return reply, nil
+}
+
+func (c *CorrectCommand) handleAlias(ctx context.Context, msg types.InboundMessage, action, id string) (types.Reply, error) {
+	var err error
+	switch action {
+	case "accept":
+		err = c.store.ConfirmPendingAlias(ctx, msg.UserID, id)
+	case "reject":
+		err = c.store.RejectPendingAlias(ctx, msg.UserID, id)
+	default:
+		return types.Reply{Text: "Use /correct alias accept <id> or /correct alias reject <id>.", ChannelMeta: msg.ChannelMeta}, nil
+	}
+	if err == types.ErrNotFound {
+		return types.Reply{Text: "That alias confirmation was not found.", ChannelMeta: msg.ChannelMeta}, nil
+	}
+	if err != nil {
+		return types.Reply{}, fmt.Errorf("handle correction alias: %w", err)
+	}
+	text := "Kept the existing learned name."
+	if action == "accept" {
+		text = "Updated the learned name."
+	}
+	return types.Reply{Text: text, ChannelMeta: msg.ChannelMeta}, nil
 }
