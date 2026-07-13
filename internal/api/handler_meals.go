@@ -237,7 +237,7 @@ func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request,
 		byID[c.RuleID] = c
 	}
 
-	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules())+len(scheduler.DefaultWeeklyBudgetRules()))
+	views := make([]nudgeRuleView, 0, len(scheduler.DefaultRules())+len(scheduler.DefaultHealthRules())+len(scheduler.DefaultDigestRules())+len(scheduler.DefaultWeeklyBudgetRules())+len(scheduler.DefaultSmartMealRules()))
 	for _, base := range scheduler.DefaultRules() {
 		views = append(views, buildNudgeRuleView(base.ID, "macro", base, byID))
 	}
@@ -249,6 +249,9 @@ func (h *Handler) handleGetNudgeSettings(w http.ResponseWriter, r *http.Request,
 	}
 	for _, base := range scheduler.DefaultWeeklyBudgetRules() {
 		views = append(views, buildNudgeRuleViewWeeklyBudget(base.ID, "weekly-budget", base, byID))
+	}
+	for _, base := range scheduler.DefaultSmartMealRules() {
+		views = append(views, buildNudgeRuleView(base.ID, "smart-meal", base, byID))
 	}
 
 	_ = json.NewEncoder(w).Encode(views)

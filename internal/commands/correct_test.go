@@ -18,6 +18,8 @@ type fakeCorrectStore struct {
 	gotItemIndex  int
 	gotCorrected  types.ResolvedItem
 	correctErr    error
+	feedback      types.CorrectionFeedback
+	pendingErr    error
 }
 
 func (f *fakeCorrectStore) RecentMeals(_ context.Context, _ string, limit int) ([]types.Meal, error) {
@@ -34,6 +36,19 @@ func (f *fakeCorrectStore) CorrectMealItem(_ context.Context, userID, mealID str
 	f.gotItemIndex = itemIndex
 	f.gotCorrected = corrected
 	return f.correctErr
+}
+
+func (f *fakeCorrectStore) CorrectMealItemWithFeedback(ctx context.Context, userID, mealID string, itemIndex int, corrected types.ResolvedItem) (types.CorrectionFeedback, error) {
+	if err := f.CorrectMealItem(ctx, userID, mealID, itemIndex, corrected); err != nil {
+		return types.CorrectionFeedback{}, err
+	}
+	return f.feedback, nil
+}
+func (f *fakeCorrectStore) ConfirmPendingAlias(context.Context, string, string) error {
+	return f.pendingErr
+}
+func (f *fakeCorrectStore) RejectPendingAlias(context.Context, string, string) error {
+	return f.pendingErr
 }
 
 // fakeCorrectResolver is a minimal CorrectResolver stub for /correct tests.
@@ -114,5 +129,17 @@ func TestCorrectCommand_BadGramsFormat(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(reply.Text), "grams") {
 		t.Errorf("expected reply to complain about grams format, got %q", reply.Text)
+	}
+}
+
+func TestCorrectCommand_ConflictOffersReplacement(t *testing.T) {
+	store := &fakeCorrectStore{meals: []types.Meal{{ID: "meal-1"}}, feedback: types.CorrectionFeedback{PendingAliasID: "pending-1"}}
+	resolver := &fakeCorrectResolver{result: types.ResolvedItem{Match: types.FoodMatch{FoodID: "chicken", Name: "Chicken"}, Macros: types.Macros{Calories: 1}}}
+	reply, err := NewCorrectCommand(store, resolver).Handle(context.Background(), types.InboundMessage{UserID: "u1"}, "0 150g chicken")
+	if err != nil || reply.Markup == nil || len(reply.Markup.InlineKeyboard) != 1 {
+		t.Fatalf("expected replacement buttons, reply=%+v err=%v", reply, err)
+	}
+	if got := reply.Markup.InlineKeyboard[0][0].CallbackData; got != "/correct alias accept pending-1" {
+		t.Fatalf("accept callback = %q", got)
 	}
 }

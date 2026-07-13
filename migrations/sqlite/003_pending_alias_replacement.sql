@@ -1,0 +1,1 @@
+ALTER TABLE pending_aliases ADD COLUMN replacement INTEGER NOT NULL DEFAULT 0;

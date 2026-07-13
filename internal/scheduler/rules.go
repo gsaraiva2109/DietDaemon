@@ -193,3 +193,10 @@ func DefaultWeeklyBudgetRules() []WeeklyBudgetRule {
 		{ID: "weekly-budget-protein", Macro: MacroProtein, CheckHour: 9},
 	}
 }
+
+// SmartMealRule learns up to three meal hours from recent logging history.
+type SmartMealRule struct{ ID, Message string }
+
+func DefaultSmartMealRules() []SmartMealRule {
+	return []SmartMealRule{{ID: "smart-meal-reminders", Message: "Usual meal time — log something when you can."}}
+}

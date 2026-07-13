@@ -329,6 +329,12 @@ type PendingAlias struct {
 	FoodID     string    `json:"food_id"`
 	MatchScore float64   `json:"match_score"`
 	CreatedAt  time.Time `json:"created_at"`
+	Replace    bool      `json:"replace"`
+}
+
+// CorrectionFeedback describes the alias-learning outcome of a chat correction.
+type CorrectionFeedback struct {
+	PendingAliasID string
 }
 
 // NudgeRuleConfig is a per-user override for one macro/health/digest nudge

@@ -41,6 +41,7 @@ const EDITABLE_FIELDS: Record<string, { key: string; label: string; min?: number
     { key: 'ClampFloorPct', label: 'Clamp floor (%)', min: 0.1, max: 1.5, step: 0.05 },
     { key: 'ClampCeilPct', label: 'Clamp ceiling (%)', min: 0.1, max: 2.0, step: 0.05 },
   ],
+  'smart-meal': [],
 }
 
 function titleFromID(id: string): string {
@@ -59,6 +60,7 @@ export function NudgeSettings() {
   const health = rules.filter((r) => r.kind === 'health')
   const digest = rules.filter((r) => r.kind === 'digest')
   const weeklyBudget = rules.filter((r) => r.kind === 'weekly-budget')
+  const smartMeal = rules.filter((r) => r.kind === 'smart-meal')
 
   return (
     <div>
@@ -90,6 +92,7 @@ export function NudgeSettings() {
           <RuleGroup title="Macro nudges" rules={macro} demo={demo} />
           <RuleGroup title="Health nudges" rules={health} demo={demo} />
           <RuleGroup title="Weekly budget" rules={weeklyBudget} demo={demo} />
+          <RuleGroup title="Smart meal reminders" rules={smartMeal} demo={demo} />
           <RuleGroup title="Weekly digest" rules={digest} demo={demo} />
         </motion.div>
       )}

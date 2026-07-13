@@ -50,6 +50,47 @@ func (f *fakeNotifier) Notify(_ context.Context, n types.Notification) error {
 	return nil
 }
 
+type fakeMealHistory struct{ times []time.Time }
+
+func (f *fakeMealHistory) RecentMealTimes(_ context.Context, _ string, _ time.Time) ([]time.Time, error) {
+	return f.times, nil
+}
+
+func TestLearnedMealHoursThresholdAndCap(t *testing.T) {
+	var times []time.Time
+	for day := 1; day <= 7; day++ {
+		for _, hour := range []int{8, 12, 18, 21} {
+			times = append(times, time.Date(2026, 6, day, hour, 0, 0, 0, time.UTC))
+		}
+	}
+	hours := learnedMealHours(times, time.UTC)
+	if len(hours) != 3 || hours[0] != 8 || hours[1] != 12 || hours[2] != 18 {
+		t.Fatalf("hours = %v, want top three in hour order on tie", hours)
+	}
+	if got := learnedMealHours(times[:6], time.UTC); got != nil {
+		t.Fatalf("insufficient days = %v, want nil", got)
+	}
+}
+
+func TestSmartMealReminderMidnightDedupes(t *testing.T) {
+	var times []time.Time
+	for day := 1; day <= 7; day++ {
+		times = append(times, time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC))
+	}
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	nd, nt := newFakeNudges(), &fakeNotifier{}
+	s := New(st, nd, nt, nil, time.UTC, time.Minute, WithSmartMealRules(&fakeMealHistory{times: times}, DefaultSmartMealRules()))
+	now := time.Date(2026, 6, 8, 23, 30, 0, 0, time.UTC)
+	s.tick(context.Background(), now)
+	s.tick(context.Background(), now)
+	if len(nt.sent) != 1 {
+		t.Fatalf("sent = %d, want one", len(nt.sent))
+	}
+	if !nd.marked["u1|2026-06-09|smart-meal-reminders-00"] {
+		t.Fatalf("missing next-local-day midnight dedupe key: %#v", nd.marked)
+	}
+}
+
 func proteinRule() []Rule {
 	return []Rule{{ID: "protein-evening", AfterHour: 20, Macro: MacroProtein, MinFraction: 0.8, Message: "p %.0f/%.0f"}}
 }

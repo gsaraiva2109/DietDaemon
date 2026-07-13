@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -128,6 +130,19 @@ func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]ty
 	}
 
 	return meals, nil
+}
+
+// RecentMealTimes returns logged meal timestamps since since, newest first.
+func (s *Store) RecentMealTimes(ctx context.Context, userID string, since time.Time) ([]time.Time, error) {
+	var rows []string
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(`SELECT at_utc FROM meals WHERE user_id = ? AND at_utc >= ? ORDER BY at_utc DESC`), userID, utcStr(since)); err != nil {
+		return nil, fmt.Errorf("store: recent meal times: %w", err)
+	}
+	out := make([]time.Time, len(rows))
+	for i, row := range rows {
+		out[i] = parseUTC(row)
+	}
+	return out, nil
 }
 
 // GetMeal returns a single meal by ID with its resolved items populated.
@@ -315,10 +330,64 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	_, err = s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CorrectMealItemWithFeedback corrects an item and learns its original phrase
+// atomically. Conflicting aliases are queued for an explicit replacement.
+func (s *Store) CorrectMealItemWithFeedback(ctx context.Context, userID, mealID string, itemIndex int, corrected types.ResolvedItem) (types.CorrectionFeedback, error) {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return types.CorrectionFeedback{}, fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	phrase, err := s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected)
+	if err != nil {
+		return types.CorrectionFeedback{}, err
+	}
+	normalized := normalize.Normalize(phrase)
+	if normalized == "" || corrected.Match.FoodID == "" {
+		if err := tx.Commit(); err != nil {
+			return types.CorrectionFeedback{}, err
+		}
+		return types.CorrectionFeedback{}, nil
+	}
+	var existing string
+	err = tx.GetContext(ctx, &existing, s.rewrite(`SELECT food_id FROM food_aliases WHERE user_id = ? AND alias_normalized = ?`), userID, normalized)
+	if errors.Is(err, sql.ErrNoRows) || existing == corrected.Match.FoodID {
+		if _, err := tx.ExecContext(ctx, s.rewrite(`INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`), userID, normalized, corrected.Match.FoodID); err != nil {
+			return types.CorrectionFeedback{}, fmt.Errorf("store: insert correction alias: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return types.CorrectionFeedback{}, err
+		}
+		return types.CorrectionFeedback{}, nil
+	}
+	if err != nil {
+		return types.CorrectionFeedback{}, fmt.Errorf("store: lookup correction alias: %w", err)
+	}
+	id := newID()
+	if _, err := tx.ExecContext(ctx, s.rewrite(`INSERT INTO pending_aliases (id, user_id, phrase, food_id, match_score, replacement, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`), id, userID, phrase, corrected.Match.FoodID, corrected.Match.MatchScore, true, utcStr(time.Now())); err != nil {
+		return types.CorrectionFeedback{}, fmt.Errorf("store: add replacement alias: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return types.CorrectionFeedback{}, err
+	}
+	return types.CorrectionFeedback{PendingAliasID: id}, nil
+}
+
+// correctMealItemTx performs the shared direct/API correction work and returns
+// the original phrase of the corrected item for chat feedback learning.
+func (s *Store) correctMealItemTx(ctx context.Context, tx *sqlx.Tx, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) (string, error) {
 	// Load the meal to get the at time for rollup lookup and the original items.
 	meal, err := s.mealOwner(ctx, tx, mealID, userID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	mealAt := parseUTC(meal.AtUTC)
 
@@ -334,7 +403,7 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 	`
 	var itemRows []mealItemRow
 	if err := tx.SelectContext(ctx, &itemRows, s.rewrite(itemsQ), mealID); err != nil {
-		return fmt.Errorf("store: query items: %w", err)
+		return "", fmt.Errorf("store: query items: %w", err)
 	}
 
 	type item struct {
@@ -348,11 +417,12 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		oldTotal = oldTotal.Add(items[i].ri.Macros)
 	}
 	if itemIndex < 0 || itemIndex >= len(items) {
-		return fmt.Errorf("store: item index %d out of range [0, %d)", itemIndex, len(items))
+		return "", fmt.Errorf("store: item index %d out of range [0, %d)", itemIndex, len(items))
 	}
 
 	// Replace the target item's macros and recalculate the new total.
 	oldItemMacros := items[itemIndex].ri.Macros
+	originalPhrase := items[itemIndex].ri.Parsed.RawPhrase
 	items[itemIndex].ri = corrected
 
 	var newTotal types.Macros
@@ -382,10 +452,10 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		"id":               items[itemIndex].id,
 	})
 	if err != nil {
-		return fmt.Errorf("store: bind update item: %w", err)
+		return "", fmt.Errorf("store: bind update item: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, s.rewrite(updateQuery), updateArgs...); err != nil {
-		return fmt.Errorf("store: update item: %w", err)
+		return "", fmt.Errorf("store: update item: %w", err)
 	}
 
 	// Update the daily rollup: remove old macros, add new ones.
@@ -425,10 +495,10 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		"corrected_fiber":   corrected.Macros.Fiber,
 	})
 	if err != nil {
-		return fmt.Errorf("store: bind update rollup: %w", err)
+		return "", fmt.Errorf("store: bind update rollup: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQuery), rollupArgs...); err != nil {
-		return fmt.Errorf("store: update rollup: %w", err)
+		return "", fmt.Errorf("store: update rollup: %w", err)
 	}
 
 	// Refresh the global food catalog: upsert the corrected macros so future
@@ -448,14 +518,14 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 		`
 		foodQuery, foodArgs, err := sqlx.Named(foodQ, foodNamedArgs(corrected.Match))
 		if err != nil {
-			return fmt.Errorf("store: bind upsert food: %w", err)
+			return "", fmt.Errorf("store: bind upsert food: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, s.rewrite(foodQuery), foodArgs...); err != nil {
-			return fmt.Errorf("store: upsert food: %w", err)
+			return "", fmt.Errorf("store: upsert food: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	return originalPhrase, nil
 }
 
 // mealItemRow is resolvedItemRow plus its own id, used where the caller must

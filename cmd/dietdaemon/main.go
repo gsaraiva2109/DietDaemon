@@ -279,6 +279,7 @@ func run() error {
 		scheduler.WithChatSender(st, msg),
 		scheduler.WithSentNudges(st),
 		scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()),
+		scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
 	)
 	go sched.Run(ctx)
 	slog.Info("scheduler running", "interval", nudgeInterval.String())
