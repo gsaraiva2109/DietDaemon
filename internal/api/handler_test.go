@@ -42,13 +42,15 @@ type fakeMealStore struct {
 	latestMealTimeErr error
 
 	// Food discovery.
-	foodList       []types.FoodDetail
-	foodListErr    error
-	foodDetail     types.FoodDetail
-	foodDetailErr  error
-	addAliasErr    error
-	deleteAliasErr error
-	foodsByID      map[string]types.FoodMatch
+	foodList             []types.FoodDetail
+	foodListErr          error
+	foodDetail           types.FoodDetail
+	foodDetailErr        error
+	addAliasErr          error
+	deleteAliasErr       error
+	foodsByID            map[string]types.FoodMatch
+	removeFromLibraryErr error
+	addToLibraryErr      error
 
 	// Pending aliases.
 	pendingAliases         []types.PendingAlias
@@ -246,6 +248,15 @@ func (s *fakeMealStore) GetFood(_ context.Context, foodID string) (types.FoodMat
 		return fm, nil
 	}
 	return types.FoodMatch{}, types.ErrNoMatch
+}
+func (s *fakeMealStore) SearchCatalog(_ context.Context, _, _, _ string, _, _ int) ([]types.FoodDetail, error) {
+	return s.foodList, s.foodListErr
+}
+func (s *fakeMealStore) RemoveFromLibrary(_ context.Context, _, _ string) error {
+	return s.removeFromLibraryErr
+}
+func (s *fakeMealStore) AddToLibrary(_ context.Context, _, _ string) error {
+	return s.addToLibraryErr
 }
 func (s *fakeMealStore) AddFoodAlias(_ context.Context, _, _, _ string) error {
 	return s.addAliasErr
@@ -774,6 +785,42 @@ func TestHandleRollupsToday(t *testing.T) {
 	rollup := decodeJSON[types.DailyRollup](t, rec)
 	if rollup.Consumed.Calories != 2100 {
 		t.Errorf("calories = %v, want 2100", rollup.Consumed.Calories)
+	}
+}
+
+func TestHandleGetFoodCatalogFallback(t *testing.T) {
+	store := newFakeMealStore()
+	store.foodDetailErr = types.ErrNotFound
+	store.foodsByID = map[string]types.FoodMatch{
+		"catalog-1": {
+			FoodID: "catalog-1", Name: "Catalog Only Food", Source: "usda",
+			Per100g: types.Macros{Calories: 100, Protein: 10},
+		},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/foods/catalog-1", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	fd := decodeJSON[types.FoodDetail](t, rec)
+	if fd.Name != "Catalog Only Food" || fd.InLibrary {
+		t.Errorf("unexpected fallback food detail: %+v", fd)
+	}
+	if len(fd.Aliases) != 0 {
+		t.Errorf("expected no aliases, got %v", fd.Aliases)
+	}
+}
+
+func TestHandleGetFoodNotFoundAnywhere(t *testing.T) {
+	store := newFakeMealStore()
+	store.foodDetailErr = types.ErrNotFound
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/foods/nonexistent", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

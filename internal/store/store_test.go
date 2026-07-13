@@ -358,6 +358,115 @@ func TestFoodLibraryRoundTrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Catalog search + library removal
+// ---------------------------------------------------------------------------
+
+func TestSearchCatalogUnscopedToLibrary(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	// Bulk-imported, never logged by anyone — catalog-only.
+	if err := s.BulkUpsertFoods(ctx(), []types.FoodMatch{
+		{FoodID: "frango-cat", Name: "Frango Grelhado", Source: "taco", Per100g: types.Macros{Calories: 165}},
+		{FoodID: "arroz-cat", Name: "Arroz Branco", Source: "usda", Per100g: types.Macros{Calories: 130}},
+	}); err != nil {
+		t.Fatalf("BulkUpsertFoods: %v", err)
+	}
+
+	// Logged by u1 — should show up as in_library with usage stats.
+	feijao := types.FoodMatch{FoodID: "feijao-lib", Name: "Feijao Preto", Source: "taco", Per100g: types.Macros{Calories: 90}}
+	if err := s.UpsertFood(ctx(), "u1", feijao, nil); err != nil {
+		t.Fatalf("UpsertFood feijao: %v", err)
+	}
+	if err := s.RecordFoodQuery(ctx(), "u1", "feijao-lib"); err != nil {
+		t.Fatalf("RecordFoodQuery: %v", err)
+	}
+
+	// Browsing with no query returns every catalog food, ordered by name.
+	all, err := s.SearchCatalog(ctx(), "u1", "", "", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchCatalog: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 catalog foods, got %d: %+v", len(all), all)
+	}
+	byID := map[string]types.FoodDetail{}
+	for _, fd := range all {
+		byID[fd.FoodID] = fd
+	}
+	if fd := byID["frango-cat"]; fd.InLibrary || fd.QueryCount != 0 || fd.LastUsed != "" {
+		t.Errorf("catalog-only food should not be in library: %+v", fd)
+	}
+	if fd := byID["feijao-lib"]; !fd.InLibrary || fd.QueryCount != 1 {
+		t.Errorf("logged food should be in library with query_count 1: %+v", fd)
+	}
+
+	// Source filter.
+	tacoOnly, err := s.SearchCatalog(ctx(), "u1", "", "taco", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchCatalog source=taco: %v", err)
+	}
+	if len(tacoOnly) != 2 {
+		t.Fatalf("expected 2 taco foods, got %d: %+v", len(tacoOnly), tacoOnly)
+	}
+
+	// Full-text query against the global catalog, including catalog-only foods.
+	matches, err := s.SearchCatalog(ctx(), "u1", "Frango", "", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchCatalog q=Frango: %v", err)
+	}
+	if len(matches) != 1 || matches[0].FoodID != "frango-cat" {
+		t.Fatalf("expected only frango-cat to match, got %+v", matches)
+	}
+
+	// Limit/offset paginate consistently.
+	page, err := s.SearchCatalog(ctx(), "u1", "", "", 1, 1)
+	if err != nil {
+		t.Fatalf("SearchCatalog paged: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("expected 1 result for limit=1 offset=1, got %d", len(page))
+	}
+}
+
+func TestRemoveFromLibrary(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	frango := types.FoodMatch{FoodID: "frango", Name: "Frango Grelhado", Source: "taco", Per100g: types.Macros{Calories: 165}}
+	if err := s.UpsertFood(ctx(), "u1", frango, nil); err != nil {
+		t.Fatalf("UpsertFood: %v", err)
+	}
+	if _, err := s.GetFoodDetail(ctx(), "u1", "frango"); err != nil {
+		t.Fatalf("GetFoodDetail before removal: %v", err)
+	}
+
+	if err := s.RemoveFromLibrary(ctx(), "u1", "frango"); err != nil {
+		t.Fatalf("RemoveFromLibrary: %v", err)
+	}
+	if _, err := s.GetFoodDetail(ctx(), "u1", "frango"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("GetFoodDetail after removal: expected ErrNotFound, got %v", err)
+	}
+
+	// Global catalog row is untouched.
+	if _, err := s.GetFood(ctx(), "frango"); err != nil {
+		t.Fatalf("GetFood after removal from library: %v", err)
+	}
+
+	// Removing again (already gone) is ErrNotFound.
+	if err := s.RemoveFromLibrary(ctx(), "u1", "frango"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("RemoveFromLibrary again: expected ErrNotFound, got %v", err)
+	}
+
+	// Removing a food that was never in the library is ErrNotFound too.
+	if err := s.RemoveFromLibrary(ctx(), "u1", "never-logged"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("RemoveFromLibrary never-logged: expected ErrNotFound, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Targets set / get
 // ---------------------------------------------------------------------------
 

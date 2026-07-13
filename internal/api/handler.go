@@ -139,6 +139,9 @@ type MealStore interface {
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
 	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
+	SearchCatalog(ctx context.Context, userID, query, source string, limit, offset int) ([]types.FoodDetail, error)
+	RemoveFromLibrary(ctx context.Context, userID, foodID string) error
+	AddToLibrary(ctx context.Context, userID, foodID string) error
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
 
@@ -388,6 +391,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/suggest", h.wrap(h.handleSuggest))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
+	mux.HandleFunc("GET /api/v1/catalog/search", h.wrap(h.handleSearchCatalog))
+	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/library", h.wrap(h.handleRemoveFromLibrary))
+	mux.HandleFunc("POST /api/v1/foods/{foodID}/library", h.wrap(h.handleAddToLibrary))
 
 	// Pending aliases.
 	mux.HandleFunc("GET /api/v1/aliases/pending", h.wrap(h.handleListPendingAliases))

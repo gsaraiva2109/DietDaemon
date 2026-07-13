@@ -397,6 +397,14 @@ export const api = {
         `/foods/${encodeURIComponent(foodID)}/aliases/${encodeURIComponent(alias)}`,
         { method: 'DELETE' },
       ),
+    searchCatalog: (q = '', source = '', limit = 20, offset = 0) =>
+      request<FoodDetail[]>(
+        `/catalog/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}${source ? `&source=${encodeURIComponent(source)}` : ''}`,
+      ),
+    removeFromLibrary: (foodID: string) =>
+      request<void>(`/foods/${encodeURIComponent(foodID)}/library`, { method: 'DELETE' }),
+    addToLibrary: (foodID: string) =>
+      request<{ status: string }>(`/foods/${encodeURIComponent(foodID)}/library`, { method: 'POST' }),
   },
 
   // --- Pending Aliases --------------------------------------------

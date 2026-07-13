@@ -288,6 +288,7 @@ type FoodDetail struct {
 	ServingUnit string      `json:"serving_unit"`
 	QueryCount  int         `json:"query_count"`
 	LastUsed    string      `json:"last_used"`
+	InLibrary   bool        `json:"in_library"`
 	Aliases     []FoodAlias `json:"aliases,omitempty"`
 }
 

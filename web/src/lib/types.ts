@@ -154,6 +154,7 @@ export interface FoodDetail {
   query_count: number
   last_used: string
   aliases?: FoodAlias[]
+  in_library: boolean
 }
 
 export interface MealTemplate {

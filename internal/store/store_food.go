@@ -46,7 +46,8 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 func (s *Store) GetFood(ctx context.Context, foodID string) (types.FoodMatch, error) {
 	const q = `
 		SELECT food_id, name, source, kcal_100g, protein_100g,
-		       carbs_100g, fat_100g, fiber_100g
+		       carbs_100g, fat_100g, fiber_100g,
+		       category, brand, barcode, image_url, serving_size, serving_unit
 		FROM foods
 		WHERE food_id = ?
 	`
@@ -63,14 +64,20 @@ func (s *Store) GetFood(ctx context.Context, foodID string) (types.FoodMatch, er
 // foodMatchRow is the flat DB shape shared by LookupFood and GetFood;
 // types.FoodMatch nests the macro columns into Per100g.
 type foodMatchRow struct {
-	FoodID  string  `db:"food_id"`
-	Name    string  `db:"name"`
-	Source  string  `db:"source"`
-	Kcal    float64 `db:"kcal_100g"`
-	Protein float64 `db:"protein_100g"`
-	Carbs   float64 `db:"carbs_100g"`
-	Fat     float64 `db:"fat_100g"`
-	Fiber   float64 `db:"fiber_100g"`
+	FoodID      string  `db:"food_id"`
+	Name        string  `db:"name"`
+	Source      string  `db:"source"`
+	Kcal        float64 `db:"kcal_100g"`
+	Protein     float64 `db:"protein_100g"`
+	Carbs       float64 `db:"carbs_100g"`
+	Fat         float64 `db:"fat_100g"`
+	Fiber       float64 `db:"fiber_100g"`
+	Category    string  `db:"category"`
+	Brand       string  `db:"brand"`
+	Barcode     string  `db:"barcode"`
+	ImageURL    string  `db:"image_url"`
+	ServingSize float64 `db:"serving_size"`
+	ServingUnit string  `db:"serving_unit"`
 }
 
 func (r foodMatchRow) toFoodMatch() types.FoodMatch {
@@ -81,6 +88,12 @@ func (r foodMatchRow) toFoodMatch() types.FoodMatch {
 		Per100g: types.Macros{
 			Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber,
 		},
+		Category:    r.Category,
+		Brand:       r.Brand,
+		Barcode:     r.Barcode,
+		ImageURL:    r.ImageURL,
+		ServingSize: r.ServingSize,
+		ServingUnit: r.ServingUnit,
 	}
 }
 
@@ -269,6 +282,102 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 	return foodDetailRows(rows), nil
 }
 
+// SearchCatalog browses the global food catalog directly (unlike ListFoods/
+// SearchFoods/FrequentFoods, it is NOT scoped to foods this user has used):
+// every food ever bulk-imported or resolved is visible. It LEFT JOINs
+// user_food_stats so callers can tell which results are already in the
+// user's personal library (in_library, query_count, last_used), defaulting
+// those to false/0/"" for catalog-only foods.
+func (s *Store) SearchCatalog(ctx context.Context, userID, query, source string, limit, offset int) ([]types.FoodDetail, error) {
+	args := []any{userID}
+	q := `
+		SELECT f.food_id, f.name, f.source, f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
+		       COALESCE(ufs.query_count, 0) AS query_count, COALESCE(ufs.last_used, '') AS last_used,
+		       (ufs.food_id IS NOT NULL) AS in_library
+		FROM foods f
+		LEFT JOIN user_food_stats ufs ON ufs.user_id = ? AND ufs.food_id = f.food_id
+		WHERE 1 = 1`
+
+	if query != "" {
+		searchParam := s.dialect.SearchQuery(query)
+		if s.driver == "postgres" {
+			q += ` AND f.food_id IN (
+				SELECT fs.food_id FROM food_search fs
+				WHERE fs.tsv @@ to_tsquery('simple', ?) AND fs.user_id = ''
+			)`
+		} else {
+			q += ` AND f.food_id IN (
+				SELECT fs.food_id FROM food_search fs
+				WHERE food_search MATCH ? AND fs.user_id = ''
+			)`
+		}
+		args = append(args, searchParam)
+	}
+	if source != "" {
+		q += ` AND f.source = ?`
+		args = append(args, source)
+	}
+	if query != "" {
+		q += ` ORDER BY query_count DESC, f.name ASC`
+	} else {
+		q += ` ORDER BY f.name ASC`
+	}
+	q += ` LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	var rows []catalogRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
+		return nil, fmt.Errorf("store: search catalog: %w", err)
+	}
+	out := make([]types.FoodDetail, len(rows))
+	for i, r := range rows {
+		fd := r.foodDetailRow.toFoodDetail()
+		fd.UserID = userID
+		fd.InLibrary = r.InLibrary
+		out[i] = fd
+	}
+	return out, nil
+}
+
+// RemoveFromLibrary deletes this user's usage-stats row for a food, hiding it
+// from their personal library view. It does not touch the global foods row,
+// food_aliases, or meal history — the food silently reappears in the
+// library next time the user logs it (UpsertFood re-inserts the stats row).
+// Returns types.ErrNotFound if no row was deleted.
+func (s *Store) RemoveFromLibrary(ctx context.Context, userID, foodID string) error {
+	const q = `DELETE FROM user_food_stats WHERE user_id = ? AND food_id = ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID)
+	if err != nil {
+		return fmt.Errorf("store: remove from library: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// AddToLibrary adds a catalog food to this user's personal library without
+// logging a meal — e.g. a component the user only ever eats as part of a
+// combo (grilled chicken + bread) and wants available for quick-log/search
+// ahead of time. Idempotent: does nothing if the food is already in the
+// library. Returns types.ErrNotFound if foodID doesn't exist in the catalog.
+func (s *Store) AddToLibrary(ctx context.Context, userID, foodID string) error {
+	if _, err := s.GetFood(ctx, foodID); err != nil {
+		return err
+	}
+	const q = `
+		INSERT INTO user_food_stats (user_id, food_id, query_count, last_used)
+		VALUES (?, ?, 0, '')
+		ON CONFLICT(user_id, food_id) DO NOTHING
+	`
+	if _, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID); err != nil {
+		return fmt.Errorf("store: add to library: %w", err)
+	}
+	return nil
+}
+
 // FrequentFoods returns this user's most frequently logged foods.
 func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error) {
 	const q = `
@@ -308,6 +417,7 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 		return types.FoodDetail{}, fmt.Errorf("store: get food detail: %w", err)
 	}
 	fd := row.toFoodDetail()
+	fd.InLibrary = true // this path only succeeds via the user_food_stats join
 
 	// Load aliases separately.
 	const aliasQ = `
@@ -531,6 +641,15 @@ func (r foodDetailRow) toFoodDetail() types.FoodDetail {
 		LastUsed:    r.LastUsed,
 		Aliases:     []types.FoodAlias{},
 	}
+}
+
+// catalogRow is the flat DB shape of SearchCatalog's foods+LEFT JOIN
+// user_food_stats query; embeds foodDetailRow (minus its UserID column,
+// which SearchCatalog fills in from the query param instead) plus the
+// LEFT JOIN presence flag.
+type catalogRow struct {
+	foodDetailRow
+	InLibrary bool `db:"in_library"`
 }
 
 func foodDetailRows(rows []foodDetailRow) []types.FoodDetail {
