@@ -1,0 +1,60 @@
+name: Feature request
+description: Idea for a new feature or improvement
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are welcome. Help us understand the *why* more than the *what*.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that DietDaemon doesn't support today?
+      placeholder: "I can't log meals via voice on iOS because..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: How would you solve it?
+      description: Describe the feature the way you'd want to use it. Concrete user stories help.
+      placeholder: |
+        As a user, I want to send a voice note via Telegram and have it parsed automatically.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives
+      description: How do you handle this today? What else have you tried?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: What part of the project does this affect?
+      multiple: true
+      options:
+        - Chat bot (Telegram/Discord/Matrix)
+        - Dashboard / web UI
+        - Food database / parsing
+        - Fasting / weight / water / sleep tracking
+        - Notifications / nudges
+        - Deployment / ops
+        - Documentation
+        - Other
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I checked existing issues and didn't find a duplicate
+          required: true
+        - label: This is a feature request, not a bug report
+          required: true

@@ -1,0 +1,107 @@
+name: Bug report
+description: Something's broken
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Fill in what you can — every field helps.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: What did you see that shouldn't have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: |
+        1. Sent message "..."
+        2. Opened dashboard at ...
+        3. Saw error / crash / silence
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Parser tier
+      description: Which parsing mode are you running?
+      options:
+        - Tier 0 (deterministic, no Ollama)
+        - Tier 1 (embeddings via Ollama)
+        - Tier 2 (LLM via Ollama)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: DietDaemon version
+      description: |
+        `git describe --tags` if built from source, or Docker image tag.
+      placeholder: v0.4.0 or 37e7358
+    validations:
+      required: false
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker Compose
+        - Bare binary
+        - Dokploy
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version
+      description: Only if running bare binary. `go version`
+      placeholder: go1.26.4
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (amd64)
+        - Linux (arm64)
+        - macOS
+        - Other
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste any error messages, stack traces, or relevant log output.
+        ```text
+        ```
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, config snippets, anything that helps.
