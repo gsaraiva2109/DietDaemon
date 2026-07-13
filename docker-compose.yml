@@ -19,6 +19,15 @@ services:
     expose:
       - 8080
 
+    # Soft memory cap — DietDaemon idles at 15-25 MB, 512 MB hard limit
+    # catches leaks. Ollama runs in a separate container (see ai profile below).
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 64M
+
 
 #  # Opt-in AI: docker compose --profile ai up
 #  ollama:

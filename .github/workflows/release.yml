@@ -170,8 +170,10 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/dietdaemon-linux-amd64 ./cmd/dietdaemon
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/tune-linux-amd64 ./cmd/tune
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/import-foods-linux-amd64 ./cmd/import-foods
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/dietdaemon-linux-arm64 ./cmd/dietdaemon
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/tune-linux-arm64 ./cmd/tune
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/import-foods-linux-arm64 ./cmd/import-foods
           gzip -k dist/*-amd64 dist/*-arm64
 
       - name: Create Release
