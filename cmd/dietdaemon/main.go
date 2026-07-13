@@ -87,6 +87,12 @@ func run() error {
 		"timezone", cfg.Location.String(),
 	)
 
+	// File-based liveness probe for distroless HEALTHCHECK. The healthcheck
+	// binary checks /tmp/healthy age — works even without the dashboard HTTP
+	// server (bot-only deployments). Goroutine dies with the process; no
+	// explicit cancellation needed.
+	go touchHealthy()
+
 	dialect, err := store.NewDialect(cfg.DBDriver)
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
@@ -535,6 +541,17 @@ func buildSources(cfg *config.Config) ([]resolver.Source, error) {
 		}
 	}
 	return sources, nil
+}
+
+// touchHealthy writes a timestamp file every 5 seconds so the distroless
+// HEALTHCHECK probe (/bin/healthcheck) can verify the process is alive
+// without depending on the dashboard HTTP server.
+func touchHealthy() {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		_ = os.WriteFile("/data/healthy", []byte(time.Now().UTC().Format(time.RFC3339)), 0600)
+	}
 }
 
 func setupLogging(level string) {

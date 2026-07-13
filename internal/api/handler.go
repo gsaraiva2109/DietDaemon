@@ -359,6 +359,9 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 
 // RegisterRoutes mounts all API routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	// Health — no auth, no rate limit. Used by orchestration probes.
+	mux.HandleFunc("GET /api/v1/healthz", h.handleHealthz)
+
 	// Existing.
 	mux.HandleFunc("GET /api/v1/rollups/today", h.wrap(h.handleRollupsToday))
 	mux.HandleFunc("GET /api/v1/rollups/range", h.wrap(h.handleRollupsRange))
@@ -564,6 +567,14 @@ func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		next(w, r)
 	}
+}
+
+// handleHealthz is a liveness probe for orchestration health checks.
+// No auth, no rate limit — it only confirms the HTTP server is alive.
+func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // wrapPublicLimited adds per-IP rate limiting on top of wrapPublic.

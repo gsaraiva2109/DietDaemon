@@ -39,6 +39,8 @@ build-go:
 	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/tune ./cmd/tune
 	@echo ">> building import-foods..."
 	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/import-foods ./cmd/import-foods
+	@echo ">> building healthcheck..."
+	CGO_ENABLED=0 $(GO) build $(GO_FLAGS) -o $(GOBIN)/healthcheck ./cmd/healthcheck
 
 # Run the Vite dev server (proxies /api to a locally running daemon on :8080).
 dev-web:
