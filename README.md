@@ -94,6 +94,17 @@ Key knobs:
 | `DEFAULT_TIMEZONE`   | IANA timezone for daily rollup boundaries                                   |
 | `MULTI_USER`         | `true` to allow more than one account                                       |
 
+### Bulk food imports
+
+Set `FOOD_IMPORT_ENABLED=true` and choose sources with `FOOD_IMPORT_SOURCES` to
+warm the local food catalog. USDA and OpenFoodFacts can use local bulk files via
+`USDA_BULK_FILE` and `OFF_BULK_FILE`; TACO uses `TACO_DATA_PATH`. Local files
+are skipped when their path, file identity, or import filter is unchanged.
+
+For a shared database, enable `FOOD_IMPORT_ENABLED` on exactly one instance.
+Update a bulk dataset by preparing its replacement and atomically renaming it
+into place (or redeploying the mounted file); do not edit it in place.
+
 ## Parser tiers vs. STT
 
 Two knobs that look related but aren't: parser tier decides how *text* becomes food items,

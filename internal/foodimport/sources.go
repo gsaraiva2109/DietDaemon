@@ -15,6 +15,22 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 )
 
+// LocalPaths returns the configured on-disk dataset for each file-backed bulk
+// source. Empty paths deliberately remain API (or embedded TACO) mode.
+func LocalPaths(cfg *config.Config) map[string]string {
+	paths := make(map[string]string, 3)
+	if cfg.USDABulkFile != "" {
+		paths["usda"] = cfg.USDABulkFile
+	}
+	if cfg.OFFBulkFile != "" {
+		paths["openfoodfacts"] = cfg.OFFBulkFile
+	}
+	if cfg.TacoDataPath != "" {
+		paths["taco"] = cfg.TacoDataPath
+	}
+	return paths
+}
+
 // BuildSource constructs the ports.BulkSource and ports.BulkFilter for a
 // named source ("usda", "openfoodfacts", "taco"), reading all adapter-specific
 // settings from cfg. Returns an error for an unrecognized name, or if a
