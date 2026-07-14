@@ -252,10 +252,13 @@ func TestBackfillEmbeddings(t *testing.T) {
 	m := New(model, idx, st, 0.80)
 
 	var progressCalls []int
-	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(done, total int) {
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(done, total int, itemErr error) {
 		progressCalls = append(progressCalls, done)
 		if total != 2 {
 			t.Errorf("progress total = %d, want 2", total)
+		}
+		if itemErr != nil {
+			t.Errorf("progress itemErr = %v, want nil", itemErr)
 		}
 	})
 	if err != nil {
@@ -329,12 +332,24 @@ func TestBackfillEmbeddings_OneFailureDoesNotAbortBatch(t *testing.T) {
 	}
 	m := New(model, idx, st, 0.80)
 
-	embedded, failed, err := m.BackfillEmbeddings(context.Background(), nil)
+	var itemErrs []error
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(_, _ int, itemErr error) {
+		itemErrs = append(itemErrs, itemErr)
+	})
 	if err != nil {
 		t.Fatalf("BackfillEmbeddings: %v", err)
 	}
 	if embedded != 2 || failed != 1 {
 		t.Fatalf("embedded=%d failed=%d, want 2/1", embedded, failed)
+	}
+	var nonNilErrs int
+	for _, e := range itemErrs {
+		if e != nil {
+			nonNilErrs++
+		}
+	}
+	if nonNilErrs != 1 {
+		t.Fatalf("progress reported %d non-nil item errors, want exactly 1 (the failure must be visible to the caller, not just counted)", nonNilErrs)
 	}
 
 	for _, foodID := range []string{"good-1", "good-2"} {
@@ -359,7 +374,7 @@ func TestBackfillEmbeddings_EmptyCatalogIsNoOp(t *testing.T) {
 	m := New(model, idx, st, 0.80)
 
 	var progressCalled bool
-	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(_, _ int) {
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(_, _ int, _ error) {
 		progressCalled = true
 	})
 	if err != nil {
