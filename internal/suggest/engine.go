@@ -27,6 +27,8 @@ type Store interface {
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
+	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
+	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
 }
 
 // Engine orchestrates /suggest: compute remaining macros, find rule-based
@@ -56,6 +58,42 @@ func (e *Engine) Suggest(ctx context.Context, userID string) (types.MealSuggesti
 	if err != nil {
 		return types.MealSuggestion{}, fmt.Errorf("suggest: frequent foods: %w", err)
 	}
+
+	return e.rankAndRespond(ctx, remaining, pool)
+}
+
+// SuggestFromIngredients is like Suggest but scopes the candidate pool to a
+// caller-supplied list of food IDs (e.g. what's on hand) instead of the
+// user's frequently-logged foods. IDs that don't resolve to a food — typos,
+// foods from another user's library — are skipped rather than failing the
+// whole request.
+func (e *Engine) SuggestFromIngredients(ctx context.Context, userID string, foodIDs []string) (types.MealSuggestion, error) {
+	remaining, err := e.remainingMacros(ctx, userID)
+	if err != nil {
+		return types.MealSuggestion{}, err
+	}
+
+	pool := make([]types.FoodDetail, 0, len(foodIDs))
+	for _, id := range foodIDs {
+		if detail, err := e.store.GetFoodDetail(ctx, userID, id); err == nil {
+			pool = append(pool, detail)
+			continue
+		}
+		// Not in this user's library — fall back to the global catalog so
+		// on-hand items never logged by this user still resolve.
+		if match, err := e.store.GetFood(ctx, id); err == nil {
+			pool = append(pool, foodDetailFromMatch(match))
+		}
+	}
+
+	return e.rankAndRespond(ctx, remaining, pool)
+}
+
+// rankAndRespond builds rule-based candidates from pool, asks the completion
+// adapter to rank/phrase them, and falls back to the top rule-based candidate
+// when the model is unavailable or misbehaves. Shared tail for Suggest and
+// SuggestFromIngredients, which differ only in how they build pool.
+func (e *Engine) rankAndRespond(ctx context.Context, remaining types.Macros, pool []types.FoodDetail) (types.MealSuggestion, error) {
 	if len(pool) == 0 {
 		return types.MealSuggestion{
 			Remaining: remaining,
@@ -95,6 +133,24 @@ func (e *Engine) Suggest(ctx context.Context, userID string) (types.MealSuggesti
 		Message:    resp.Message,
 		Source:     "llm",
 	}, nil
+}
+
+// foodDetailFromMatch adapts a global-catalog FoodMatch (no per-user usage
+// stats) to FoodDetail so it can sit in the same candidate pool as logged
+// foods.
+func foodDetailFromMatch(m types.FoodMatch) types.FoodDetail {
+	return types.FoodDetail{
+		FoodID:      m.FoodID,
+		Name:        m.Name,
+		Source:      m.Source,
+		Per100g:     m.Per100g,
+		Category:    m.Category,
+		Brand:       m.Brand,
+		Barcode:     m.Barcode,
+		ImageURL:    m.ImageURL,
+		ServingSize: m.ServingSize,
+		ServingUnit: m.ServingUnit,
+	}
 }
 
 // remainingMacros computes targets minus what's been consumed today. A user

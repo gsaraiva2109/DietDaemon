@@ -10,6 +10,9 @@ import {
   useApiKeys,
   useCreateApiKey,
   useRevokeApiKey,
+  useShareTokens,
+  useCreateShareToken,
+  useRevokeShareToken,
   useChangePassword,
   useTotpDisable,
   useRegenerateRecovery,
@@ -25,7 +28,7 @@ import { LinkedAccounts } from '@/components/LinkedAccounts'
 import { PasskeyManager } from '@/components/PasskeyManager'
 import { CopyIcon, TrashIcon } from '@/components/icons'
 import { scaleIn } from '@/lib/motion'
-import type { NewApiKey } from '@/lib/types'
+import type { NewApiKey, NewShareToken } from '@/lib/types'
 
 export function Security() {
   const { t } = useTranslation()
@@ -38,6 +41,7 @@ export function Security() {
       <PasskeysCard demo={demo} />
       <LinkedAccountsCard demo={demo} />
       <ApiKeysCard demo={demo} />
+      <ShareLinksCard demo={demo} />
       <ChangeEmailCard demo={demo} />
       <ChangePasswordCard demo={demo} />
     </div>
@@ -293,6 +297,113 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
         <Spinner />
       ) : active.length === 0 ? (
         <p className="text-sm text-muted">{t('security.noApiKeysYet')}</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line">
+          {active.map((k) => (
+            <li key={k.id} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{k.label}</p>
+                <p className="text-xs text-muted">
+                  {t('security.createdOn')} {new Date(k.created_at).toLocaleDateString(i18n.language)}
+                  {k.last_used_at && ` · ${t('security.lastUsedOn')} ${new Date(k.last_used_at).toLocaleDateString(i18n.language)}`}
+                </p>
+              </div>
+              <button
+                onClick={() => revoke.mutate(k.id)}
+                disabled={revoke.isPending}
+                className="grid size-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-accent disabled:opacity-50"
+                aria-label={t('security.revokeAria', { label: k.label })}
+              >
+                <TrashIcon width={18} height={18} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+function ShareLinksCard({ demo }: { demo: boolean }) {
+  const { t, i18n } = useTranslation()
+  const tokens = useShareTokens()
+  const create = useCreateShareToken()
+  const revoke = useRevokeShareToken()
+  const [label, setLabel] = useState('')
+  const [fresh, setFresh] = useState<NewShareToken | null>(null)
+
+  async function onCreate(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!label.trim()) return
+    const token = await create.mutateAsync(label.trim())
+    setFresh(token)
+    setLabel('')
+  }
+
+  async function copyLink(rawToken: string) {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/shared/${rawToken}`)
+      toast.success(t('security.copyLinkSuccess'))
+    } catch {
+      toast.error(t('security.copyLinkFailed'))
+    }
+  }
+
+  const list = tokens.data ?? []
+  const active = list.filter((k) => !k.revoked_at)
+
+  return (
+    <Card className="mb-5 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-ink">{t('security.shareLinksTitle')}</h2>
+        {demo && <Pill tone="muted">{t('security.readOnly')}</Pill>}
+      </div>
+      <p className="mb-4 text-sm text-muted">{t('security.shareLinksDesc')}</p>
+
+      {fresh && (
+        <motion.div
+          variants={scaleIn}
+          initial="hidden"
+          animate="show"
+          className="mb-4 rounded-xl border border-primary/40 bg-primary-soft/50 p-4"
+        >
+          <p className="text-sm font-medium text-ink">
+            {t('security.shareLinkCopyNowNote')}
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <code className="flex-1 overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink tnum">
+              {`${window.location.origin}/shared/${fresh.token}`}
+            </code>
+            <Button type="button" onClick={() => copyLink(fresh.token)} className="shrink-0">
+              <CopyIcon width={16} height={16} /> {t('security.copy')}
+            </Button>
+          </div>
+          <button
+            onClick={() => setFresh(null)}
+            className="mt-3 text-xs font-medium text-muted hover:text-ink"
+          >
+            {t('security.dismissSavedLink')}
+          </button>
+        </motion.div>
+      )}
+
+      <form onSubmit={onCreate} className="mb-5 flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={label}
+          disabled={demo || create.isPending}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder={t('security.shareLinkLabelPlaceholder')}
+          aria-label={t('security.shareLinkLabelAria')}
+        />
+        <Button type="submit" disabled={demo || create.isPending || !label.trim()} className="shrink-0">
+          {create.isPending ? t('security.creating') : t('security.createLinkButton')}
+        </Button>
+      </form>
+
+      {tokens.isLoading ? (
+        <Spinner />
+      ) : active.length === 0 ? (
+        <p className="text-sm text-muted">{t('security.noShareLinksYet')}</p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {active.map((k) => (

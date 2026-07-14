@@ -63,6 +63,10 @@ type fakeMealStore struct {
 	precedenceErr    error
 	setPrecedenceErr error
 
+	// Bulk food-import status.
+	foodImportStatuses    []types.FoodImportStatus
+	foodImportStatusesErr error
+
 	// Meal templates.
 	templates         []types.MealTemplate
 	templatesErr      error
@@ -285,6 +289,10 @@ func (s *fakeMealStore) SetSourcePrecedence(_ context.Context, _ string, order [
 	return s.setPrecedenceErr
 }
 
+func (s *fakeMealStore) GetFoodImportStatuses(_ context.Context) ([]types.FoodImportStatus, error) {
+	return s.foodImportStatuses, s.foodImportStatusesErr
+}
+
 // Meal templates.
 func (s *fakeMealStore) SaveTemplate(_ context.Context, _ types.MealTemplate) error {
 	return s.saveTemplateErr
@@ -479,6 +487,8 @@ type fakeAuthStore struct {
 	userCount     int
 	apiKeys       map[string][]types.APIKey
 	keyUserID     map[string]string // hashed key -> userID
+	shareTokens   map[string][]types.ShareToken
+	shareUserID   map[string]string // hashed token -> userID
 	loginAttempts []loginAttemptEntry
 }
 
@@ -495,6 +505,8 @@ func newFakeAuthStore() *fakeAuthStore {
 		phcHash:     make(map[string]string),
 		apiKeys:     make(map[string][]types.APIKey),
 		keyUserID:   make(map[string]string),
+		shareTokens: make(map[string][]types.ShareToken),
+		shareUserID: make(map[string]string),
 	}
 	// Pre-register a test user for existing test compatibility.
 	s.users["test-user"] = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
@@ -555,6 +567,40 @@ func (s *fakeAuthStore) ListAPIKeys(_ context.Context, userID string) ([]types.A
 
 func (s *fakeAuthStore) RevokeAPIKey(_ context.Context, userID, keyID string) error {
 	return nil
+}
+
+func (s *fakeAuthStore) GetUserByShareToken(_ context.Context, hashedToken string) (types.User, error) {
+	if userID, ok := s.shareUserID[hashedToken]; ok {
+		if u, ok := s.users[userID]; ok {
+			return u, nil
+		}
+	}
+	return types.User{}, types.ErrNotFound
+}
+
+func (s *fakeAuthStore) CreateShareToken(_ context.Context, id, userID, hashedToken, label string) error {
+	s.shareUserID[hashedToken] = userID
+	s.shareTokens[userID] = append(s.shareTokens[userID], types.ShareToken{ID: id, UserID: userID, Label: label, CreatedAt: time.Now().UTC()})
+	return nil
+}
+
+func (s *fakeAuthStore) ListShareTokens(_ context.Context, userID string) ([]types.ShareToken, error) {
+	return s.shareTokens[userID], nil
+}
+
+func (s *fakeAuthStore) RevokeShareToken(_ context.Context, userID, tokenID string) error {
+	for hashed, uid := range s.shareUserID {
+		if uid != userID {
+			continue
+		}
+		for _, t := range s.shareTokens[userID] {
+			if t.ID == tokenID {
+				delete(s.shareUserID, hashed)
+				return nil
+			}
+		}
+	}
+	return types.ErrNotFound
 }
 
 func (s *fakeAuthStore) WriteAuditEvent(_ context.Context, ev types.AuditEvent) error {
@@ -697,6 +743,10 @@ type fakeSuggester struct {
 }
 
 func (s *fakeSuggester) Suggest(_ context.Context, _ string) (types.MealSuggestion, error) {
+	return s.sug, s.err
+}
+
+func (s *fakeSuggester) SuggestFromIngredients(_ context.Context, _ string, _ []string) (types.MealSuggestion, error) {
 	return s.sug, s.err
 }
 
@@ -1059,6 +1109,56 @@ func TestHandleRollupsTodayNotFound(t *testing.T) {
 	}
 }
 
+// TestShareTokenReadOnlyFlow exercises the full share-link lifecycle:
+// create → read via the /shared/{token}/... prefix with no cookie/API key →
+// mutation on that prefix is rejected → revoke → subsequent reads 401.
+func TestShareTokenReadOnlyFlow(t *testing.T) {
+	store := newFakeMealStore()
+	store.rollup = types.DailyRollup{
+		UserID:   "test-user",
+		Date:     "2026-06-17",
+		Consumed: types.Macros{Calories: 2100, Protein: 140},
+		Targets:  types.Macros{Calories: 3000, Protein: 180},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	// Create a share token as the authenticated user.
+	createRec := doRequest(h, "POST", "/api/v1/auth/share-tokens", map[string]string{"label": "test"}, nil)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create share token: expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	created := decodeJSON[types.NewShareTokenResponse](t, createRec)
+	if created.Token == "" {
+		t.Fatal("create share token: empty raw token")
+	}
+
+	// Read the shared dashboard with no Authorization header at all.
+	readRec := doRequest(h, "GET", "/api/v1/shared/"+created.Token+"/rollups/today", nil, map[string]string{"Authorization": ""})
+	if readRec.Code != http.StatusOK {
+		t.Fatalf("shared read: expected 200, got %d: %s", readRec.Code, readRec.Body.String())
+	}
+	rollup := decodeJSON[types.DailyRollup](t, readRec)
+	if rollup.Consumed.Calories != 2100 {
+		t.Errorf("shared read: calories = %v, want 2100", rollup.Consumed.Calories)
+	}
+
+	// Mutations are not exposed on the shared prefix.
+	mutateRec := doRequest(h, "POST", "/api/v1/shared/"+created.Token+"/rollups/today", nil, map[string]string{"Authorization": ""})
+	if mutateRec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("shared mutate: expected 405, got %d", mutateRec.Code)
+	}
+
+	// Revoke, then the same link must stop working.
+	revokeRec := doRequest(h, "DELETE", "/api/v1/auth/share-tokens/"+created.ID, nil, nil)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("revoke share token: expected 204, got %d: %s", revokeRec.Code, revokeRec.Body.String())
+	}
+	postRevokeRec := doRequest(h, "GET", "/api/v1/shared/"+created.Token+"/rollups/today", nil, map[string]string{"Authorization": ""})
+	if postRevokeRec.Code != http.StatusUnauthorized {
+		t.Errorf("shared read after revoke: expected 401, got %d", postRevokeRec.Code)
+	}
+}
+
 func TestHandleSuggest(t *testing.T) {
 	store := newFakeMealStore()
 	sug := &fakeSuggester{sug: types.MealSuggestion{
@@ -1093,6 +1193,36 @@ func TestHandleSuggestError(t *testing.T) {
 	rec := doRequest(h, "GET", "/api/v1/suggest", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSuggestFromIngredients(t *testing.T) {
+	store := newFakeMealStore()
+	sug := &fakeSuggester{sug: types.MealSuggestion{
+		Remaining: types.Macros{Calories: 500, Protein: 30},
+		Message:   "on-hand suggestion",
+		Source:    "rules",
+	}}
+	h := newHandler(store, &fakeMealLogger{}, sug)
+
+	rec := doRequest(h, "POST", "/api/v1/suggest/ingredients", map[string]any{"food_ids": []string{"f1", "f2"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := decodeJSON[types.MealSuggestion](t, rec)
+	if got.Message != "on-hand suggestion" {
+		t.Errorf("message = %q, want %q", got.Message, "on-hand suggestion")
+	}
+}
+
+func TestHandleSuggestFromIngredientsRequiresFoodIDs(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{}, &fakeSuggester{})
+
+	rec := doRequest(h, "POST", "/api/v1/suggest/ingredients", map[string]any{"food_ids": []string{}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty food_ids, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

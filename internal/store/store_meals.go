@@ -26,8 +26,8 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const mealQ = `
-		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at)
-		VALUES (:id, :user_id, :at_utc, :raw_text, :confidence, :parser_tier, :created_at)
+		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at, external_id)
+		VALUES (:id, :user_id, :at_utc, :raw_text, :confidence, :parser_tier, :created_at, :external_id)
 	`
 	mealQuery, mealArgs, err := sqlx.Named(mealQ, map[string]any{
 		"id":          m.ID,
@@ -37,11 +37,15 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 		"confidence":  m.Confidence,
 		"parser_tier": int(m.ParserTier),
 		"created_at":  utcStr(m.CreatedAt),
+		"external_id": m.ExternalID,
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind meal: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx, s.rewrite(mealQuery), mealArgs...); err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already imported
+		}
 		return fmt.Errorf("store: insert meal: %w", err)
 	}
 

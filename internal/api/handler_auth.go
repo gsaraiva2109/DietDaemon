@@ -454,6 +454,79 @@ func (h *Handler) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request, use
 }
 
 // ---------------------------------------------------------------------------
+// GET /auth/share-tokens  (auth required)
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleListShareTokens(w http.ResponseWriter, r *http.Request, userID string) {
+	tokens, err := h.authStore.ListShareTokens(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if tokens == nil {
+		tokens = []types.ShareToken{}
+	}
+	_ = json.NewEncoder(w).Encode(tokens)
+}
+
+// ---------------------------------------------------------------------------
+// POST /auth/share-tokens  (auth required)
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleCreateShareToken(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	if strings.TrimSpace(body.Label) == "" {
+		body.Label = "default"
+	}
+
+	raw := auth.NewToken()
+	hashed := auth.HashToken(raw)
+	tokenID := newHandlerID()
+
+	if err := h.authStore.CreateShareToken(r.Context(), tokenID, userID, hashed, body.Label); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	ip := clientIP(r)
+	h.writeAudit(r.Context(), "", userID, "share_token.created", ip, r.UserAgent(), tokenID)
+
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(types.NewShareTokenResponse{
+		ShareToken: types.ShareToken{
+			ID:        tokenID,
+			UserID:    userID,
+			Label:     body.Label,
+			CreatedAt: time.Now().UTC(),
+		},
+		Token: raw,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /auth/share-tokens/{id}  (auth required)
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleRevokeShareToken(w http.ResponseWriter, r *http.Request, userID string) {
+	tokenID := r.PathValue("id")
+	if err := h.authStore.RevokeShareToken(r.Context(), userID, tokenID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	ip := clientIP(r)
+	h.writeAudit(r.Context(), "", userID, "share_token.revoked", ip, r.UserAgent(), tokenID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
 // Cookie helpers
 // ---------------------------------------------------------------------------
 

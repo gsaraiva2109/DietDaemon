@@ -58,6 +58,9 @@ const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals 
 const OnboardingWizard = lazy(() =>
   import('@/components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })),
 )
+const SharedDashboard = lazy(() =>
+  import('@/routes/SharedDashboard').then(m => ({ default: m.SharedDashboard })),
+)
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -111,6 +114,8 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/magic" element={<MagicLink />} />
+      {/* Read-only share link: no session, auth is the token itself. */}
+      <Route path="/shared/:token" element={<SharedDashboard />} />
 
       {/* Everything else is gated, then wrapped in the app frame. */}
       <Route element={<ProtectedRoute />}>

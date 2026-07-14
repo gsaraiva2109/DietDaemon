@@ -12,7 +12,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { api, ApiError } from './api'
+import { api, ApiError, sharedApi } from './api'
 import { useDemo } from './demo'
 import {
   demoToday,
@@ -349,6 +349,15 @@ export function useSetPrecedence() {
   return useMutation({
     mutationFn: (order: string[]) => api.precedence.set(order),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['precedence'] }),
+  })
+}
+
+// Per-source bulk food-import status. A 404 just means "no status recorded".
+export function useFoodImportStatus() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['food-import-status', demo],
+    queryFn: () => (demo ? [] : emptyOn404(() => api.foodImport.status(), [])),
   })
 }
 
@@ -699,6 +708,32 @@ export function useRevokeApiKey() {
   })
 }
 
+// Shareable read-only dashboard links. Same shape as the API-key hooks
+// above -- a share token is just another revocable token type.
+export function useShareTokens() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['auth', 'share-tokens', demo],
+    queryFn: () => (demo ? [] : api.auth.shareTokens.list()),
+  })
+}
+
+export function useCreateShareToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (label: string) => api.auth.shareTokens.create(label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'share-tokens'] }),
+  })
+}
+
+export function useRevokeShareToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.auth.shareTokens.revoke(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'share-tokens'] }),
+  })
+}
+
 export function useChangePassword() {
   return useMutation({
     mutationFn: ({ current, next }: { current: string; next: string }) =>
@@ -975,4 +1010,44 @@ export function useSetAssistantSettings() {
     mutationFn: (body: { custom_instructions: string }) => api.chat.settings.set(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'settings'] }),
   })
+}
+
+// ---------------------------------------------------------------------------
+// Shared read-only dashboard. No session/demo mode -- these back the
+// public /shared/:token route, scoped entirely to the token in the URL.
+// ---------------------------------------------------------------------------
+
+export function useSharedDashboard(token: string) {
+  const shared = sharedApi(token)
+  const today = useQuery({
+    queryKey: ['shared', token, 'rollup-today'],
+    queryFn: shared.rollupToday,
+    retry: false,
+  })
+  const meals = useQuery({
+    queryKey: ['shared', token, 'meals'],
+    queryFn: () => shared.meals(20),
+    retry: false,
+  })
+  const targets = useQuery({
+    queryKey: ['shared', token, 'targets'],
+    queryFn: shared.targets,
+    retry: false,
+  })
+  const budget = useQuery({
+    queryKey: ['shared', token, 'budget-weekly'],
+    queryFn: shared.budgetWeekly,
+    retry: false,
+  })
+  const bodySummary = useQuery({
+    queryKey: ['shared', token, 'body-summary'],
+    queryFn: shared.bodySummary,
+    retry: false,
+  })
+  const streak = useQuery({
+    queryKey: ['shared', token, 'streak'],
+    queryFn: shared.streak,
+    retry: false,
+  })
+  return { today, meals, targets, budget, bodySummary, streak }
 }

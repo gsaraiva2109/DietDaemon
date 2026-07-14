@@ -85,6 +85,27 @@ func (h *Handler) handleSuggest(w http.ResponseWriter, r *http.Request, userID s
 	_ = json.NewEncoder(w).Encode(sug)
 }
 
+// handleSuggestFromIngredients recommends a next meal scoped to a caller-
+// supplied list of on-hand food IDs, instead of the user's frequently-logged
+// foods.
+func (h *Handler) handleSuggestFromIngredients(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		FoodIDs []string `json:"food_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.FoodIDs) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "food_ids field is required"})
+		return
+	}
+	ctx := h.injectModelOverride(r.Context(), userID)
+	sug, err := h.suggester.SuggestFromIngredients(ctx, userID, body.FoodIDs)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(sug)
+}
+
 func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID string) {
 	foodID := r.PathValue("foodID")
 	fd, err := h.store.GetFoodDetail(r.Context(), userID, foodID)
@@ -251,6 +272,18 @@ func (h *Handler) handleGetPrecedence(w http.ResponseWriter, r *http.Request, us
 		order = []string{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string][]string{"order": order})
+}
+
+func (h *Handler) handleFoodImportStatus(w http.ResponseWriter, r *http.Request, userID string) {
+	statuses, err := h.store.GetFoodImportStatuses(r.Context())
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if statuses == nil {
+		statuses = []types.FoodImportStatus{}
+	}
+	_ = json.NewEncoder(w).Encode(statuses)
 }
 
 func (h *Handler) handleSetPrecedence(w http.ResponseWriter, r *http.Request, userID string) {

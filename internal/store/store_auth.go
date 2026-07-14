@@ -282,6 +282,97 @@ func (s *Store) RevokeAPIKey(ctx context.Context, userID, keyID string) error {
 	return nil
 }
 
+// --- Share tokens (read-only dashboard links) ---
+
+// CreateShareToken inserts a new read-only share token.
+func (s *Store) CreateShareToken(ctx context.Context, id, userID, hashedToken, label string) error {
+	const q = `INSERT INTO share_tokens (id, user_id, hashed_token, label, created_at)
+		VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, id, userID, hashedToken, label, utcNow())
+	return err
+}
+
+// ListShareTokens returns all non-revoked share tokens for a user.
+func (s *Store) ListShareTokens(ctx context.Context, userID string) ([]types.ShareToken, error) {
+	const q = `SELECT id, user_id, label, created_at, last_used_at, revoked_at
+		FROM share_tokens WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list share tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.ShareToken
+	for rows.Next() {
+		var t types.ShareToken
+		var ca, lua, ra string
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &ca, &lua, &ra); err != nil {
+			return nil, fmt.Errorf("store: scan share token: %w", err)
+		}
+		t.CreatedAt = parseUTC(ca)
+		if lua != "" {
+			t.LastUsedAt = new(parseUTC(lua))
+		}
+		if ra != "" {
+			t.RevokedAt = new(parseUTC(ra))
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeShareToken marks a share token as revoked. Returns ErrNotFound if the
+// token does not exist or is already revoked.
+func (s *Store) RevokeShareToken(ctx context.Context, userID, tokenID string) error {
+	const q = `UPDATE share_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
+	res, err := s.db.ExecContext(ctx, q, utcNow(), tokenID, userID)
+	if err != nil {
+		return fmt.Errorf("store: revoke share token: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
+
+// GetUserByShareToken resolves a hashed share token to its owning user.
+// Touches last_used_at on success. Skips revoked tokens. Returns
+// ErrNotFound when the token is invalid or revoked.
+func (s *Store) GetUserByShareToken(ctx context.Context, hashedToken string) (types.User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return types.User{}, fmt.Errorf("store: share token lookup tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const tokenQ = `SELECT user_id FROM share_tokens WHERE hashed_token = ? AND revoked_at IS NULL` // #nosec G101 -- SQL query text, not a credential
+	var userID string
+	if err := tx.QueryRowContext(ctx, tokenQ, hashedToken).Scan(&userID); err == sql.ErrNoRows {
+		return types.User{}, types.ErrNotFound
+	} else if err != nil {
+		return types.User{}, fmt.Errorf("store: lookup share token: %w", err)
+	}
+
+	_, _ = tx.ExecContext(ctx, `UPDATE share_tokens SET last_used_at = ? WHERE hashed_token = ?`, utcNow(), hashedToken)
+
+	const userQ = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle
+		FROM users WHERE id = ?`
+	row := tx.QueryRowContext(ctx, userQ, userID)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return types.User{}, types.ErrNotFound
+	}
+	if err != nil {
+		return types.User{}, fmt.Errorf("store: get user by share token: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return types.User{}, fmt.Errorf("store: commit share token lookup: %w", err)
+	}
+	return u, nil
+}
+
 // --- Login attempts ---
 
 func (s *Store) RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error {
