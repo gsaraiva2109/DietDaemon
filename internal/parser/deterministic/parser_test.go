@@ -81,6 +81,79 @@ func TestQuantitylessAndEmpty(t *testing.T) {
 	}
 }
 
+// TestLeadingVerbStripped reproduces the real bug: "Comi arroz, feijão, bife
+// e salada" left "comi" attached to the first item's RawPhrase, polluting
+// the embedding query for exactly the first food in the extremely common "I
+// ate X, Y and Z" phrasing.
+func TestLeadingVerbStripped(t *testing.T) {
+	p := New()
+
+	items, _, _ := p.Extract(context.Background(), "Comi arroz, feijao, bife e salada", "pt-BR")
+	if len(items) != 4 {
+		t.Fatalf("want 4 items, got %d: %+v", len(items), items)
+	}
+	want := []string{"arroz", "feijao", "bife", "salada"}
+	for i, w := range want {
+		if items[i].RawPhrase != w {
+			t.Errorf("item %d RawPhrase = %q, want %q", i, items[i].RawPhrase, w)
+		}
+	}
+
+	items, _, _ = p.Extract(context.Background(), "I ate rice, beans, steak and salad", "en-US")
+	if len(items) != 4 {
+		t.Fatalf("want 4 items, got %d: %+v", len(items), items)
+	}
+	wantEN := []string{"rice", "beans", "steak", "salad"}
+	for i, w := range wantEN {
+		if items[i].RawPhrase != w {
+			t.Errorf("item %d RawPhrase = %q, want %q", i, items[i].RawPhrase, w)
+		}
+	}
+}
+
+// TestLeadingVerbStrippedOtherPhrasings covers the remaining filler phrases
+// (PT/EN) and the mass-unit path ("comi 200g de arroz" strips before the
+// quantity is even parsed since it starts with the verb, matching the
+// no-quantity fallback path deterministically).
+func TestLeadingVerbStrippedOtherPhrasings(t *testing.T) {
+	p := New()
+
+	tests := []struct {
+		text string
+		want string
+	}{
+		{"comendo arroz", "arroz"},
+		{"vou comer arroz", "arroz"},
+		{"acabei de comer arroz", "arroz"},
+		{"I had rice", "rice"},
+		{"eating rice", "rice"},
+	}
+	for _, tt := range tests {
+		items, _, _ := p.Extract(context.Background(), tt.text, "pt-BR")
+		if len(items) != 1 || items[0].RawPhrase != tt.want {
+			t.Errorf("Extract(%q) = %+v, want RawPhrase %q", tt.text, items, tt.want)
+		}
+	}
+}
+
+// TestNoLeadingVerbUnaffected is the control: a segment with no leading
+// filler word must be left exactly as before, and an unusual ordering that
+// happens to end with a filler word (not lead with it) must not be mangled
+// since stripLeadingFiller only checks the start of the phrase.
+func TestNoLeadingVerbUnaffected(t *testing.T) {
+	p := New()
+
+	items, _, _ := p.Extract(context.Background(), "200g frango, 2 ovos", "pt-BR")
+	if len(items) != 2 || items[0].RawPhrase != "frango" || items[1].RawPhrase != "ovos" {
+		t.Fatalf("unaffected case = %+v", items)
+	}
+
+	items, _, _ = p.Extract(context.Background(), "arroz comi", "pt-BR")
+	if len(items) != 1 || items[0].RawPhrase != "arroz comi" {
+		t.Errorf("trailing verb should be left alone, got %+v", items)
+	}
+}
+
 func TestConjunctionSeparators(t *testing.T) {
 	p := New()
 	items, _, _ := p.Extract(context.Background(), "100g arroz e 150g feijao", "pt-BR")

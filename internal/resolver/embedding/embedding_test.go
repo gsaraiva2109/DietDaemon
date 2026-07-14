@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math"
 	"testing"
 
@@ -19,9 +20,13 @@ import (
 // match across languages. Unrelated phrases map to [0,1].
 type stubModel struct {
 	embedMap map[string][]float32
+	failFor  map[string]bool // texts that should return an error from Embed
 }
 
 func (m *stubModel) Embed(_ context.Context, text string) ([]float32, error) {
+	if m.failFor[text] {
+		return nil, fmt.Errorf("stub: embed failed for %q", text)
+	}
 	if v, ok := m.embedMap[text]; ok {
 		return v, nil
 	}
@@ -33,9 +38,14 @@ func (m *stubModel) Complete(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
 
-// stubStore is a minimal in-memory FoodStore for the embedding matcher.
+// stubStore is a minimal in-memory FoodStore for the embedding matcher. It
+// also implements backfillStore so BackfillEmbeddings tests don't need a
+// real DB.
 type stubStore struct {
 	foods map[string]types.FoodMatch // foodID -> match
+
+	missingVectors    []types.FoodMatch
+	missingVectorsErr error
 }
 
 func (s *stubStore) LookupFood(_ context.Context, _, _ string) (types.FoodMatch, error) {
@@ -55,6 +65,16 @@ func (s *stubStore) RecordFoodQuery(_ context.Context, _, _ string) error {
 }
 func (s *stubStore) AddPendingAlias(_ context.Context, _, _, _ string, _ float64) error {
 	return nil
+}
+
+// missingVectors is the set of foods stubStore reports as missing a vector,
+// so tests can exercise BackfillEmbeddings without a real store's
+// LEFT JOIN food_vectors query.
+func (s *stubStore) ListFoodsWithoutVectors(_ context.Context) ([]types.FoodMatch, error) {
+	if s.missingVectorsErr != nil {
+		return nil, s.missingVectorsErr
+	}
+	return s.missingVectors, nil
 }
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -211,6 +231,145 @@ func TestTier2CrossLanguageEmbedding(t *testing.T) {
 	// Unrelated phrase must stay below threshold — no silent weak match.
 	if _, err := m.Match(context.Background(), "u1", "pizza"); err != types.ErrNoMatch {
 		t.Errorf("Match(pizza) = %v, want ErrNoMatch", err)
+	}
+}
+
+func TestBackfillEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	idx := index.New(db)
+
+	st := &stubStore{
+		foods: map[string]types.FoodMatch{},
+		missingVectors: []types.FoodMatch{
+			{FoodID: "arroz-1", Name: "Arroz, tipo 1, cozido"},
+			{FoodID: "feijao-1", Name: "Feijao carioca, cozido"},
+		},
+	}
+	model := &stubModel{embedMap: map[string][]float32{
+		"Arroz, tipo 1, cozido":  {1, 0},
+		"Feijao carioca, cozido": {0, 1},
+	}}
+	m := New(model, idx, st, 0.80)
+
+	var progressCalls []int
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(done, total int) {
+		progressCalls = append(progressCalls, done)
+		if total != 2 {
+			t.Errorf("progress total = %d, want 2", total)
+		}
+	})
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if embedded != 2 || failed != 0 {
+		t.Fatalf("embedded=%d failed=%d, want 2/0", embedded, failed)
+	}
+	if len(progressCalls) != 2 || progressCalls[0] != 1 || progressCalls[1] != 2 {
+		t.Fatalf("progress calls = %v, want [1 2]", progressCalls)
+	}
+
+	for _, foodID := range []string{"arroz-1", "feijao-1"} {
+		exists, err := idx.Exists(context.Background(), foodID)
+		requireNoErr(t, err)
+		if !exists {
+			t.Errorf("expected %q to have a vector after backfill", foodID)
+		}
+	}
+}
+
+func TestBackfillEmbeddings_SkipsAlreadyEmbedded(t *testing.T) {
+	db := openTestDB(t)
+	idx := index.New(db)
+	// Pre-seed a vector directly; the store still reports this food as
+	// missing-vectors only if it genuinely is missing, so here we prove
+	// EmbedFood's own "skip the model call" short-circuit still applies
+	// when a food that's already indexed somehow appears in the backfill
+	// list (e.g. a race with a concurrent live resolve).
+	requireNoErr(t, idx.Upsert(context.Background(), "chicken-1", []float32{1, 0}))
+
+	st := &stubStore{
+		foods: map[string]types.FoodMatch{},
+		missingVectors: []types.FoodMatch{
+			{FoodID: "chicken-1", Name: "Chicken Breast"},
+		},
+	}
+	model := &stubModel{failFor: map[string]bool{"Chicken Breast": true}}
+	m := New(model, idx, st, 0.80)
+
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	// EmbedFood short-circuits on existing vectors before calling the model,
+	// so this counts as embedded (no-op success), not failed, even though
+	// the model would have errored.
+	if embedded != 1 || failed != 0 {
+		t.Fatalf("embedded=%d failed=%d, want 1/0", embedded, failed)
+	}
+}
+
+func TestBackfillEmbeddings_OneFailureDoesNotAbortBatch(t *testing.T) {
+	db := openTestDB(t)
+	idx := index.New(db)
+
+	st := &stubStore{
+		foods: map[string]types.FoodMatch{},
+		missingVectors: []types.FoodMatch{
+			{FoodID: "bad-1", Name: "Bad Food"},
+			{FoodID: "good-1", Name: "Good Food"},
+			{FoodID: "good-2", Name: "Good Food 2"},
+		},
+	}
+	model := &stubModel{
+		embedMap: map[string][]float32{
+			"Good Food":   {1, 0},
+			"Good Food 2": {0, 1},
+		},
+		failFor: map[string]bool{"Bad Food": true},
+	}
+	m := New(model, idx, st, 0.80)
+
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if embedded != 2 || failed != 1 {
+		t.Fatalf("embedded=%d failed=%d, want 2/1", embedded, failed)
+	}
+
+	for _, foodID := range []string{"good-1", "good-2"} {
+		exists, err := idx.Exists(context.Background(), foodID)
+		requireNoErr(t, err)
+		if !exists {
+			t.Errorf("expected %q to have a vector despite an earlier failure", foodID)
+		}
+	}
+	exists, err := idx.Exists(context.Background(), "bad-1")
+	requireNoErr(t, err)
+	if exists {
+		t.Errorf("bad-1 should have no vector since its embed call failed")
+	}
+}
+
+func TestBackfillEmbeddings_EmptyCatalogIsNoOp(t *testing.T) {
+	db := openTestDB(t)
+	idx := index.New(db)
+	st := &stubStore{foods: map[string]types.FoodMatch{}, missingVectors: nil}
+	model := &stubModel{}
+	m := New(model, idx, st, 0.80)
+
+	var progressCalled bool
+	embedded, failed, err := m.BackfillEmbeddings(context.Background(), func(_, _ int) {
+		progressCalled = true
+	})
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings: %v", err)
+	}
+	if embedded != 0 || failed != 0 {
+		t.Fatalf("embedded=%d failed=%d, want 0/0 for empty catalog", embedded, failed)
+	}
+	if progressCalled {
+		t.Errorf("progress should not be called when there is nothing to backfill")
 	}
 }
 

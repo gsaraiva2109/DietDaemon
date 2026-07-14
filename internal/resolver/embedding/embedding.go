@@ -89,3 +89,43 @@ func (m *Matcher) EmbedFood(ctx context.Context, userID, foodID, name string) er
 	}
 	return m.idx.Upsert(ctx, foodID, vec)
 }
+
+// backfillStore is the subset of the store needed to enumerate foods missing
+// a vector. Declared here rather than added to resolver.FoodStore since only
+// the concrete store needs bulk enumeration, not every Matcher caller; the
+// concrete store satisfies it and BackfillEmbeddings type-asserts for it.
+type backfillStore interface {
+	ListFoodsWithoutVectors(ctx context.Context) ([]types.FoodMatch, error)
+}
+
+// BackfillEmbeddings embeds every catalog food that has no vector yet, e.g.
+// foods written by a bulk import (which never calls EmbedFood) rather than
+// the live resolver's embedding-on-write path. It calls EmbedFood
+// sequentially per food (the Ollama adapter has no batch-embed call) so one
+// failed food is logged and skipped rather than aborting the run; progress,
+// if non-nil, is called once per food after it's processed. Returns the
+// counts of successfully embedded and failed foods.
+func (m *Matcher) BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (embedded, failed int, err error) {
+	bs, ok := m.store.(backfillStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("embedding: backfill: store does not support ListFoodsWithoutVectors")
+	}
+
+	foods, err := bs.ListFoodsWithoutVectors(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("embedding: backfill: list foods: %w", err)
+	}
+
+	total := len(foods)
+	for i, food := range foods {
+		if err := m.EmbedFood(ctx, "", food.FoodID, food.Name); err != nil {
+			failed++
+		} else {
+			embedded++
+		}
+		if progress != nil {
+			progress(i+1, total)
+		}
+	}
+	return embedded, failed, nil
+}

@@ -39,6 +39,31 @@ var (
 	qtyRe = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)\s*(.*)$`)
 )
 
+// leadingFillers lists PT/EN verb/filler phrases that commonly open a casual
+// food mention ("Comi arroz...", "I ate rice...") but carry no nutritional
+// meaning of their own. Longer phrases are listed first so "vou comer" and
+// "acabei de comer" strip as a whole rather than leaving a shorter entry to
+// match a prefix of them first. Each entry keeps its trailing space so
+// stripLeadingFiller only matches a leading whole word, never mid-phrase
+// (mirrors stripConnector's "de "/"do "/"da "/"of " style below).
+var leadingFillers = []string{
+	"acabei de comer ", "vou comer ", "comendo ", "comer ", "comi ",
+	"i ate ", "i had ", "eating ", "ate ", "had ",
+}
+
+// stripLeadingFiller removes one leading filler/verb phrase from s, if
+// present, so the embedding matcher and food lookups see just the food
+// phrase (e.g. "comi arroz" -> "arroz"). Only the start of s is checked, so
+// unusual orderings such as "arroz comi" are left untouched.
+func stripLeadingFiller(s string) string {
+	for _, f := range leadingFillers {
+		if strings.HasPrefix(s, f) {
+			return strings.TrimSpace(s[len(f):])
+		}
+	}
+	return s
+}
+
 // Extract implements ports.Parser. confidence is the mean per-item confidence
 // (0..1): clean "quantity + mass-unit + food" scores highest; count-based and
 // quantity-less items score lower.
@@ -67,7 +92,7 @@ func (p *Parser) Extract(_ context.Context, text, locale string) ([]types.Parsed
 
 // parseSegment parses one item segment, e.g. "200g frango" or "2 ovos".
 func parseSegment(seg, locale string) (types.ParsedItem, float64, bool) {
-	norm := normalize(seg)
+	norm := stripLeadingFiller(normalize(seg))
 	item := types.ParsedItem{Locale: locale, Quantity: 1}
 	conf := 1.0
 

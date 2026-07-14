@@ -245,12 +245,125 @@ func TestUnresolvedAndCountBased(t *testing.T) {
 	}
 }
 
+// --- Default serving size tests ---
+//
+// finalize() falls back to a matched food's ServingSize/ServingUnit when
+// grams are unspecified, but only when that unit is an explicit gram unit.
+// See resolver.defaultServingGrams.
+
+func eggOFF() types.FoodMatch {
+	return types.FoodMatch{FoodID: "off:egg", Name: "egg", Source: "openfoodfacts",
+		Per100g:     types.Macros{Calories: 155, Protein: 13, Carbs: 1.1, Fat: 11},
+		ServingSize: 50, ServingUnit: "g"}
+}
+
+func tacoRice() types.FoodMatch {
+	return types.FoodMatch{FoodID: "taco:rice", Name: "arroz branco cozido", Source: "taco",
+		Per100g: types.Macros{Calories: 130, Protein: 2.7, Carbs: 28, Fat: 0.3}}
+	// TACO never populates ServingSize/ServingUnit — it's a per-100g-only table.
+}
+
+// TestFinalizeUsesDefaultServingSizeForGramUnit covers the fix: an
+// OFF/USDA-sourced match with a gram ServingSize resolves without
+// clarification when the parsed item carries no explicit grams (e.g. "1
+// egg"), using ServingSize as the effective portion.
+func TestFinalizeUsesDefaultServingSizeForGramUnit(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{"egg": eggOFF()}}
+	r := New(st, nil, nil, 0.92, st)
+
+	items := []types.ParsedItem{{RawPhrase: "egg", NormalizedGrams: 0}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0 (default 50g serving should resolve without clarification)", need)
+	}
+	if want := 155 * 0.5; res[0].Macros.Calories != want {
+		t.Errorf("calories = %v, want %v (scaled by default 50g serving)", res[0].Macros.Calories, want)
+	}
+	// The caller (logmeal.go summaryText) derives "assumed" from exactly these
+	// two fields, so both must be intact on the returned item.
+	if res[0].Parsed.NormalizedGrams != 0 || res[0].Match.ServingSize != 50 {
+		t.Errorf("expected Parsed.NormalizedGrams=0 and Match.ServingSize=50 preserved, got %+v", res[0])
+	}
+}
+
+// TestFinalizeTacoWithoutServingSizeStillNeedsClarification is the
+// regression guard: TACO matches never populate ServingSize, so a
+// count-based item ("2 eggs" against a TACO food) must keep requiring
+// clarification exactly as before this change.
+func TestFinalizeTacoWithoutServingSizeStillNeedsClarification(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{"arroz": tacoRice()}}
+	r := New(st, nil, nil, 0.92, st)
+
+	items := []types.ParsedItem{{RawPhrase: "arroz", NormalizedGrams: 0}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 1 {
+		t.Fatalf("need=%d, want 1 (TACO has no serving-size default, must still ask for grams)", need)
+	}
+	if res[0].Match.FoodID != "taco:rice" || res[0].Macros != (types.Macros{}) {
+		t.Errorf("expected matched food with zero macros (portion unknown), got %+v", res[0])
+	}
+}
+
+// TestFinalizeNonMassServingUnitStillNeedsClarification ensures a serving
+// unit that isn't a mass ("piece", "ml", ...) is never silently treated as a
+// gram count.
+func TestFinalizeNonMassServingUnitStillNeedsClarification(t *testing.T) {
+	cookie := types.FoodMatch{FoodID: "off:cookie", Name: "cookie", Source: "openfoodfacts",
+		Per100g:     types.Macros{Calories: 480, Protein: 6, Carbs: 60, Fat: 22},
+		ServingSize: 1, ServingUnit: "piece"}
+	st := &fakeStore{lib: map[string]types.FoodMatch{"cookie": cookie}}
+	r := New(st, nil, nil, 0.92, st)
+
+	items := []types.ParsedItem{{RawPhrase: "cookie", NormalizedGrams: 0}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 1 {
+		t.Fatalf("need=%d, want 1 (non-mass serving unit must not be treated as grams)", need)
+	}
+	if res[0].Macros != (types.Macros{}) {
+		t.Errorf("expected zero macros (portion unknown), got %+v", res[0].Macros)
+	}
+}
+
+// TestDefaultServingGramsUnitAliases covers case-insensitivity and the
+// "gram"/"grams" aliases beyond the bare "g" used above, plus rejection of
+// non-gram mass units (kg) per spec: only g/gram/grams should be trusted.
+func TestDefaultServingGramsUnitAliases(t *testing.T) {
+	tests := []struct {
+		name   string
+		unit   string
+		size   float64
+		wantG  float64
+		wantOK bool
+	}{
+		{"lowercase g", "g", 30, 30, true},
+		{"uppercase GRAMS", "GRAMS", 30, 30, true},
+		{"mixed-case Gram", "Gram", 30, 30, true},
+		{"kg not trusted", "kg", 0.03, 0, false},
+		{"ml not trusted", "ml", 30, 0, false},
+		{"piece not trusted", "piece", 1, 0, false},
+		{"zero size", "g", 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match := types.FoodMatch{ServingSize: tt.size, ServingUnit: tt.unit}
+			g, ok := defaultServingGrams(match)
+			if ok != tt.wantOK || g != tt.wantG {
+				t.Errorf("defaultServingGrams(size=%v unit=%q) = (%v, %v), want (%v, %v)",
+					tt.size, tt.unit, g, ok, tt.wantG, tt.wantOK)
+			}
+		})
+	}
+}
+
 // --- Matcher tests ---
 
 func TestMatcherHit(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	m := &fakeMatcher{match: map[string]types.FoodMatch{
-		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
+		"frango": {FoodID: "off:1", Name: "frango", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.85},
 	}}
 	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
@@ -298,7 +411,7 @@ func TestMatcherMissFallsThroughToExternal(t *testing.T) {
 func TestMatcherStrongMatchWritesAlias(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	m := &fakeMatcher{match: map[string]types.FoodMatch{
-		"frango": {FoodID: "off:1", Name: "chicken", Source: "food_library",
+		"frango": {FoodID: "off:1", Name: "frango", Source: "food_library",
 			Per100g: types.Macros{Calories: 165, Protein: 31}, MatchScore: 0.95},
 	}}
 	r := New(st, m, nil, 0.92, st)
@@ -343,6 +456,60 @@ func TestMatcherWeakMatchNoAlias(t *testing.T) {
 	}
 }
 
+// TestMatcherIrrelevantMatchRejectedFallsThrough is the mechanical proof for
+// the embedding relevance gate: the matcher's top hit clears the similarity
+// threshold but shares no real word with the query, so it must be treated as
+// a non-match (same as types.ErrNoMatch) and the resolver must fall through
+// to external sources exactly as it already does for irrelevant external
+// results.
+func TestMatcherIrrelevantMatchRejectedFallsThrough(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{}}
+	m := &fakeMatcher{match: map[string]types.FoodMatch{
+		"leite": {FoodID: "food_library:bad", Name: "Chocolate amargo 70%", Source: "food_library",
+			Per100g: types.Macros{Calories: 598}, MatchScore: 0.95},
+	}}
+	src := &fakeSource{name: "usda", phr: "leite", match: types.FoodMatch{
+		FoodID: "usda:milk", Name: "Leite integral pasteurizado", Source: "usda",
+		Per100g: types.Macros{Calories: 61, Protein: 3.2, Carbs: 4.8, Fat: 3.3},
+	}}
+	r := New(st, m, nil, 0.92, st, src)
+
+	items := []types.ParsedItem{{RawPhrase: "leite", NormalizedGrams: 200}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0", need)
+	}
+	if m.calls != 1 {
+		t.Errorf("matcher called %d times, want 1", m.calls)
+	}
+	if src.calls != 1 {
+		t.Errorf("external source called %d times, want 1 (matcher hit must be rejected and fall through)", src.calls)
+	}
+	if res[0].Match.FoodID != "usda:milk" {
+		t.Errorf("resolved via %q, want usda:milk (irrelevant matcher hit must be rejected)", res[0].Match.FoodID)
+	}
+	if len(st.pendingAliases) != 0 {
+		t.Errorf("expected no pending alias for a rejected matcher hit, got %v", st.pendingAliases)
+	}
+}
+
+// TestNameMatchesQueryArrozSubstringLimitation documents a known limitation
+// of the relevance gate rather than asserting it's fully fixed: the real
+// production near-miss was query "arroz" matching the unrelated Spanish
+// snack "Tortitas de arroz y legumbres". nameMatchesQuery treats any 3+-char
+// substring overlap as relevant, and "arroz" literally is a substring of
+// that candidate's name, so this specific example still clears the gate.
+// The gate added in resolveItem reuses this exact function, so it is
+// defense-in-depth, not a guarantee against this precise example — fully
+// avoiding it depends on the embedding index surfacing the correct TACO
+// "arroz" candidate in the first place (a separate backfill fix).
+func TestNameMatchesQueryArrozSubstringLimitation(t *testing.T) {
+	if !nameMatchesQuery("arroz", "Tortitas de arroz y legumbres") {
+		t.Fatalf("expected nameMatchesQuery to still accept this substring overlap (documents gate limitation, not a regression)")
+	}
+}
+
 func TestEmbeddingOnWrite(t *testing.T) {
 	st := &fakeStore{lib: map[string]types.FoodMatch{}}
 	emb := &fakeEmbedder{}
@@ -373,7 +540,10 @@ func TestProfileOffRegression(t *testing.T) {
 	// the matcher maps "frango" to a different food than the external source.
 	spyMatch := func() *fakeMatcher {
 		return &fakeMatcher{match: map[string]types.FoodMatch{
-			"frango": {FoodID: "matcher:wrong", Name: "wrong", Source: "food_library",
+			// Name shares "frango" with the query so it clears the relevance
+			// gate; FoodID/Calories differ from the external chicken() fixture
+			// so the two paths remain distinguishable.
+			"frango": {FoodID: "matcher:wrong", Name: "frango errado", Source: "food_library",
 				Per100g: types.Macros{Calories: 1}, MatchScore: 0.99},
 		}}
 	}

@@ -73,6 +73,75 @@ func (s *fakeStore) SetFoodImportFingerprint(ctx context.Context, source, finger
 	return nil
 }
 
+// fakeEmbedder records BackfillEmbeddings calls and returns canned counts.
+type fakeEmbedder struct {
+	calls    int
+	embedded int
+	failed   int
+	err      error
+	lastCtx  context.Context
+}
+
+func (e *fakeEmbedder) BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (int, int, error) {
+	e.calls++
+	e.lastCtx = ctx
+	if progress != nil {
+		progress(e.embedded+e.failed, e.embedded+e.failed)
+	}
+	return e.embedded, e.failed, e.err
+}
+
+func TestRunOnce_EmbedderBackfillsAfterImport(t *testing.T) {
+	src := &fakeSource{name: "taco", count: 2}
+	store := &fakeStore{}
+	emb := &fakeEmbedder{embedded: 2}
+	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default()).WithEmbedder(emb)
+
+	r.RunOnce(context.Background())
+
+	if emb.calls != 1 {
+		t.Fatalf("BackfillEmbeddings calls = %d, want 1", emb.calls)
+	}
+}
+
+func TestRunOnce_EmbedderRunsEvenWhenAllSourcesFail(t *testing.T) {
+	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
+	store := &fakeStore{}
+	emb := &fakeEmbedder{}
+	r := New(store, []ports.BulkSource{failing}, map[string]ports.BulkFilter{}, 0, slog.Default()).WithEmbedder(emb)
+
+	r.RunOnce(context.Background())
+
+	if emb.calls != 1 {
+		t.Fatalf("BackfillEmbeddings calls = %d, want 1 (backfill should still run to pick up any previously-missed foods)", emb.calls)
+	}
+}
+
+func TestRunOnce_EmbedderErrorDoesNotPanic(t *testing.T) {
+	src := &fakeSource{name: "taco", count: 1}
+	store := &fakeStore{}
+	emb := &fakeEmbedder{err: errors.New("ollama unreachable")}
+	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default()).WithEmbedder(emb)
+
+	r.RunOnce(context.Background()) // must not panic
+
+	if emb.calls != 1 {
+		t.Fatalf("BackfillEmbeddings calls = %d, want 1", emb.calls)
+	}
+}
+
+func TestRunOnce_NoEmbedderIsNoOp(t *testing.T) {
+	src := &fakeSource{name: "taco", count: 1}
+	store := &fakeStore{}
+	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default())
+
+	r.RunOnce(context.Background()) // must not panic with r.embedder == nil
+
+	if len(store.calls) != 1 {
+		t.Fatalf("BulkUpsertFoods calls = %d, want 1", len(store.calls))
+	}
+}
+
 func TestRunOnce_BatchingAndFinalPartialBatch(t *testing.T) {
 	src := &fakeSource{name: "usda", count: 1200} // 2 full batches of 500 + 1 partial of 200
 	store := &fakeStore{}

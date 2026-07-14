@@ -90,3 +90,55 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 		t.Fatalf("expected 0 food_aliases rows, got %d", aliasCount)
 	}
 }
+
+func TestListFoodsWithoutVectors(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	foods := []types.FoodMatch{
+		{FoodID: "no-vec-1", Name: "Arroz", Source: "taco"},
+		{FoodID: "no-vec-2", Name: "Feijao", Source: "taco"},
+		{FoodID: "has-vec-1", Name: "Chicken Breast", Source: "usda"},
+	}
+	if err := s.BulkUpsertFoods(ctx(), foods); err != nil {
+		t.Fatalf("BulkUpsertFoods: %v", err)
+	}
+
+	// Simulate one food already having a vector (e.g. resolved live via an
+	// external source, which embeds on write).
+	if _, err := s.db.Exec("INSERT INTO food_vectors (food_id, dim, vec) VALUES (?, 1, ?)",
+		"has-vec-1", []byte{0, 0, 0, 0}); err != nil {
+		t.Fatalf("seed food_vectors: %v", err)
+	}
+
+	got, err := s.ListFoodsWithoutVectors(ctx())
+	if err != nil {
+		t.Fatalf("ListFoodsWithoutVectors: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 foods missing vectors, got %d: %+v", len(got), got)
+	}
+	ids := map[string]bool{}
+	for _, fm := range got {
+		ids[fm.FoodID] = true
+	}
+	if !ids["no-vec-1"] || !ids["no-vec-2"] {
+		t.Fatalf("expected no-vec-1 and no-vec-2, got %+v", got)
+	}
+	if ids["has-vec-1"] {
+		t.Fatalf("has-vec-1 already has a vector, should be excluded: %+v", got)
+	}
+}
+
+func TestListFoodsWithoutVectors_EmptyCatalog(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	got, err := s.ListFoodsWithoutVectors(ctx())
+	if err != nil {
+		t.Fatalf("ListFoodsWithoutVectors: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected 0 foods for empty catalog, got %d", len(got))
+	}
+}

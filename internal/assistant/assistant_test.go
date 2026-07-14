@@ -300,8 +300,8 @@ func TestRouterToolCallMaxRounds(t *testing.T) {
 	if last.Kind != "error" {
 		t.Fatalf("events[12].Kind = %q, want error", last.Kind)
 	}
-	if last.Err == nil || last.Err.Error() != suggestFallback {
-		t.Errorf("events[12].Err = %v, want '%s'", last.Err, suggestFallback)
+	if !errors.Is(last.Err, ErrMaxToolRounds) {
+		t.Errorf("events[12].Err = %v, want ErrMaxToolRounds", last.Err)
 	}
 }
 
