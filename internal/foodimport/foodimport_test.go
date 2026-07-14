@@ -47,6 +47,7 @@ type fakeStore struct {
 	calls        [][]types.FoodMatch
 	fingerprints map[string]string
 	setCalls     int
+	statuses     map[string]types.FoodImportStatus
 }
 
 func (s *fakeStore) BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch) error {
@@ -70,6 +71,14 @@ func (s *fakeStore) SetFoodImportFingerprint(ctx context.Context, source, finger
 	}
 	s.fingerprints[source] = fingerprint
 	s.setCalls++
+	return nil
+}
+
+func (s *fakeStore) SetFoodImportStatus(ctx context.Context, source, result, lastError string) error {
+	if s.statuses == nil {
+		s.statuses = make(map[string]types.FoodImportStatus)
+	}
+	s.statuses[source] = types.FoodImportStatus{Source: source, LastResult: result, LastError: lastError}
 	return nil
 }
 
@@ -272,6 +281,54 @@ func TestRunOnce_LocalSourceRefreshesBeforeFirstAndChangedImport(t *testing.T) {
 	if refreshes != 2 {
 		t.Fatalf("source refreshes = %d, want 2", refreshes)
 	}
+}
+
+// TestRunOnce_RecordsStatus covers all four outcomes against a fake store,
+// at the RunOnce->recordStatus choke point.
+func TestRunOnce_RecordsStatus(t *testing.T) {
+	t.Run("imported (API source)", func(t *testing.T) {
+		src := &fakeSource{name: "openfoodfacts", count: 1}
+		store := &fakeStore{}
+		r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{}, 0, slog.Default())
+		r.RunOnce(t.Context())
+		if got := store.statuses["openfoodfacts"].LastResult; got != "imported" {
+			t.Fatalf("last_result = %q, want imported", got)
+		}
+	})
+
+	t.Run("skipped (unchanged local file)", func(t *testing.T) {
+		path := writeDataset(t, "foods.json", "one")
+		src := &fakeSource{name: "usda", count: 1}
+		store := &fakeStore{}
+		r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
+		r.RunOnce(t.Context())
+		r.RunOnce(t.Context())
+		if got := store.statuses["usda"].LastResult; got != "skipped" {
+			t.Fatalf("last_result = %q, want skipped", got)
+		}
+	})
+
+	t.Run("changed_during_import", func(t *testing.T) {
+		path := writeDataset(t, "foods.json", "one")
+		store := &fakeStore{}
+		src := &fakeSource{name: "taco", count: 1, duringFetch: func() { replaceDataset(t, path, "two") }}
+		r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default(), map[string]string{"taco": path}, nil)
+		r.RunOnce(t.Context())
+		if got := store.statuses["taco"].LastResult; got != "changed_during_import" {
+			t.Fatalf("last_result = %q, want changed_during_import", got)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		src := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
+		store := &fakeStore{}
+		r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{}, 0, slog.Default())
+		r.RunOnce(t.Context())
+		st := store.statuses["usda"]
+		if st.LastResult != "failed" || st.LastError != "boom" {
+			t.Fatalf("status = %+v, want result=failed error=boom", st)
+		}
+	})
 }
 
 func writeDataset(t *testing.T, name, contents string) string {

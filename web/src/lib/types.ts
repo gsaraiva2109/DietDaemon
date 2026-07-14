@@ -383,6 +383,28 @@ export interface NewApiKey extends ApiKey {
   key: string // "ddk_…", shown once, never stored client-side
 }
 
+// Read-only share link. The raw `token` is returned ONCE on create and never listed.
+export interface ShareToken {
+  id: string
+  label: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+export interface NewShareToken extends ShareToken {
+  token: string // shown once, never stored client-side
+}
+
+// Per-source bulk food-import status.
+export interface FoodImportStatus {
+  source: string
+  fingerprint?: string
+  last_result: string // "imported" | "skipped" | "failed" | "changed_during_import"
+  last_run_at: string
+  last_error?: string
+}
+
 // ---------------------------------------------------------------------------
 // TOTP / MFA
 // ---------------------------------------------------------------------------

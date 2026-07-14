@@ -237,7 +237,7 @@ func run() error {
 	}
 
 	suggestEngine := suggest.New(st, completionModel, cfg.Location)
-	if err := cmdRegistry.Register(commands.NewSuggestCommand(suggestEngine)); err != nil {
+	if err := cmdRegistry.Register(commands.NewSuggestCommand(suggestEngine, st)); err != nil {
 		return fmt.Errorf("register suggest command: %w", err)
 	}
 

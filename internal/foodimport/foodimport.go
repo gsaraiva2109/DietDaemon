@@ -35,6 +35,7 @@ type Embedder interface {
 type fingerprintStore interface {
 	GetFoodImportFingerprint(ctx context.Context, source string) (string, error)
 	SetFoodImportFingerprint(ctx context.Context, source, fingerprint string) error
+	SetFoodImportStatus(ctx context.Context, source, result, lastError string) error
 }
 
 // SourceFactory rebuilds a source when its local dataset has changed. This is
@@ -111,7 +112,8 @@ func (r *Runner) Run(ctx context.Context) {
 // logged but doesn't stop the others from running.
 func (r *Runner) RunOnce(ctx context.Context) {
 	for i, src := range r.sources {
-		next, err := r.runFor(ctx, src)
+		next, result, err := r.runFor(ctx, src)
+		r.recordStatus(ctx, src.Name(), result, err)
 		if err != nil {
 			r.log.Error("foodimport: run source", "source", src.Name(), "result", "failed", "err", err)
 			continue
@@ -119,6 +121,24 @@ func (r *Runner) RunOnce(ctx context.Context) {
 		r.sources[i] = next
 	}
 	r.backfillEmbeddings(ctx)
+}
+
+// recordStatus persists runFor's outcome. Best-effort: a status-write
+// failure is logged but never blocks or fails the import itself, and is a
+// silent no-op if the store doesn't support it.
+func (r *Runner) recordStatus(ctx context.Context, source, result string, runErr error) {
+	fs, ok := r.store.(fingerprintStore)
+	if !ok {
+		return
+	}
+	errMsg := ""
+	if runErr != nil {
+		errMsg = runErr.Error()
+		result = "failed"
+	}
+	if err := fs.SetFoodImportStatus(ctx, source, result, errMsg); err != nil {
+		r.log.Warn("foodimport: record status", "source", source, "err", err)
+	}
 }
 
 // backfillEmbeddings runs after every import pass so foods this package just
@@ -151,31 +171,34 @@ func (r *Runner) backfillEmbeddings(ctx context.Context) {
 }
 
 // runFor streams src's bulk results into the store in fixed-size batches.
-func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSource, error) {
+// The returned string is the run's outcome ("imported", "skipped", or
+// "changed_during_import") for the caller to persist via recordStatus --
+// meaningless when err is non-nil (RunOnce always maps that case to "failed").
+func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSource, string, error) {
 	path := r.localPaths[src.Name()]
 	var before string
 	if path != "" {
 		var err error
 		before, err = localFingerprint(path, r.filters[src.Name()])
 		if err != nil {
-			return src, err
+			return src, "", err
 		}
 		fs, ok := r.store.(fingerprintStore)
 		if !ok {
-			return src, errors.New("foodimport: local file import requires fingerprint store")
+			return src, "", errors.New("foodimport: local file import requires fingerprint store")
 		}
 		previous, err := fs.GetFoodImportFingerprint(ctx, src.Name())
 		if err != nil && !errors.Is(err, types.ErrNotFound) {
-			return src, fmt.Errorf("get fingerprint: %w", err)
+			return src, "", fmt.Errorf("get fingerprint: %w", err)
 		}
 		if err == nil && previous == before {
 			r.log.Info("foodimport: skipped", "source", src.Name(), "result", "skipped")
-			return src, nil
+			return src, "skipped", nil
 		}
 		if makeSource := r.refresh[src.Name()]; makeSource != nil {
 			src, err = makeSource()
 			if err != nil {
-				return src, fmt.Errorf("refresh source: %w", err)
+				return src, "", fmt.Errorf("refresh source: %w", err)
 			}
 		}
 	}
@@ -197,26 +220,26 @@ func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSo
 		return nil
 	})
 	if err != nil {
-		return src, err
+		return src, "", err
 	}
 	if err := flush(); err != nil {
-		return src, err
+		return src, "", err
 	}
 	if path == "" {
 		r.log.Info("foodimport: imported", "source", src.Name(), "result", "imported")
-		return src, nil
+		return src, "imported", nil
 	}
 
 	after, err := localFingerprint(path, r.filters[src.Name()])
 	if err != nil || after != before {
 		r.log.Warn("foodimport: changed during import", "source", src.Name(), "result", "changed_during_import")
-		return src, nil
+		return src, "changed_during_import", nil
 	}
 	if err := r.store.(fingerprintStore).SetFoodImportFingerprint(ctx, src.Name(), before); err != nil {
-		return src, fmt.Errorf("set fingerprint: %w", err)
+		return src, "", fmt.Errorf("set fingerprint: %w", err)
 	}
 	r.log.Info("foodimport: imported", "source", src.Name(), "result", "imported")
-	return src, nil
+	return src, "imported", nil
 }
 
 func localFingerprint(path string, filter ports.BulkFilter) (string, error) {

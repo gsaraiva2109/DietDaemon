@@ -188,6 +188,7 @@ type Meal struct {
 	Confidence float64 // overall parse confidence, 0..1
 	ParserTier ParserTier
 	CreatedAt  time.Time
+	ExternalID *string // set for imported meals (e.g. MyFitnessPal); nil for normal logging
 }
 
 // Total sums the macros across every resolved item in the meal.
@@ -504,6 +505,34 @@ type APIKey struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+// FoodImportStatus is one bulk food-import source's last-run outcome.
+type FoodImportStatus struct {
+	Source      string    `json:"source"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	LastResult  string    `json:"last_result"` // "imported" | "skipped" | "failed" | "changed_during_import"
+	LastRunAt   time.Time `json:"last_run_at"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
+// ShareToken is a read-only credential for a public dashboard link. It
+// resolves to a userID the same way an APIKey does; the only difference is
+// the routes it's accepted on (GET-only, under /shared/{token}/...). The
+// raw token is returned exactly once on creation.
+type ShareToken struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	Label      string     `json:"label"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+// NewShareTokenResponse wraps a ShareToken with the one-time raw secret.
+type NewShareTokenResponse struct {
+	ShareToken
+	Token string `json:"token"`
 }
 
 // NewAPIKeyResponse wraps an APIKey with the one-time raw secret.

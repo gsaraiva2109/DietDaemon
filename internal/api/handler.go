@@ -36,6 +36,10 @@ type AuthStore interface {
 	CreateAPIKey(ctx context.Context, id, userID, hashedKey, label string) error
 	ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey, error)
 	RevokeAPIKey(ctx context.Context, userID, keyID string) error
+	GetUserByShareToken(ctx context.Context, hashedToken string) (types.User, error)
+	CreateShareToken(ctx context.Context, id, userID, hashedToken, label string) error
+	ListShareTokens(ctx context.Context, userID string) ([]types.ShareToken, error)
+	RevokeShareToken(ctx context.Context, userID, tokenID string) error
 	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
 	RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error
 
@@ -154,6 +158,9 @@ type MealStore interface {
 	GetSourcePrecedence(ctx context.Context, userID string) ([]string, error)
 	SetSourcePrecedence(ctx context.Context, userID string, order []string) error
 
+	// Bulk food-import status, keyed by source.
+	GetFoodImportStatuses(ctx context.Context) ([]types.FoodImportStatus, error)
+
 	// Meal templates.
 	SaveTemplate(ctx context.Context, t types.MealTemplate) error
 	GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error)
@@ -231,6 +238,7 @@ type MealLogger interface {
 // foods the user already eats. Satisfied by *suggest.Engine.
 type Suggester interface {
 	Suggest(ctx context.Context, userID string) (types.MealSuggestion, error)
+	SuggestFromIngredients(ctx context.Context, userID string, foodIDs []string) (types.MealSuggestion, error)
 }
 
 // ChatStore is the persistence interface the chat assistant endpoints need.
@@ -389,6 +397,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods/frequent", h.wrap(h.handleFrequentFoods))
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
 	mux.HandleFunc("GET /api/v1/suggest", h.wrap(h.handleSuggest))
+	mux.HandleFunc("POST /api/v1/suggest/ingredients", h.wrap(h.handleSuggestFromIngredients))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/aliases/{alias}", h.wrap(h.handleDeleteAlias))
 	mux.HandleFunc("GET /api/v1/catalog/search", h.wrap(h.handleSearchCatalog))
@@ -403,6 +412,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Nutrition source precedence.
 	mux.HandleFunc("GET /api/v1/settings/precedence", h.wrap(h.handleGetPrecedence))
 	mux.HandleFunc("PUT /api/v1/settings/precedence", h.wrap(h.handleSetPrecedence))
+
+	// Bulk food-import status.
+	mux.HandleFunc("GET /api/v1/food-import/status", h.wrap(h.handleFoodImportStatus))
 
 	// Meal templates.
 	mux.HandleFunc("GET /api/v1/templates", h.wrap(h.handleListTemplates))
@@ -493,6 +505,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/api-keys", h.wrap(h.handleListAPIKeys))
 	mux.HandleFunc("POST /api/v1/auth/api-keys", h.wrap(h.handleCreateAPIKey))
 	mux.HandleFunc("DELETE /api/v1/auth/api-keys/{id}", h.wrap(h.handleRevokeAPIKey))
+	mux.HandleFunc("GET /api/v1/auth/share-tokens", h.wrap(h.handleListShareTokens))
+	mux.HandleFunc("POST /api/v1/auth/share-tokens", h.wrap(h.handleCreateShareToken))
+	mux.HandleFunc("DELETE /api/v1/auth/share-tokens/{id}", h.wrap(h.handleRevokeShareToken))
 
 	// TOTP two-factor authentication.
 	mux.HandleFunc("POST /api/v1/auth/totp/enroll", h.wrap(h.handleTOTPEnroll))
@@ -549,6 +564,17 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/bot/link-code", h.wrap(h.handleCreateLinkCode))
 	mux.HandleFunc("POST /api/v1/bot/link", h.wrap(h.handleCompleteLink))
 	mux.HandleFunc("GET /api/v1/bot/link-code/{code}/stream", h.wrap(h.handleStreamLinkCode))
+
+	// Shared read-only dashboard — same handlers as above, mounted under a
+	// distinct prefix and authenticated by the token in the URL instead of a
+	// cookie/API key. No new handler code: the share token just resolves to
+	// a userID and every one of these already scopes its query by userID.
+	mux.HandleFunc("GET /api/v1/shared/{token}/rollups/today", h.wrapReadOnly(h.handleRollupsToday))
+	mux.HandleFunc("GET /api/v1/shared/{token}/meals", h.wrapReadOnly(h.handleMealsList))
+	mux.HandleFunc("GET /api/v1/shared/{token}/targets", h.wrapReadOnly(h.handleGetTargets))
+	mux.HandleFunc("GET /api/v1/shared/{token}/budget/weekly", h.wrapReadOnly(h.handleGetBudgetWeekly))
+	mux.HandleFunc("GET /api/v1/shared/{token}/body/summary", h.wrapReadOnly(h.handleBodySummary))
+	mux.HandleFunc("GET /api/v1/shared/{token}/streak", h.wrapReadOnly(h.handleStreak))
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
@@ -564,6 +590,34 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 			return
 		}
 		next(w, r, userID)
+	}
+}
+
+// wrapReadOnly authenticates via a share token embedded in the URL path
+// (not a cookie or Bearer header — a share link opens standalone in a
+// browser with no DietDaemon session) and rejects anything but GET. It
+// deliberately skips the cookie/CSRF machinery in authenticate(): a share
+// link has no session to forge a CSRF token against, and the GET-only
+// restriction is what keeps it from being a mutation vector.
+func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		token := r.PathValue("token")
+		hashed := auth.HashToken(token)
+		u, err := h.authStore.GetUserByShareToken(r.Context(), hashed)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		next(w, r, u.ID)
 	}
 }
 

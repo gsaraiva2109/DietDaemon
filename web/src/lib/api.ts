@@ -22,6 +22,7 @@ import type {
   DailyRollup,
   Fast,
   FoodDetail,
+  FoodImportStatus,
   GoalSuggestion,
   HevyImportResult,
   HevyKeyStatus,
@@ -41,6 +42,8 @@ import type {
   RecoveryCodesResponse,
   ResolvedItem,
   SessionResponse,
+  ShareToken,
+  NewShareToken,
   SleepLog,
   SleepQuality,
   StreakResponse,
@@ -327,6 +330,17 @@ export const api = {
       revoke: (id: string) =>
         request<void>(`/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
+    shareTokens: {
+      list: () => request<ShareToken[]>('/auth/share-tokens'),
+      // Raw token returned ONCE; surface it immediately, never persist it.
+      create: (label: string) =>
+        request<NewShareToken>('/auth/share-tokens', {
+          method: 'POST',
+          body: JSON.stringify({ label }),
+        }),
+      revoke: (id: string) =>
+        request<void>(`/auth/share-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
     // --- TOTP / MFA -------------------------------------------
     // --- MFA step-up: passkey + email-OTP fallback ------------
     mfa: {
@@ -428,6 +442,10 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ order }),
       }),
+  },
+
+  foodImport: {
+    status: () => request<FoodImportStatus[]>('/food-import/status'),
   },
 
   // --- Meal Templates -------------------------------------------
@@ -670,6 +688,44 @@ export const api = {
         request<{ status: string }>('/chat/settings', { method: 'PUT', body: JSON.stringify(body) }),
     },
   },
+}
+
+// requestShared fetches a GET-only /shared/{token}/... endpoint. No session
+// cookie, no CSRF header -- a share link works standalone in a browser with
+// no DietDaemon login at all, auth is the token in the URL itself.
+async function requestShared<T>(token: string, path: string): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/shared/${encodeURIComponent(token)}${path}`, {
+      headers: { Accept: 'application/json' },
+    })
+  } catch {
+    throw new ApiError(0, 'Network error, is the DietDaemon server running?')
+  }
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`
+    try {
+      const body = (await res.json()) as { error?: string }
+      if (body?.error) msg = body.error
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, msg)
+  }
+  return (await res.json()) as T
+}
+
+// sharedApi scopes the read-only share-link endpoints to one token, so
+// SharedDashboard.tsx never has to repeat it at each call site.
+export function sharedApi(token: string) {
+  return {
+    rollupToday: () => requestShared<DailyRollup>(token, '/rollups/today'),
+    meals: (limit = 20) => requestShared<Meal[]>(token, `/meals?limit=${limit}`),
+    targets: () => requestShared<{ UserID: string; Targets: Macros }>(token, '/targets'),
+    budgetWeekly: () => requestShared<WeeklyBudgetResponse>(token, '/budget/weekly'),
+    bodySummary: () => requestShared<BodyCompositionSummary>(token, '/body/summary'),
+    streak: () => requestShared<StreakResponse>(token, '/streak'),
+  }
 }
 
 // multipart sends FormData without forcing a JSON Content-Type (the browser
