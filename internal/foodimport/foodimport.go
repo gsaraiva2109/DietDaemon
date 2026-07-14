@@ -24,6 +24,14 @@ type Store interface {
 	BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch) error
 }
 
+// Embedder backfills vector embeddings for catalog foods that don't have one
+// yet — satisfied by *embedding.Matcher. Bulk-imported foods (this package's
+// whole job) never go through the live resolver's embed-on-write path, so
+// without this they'd stay invisible to the Tier 1/2 fuzzy matcher forever.
+type Embedder interface {
+	BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (embedded, failed int, err error)
+}
+
 type fingerprintStore interface {
 	GetFoodImportFingerprint(ctx context.Context, source string) (string, error)
 	SetFoodImportFingerprint(ctx context.Context, source, fingerprint string) error
@@ -41,8 +49,20 @@ type Runner struct {
 	filters    map[string]ports.BulkFilter // keyed by Name()
 	localPaths map[string]string           // keyed by Name(); empty means API/embedded mode
 	refresh    map[string]SourceFactory
+	embedder   Embedder
 	interval   time.Duration
 	log        *slog.Logger
+}
+
+// WithEmbedder wires an embedding backfill into the runner: after every
+// import pass, any catalog food still missing a vector (fresh from this run
+// or left over from an earlier one) gets embedded so it's matchable by the
+// Tier 1/2 fuzzy matcher. Optional — nil (the default) skips this step
+// entirely, e.g. on Tier 0 where no embedder is configured. Returns r for
+// chaining off the New/NewWithLocalPaths call site.
+func (r *Runner) WithEmbedder(e Embedder) *Runner {
+	r.embedder = e
+	return r
 }
 
 // NewWithLocalPaths adds zero-read file identity checks for local bulk files.
@@ -97,6 +117,24 @@ func (r *Runner) RunOnce(ctx context.Context) {
 			continue
 		}
 		r.sources[i] = next
+	}
+	r.backfillEmbeddings(ctx)
+}
+
+// backfillEmbeddings runs after every import pass so foods this package just
+// wrote (or missed on an earlier run) become matchable without a separate
+// manual step. A no-op when no embedder is wired (r.embedder == nil).
+func (r *Runner) backfillEmbeddings(ctx context.Context) {
+	if r.embedder == nil {
+		return
+	}
+	embedded, failed, err := r.embedder.BackfillEmbeddings(ctx, nil)
+	if err != nil {
+		r.log.Error("foodimport: embedding backfill", "result", "failed", "err", err)
+		return
+	}
+	if embedded > 0 || failed > 0 {
+		r.log.Info("foodimport: embedding backfill", "result", "done", "embedded", embedded, "failed", failed)
 	}
 }
 

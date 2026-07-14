@@ -19,6 +19,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
+	unitnorm "github.com/gsaraiva2109/dietdaemon/internal/parser/normalize"
 )
 
 // FoodStore is the subset of ports.Store the resolver needs. Declaring it here
@@ -133,6 +134,15 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 	// 2. Embedding matcher (when configured): nearest-neighbour in the library.
 	if r.matcher != nil {
 		match, err := r.matcher.Match(ctx, userID, item.RawPhrase)
+		if err == nil && !nameMatchesQuery(item.RawPhrase, match.Name) {
+			// Cosine similarity alone isn't enough: the embedding matcher can
+			// confidently return a nearest neighbour with no real lexical
+			// relation to what the user said (e.g. "arroz" landing on an
+			// unrelated snack product). Gate it through the same relevance
+			// check external sources already pass (below) instead of trusting
+			// the similarity score blindly, and fall through to step 3.
+			err = types.ErrNoMatch
+		}
 		if err == nil {
 			_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
 			// Queue the new phrasing for user confirmation when the match is
@@ -216,13 +226,43 @@ func nameMatchesQuery(query, name string) bool {
 }
 
 // finalize attaches a matched food and scales its per-100g macros to the
-// portion. Count-based items (grams unknown) keep zero macros and are flagged
-// as needing clarification so the portion can be confirmed later.
+// portion. Count-based items (grams unknown) fall back to the matched food's
+// default serving size when it's expressed in grams (e.g. an Open Food Facts
+// or USDA entry with a real per-serving default); TACO entries never
+// populate ServingSize, so they — and anything with a non-gram serving unit
+// like "piece" — keep needing clarification exactly as before.
 func finalize(item types.ParsedItem, match types.FoodMatch) (types.ResolvedItem, bool) {
 	ri := types.ResolvedItem{Parsed: item, Match: match}
-	if item.NormalizedGrams <= 0 {
-		return ri, false // food known, portion unknown
+	grams := item.NormalizedGrams
+	if grams <= 0 {
+		g, ok := defaultServingGrams(match)
+		if !ok {
+			return ri, false // food known, portion unknown
+		}
+		grams = g
 	}
-	ri.Macros = match.Per100g.Scale(item.NormalizedGrams / 100.0)
+	ri.Macros = match.Per100g.Scale(grams / 100.0)
 	return ri, true
+}
+
+// defaultServingGrams returns match's serving size in grams when its
+// ServingUnit is an explicit gram unit ("g"/"gram"/"grams", case-insensitive
+// — resolved via the shared parser unit-normalization table so its "gramas",
+// "gr", etc. aliases count too; that table only lacks the bare English
+// "gram"/"grams" words, checked directly below). A non-mass unit ("piece",
+// "ml", …) or a missing ServingSize (e.g. every TACO-sourced match) reports
+// ok=false so the caller still requires clarification instead of guessing.
+func defaultServingGrams(match types.FoodMatch) (grams float64, ok bool) {
+	if match.ServingSize <= 0 {
+		return 0, false
+	}
+	unit := strings.ToLower(strings.TrimSpace(match.ServingUnit))
+	if unit == "gram" || unit == "grams" {
+		return match.ServingSize, true
+	}
+	canonical, _ := unitnorm.NormalizeUnit(1, match.ServingUnit, "", "")
+	if canonical != "g" {
+		return 0, false
+	}
+	return match.ServingSize, true
 }

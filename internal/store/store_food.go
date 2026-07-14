@@ -97,6 +97,31 @@ func (r foodMatchRow) toFoodMatch() types.FoodMatch {
 	}
 }
 
+// ListFoodsWithoutVectors returns every food in the global catalog that has
+// no row in food_vectors yet, e.g. rows written by a bulk catalog import
+// (which never calls EmbedFood) rather than the live resolver's
+// embedding-on-write path. Used by the backfill maintenance operation to make
+// the whole catalog embedding-matchable, not just accidentally-touched foods.
+func (s *Store) ListFoodsWithoutVectors(ctx context.Context) ([]types.FoodMatch, error) {
+	const q = `
+		SELECT f.food_id, f.name, f.source, f.kcal_100g, f.protein_100g,
+		       f.carbs_100g, f.fat_100g, f.fiber_100g,
+		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit
+		FROM foods f
+		LEFT JOIN food_vectors fv ON fv.food_id = f.food_id
+		WHERE fv.food_id IS NULL
+	`
+	var rows []foodMatchRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q)); err != nil {
+		return nil, fmt.Errorf("store: list foods without vectors: %w", err)
+	}
+	matches := make([]types.FoodMatch, len(rows))
+	for i, r := range rows {
+		matches[i] = r.toFoodMatch()
+	}
+	return matches, nil
+}
+
 // UpsertFood writes a resolved food into the global catalog (shared by every
 // user — a food's name/source/macros are resolved once, ever, regardless of
 // how many users log it), ensures a per-user usage-stats row exists, and adds

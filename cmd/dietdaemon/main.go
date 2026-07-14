@@ -332,7 +332,11 @@ func run() error {
 				}
 			}
 		}
-		go foodimport.NewWithLocalPaths(st, srcs, filters, cfg.FoodImportInterval, slog.Default(), localPaths, refresh).Run(ctx)
+		importRunner := foodimport.NewWithLocalPaths(st, srcs, filters, cfg.FoodImportInterval, slog.Default(), localPaths, refresh)
+		if embedder, ok := embed.(foodimport.Embedder); ok {
+			importRunner = importRunner.WithEmbedder(embedder)
+		}
+		go importRunner.Run(ctx)
 		slog.Info("food import runner running", "sources", cfg.FoodImportSources, "interval", cfg.FoodImportInterval.String())
 	}
 

@@ -80,7 +80,7 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 		if err := h.chatStore.AppendChatMessage(r.Context(), msgID, userID, sessionID, "user", req.Text, ""); err != nil {
 			if errors.Is(err, types.ErrNotFound) {
 				// Lazy-create session on first message.
-				if err := h.chatStore.CreateChatSession(r.Context(), sessionID, userID, ""); err != nil {
+				if err := h.chatStore.CreateChatSession(r.Context(), sessionID, userID, deriveSessionTitle(req.Text)); err != nil {
 					h.writeErr(w, err)
 					return
 				}
@@ -162,7 +162,11 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 			if textBuf.Len() > 0 {
 				h.persistAssistantMessages(r.Context(), userID, sessionID, textBuf.String(), toolInfos)
 			}
-			writeSSE(w, "error", map[string]string{"message": "chat error, please try again"})
+			msg := "Trouble reaching the AI provider. Please try again in a moment."
+			if errors.Is(evt.Err, assistant.ErrMaxToolRounds) {
+				msg = "I tried a few different ways but couldn't finish that — try naming the food more simply, or give the exact grams."
+			}
+			writeSSE(w, "error", map[string]string{"message": msg})
 			flusher.Flush()
 			return
 		}
@@ -228,12 +232,28 @@ func (h *Handler) persistAssistantMessages(ctx context.Context, userID, sessionI
 	}
 	// Save tool results first (they happened before the final text).
 	for _, ti := range tools {
-		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "tool", ti.Text, ti.Name)
+		if err := h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "tool", ti.Text, ti.Name); err != nil {
+			slog.Error("persist chat message failed", "session_id", sessionID, "role", "tool", "err", err)
+		}
 	}
 	// Save final assistant text.
 	if strings.TrimSpace(text) != "" {
-		_ = h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "assistant", text, "")
+		if err := h.chatStore.AppendChatMessage(ctx, newHandlerID(), userID, sessionID, "assistant", text, ""); err != nil {
+			slog.Error("persist chat message failed", "session_id", sessionID, "role", "assistant", "err", err)
+		}
 	}
+}
+
+// deriveSessionTitle builds a short session title from the first user message:
+// collapses all whitespace (including newlines) to single spaces, trims, and
+// truncates to ~60 runes with a trailing ellipsis if shortened.
+func deriveSessionTitle(text string) string {
+	collapsed := strings.Join(strings.Fields(text), " ")
+	runes := []rune(collapsed)
+	if len(runes) <= 60 {
+		return collapsed
+	}
+	return string(runes[:60]) + "…"
 }
 
 // ---------------------------------------------------------------------------

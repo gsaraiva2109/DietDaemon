@@ -79,5 +79,14 @@ func summaryText(meal types.Meal) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Logged %d item(s).\n", len(meal.Items))
 	fmt.Fprintf(&b, "~%.0f kcal | P %.0fg · C %.0fg · F %.0fg", total.Calories, total.Protein, total.Carbs, total.Fat)
+	for _, it := range meal.Items {
+		// A resolved item with no explicit parsed grams only ever reaches a
+		// logged meal because resolver.finalize fell back to the matched
+		// food's default serving size — flag that so the user knows it was
+		// assumed, not stated (see resolver.defaultServingGrams).
+		if it.Parsed.NormalizedGrams <= 0 && it.Match.ServingSize > 0 {
+			fmt.Fprintf(&b, "\n- %s: assumed %.0fg serving", it.Match.Name, it.Match.ServingSize)
+		}
+	}
 	return b.String()
 }

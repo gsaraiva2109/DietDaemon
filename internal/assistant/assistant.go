@@ -18,8 +18,10 @@ import (
 
 const maxToolRounds = 6
 
-// suggestFallback is returned when the tool-calling loop exceeds maxToolRounds.
-const suggestFallback = "Couldn't complete that request. Please try again."
+// ErrMaxToolRounds is returned when the tool-calling loop exceeds maxToolRounds
+// without the model ever finishing with plain text. Callers can check for it
+// with errors.Is to show a more specific message than a generic stream failure.
+var ErrMaxToolRounds = errors.New("assistant: exceeded max tool rounds")
 
 // Router runs the tool-calling loop for the conversational assistant.
 type Router struct {
@@ -198,12 +200,7 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	}
 
 	// Exceeded max tool rounds.
-	sendOut(ctx, out, ports.ChatEvent{
-		Kind: "error",
-		//nolint:staticcheck // ST1005: suggestFallback is user-facing display copy, not a Go error meant for further %w wrapping.
-		//lint:ignore ST1005 suggestFallback is user-facing display copy, not a Go error meant for further %w wrapping.
-		Err: errors.New(suggestFallback),
-	})
+	sendOut(ctx, out, ports.ChatEvent{Kind: "error", Err: ErrMaxToolRounds})
 }
 
 // executeCommand looks up a command by name and calls its Handle method.
