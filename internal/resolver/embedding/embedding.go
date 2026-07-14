@@ -102,10 +102,12 @@ type backfillStore interface {
 // foods written by a bulk import (which never calls EmbedFood) rather than
 // the live resolver's embedding-on-write path. It calls EmbedFood
 // sequentially per food (the Ollama adapter has no batch-embed call) so one
-// failed food is logged and skipped rather than aborting the run; progress,
-// if non-nil, is called once per food after it's processed. Returns the
-// counts of successfully embedded and failed foods.
-func (m *Matcher) BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (embedded, failed int, err error) {
+// failed food is skipped rather than aborting the run; progress, if non-nil,
+// is called once per food after it's processed with that food's error (nil
+// on success) so the caller can log/aggregate failures instead of only
+// seeing an opaque final count. Returns the counts of successfully embedded
+// and failed foods.
+func (m *Matcher) BackfillEmbeddings(ctx context.Context, progress func(done, total int, itemErr error)) (embedded, failed int, err error) {
 	bs, ok := m.store.(backfillStore)
 	if !ok {
 		return 0, 0, fmt.Errorf("embedding: backfill: store does not support ListFoodsWithoutVectors")
@@ -118,13 +120,14 @@ func (m *Matcher) BackfillEmbeddings(ctx context.Context, progress func(done, to
 
 	total := len(foods)
 	for i, food := range foods {
-		if err := m.EmbedFood(ctx, "", food.FoodID, food.Name); err != nil {
+		itemErr := m.EmbedFood(ctx, "", food.FoodID, food.Name)
+		if itemErr != nil {
 			failed++
 		} else {
 			embedded++
 		}
 		if progress != nil {
-			progress(i+1, total)
+			progress(i+1, total, itemErr)
 		}
 	}
 	return embedded, failed, nil

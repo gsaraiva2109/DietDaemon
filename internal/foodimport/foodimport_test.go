@@ -82,11 +82,11 @@ type fakeEmbedder struct {
 	lastCtx  context.Context
 }
 
-func (e *fakeEmbedder) BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (int, int, error) {
+func (e *fakeEmbedder) BackfillEmbeddings(ctx context.Context, progress func(done, total int, itemErr error)) (int, int, error) {
 	e.calls++
 	e.lastCtx = ctx
 	if progress != nil {
-		progress(e.embedded+e.failed, e.embedded+e.failed)
+		progress(e.embedded+e.failed, e.embedded+e.failed, e.err)
 	}
 	return e.embedded, e.failed, e.err
 }

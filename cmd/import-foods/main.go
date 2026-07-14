@@ -129,8 +129,18 @@ func runBackfill(ctx context.Context, dbPath string) error {
 	idx := index.New(st.DB())
 	matcher := embedding.New(model, idx, st, cfg.EmbedMatchThreshold)
 
-	embedded, failed, err := matcher.BackfillEmbeddings(ctx, func(done, total int) {
+	var loggedErrs int
+	embedded, failed, err := matcher.BackfillEmbeddings(ctx, func(done, total int, itemErr error) {
 		fmt.Printf("import-foods: embedded %d/%d foods\n", done, total)
+		if itemErr == nil {
+			return
+		}
+		loggedErrs++
+		if loggedErrs <= 3 {
+			fmt.Fprintf(os.Stderr, "import-foods: embed failed: %v\n", itemErr)
+		} else if loggedErrs == 4 {
+			fmt.Fprintln(os.Stderr, "import-foods: further embed errors suppressed (same cause likely)")
+		}
 	})
 	if err != nil {
 		return fmt.Errorf("backfill embeddings: %w", err)

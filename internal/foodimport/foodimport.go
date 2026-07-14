@@ -29,7 +29,7 @@ type Store interface {
 // whole job) never go through the live resolver's embed-on-write path, so
 // without this they'd stay invisible to the Tier 1/2 fuzzy matcher forever.
 type Embedder interface {
-	BackfillEmbeddings(ctx context.Context, progress func(done, total int)) (embedded, failed int, err error)
+	BackfillEmbeddings(ctx context.Context, progress func(done, total int, itemErr error)) (embedded, failed int, err error)
 }
 
 type fingerprintStore interface {
@@ -124,11 +124,23 @@ func (r *Runner) RunOnce(ctx context.Context) {
 // backfillEmbeddings runs after every import pass so foods this package just
 // wrote (or missed on an earlier run) become matchable without a separate
 // manual step. A no-op when no embedder is wired (r.embedder == nil).
+// maxLoggedBackfillErrors caps how many per-food embed errors get their own
+// log line — a systemic failure (bad OLLAMA_URL, model not pulled) fails
+// every item identically, so logging past the first few is just noise.
+const maxLoggedBackfillErrors = 3
+
 func (r *Runner) backfillEmbeddings(ctx context.Context) {
 	if r.embedder == nil {
 		return
 	}
-	embedded, failed, err := r.embedder.BackfillEmbeddings(ctx, nil)
+	var loggedErrs int
+	embedded, failed, err := r.embedder.BackfillEmbeddings(ctx, func(_, _ int, itemErr error) {
+		if itemErr == nil || loggedErrs >= maxLoggedBackfillErrors {
+			return
+		}
+		loggedErrs++
+		r.log.Warn("foodimport: embedding backfill: food failed", "err", itemErr)
+	})
 	if err != nil {
 		r.log.Error("foodimport: embedding backfill", "result", "failed", "err", err)
 		return
