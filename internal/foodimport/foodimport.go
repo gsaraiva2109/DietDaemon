@@ -165,8 +165,12 @@ func (r *Runner) backfillEmbeddings(ctx context.Context) {
 		r.log.Error("foodimport: embedding backfill", "result", "failed", "err", err)
 		return
 	}
-	if embedded > 0 || failed > 0 {
+	if failed > 0 {
 		r.log.Info("foodimport: embedding backfill", "result", "done", "embedded", embedded, "failed", failed)
+		return
+	}
+	if embedded > 0 {
+		r.log.Info("foodimport: embedding backfill", "result", "done", "embedded", embedded)
 	}
 }
 

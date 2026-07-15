@@ -1,12 +1,14 @@
 package foodimport
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
@@ -110,6 +112,17 @@ func TestRunOnce_EmbedderBackfillsAfterImport(t *testing.T) {
 
 	if emb.calls != 1 {
 		t.Fatalf("BackfillEmbeddings calls = %d, want 1", emb.calls)
+	}
+}
+
+func TestBackfillEmbeddings_SuccessLogOmitsFailed(t *testing.T) {
+	var logs bytes.Buffer
+	r := New(&fakeStore{}, nil, nil, 0, slog.New(slog.NewTextHandler(&logs, nil))).WithEmbedder(&fakeEmbedder{embedded: 601})
+
+	r.backfillEmbeddings(context.Background())
+
+	if got := logs.String(); strings.Contains(got, "failed=") {
+		t.Fatalf("success log contains failed field: %s", got)
 	}
 }
 
