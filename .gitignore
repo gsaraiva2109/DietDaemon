@@ -8,6 +8,7 @@
 # Build output
 /bin/
 dietdaemon
+!cmd/dietdaemon/
 
 # Runtime data
 /data/
@@ -37,6 +38,7 @@ dietdaemon
 BLUEPRINT.md
 graphify-out/cache
 AGENTS.md
+!AGENTS.md
 .codex/
 claudedocs/
 

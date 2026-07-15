@@ -17,7 +17,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"FOOD_IMPORT_ENABLED", "FOOD_IMPORT_SOURCES", "FOOD_IMPORT_INTERVAL",
 		"USDA_BULK_FILE", "USDA_BULK_DATA_TYPES", "USDA_BULK_MAX_ROWS",
 		"OFF_BULK_FILE", "OFF_BULK_MIN_POPULARITY", "OFF_BULK_MAX_ROWS", "TACO_BULK_MAX_ROWS",
-		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
+		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "OLLAMA_AUTO_PULL", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
@@ -61,6 +61,19 @@ func TestLoadValid(t *testing.T) {
 	}
 	if c.Location == nil || c.Location.String() != "America/Sao_Paulo" {
 		t.Errorf("Location = %v, want America/Sao_Paulo", c.Location)
+	}
+}
+
+func TestOllamaAutoPull(t *testing.T) {
+	env := validBase()
+	env["OLLAMA_AUTO_PULL"] = "true"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !c.OllamaAutoPull {
+		t.Error("OllamaAutoPull = false, want true")
 	}
 }
 

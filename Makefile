@@ -6,13 +6,14 @@
 GO          ?= go
 NPM         ?= npm
 GOBIN       ?= $(CURDIR)/bin
+GO_PACKAGES = $(shell $(GO) list ./... | grep -v '/web/')
 GO_FLAGS    ?= -ldflags="-s -w"
 GIT_SHA     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 DOCKER_IMAGE ?= ghcr.io/gsaraiva2109/dietdaemon
 
 .PHONY: all build build-go build-web test test-web lint lint-go lint-web \
-        vet fmt dev-web ai-setup docker-build docker-run docker-stop clean
+        vet fmt staticcheck dev-web ai-setup docker-build docker-run docker-stop clean
 
 all: build
 
@@ -52,7 +53,7 @@ dev-web:
 
 test:
 	@echo ">> running all Go tests..."
-	$(GO) test ./... -count=1 -timeout 120s
+	$(GO) test $(GO_PACKAGES) -count=1 -timeout 120s
 
 test-web:
 	@echo ">> running frontend tests..."
@@ -74,11 +75,15 @@ lint-web:
 
 vet:
 	@echo ">> running go vet..."
-	$(GO) vet ./...
+	$(GO) vet $(GO_PACKAGES)
 
 fmt:
 	@echo ">> checking go fmt..."
-	@test -z "$$($(GO) fmt ./...)" || (echo "go fmt found unformatted files" && exit 1)
+	@test -z "$$($(GO) fmt $(GO_PACKAGES))" || (echo "go fmt found unformatted files" && exit 1)
+
+staticcheck:
+	@echo ">> running staticcheck..."
+	staticcheck $(GO_PACKAGES)
 
 # ============================================================
 # AI (optional)

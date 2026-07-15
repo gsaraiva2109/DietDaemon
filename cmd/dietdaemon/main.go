@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -267,6 +268,9 @@ func run() error {
 	// Graceful shutdown on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := ensureOllamaModels(ctx, cfg); err != nil {
+		return err
+	}
 
 	// Nudge scheduler: delivers through chat (Telegram/Discord/Matrix) whenever
 	// a route is known for the user, falling back to the notifier (ntfy/gotify)
@@ -427,7 +431,7 @@ func run() error {
 
 		go func() {
 			slog.Info("dashboard listening", "port", port)
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("dashboard server", "err", err)
 			}
 		}()
@@ -442,6 +446,7 @@ func run() error {
 	}
 
 	q := queue.NewMemory[types.InboundMessage](64)
+	defer func() { _ = q.Close() }()
 
 	// Producer: messaging adapter → queue.
 	in, err := msg.Receive(ctx)
@@ -477,6 +482,34 @@ func buildEmbedAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
 	default:
 		return nil, fmt.Errorf("unsupported EMBED_ADAPTER %q", cfg.EmbedAdapter)
 	}
+}
+
+// ensureOllamaModels provisions only the models enabled by the current feature
+// set. It is opt-in because models can be several gigabytes.
+func ensureOllamaModels(ctx context.Context, cfg *config.Config) error {
+	if !cfg.OllamaAutoPull {
+		return nil
+	}
+	models := requiredOllamaModels(cfg)
+	if len(models) == 0 {
+		return nil
+	}
+	if err := ollama.New(cfg.OllamaURL, "", "", cfg.ModelTimeout).EnsureModels(ctx, models...); err != nil {
+		return fmt.Errorf("ensure Ollama models: %w", err)
+	}
+	slog.Info("Ollama models ready", "models", models)
+	return nil
+}
+
+func requiredOllamaModels(cfg *config.Config) []string {
+	var models []string
+	if cfg.ParserTier >= types.TierEmbedding {
+		models = append(models, cfg.EmbedModel)
+	}
+	if cfg.CompletionAdapter == "ollama" && (cfg.ParserTier >= types.TierLLM || cfg.EnableDashboard) {
+		models = append(models, cfg.LLMModel)
+	}
+	return models
 }
 
 // buildCompletionAdapter creates the adapter used for text completion
