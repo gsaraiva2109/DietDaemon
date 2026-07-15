@@ -15,6 +15,16 @@ import '@fontsource/plus-jakarta-sans/latin-800.css'
 import App from './App.tsx'
 import './lib/i18n'
 
+// A deployment can replace a hashed lazy chunk while an open tab still has the
+// previous entry bundle. Reload once to fetch the current index and its assets.
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault()
+  const reloadKey = 'dietdaemon:chunk-reload'
+  if (sessionStorage.getItem(reloadKey)) return
+  sessionStorage.setItem(reloadKey, '1')
+  window.location.reload()
+})
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
