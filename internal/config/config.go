@@ -71,6 +71,7 @@ type Config struct {
 	EmbedModel        string
 	LLMModel          string
 	ModelTimeout      time.Duration
+	OllamaAutoPull    bool
 
 	AnthropicAPIKey string
 	AnthropicModel  string
@@ -218,6 +219,7 @@ func Load() (*Config, error) {
 		EmbedModel:              getStr("EMBED_MODEL", "nomic-embed-text"),
 		LLMModel:                getStr("LLM_MODEL", "llama3.1"),
 		ModelTimeout:            getDuration("MODEL_TIMEOUT", 30*time.Second),
+		OllamaAutoPull:          getBool("OLLAMA_AUTO_PULL", false),
 		AnthropicAPIKey:         getStr("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:          getStr("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
 		OpenAIBaseURL:           getStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),

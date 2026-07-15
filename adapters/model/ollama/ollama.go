@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -102,6 +103,109 @@ type generateRequest struct {
 
 type generateResponse struct {
 	Response string `json:"response"`
+}
+
+const maxTagsResponseBytes = 4 << 20
+
+type tagsResponse struct {
+	Models []struct {
+		Name string `json:"name"`
+	} `json:"models"`
+}
+
+type pullRequest struct {
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
+}
+
+// EnsureModels pulls configured models that are not already present in Ollama.
+// Pull requests intentionally have no client timeout: downloading a model can
+// take much longer than normal inference. The caller's context still cancels
+// the request during shutdown.
+func (a *Adapter) EnsureModels(ctx context.Context, models ...string) error {
+	required := uniqueModels(models)
+	if len(required) == 0 {
+		return nil
+	}
+
+	installed, err := a.installedModels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, model := range required {
+		if installed[model] || (!strings.Contains(model, ":") && installed[model+":latest"]) {
+			continue
+		}
+		if err := a.pull(ctx, model); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func uniqueModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	unique := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		unique = append(unique, model)
+	}
+	return unique
+}
+
+func (a *Adapter) installedModels(ctx context.Context) (map[string]bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.url+"/api/tags", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ollama: build tags request: %w", err)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama: list models: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama: list models status %d", resp.StatusCode)
+	}
+
+	var tags tagsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTagsResponseBytes)).Decode(&tags); err != nil {
+		return nil, fmt.Errorf("ollama: decode model list: %w", err)
+	}
+	installed := make(map[string]bool, len(tags.Models))
+	for _, model := range tags.Models {
+		installed[model.Name] = true
+	}
+	return installed, nil
+}
+
+func (a *Adapter) pull(ctx context.Context, model string) error {
+	payload, err := json.Marshal(pullRequest{Model: model, Stream: false})
+	if err != nil {
+		return fmt.Errorf("ollama: marshal pull request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url+"/api/pull", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("ollama: build pull request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Pulls can last minutes; inference timeout must not abort an otherwise
+	// healthy download. Shutdown still cancels through ctx.
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama: pull %q: %w", model, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama: pull %q status %d", model, resp.StatusCode)
+	}
+	return nil
 }
 
 // Complete sends a prompt to the model and returns its text completion.

@@ -593,7 +593,7 @@ func (s *Store) RejectPendingAlias(ctx context.Context, userID, id string) error
 // to its startup-configured default order in that case.
 func (s *Store) GetSourcePrecedence(ctx context.Context, userID string) ([]string, error) {
 	const q = `SELECT source FROM source_precedence WHERE user_id = ? ORDER BY rank ASC`
-	out := []string{}
+	var out []string
 	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: get source precedence: %w", err)
 	}

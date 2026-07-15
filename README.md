@@ -88,6 +88,7 @@ Key knobs:
 | `NUTRITION_SOURCE`   | Comma-separated: `openfoodfacts,taco,usda`                                  |
 | `EMBED_ADAPTER`      | `ollama` only, backs food-matching embeddings                               |
 | `COMPLETION_ADAPTER` | `ollama`, `anthropic`, `openai` (opt-in), backs Tier-2 parsing + `/suggest` |
+| `OLLAMA_AUTO_PULL`   | `true` to pull required local Ollama models at startup                      |
 | `ENABLE_STT`         | `true`, enables speech-to-text for audio messages                           |
 | `WHISPER_URL`        | Whisper.cpp HTTP server URL                                                 |
 | `NOTIFIER`           | `ntfy`, `gotify`                                                            |

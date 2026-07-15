@@ -119,3 +119,44 @@ func TestContextCancellation(t *testing.T) {
 		t.Error("expected error from cancelled context")
 	}
 }
+
+func TestEnsureModelsPullsOnlyMissingModels(t *testing.T) {
+	var pulled []pullRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(tagsResponse{Models: []struct {
+				Name string `json:"name"`
+			}{{Name: "nomic-embed-text:latest"}}})
+		case "/api/pull":
+			var req pullRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode pull request: %v", err)
+			}
+			pulled = append(pulled, req)
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "", "", time.Second)
+	if err := a.EnsureModels(t.Context(), "nomic-embed-text", "qwen2.5:14b", "qwen2.5:14b"); err != nil {
+		t.Fatalf("EnsureModels: %v", err)
+	}
+	if len(pulled) != 1 || pulled[0].Model != "qwen2.5:14b" || pulled[0].Stream {
+		t.Errorf("pulled = %#v, want one non-streaming qwen2.5:14b pull", pulled)
+	}
+}
+
+func TestEnsureModelsFailsWhenTagsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	if err := New(srv.URL, "", "", time.Second).EnsureModels(t.Context(), "nomic-embed-text"); err == nil {
+		t.Error("EnsureModels error = nil, want tags error")
+	}
+}

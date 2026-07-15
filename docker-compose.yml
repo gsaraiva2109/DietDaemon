@@ -30,17 +30,15 @@ services:
 
 
 #  # Opt-in AI: docker compose --profile ai up
-#  ollama:
-#    image: ollama/ollama:latest
-#    container_name: dietdaemon-ollama
-#    restart: unless-stopped
-#    volumes:
-#      - ollama_data:/root/.ollama
-#    profiles:
-#      - ai
-#
-#  # Uncomment when ollama service above is active.
-#  ollama_data:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dietdaemon-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - ai
 
 volumes:
   dietdaemon_data:
+  ollama_data:
