@@ -86,16 +86,20 @@ func (s *magicTestAuthStore) HasConfirmedTOTP(_ context.Context, userID string) 
 func buildMagicHandler(authStore *magicTestAuthStore, m mailer.Mailer) *Handler {
 	store := newFakeMealStore()
 	store.user = types.User{ID: "test-user", Email: "test@example.com", AccountID: "acct-1", Status: "active", CreatedAt: time.Now().UTC()}
-	return New(store, authStore, &fakeMealLogger{}, time.UTC, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", nil, m, "none", "http://localhost:8080", AuthConfig{
-		SessionCfg: auth.SessionConfig{
-			IdleTTL:     1 * time.Hour,
-			AbsoluteTTL: 24 * time.Hour,
-			RememberTTL: 72 * time.Hour,
-		},
-		LockoutCfg:       auth.DefaultLockoutConfig(),
-		RegistrationMode: types.RegistrationOpen,
-		CookieSecure:     false,
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+		WithMailer(m, "none"),
+		WithPublicBaseURL("http://localhost:8080"),
+	)
 }
 
 // --- Magic request tests ---

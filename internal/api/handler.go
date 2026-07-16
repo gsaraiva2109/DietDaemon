@@ -325,52 +325,116 @@ type BackupRunner interface {
 	RunOnce(ctx context.Context, userID string) error
 }
 
-// New returns a ready API Handler. The store and authStore are typically the
-// same concrete *store.Store, passed through two interfaces. sessions and
-// loginAttempts are the same concrete store, cast to the auth package
-// interfaces (they are satisfied by *store.Store). backupRunner may be nil if
-// scheduled backups aren't configured; the manual "run now" endpoint then
-// returns 503.
-func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Location, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, providers map[string]*oidc.Provider, m mailer.Mailer, emailProvider, publicBaseURL string, authCfg AuthConfig, wa *gowa.WebAuthn, backupRunner BackupRunner, suggester Suggester, c *config.Config, chatAdapter ports.ChatAdapter, assistantRouter *assistant.Router, chatCommands []ports.Command, toolDescs map[string]string, chatStore ChatStore, i18nBundle *i18n.Bundle) *Handler {
+// Option configures a Handler. Used with the variadic New constructor. This
+// mirrors internal/scheduler.Option: it exists because *store.Store satisfies
+// most of these params (AuthStore, auth.SessionRepo, auth.LoginAttemptRepo,
+// auth.TOTPRepo, auth.MFAChallengeRepo, auth.RecoveryCodeRepo, ChatStore) at
+// once, so a plain positional New() would let a future param reorder compile
+// silently while wiring the wrong value into the wrong field. Grouping the
+// related values behind named options removes that footgun.
+type Option func(*Handler)
+
+// WithAuth attaches the auth subsystem: the auth-specific store view plus its
+// session/lockout/TOTP/MFA/recovery-code repos and config. authStore and the
+// five repo params are typically all the same concrete *store.Store, cast to
+// different narrow interfaces.
+func WithAuth(authStore AuthStore, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, cfg AuthConfig) Option {
+	return func(h *Handler) {
+		h.authStore = authStore
+		h.sessions = sessions
+		h.loginAttempts = loginAttempts
+		h.totp = totpRepo
+		h.mfaChallenges = mfaChallenges
+		h.recoveryCodes = recoveryCodes
+		h.totpEncKey = totpEncKey
+		h.totpIssuer = totpIssuer
+		h.sessionCfg = cfg.SessionCfg
+		h.lockoutCfg = cfg.LockoutCfg
+		h.registrationMode = cfg.RegistrationMode
+		h.cookieSecure = cfg.CookieSecure
+	}
+}
+
+// WithOIDC attaches the registry of configured OIDC providers. A nil map is
+// normalized to an empty one, same as the pre-options constructor did.
+func WithOIDC(providers map[string]*oidc.Provider) Option {
+	return func(h *Handler) {
+		if providers == nil {
+			providers = map[string]*oidc.Provider{}
+		}
+		h.providers = providers
+	}
+}
+
+// WithMailer attaches the mailer and the provider name used for its
+// human-readable error messages.
+func WithMailer(m mailer.Mailer, emailProvider string) Option {
+	return func(h *Handler) {
+		h.mailer = m
+		h.emailProvider = emailProvider
+	}
+}
+
+// WithPublicBaseURL sets the externally reachable base URL used to build
+// links in outgoing emails (verification, password reset, etc.).
+func WithPublicBaseURL(publicBaseURL string) Option {
+	return func(h *Handler) { h.publicBaseURL = publicBaseURL }
+}
+
+// WithWebAuthn attaches the WebAuthn (passkey) relying party.
+func WithWebAuthn(wa *gowa.WebAuthn) Option {
+	return func(h *Handler) { h.webauthn = wa }
+}
+
+// WithBackupRunner attaches the manual "run now" backup trigger. When not
+// passed, the endpoint returns 503, same as passing nil did before options.
+func WithBackupRunner(r BackupRunner) Option {
+	return func(h *Handler) { h.backupRunner = r }
+}
+
+// WithChat attaches the conversational assistant subsystem: its model
+// adapter, tool-calling router, available commands/descriptions, and
+// persistence. When not passed, the chat endpoints stay unsupported (nil
+// adapter/router), same as before options.
+func WithChat(adapter ports.ChatAdapter, router *assistant.Router, commands []ports.Command, toolDescs map[string]string, store ChatStore) Option {
+	return func(h *Handler) {
+		h.chatAdapter = adapter
+		h.assistantRouter = router
+		h.chatCommands = commands
+		h.toolDescs = toolDescs
+		h.chatStore = store
+	}
+}
+
+// WithI18n attaches the i18n bundle used for localized system prompts.
+func WithI18n(bundle *i18n.Bundle) Option {
+	return func(h *Handler) { h.i18nBundle = bundle }
+}
+
+// New returns a ready API Handler. store, logger, loc, suggester, and c are
+// the params every caller needs regardless of configuration; everything else
+// is attached via Option (see WithAuth, WithMailer, WithChat, etc.) so that
+// values sharing a concrete type — most notably *store.Store, which satisfies
+// AuthStore and several auth.*Repo interfaces at once — are wired through
+// named, self-documenting calls instead of a long positional list.
+func New(store MealStore, logger MealLogger, loc *time.Location, suggester Suggester, c *config.Config, opts ...Option) *Handler {
 	if loc == nil {
 		loc = time.UTC
 	}
-	if providers == nil {
-		providers = map[string]*oidc.Provider{}
+	h := &Handler{
+		store:          store,
+		logger:         logger,
+		loc:            loc,
+		suggester:      suggester,
+		cfg:            c,
+		providers:      map[string]*oidc.Provider{},
+		ipLimiter:      auth.NewIPRateLimiter(10, time.Minute),
+		trustedProxies: trustedProxyPrefixes(c),
 	}
-	return &Handler{
-		store:            store,
-		authStore:        authStore,
-		logger:           logger,
-		loc:              loc,
-		sessions:         sessions,
-		loginAttempts:    loginAttempts,
-		totp:             totpRepo,
-		mfaChallenges:    mfaChallenges,
-		recoveryCodes:    recoveryCodes,
-		totpEncKey:       totpEncKey,
-		totpIssuer:       totpIssuer,
-		providers:        providers,
-		mailer:           m,
-		emailProvider:    emailProvider,
-		publicBaseURL:    publicBaseURL,
-		webauthn:         wa,
-		sessionCfg:       authCfg.SessionCfg,
-		lockoutCfg:       authCfg.LockoutCfg,
-		registrationMode: authCfg.RegistrationMode,
-		cookieSecure:     authCfg.CookieSecure,
-		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
-		trustedProxies:   trustedProxyPrefixes(c),
-		backupRunner:     backupRunner,
-		suggester:        suggester,
-		cfg:              c,
-		chatAdapter:      chatAdapter,
-		assistantRouter:  assistantRouter,
-		chatCommands:     chatCommands,
-		toolDescs:        toolDescs,
-		chatStore:        chatStore,
-		i18nBundle:       i18nBundle,
+	for _, opt := range opts {
+		opt(h)
 	}
+	return h
 }
 
 // trustedProxyPrefixes returns the configured trusted-proxy allowlist, or
