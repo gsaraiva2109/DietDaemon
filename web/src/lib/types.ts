@@ -157,6 +157,19 @@ export interface FoodDetail {
   in_library: boolean
 }
 
+// A complete nutrition label entered per the selected serving basis. The API
+// stores the nutrients normalized per 100g while preserving basis_grams as the
+// food's serving size.
+export interface CustomFoodInput {
+  name: string
+  calories: number
+  protein: number
+  carbs: number
+  fat: number
+  fiber: number
+  basis_grams: number
+}
+
 export interface MealTemplate {
   id: string
   user_id: string

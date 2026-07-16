@@ -51,6 +51,15 @@ type fakeMealStore struct {
 	foodsByID            map[string]types.FoodMatch
 	removeFromLibraryErr error
 	addToLibraryErr      error
+	customFood           types.FoodDetail
+	createCustomFoodErr  error
+	updateCustomFoodErr  error
+	deleteCustomFoodErr  error
+	createCustomFoodUser string
+	updateCustomFoodUser string
+	deleteCustomFoodUser string
+	createCustomFoodIn   types.CustomFoodInput
+	updateCustomFoodIn   types.CustomFoodInput
 
 	// Pending aliases.
 	pendingAliases         []types.PendingAlias
@@ -253,6 +262,9 @@ func (s *fakeMealStore) GetFood(_ context.Context, foodID string) (types.FoodMat
 	}
 	return types.FoodMatch{}, types.ErrNoMatch
 }
+func (s *fakeMealStore) GetFoodForUser(_ context.Context, _, foodID string) (types.FoodMatch, error) {
+	return s.GetFood(context.Background(), foodID)
+}
 func (s *fakeMealStore) SearchCatalog(_ context.Context, _, _, _ string, _, _ int) ([]types.FoodDetail, error) {
 	return s.foodList, s.foodListErr
 }
@@ -267,6 +279,21 @@ func (s *fakeMealStore) AddFoodAlias(_ context.Context, _, _, _ string) error {
 }
 func (s *fakeMealStore) DeleteFoodAlias(_ context.Context, _, _, _ string) error {
 	return s.deleteAliasErr
+}
+func (s *fakeMealStore) CreateCustomFood(_ context.Context, userID string, input types.CustomFoodInput) (types.FoodDetail, error) {
+	s.createCustomFoodUser, s.createCustomFoodIn = userID, input
+	return s.customFood, s.createCustomFoodErr
+}
+func (s *fakeMealStore) UpdateCustomFood(_ context.Context, userID, foodID string, input types.CustomFoodInput) (types.FoodDetail, error) {
+	s.updateCustomFoodUser, s.updateCustomFoodIn = userID, input
+	if s.customFood.FoodID == "" {
+		s.customFood.FoodID = foodID
+	}
+	return s.customFood, s.updateCustomFoodErr
+}
+func (s *fakeMealStore) DeleteCustomFood(_ context.Context, userID, _ string) error {
+	s.deleteCustomFoodUser = userID
+	return s.deleteCustomFoodErr
 }
 
 // Pending aliases.
@@ -1508,6 +1535,73 @@ func TestDeleteAlias(t *testing.T) {
 	rec := doRequest(h, "DELETE", "/api/v1/foods/f1/aliases/egg", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected 204, got %d", rec.Code)
+	}
+}
+
+func customFoodBody() map[string]any {
+	return map[string]any{
+		"name": "Protein oats", "calories": 210.0, "protein": 12.0,
+		"carbs": 31.0, "fat": 5.0, "fiber": 6.0, "basis_grams": 60.0,
+	}
+}
+
+func TestCreateCustomFood(t *testing.T) {
+	store := newFakeMealStore()
+	store.customFood = types.FoodDetail{FoodID: "custom-1", Name: "Protein oats", Source: "custom", ServingSize: 60, ServingUnit: "g", InLibrary: true}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/foods/custom", customFoodBody(), nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.createCustomFoodUser != "test-user" || store.createCustomFoodIn.BasisGrams != 60 || store.createCustomFoodIn.Macros.Protein != 12 {
+		t.Fatalf("unexpected custom food input: user=%q input=%+v", store.createCustomFoodUser, store.createCustomFoodIn)
+	}
+	if got := decodeJSON[types.FoodDetail](t, rec); got.FoodID != "custom-1" {
+		t.Errorf("food_id = %q, want custom-1", got.FoodID)
+	}
+}
+
+func TestCreateCustomFoodValidation(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"missing nutrient":  {"name": "Oats", "calories": 1, "protein": 1, "carbs": 1, "fat": 1, "basis_grams": 100},
+		"negative nutrient": {"name": "Oats", "calories": -1, "protein": 1, "carbs": 1, "fat": 1, "fiber": 1, "basis_grams": 100},
+		"zero basis":        {"name": "Oats", "calories": 1, "protein": 1, "carbs": 1, "fat": 1, "fiber": 1, "basis_grams": 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doRequest(newHandler(newFakeMealStore(), &fakeMealLogger{}), "POST", "/api/v1/foods/custom", body, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCustomFoodUpdateDeleteAndErrors(t *testing.T) {
+	store := newFakeMealStore()
+	store.customFood = types.FoodDetail{FoodID: "custom-1", Name: "Protein oats", Source: "custom"}
+	h := newHandler(store, &fakeMealLogger{})
+
+	if rec := doRequest(h, "PUT", "/api/v1/foods/custom-1/custom", customFoodBody(), nil); rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.updateCustomFoodUser != "test-user" || store.updateCustomFoodIn.BasisGrams != 60 {
+		t.Fatalf("update did not use authenticated user/input: %q %+v", store.updateCustomFoodUser, store.updateCustomFoodIn)
+	}
+	if rec := doRequest(h, "DELETE", "/api/v1/foods/custom-1/custom", nil, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.deleteCustomFoodUser != "test-user" {
+		t.Fatalf("delete user = %q, want test-user", store.deleteCustomFoodUser)
+	}
+
+	store.createCustomFoodErr = types.ErrConflict
+	if rec := doRequest(h, "POST", "/api/v1/foods/custom", customFoodBody(), nil); rec.Code != http.StatusConflict {
+		t.Errorf("conflict: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	store.deleteCustomFoodErr = types.ErrNotFound
+	if rec := doRequest(h, "DELETE", "/api/v1/foods/custom-1/custom", nil, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("not found: expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -31,6 +31,102 @@ func tempDB(t *testing.T) (*Store, func()) {
 	}
 }
 
+func TestCustomFoodLifecycle(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "custom-owner", CreatedAt: time.Now().UTC()})
+	mustUser(t, s, types.User{ID: "custom-other", CreatedAt: time.Now().UTC()})
+
+	input := types.CustomFoodInput{
+		Name:       "  Homemade Oat Bar  ",
+		BasisGrams: 200,
+		Macros:     types.Macros{Calories: 400, Protein: 20, Carbs: 60, Fat: 10, Fiber: 8},
+	}
+	food, err := s.CreateCustomFood(ctx(), "custom-owner", input)
+	if err != nil {
+		t.Fatalf("CreateCustomFood: %v", err)
+	}
+	if food.Source != "custom" || food.Name != "Homemade Oat Bar" || food.ServingSize != 200 || food.ServingUnit != "g" {
+		t.Fatalf("created food = %+v", food)
+	}
+	if food.Per100g != (types.Macros{Calories: 200, Protein: 10, Carbs: 30, Fat: 5, Fiber: 4}) {
+		t.Fatalf("per 100g = %+v", food.Per100g)
+	}
+	if !food.InLibrary {
+		t.Fatal("custom food is not in its owner's library")
+	}
+
+	if _, err := s.LookupFood(ctx(), "custom-owner", "homemade oat bar"); err != nil {
+		t.Fatalf("canonical alias lookup: %v", err)
+	}
+	if _, err := s.GetFoodForUser(ctx(), "custom-other", food.FoodID); err != types.ErrNoMatch {
+		t.Fatalf("other user GetFoodForUser error = %v, want ErrNoMatch", err)
+	}
+	if _, err := s.GetFoodDetail(ctx(), "custom-other", food.FoodID); err != types.ErrNotFound {
+		t.Fatalf("other user GetFoodDetail error = %v, want ErrNotFound", err)
+	}
+	otherCatalog, err := s.SearchCatalog(ctx(), "custom-other", "homemade oat", "", 20, 0)
+	if err != nil {
+		t.Fatalf("other user catalog search: %v", err)
+	}
+	if len(otherCatalog) != 0 {
+		t.Fatalf("private food leaked into other catalog: %+v", otherCatalog)
+	}
+	for _, candidate := range mustListFoodsWithoutVectors(t, s) {
+		if candidate.FoodID == food.FoodID {
+			t.Fatal("custom food was returned for vector indexing")
+		}
+	}
+
+	if _, err := s.CreateCustomFood(ctx(), "custom-owner", input); err != types.ErrConflict {
+		t.Fatalf("duplicate canonical alias error = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateCustomFood(ctx(), "custom-owner", types.CustomFoodInput{Name: "bad", BasisGrams: 100, Macros: types.Macros{Calories: -1}}); err == nil {
+		t.Fatal("negative custom nutrition unexpectedly succeeded")
+	}
+
+	updated, err := s.UpdateCustomFood(ctx(), "custom-owner", food.FoodID, types.CustomFoodInput{
+		Name:       "Updated Oat Bar",
+		BasisGrams: 50,
+		Macros:     types.Macros{Calories: 50, Protein: 5, Carbs: 10, Fat: 2, Fiber: 1},
+	})
+	if err != nil {
+		t.Fatalf("UpdateCustomFood: %v", err)
+	}
+	if updated.ServingSize != 50 || updated.Per100g != (types.Macros{Calories: 100, Protein: 10, Carbs: 20, Fat: 4, Fiber: 2}) {
+		t.Fatalf("updated food = %+v", updated)
+	}
+	if _, err := s.UpdateCustomFood(ctx(), "custom-other", food.FoodID, input); err != types.ErrNotFound {
+		t.Fatalf("other user UpdateCustomFood error = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteCustomFood(ctx(), "custom-other", food.FoodID); err != types.ErrNotFound {
+		t.Fatalf("other user DeleteCustomFood error = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteCustomFood(ctx(), "custom-owner", food.FoodID); err != nil {
+		t.Fatalf("DeleteCustomFood: %v", err)
+	}
+	if _, err := s.GetFoodDetail(ctx(), "custom-owner", food.FoodID); err != types.ErrNotFound {
+		t.Fatalf("deleted food detail error = %v, want ErrNotFound", err)
+	}
+	var remaining int
+	if err := s.db.Get(&remaining, `SELECT COUNT(*) FROM food_search WHERE food_id = ?`, food.FoodID); err != nil {
+		t.Fatalf("count deleted search rows: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("deleted custom food has %d search rows", remaining)
+	}
+}
+
+func mustListFoodsWithoutVectors(t *testing.T, s *Store) []types.FoodMatch {
+	t.Helper()
+	foods, err := s.ListFoodsWithoutVectors(ctx())
+	if err != nil {
+		t.Fatalf("ListFoodsWithoutVectors: %v", err)
+	}
+	return foods
+}
+
 func ctx() context.Context { return context.Background() }
 
 func mustUser(t *testing.T, s *Store, u types.User) {

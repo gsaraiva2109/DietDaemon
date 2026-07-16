@@ -42,7 +42,7 @@ func (f *fakeStore) GetFoodDetail(ctx context.Context, userID, foodID string) (t
 	return types.FoodDetail{}, types.ErrNotFound
 }
 
-func (f *fakeStore) GetFood(ctx context.Context, foodID string) (types.FoodMatch, error) {
+func (f *fakeStore) GetFoodForUser(ctx context.Context, _ string, foodID string) (types.FoodMatch, error) {
 	if m, ok := f.catalog[foodID]; ok {
 		return m, nil
 	}

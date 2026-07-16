@@ -28,7 +28,7 @@ type Store interface {
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
-	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
+	GetFoodForUser(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
 }
 
 // Engine orchestrates /suggest: compute remaining macros, find rule-based
@@ -81,7 +81,7 @@ func (e *Engine) SuggestFromIngredients(ctx context.Context, userID string, food
 		}
 		// Not in this user's library — fall back to the global catalog so
 		// on-hand items never logged by this user still resolve.
-		if match, err := e.store.GetFood(ctx, id); err == nil {
+		if match, err := e.store.GetFoodForUser(ctx, userID, id); err == nil {
 			pool = append(pool, foodDetailFromMatch(match))
 		}
 	}
