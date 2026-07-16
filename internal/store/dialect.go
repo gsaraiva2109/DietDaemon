@@ -1,4 +1,5 @@
-// Package store implements ports.Store with SQLite via a pure-Go driver.
+// Package store implements ports.Store, with SQLite and Postgres dialect
+// implementations.
 package store
 
 import (

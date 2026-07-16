@@ -504,7 +504,8 @@ func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, hash string) (b
 
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return false, tx.Rollback()
+		_ = tx.Rollback()
+		return false, nil
 	}
 
 	return true, tx.Commit()

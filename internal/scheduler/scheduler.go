@@ -706,19 +706,16 @@ func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, us
 	for _, base := range s.weeklyBudgetRules {
 		r := base
 
-		// Opt-in gate: this feature is OFF by default.
-		cfg, ok := overrides[r.ID]
-		if !ok || !cfg.Enabled {
+		// Opt-in gate: this feature is OFF by default, so (unlike
+		// resolveRule's "not found = enabled with defaults" semantics used
+		// by the other rule families) an absent override means skip
+		// entirely rather than proceed with zero-value config.
+		if _, ok := overrides[r.ID]; !ok {
 			continue
 		}
-
-		// Decode WeeklyBudgetConfig from params.
-		var budgetCfg types.WeeklyBudgetConfig
-		if len(cfg.Params) > 0 {
-			if err := json.Unmarshal(cfg.Params, &budgetCfg); err != nil {
-				s.log.Error("scheduler: unmarshal weekly budget config", "rule", r.ID, "err", err)
-				continue
-			}
+		budgetCfg, enabled := resolveRule(types.WeeklyBudgetConfig{}, r.ID, overrides)
+		if !enabled {
+			continue
 		}
 
 		// Apply defaults for clamp values.
