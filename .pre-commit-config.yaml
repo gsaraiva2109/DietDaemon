@@ -1,5 +1,7 @@
 # See https://pre-commit.com for more information
 # See https://github.com/TekWizely/pre-commit-golang for hook docs
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/TekWizely/pre-commit-golang
     rev: v1.0.0-rc.4
@@ -38,6 +40,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: conventional-commit
+        name: Conventional Commit subject
+        entry: >-
+          bash -c 'subject=$(head -n1 "$1"); [[ "$subject" =~ ^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([[:alnum:]./_-]+\))?!?:[[:space:]]+.+$ ]] || { echo "Use Conventional Commits, e.g. feat(api): add meal export" >&2; exit 1; }' --
+        language: system
+        stages: [commit-msg]
+
       - id: tsc-check
         name: TypeScript type-check
         entry: bash -c 'cd web && npx tsc -b'

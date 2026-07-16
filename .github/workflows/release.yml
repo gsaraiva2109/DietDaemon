@@ -135,8 +135,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
-        with:
-          fetch-depth: 0   # needed for changelog generation
 
       - name: Setup Go
         uses: actions/setup-go@v6.5.0
@@ -155,20 +153,6 @@ jobs:
           mkdir -p internal/web/dist
           cp -r web/dist/. internal/web/dist/
 
-      - name: Generate release notes
-        id: changelog
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            {
-              echo "notes<<EOF"
-              git log --oneline --no-decorate "$PREV_TAG..HEAD"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "notes=Initial release" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build static binaries
         run: |
           mkdir -p dist
@@ -181,11 +165,11 @@ jobs:
           gzip -k dist/*-amd64 dist/*-arm64
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.notes }}
+          generate_release_notes: true
           files: dist/*.gz
           draft: false
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
