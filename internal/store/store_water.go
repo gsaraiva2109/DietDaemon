@@ -27,12 +27,12 @@ func (s *Store) LogWater(ctx context.Context, w types.WaterLog) error {
 // GetWaterToday returns water logs for a specific local date, along with the
 // total ml consumed that day.
 func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error) {
-	const q = `
+	q := fmt.Sprintf(`
 		SELECT id, user_id, amount_ml, logged_at, COALESCE(note, '') AS note
 		FROM water_logs
-		WHERE user_id = ? AND date(logged_at) = ?
+		WHERE user_id = ? AND %s = ?
 		ORDER BY logged_at DESC
-	`
+	`, s.dialect.DateTrunc("logged_at"))
 	var logs []types.WaterLog
 	if err := s.db.SelectContext(ctx, &logs, s.rewrite(q), userID, localDate); err != nil {
 		return nil, 0, fmt.Errorf("store: get water today: %w", err)
@@ -47,13 +47,14 @@ func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]
 // GetWaterDailyTotals returns per-day water totals between startDate and endDate
 // (inclusive, "YYYY-MM-DD" format). Days with no water logs are not returned.
 func (s *Store) GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error) {
-	const q = `
-		SELECT date(logged_at) AS date, SUM(amount_ml) AS total_ml
+	dateExpr := s.dialect.DateTrunc("logged_at")
+	q := fmt.Sprintf(`
+		SELECT %s AS date, SUM(amount_ml) AS total_ml
 		FROM water_logs
-		WHERE user_id = ? AND date(logged_at) >= ? AND date(logged_at) <= ?
-		GROUP BY date(logged_at)
-		ORDER BY date(logged_at) ASC
-	`
+		WHERE user_id = ? AND %s >= ? AND %s <= ?
+		GROUP BY %s
+		ORDER BY %s ASC
+	`, dateExpr, dateExpr, dateExpr, dateExpr, dateExpr)
 	var out []types.WaterDayTotal
 	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: get water daily totals: %w", err)
