@@ -16,6 +16,9 @@ go build ./cmd/dietdaemon
 cd web
 npm ci
 npm run build    # produces dist/ that Go embeds
+
+# Local checks, including Conventional Commit validation
+pre-commit install
 ```
 
 Use `docker compose up -d` for a full-stack dev environment with PostgreSQL.
@@ -32,6 +35,21 @@ fix(chat): lazy session creation stops empty rows
 refactor(db): migrate to sqlx
 chore: bump Go to 1.26.4
 ```
+
+`pre-commit install` also installs a `commit-msg` hook that rejects subjects
+outside this format. GitHub release notes group merged PRs by their labels, so
+keep PR titles equally clear and add the relevant label:
+
+| Release section | PR label                             |
+|-----------------|--------------------------------------|
+| 🔒 Security     | `security`                           |
+| ✨ Enhancements  | `enhancement`                        |
+| 🐛 Bug fixes    | `bug`                                |
+| ⚡ Performance   | `performance`                        |
+| 🛠 Maintenance  | `documentation`, `refactor`, `tests` |
+
+GitHub generates the release body from those PRs, including **New Contributors**
+only when a first-time contributor is part of that release.
 
 ## Architecture
 

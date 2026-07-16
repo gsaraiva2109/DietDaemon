@@ -1,0 +1,14 @@
+changelog:
+  categories:
+    - title: "🔒 Security"
+      labels: [security]
+    - title: "✨ Enhancements"
+      labels: [enhancement]
+    - title: "🐛 Bug fixes"
+      labels: [bug]
+    - title: "⚡ Performance"
+      labels: [performance]
+    - title: "🛠 Maintenance"
+      labels: [documentation, refactor, tests]
+    - title: "Other changes"
+      labels: ["*"]
