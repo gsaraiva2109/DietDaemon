@@ -293,6 +293,14 @@ type FoodDetail struct {
 	Aliases     []FoodAlias `json:"aliases,omitempty"`
 }
 
+// CustomFoodInput is a complete nutrition label entered by a user. Macros are
+// expressed per BasisGrams and normalized by the store for the catalog schema.
+type CustomFoodInput struct {
+	Name       string
+	Macros     Macros
+	BasisGrams float64
+}
+
 // FoodAlias is one alias for a food library entry.
 type FoodAlias struct {
 	FoodID     string `json:"food_id"`

@@ -9,7 +9,9 @@ import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, Spinner } from '@/components/ui'
 import { FoodCard } from '@/components/FoodCard'
 import { FoodDetailModal } from '@/components/FoodDetailModal'
+import { CustomFoodModal } from '@/components/CustomFoodModal'
 import { FrequentFoods } from '@/components/FrequentFoods'
+import { useDemo } from '@/lib/demo'
 import type { FoodDetail } from '@/lib/types'
 import { FoodsIcon, SearchIcon } from '@/components/icons'
 import { stagger } from '@/lib/motion'
@@ -17,7 +19,7 @@ import { stagger } from '@/lib/motion'
 // OpenFoodFacts/TACO/USDA are proper nouns, not translated.
 const SOURCES: { labelKey?: string; label?: string; value: string }[] = [
   { labelKey: 'foods.sourceAll', value: '' },
-  { labelKey: 'foods.sourceLibrary', value: 'food_library' },
+  { labelKey: 'foods.sourceCustom', value: 'custom' },
   { label: 'OpenFoodFacts', value: 'openfoodfacts' },
   { label: 'TACO', value: 'taco' },
   { label: 'USDA', value: 'usda' },
@@ -27,12 +29,14 @@ const CATALOG_PAGE_SIZE = 30
 
 export function Foods() {
   const { t } = useTranslation()
+  const { demo } = useDemo()
   const [tab, setTab] = useState<'library' | 'catalog'>('library')
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [source, setSource] = useState('')
   const [catalogLimit, setCatalogLimit] = useState(CATALOG_PAGE_SIZE)
   const [selected, setSelected] = useState<string | null>(null)
+  const [customFood, setCustomFood] = useState<FoodDetail | null | 'new'>(null)
 
   // Debounce the search input so we don't fire a request per keystroke.
   // Also resets catalog pagination, since a new query invalidates the page count.
@@ -58,7 +62,17 @@ export function Foods() {
 
   return (
     <div>
-      <PageHeader eyebrow={t('foods.eyebrow')} title={t('foods.title')} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PageHeader eyebrow={t('foods.eyebrow')} title={t('foods.title')} />
+        <button
+          type="button"
+          disabled={demo}
+          onClick={() => setCustomFood('new')}
+          className="mb-6 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-ink transition hover:brightness-[1.05] disabled:opacity-50"
+        >
+          {t('foods.addCustom')}
+        </button>
+      </div>
 
       <div className="mb-5">
         <FrequentFoods />
@@ -70,6 +84,7 @@ export function Foods() {
             key={tb}
             onClick={() => {
               setTab(tb)
+              if (tb === 'library') setSource('')
               setCatalogLimit(CATALOG_PAGE_SIZE)
             }}
             className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ${
@@ -120,23 +135,37 @@ export function Foods() {
       {isLoading ? (
         <Spinner label={t('foods.loadingLabel')} />
       ) : !foods.length ? (
-        <EmptyState
-          icon={<FoodsIcon />}
-          title={
-            tab === 'catalog'
-              ? t('foods.catalogEmptyTitle')
-              : searching
-                ? t('foods.noMatchesTitle')
-                : t('foods.emptyTitle')
-          }
-          hint={
-            tab === 'catalog'
-              ? t('foods.catalogEmptyHint')
-              : searching
-                ? t('foods.noMatchesHint')
-                : t('foods.emptyHint')
-          }
-        />
+        <>
+          <EmptyState
+            icon={<FoodsIcon />}
+            title={
+              tab === 'catalog'
+                ? t('foods.catalogEmptyTitle')
+                : searching
+                  ? t('foods.noMatchesTitle')
+                  : t('foods.emptyTitle')
+            }
+            hint={
+              tab === 'catalog'
+                ? t('foods.catalogEmptyHint')
+                : searching
+                  ? t('foods.noMatchesHint')
+                  : t('foods.emptyHint')
+            }
+          />
+          {tab === 'library' && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                disabled={demo}
+                onClick={() => setCustomFood('new')}
+                className="rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:border-primary disabled:opacity-50"
+              >
+                {t('foods.addCustom')}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <>
           <motion.div
@@ -162,7 +191,26 @@ export function Foods() {
         </>
       )}
 
-      {selected && <FoodDetailModal foodID={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <FoodDetailModal
+          foodID={selected}
+          onClose={() => setSelected(null)}
+          onEditCustom={(food) => {
+            setSelected(null)
+            setCustomFood(food)
+          }}
+        />
+      )}
+      {customFood && (
+        <CustomFoodModal
+          food={customFood === 'new' ? undefined : customFood}
+          onClose={() => setCustomFood(null)}
+          onSaved={(food) => {
+            setCustomFood(null)
+            setSelected(food.food_id)
+          }}
+        />
+      )}
     </div>
   )
 }

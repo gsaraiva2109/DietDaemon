@@ -5,12 +5,12 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useFood, useAddAlias, useDeleteAlias, useRemoveFromLibrary, useAddToLibrary } from '@/lib/queries'
+import { useFood, useAddAlias, useDeleteAlias, useRemoveFromLibrary, useAddToLibrary, useDeleteCustomFood } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { Button, Pill, Spinner } from './ui'
 import { CloseIcon, LogIcon } from './icons'
 import { sourceLabel } from './FoodCard'
-import { MACRO_KEYS } from '@/lib/types'
+import { MACRO_KEYS, type FoodDetail } from '@/lib/types'
 import { formatNumber, round } from '@/lib/format'
 import { easeOut } from '@/lib/motion'
 
@@ -19,7 +19,11 @@ const scaleInDialog: Variants = {
   show: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.4, ease: easeOut } },
 }
 
-export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: () => void }) {
+export function FoodDetailModal({ foodID, onClose, onEditCustom }: {
+  foodID: string
+  onClose: () => void
+  onEditCustom?: (food: FoodDetail) => void
+}) {
   const { t } = useTranslation()
   const { demo } = useDemo()
   const food = useFood(foodID)
@@ -28,8 +32,10 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
   const deleteAlias = useDeleteAlias(foodID)
   const removeFromLibrary = useRemoveFromLibrary(foodID)
   const addToLibrary = useAddToLibrary(foodID)
+  const deleteCustom = useDeleteCustomFood(foodID)
   const [aliasValue, setAliasValue] = useState('')
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -95,7 +101,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
             <>
               <h2 className="pr-8 text-xl font-bold text-ink">{f.name}</h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Pill tone={f.source === 'food_library' ? 'primary' : 'neutral'}>
+                <Pill tone={f.source === 'food_library' || f.source === 'custom' ? 'primary' : 'neutral'}>
                   {sourceLabel(f.source, t)}
                 </Pill>
                 {f.category && <Pill tone="muted">{f.category}</Pill>}
@@ -193,6 +199,32 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
               )}
 
               <div className="mt-6 flex items-center justify-end gap-2">
+                {f.source === 'custom' && !demo && (
+                  <>
+                    {confirmDelete ? (
+                      <span className="flex items-center gap-2 text-sm text-muted">
+                        {t('foodDetailModal.deleteConfirmTitle')}
+                        <button
+                          onClick={() => deleteCustom.mutate(undefined, { onSuccess: onClose })}
+                          disabled={deleteCustom.isPending}
+                          className="font-semibold text-accent hover:underline disabled:opacity-50"
+                        >
+                          {t('foodDetailModal.deleteConfirmYes')}
+                        </button>
+                        <button onClick={() => setConfirmDelete(false)} className="font-medium text-ink hover:underline">
+                          {t('foodDetailModal.deleteConfirmNo')}
+                        </button>
+                      </span>
+                    ) : (
+                      <Button variant="ghost" onClick={() => setConfirmDelete(true)}>
+                        {t('foodDetailModal.deleteCustom')}
+                      </Button>
+                    )}
+                    <Button variant="ghost" onClick={() => onEditCustom?.(f)}>
+                      {t('foodDetailModal.editCustom')}
+                    </Button>
+                  </>
+                )}
                 {!f.in_library && !demo && (
                   <Button
                     variant="ghost"
@@ -202,7 +234,7 @@ export function FoodDetailModal({ foodID, onClose }: { foodID: string; onClose: 
                     {t('foodDetailModal.addToLibrary')}
                   </Button>
                 )}
-                {f.in_library && !demo && (
+                {f.in_library && f.source !== 'custom' && !demo && (
                   <>
                     {confirmRemove ? (
                       <span className="flex items-center gap-2 text-sm text-muted">

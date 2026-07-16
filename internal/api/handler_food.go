@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -116,7 +118,7 @@ func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID s
 		}
 		// Not in this user's library — fall back to the global catalog so
 		// catalog-only foods (bulk-imported, never logged) are still openable.
-		match, matchErr := h.store.GetFood(r.Context(), foodID)
+		match, matchErr := h.store.GetFoodForUser(r.Context(), userID, foodID)
 		if matchErr != nil {
 			h.writeErr(w, matchErr)
 			return
@@ -143,6 +145,82 @@ func (h *Handler) handleGetFood(w http.ResponseWriter, r *http.Request, userID s
 		fd.Aliases = []types.FoodAlias{}
 	}
 	_ = json.NewEncoder(w).Encode(fd)
+}
+
+type customFoodRequest struct {
+	Name       *string  `json:"name"`
+	Calories   *float64 `json:"calories"`
+	Protein    *float64 `json:"protein"`
+	Carbs      *float64 `json:"carbs"`
+	Fat        *float64 `json:"fat"`
+	Fiber      *float64 `json:"fiber"`
+	BasisGrams *float64 `json:"basis_grams"`
+}
+
+func (b customFoodRequest) input() (types.CustomFoodInput, bool) {
+	if b.Name == nil || strings.TrimSpace(*b.Name) == "" || b.Calories == nil || b.Protein == nil || b.Carbs == nil || b.Fat == nil || b.Fiber == nil || b.BasisGrams == nil || *b.BasisGrams <= 0 || !finite(*b.BasisGrams) {
+		return types.CustomFoodInput{}, false
+	}
+	macros := types.Macros{Calories: *b.Calories, Protein: *b.Protein, Carbs: *b.Carbs, Fat: *b.Fat, Fiber: *b.Fiber}
+	for _, value := range []float64{macros.Calories, macros.Protein, macros.Carbs, macros.Fat, macros.Fiber} {
+		if value < 0 || !finite(value) {
+			return types.CustomFoodInput{}, false
+		}
+	}
+	return types.CustomFoodInput{Name: strings.TrimSpace(*b.Name), Macros: macros, BasisGrams: *b.BasisGrams}, true
+}
+
+func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+
+func decodeCustomFood(r *http.Request) (types.CustomFoodInput, error) {
+	var body customFoodRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return types.CustomFoodInput{}, err
+	}
+	input, ok := body.input()
+	if !ok {
+		return types.CustomFoodInput{}, errors.New("name, calories, protein, carbs, fat, fiber, and positive basis_grams are required")
+	}
+	return input, nil
+}
+
+func (h *Handler) handleCreateCustomFood(w http.ResponseWriter, r *http.Request, userID string) {
+	input, err := decodeCustomFood(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	food, err := h.store.CreateCustomFood(r.Context(), userID, input)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(food)
+}
+
+func (h *Handler) handleUpdateCustomFood(w http.ResponseWriter, r *http.Request, userID string) {
+	input, err := decodeCustomFood(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	food, err := h.store.UpdateCustomFood(r.Context(), userID, r.PathValue("foodID"), input)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(food)
+}
+
+func (h *Handler) handleDeleteCustomFood(w http.ResponseWriter, r *http.Request, userID string) {
+	if err := h.store.DeleteCustomFood(r.Context(), userID, r.PathValue("foodID")); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleSearchCatalog browses the full global food catalog, unscoped to the

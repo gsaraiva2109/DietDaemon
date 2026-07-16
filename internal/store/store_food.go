@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -27,9 +29,10 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 		FROM food_aliases fa
 		JOIN foods f ON f.food_id = fa.food_id
 		WHERE fa.user_id = ? AND fa.alias_normalized = ?
+		  AND (f.owner_user_id IS NULL OR f.owner_user_id = ?)
 	`
 	var row foodMatchRow
-	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, normalized); err != nil {
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID, normalized, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.FoodMatch{}, types.ErrNoMatch
 		}
@@ -41,15 +44,15 @@ func (s *Store) LookupFood(ctx context.Context, userID, phrase string) (types.Fo
 	return fm, nil
 }
 
-// GetFood loads a food from the global catalog by its food_id. Returns
-// types.ErrNoMatch when the food does not exist.
+// GetFood loads a global food by its ID. It exists for the shared vector index;
+// caller-visible paths must use GetFoodForUser instead.
 func (s *Store) GetFood(ctx context.Context, foodID string) (types.FoodMatch, error) {
 	const q = `
 		SELECT food_id, name, source, kcal_100g, protein_100g,
 		       carbs_100g, fat_100g, fiber_100g,
 		       category, brand, barcode, image_url, serving_size, serving_unit
 		FROM foods
-		WHERE food_id = ?
+		WHERE food_id = ? AND owner_user_id IS NULL
 	`
 	var row foodMatchRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), foodID); err != nil {
@@ -57,6 +60,25 @@ func (s *Store) GetFood(ctx context.Context, foodID string) (types.FoodMatch, er
 			return types.FoodMatch{}, types.ErrNoMatch
 		}
 		return types.FoodMatch{}, fmt.Errorf("store: get food: %w", err)
+	}
+	return row.toFoodMatch(), nil
+}
+
+// GetFoodForUser returns a global food or a private food owned by userID.
+func (s *Store) GetFoodForUser(ctx context.Context, userID, foodID string) (types.FoodMatch, error) {
+	const q = `
+		SELECT food_id, name, source, kcal_100g, protein_100g,
+		       carbs_100g, fat_100g, fiber_100g,
+		       category, brand, barcode, image_url, serving_size, serving_unit
+		FROM foods
+		WHERE food_id = ? AND (owner_user_id IS NULL OR owner_user_id = ?)
+	`
+	var row foodMatchRow
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), foodID, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return types.FoodMatch{}, types.ErrNoMatch
+		}
+		return types.FoodMatch{}, fmt.Errorf("store: get visible food: %w", err)
 	}
 	return row.toFoodMatch(), nil
 }
@@ -109,7 +131,7 @@ func (s *Store) ListFoodsWithoutVectors(ctx context.Context) ([]types.FoodMatch,
 		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit
 		FROM foods f
 		LEFT JOIN food_vectors fv ON fv.food_id = f.food_id
-		WHERE fv.food_id IS NULL
+		WHERE fv.food_id IS NULL AND f.owner_user_id IS NULL
 	`
 	var rows []foodMatchRow
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q)); err != nil {
@@ -172,6 +194,9 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 // creating the usage-stats row if it doesn't exist yet (e.g. the first time
 // this user matches a food another user already resolved).
 func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) error {
+	if _, err := s.GetFoodForUser(ctx, userID, foodID); err != nil {
+		return err
+	}
 	const q = `
 		INSERT INTO user_food_stats (user_id, food_id, query_count, last_used)
 		VALUES (?, ?, 1, ?)
@@ -181,6 +206,113 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 	`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID, utcNow())
 	return err
+}
+
+func validCustomFood(input types.CustomFoodInput) bool {
+	if strings.TrimSpace(input.Name) == "" || input.BasisGrams <= 0 || math.IsNaN(input.BasisGrams) || math.IsInf(input.BasisGrams, 0) {
+		return false
+	}
+	for _, value := range []float64{input.Macros.Calories, input.Macros.Protein, input.Macros.Carbs, input.Macros.Fat, input.Macros.Fiber} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// CreateCustomFood persists a complete private nutrition label and its
+// canonical alias together, so it is immediately available to normal logging.
+func (s *Store) CreateCustomFood(ctx context.Context, userID string, input types.CustomFoodInput) (types.FoodDetail, error) {
+	if !validCustomFood(input) {
+		return types.FoodDetail{}, fmt.Errorf("store: invalid custom food")
+	}
+	foodID := "custom-" + newID()
+	if err := s.writeCustomFood(ctx, userID, foodID, input, true); err != nil {
+		return types.FoodDetail{}, err
+	}
+	return s.GetFoodDetail(ctx, userID, foodID)
+}
+
+// UpdateCustomFood changes only a private food owned by userID. Meal rows
+// retain their nutrition snapshots, so existing history is intentionally not touched.
+func (s *Store) UpdateCustomFood(ctx context.Context, userID, foodID string, input types.CustomFoodInput) (types.FoodDetail, error) {
+	if !validCustomFood(input) {
+		return types.FoodDetail{}, fmt.Errorf("store: invalid custom food")
+	}
+	if err := s.writeCustomFood(ctx, userID, foodID, input, false); err != nil {
+		return types.FoodDetail{}, err
+	}
+	return s.GetFoodDetail(ctx, userID, foodID)
+}
+
+func (s *Store) writeCustomFood(ctx context.Context, userID, foodID string, input types.CustomFoodInput, create bool) error {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin custom food: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	name := strings.TrimSpace(input.Name)
+	alias := normalize.Normalize(name)
+	var existing string
+	err = tx.GetContext(ctx, &existing, s.rewrite(`SELECT food_id FROM food_aliases WHERE user_id = ? AND alias_normalized = ?`), userID, alias)
+	if err == nil && existing != foodID {
+		return types.ErrConflict
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("store: check custom alias: %w", err)
+	}
+
+	per100 := input.Macros.Scale(100 / input.BasisGrams)
+	if create {
+		const insertQ = `
+			INSERT INTO foods (food_id, owner_user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+			                   serving_size, serving_unit, created_at, updated_at)
+			VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, 'g', ?, ?)
+		`
+		if _, err := tx.ExecContext(ctx, s.rewrite(insertQ), foodID, userID, name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, input.BasisGrams, utcNow(), utcNow()); err != nil {
+			return fmt.Errorf("store: create custom food: %w", err)
+		}
+		const statsQ = `INSERT INTO user_food_stats (user_id, food_id, query_count, last_used) VALUES (?, ?, 0, '')`
+		if _, err := tx.ExecContext(ctx, s.rewrite(statsQ), userID, foodID); err != nil {
+			return fmt.Errorf("store: create custom food stats: %w", err)
+		}
+	} else {
+		const updateQ = `
+			UPDATE foods SET name = ?, kcal_100g = ?, protein_100g = ?, carbs_100g = ?, fat_100g = ?, fiber_100g = ?,
+			                 serving_size = ?, serving_unit = 'g', updated_at = ?
+			WHERE food_id = ? AND owner_user_id = ? AND source = 'custom'
+		`
+		res, err := tx.ExecContext(ctx, s.rewrite(updateQ), name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, input.BasisGrams, utcNow(), foodID, userID)
+		if err != nil {
+			return fmt.Errorf("store: update custom food: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return types.ErrNotFound
+		}
+	}
+
+	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+	if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, alias, foodID); err != nil {
+		return fmt.Errorf("store: save custom alias: %w", err)
+	}
+	return tx.Commit()
+}
+
+// DeleteCustomFood removes only a food owned by userID. Foreign keys clean up
+// aliases, library state, and search rows; resolved meal snapshots remain.
+func (s *Store) DeleteCustomFood(ctx context.Context, userID, foodID string) error {
+	const q = `DELETE FROM foods WHERE food_id = ? AND owner_user_id = ? AND source = 'custom'`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), foodID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete custom food: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
 }
 
 // foodUpsertQuery is the shared global-catalog upsert used by UpsertFood
@@ -207,6 +339,7 @@ const foodUpsertQuery = `
 		serving_size = excluded.serving_size,
 		serving_unit = excluded.serving_unit,
 		updated_at   = excluded.updated_at
+	WHERE foods.owner_user_id IS NULL
 `
 
 // foodNamedArgs builds the named-parameter map for every upsert of a global
@@ -239,14 +372,14 @@ func foodNamedArgs(match types.FoodMatch) map[string]any {
 // ListFoods returns paginated food entries this user has used, optionally
 // filtered by source.
 func (s *Store) ListFoods(ctx context.Context, userID, source string, limit, offset int) ([]types.FoodDetail, error) {
-	args := []any{userID}
+	args := []any{userID, userID}
 	q := `
 		SELECT f.food_id, ufs.user_id, f.name, f.source, f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
 		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
 		       ufs.query_count, ufs.last_used
 		FROM user_food_stats ufs
 		JOIN foods f ON f.food_id = ufs.food_id
-		WHERE ufs.user_id = ?`
+		WHERE ufs.user_id = ? AND (f.owner_user_id IS NULL OR f.owner_user_id = ?)`
 	if source != "" {
 		q += ` AND f.source = ?`
 		args = append(args, source)
@@ -277,7 +410,7 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 		       ufs.query_count, ufs.last_used
 		FROM user_food_stats ufs
 		JOIN foods f ON f.food_id = ufs.food_id
-		WHERE ufs.user_id = ? AND ufs.food_id IN (
+		WHERE ufs.user_id = ? AND (f.owner_user_id IS NULL OR f.owner_user_id = ?) AND ufs.food_id IN (
 			SELECT fs.food_id FROM food_search fs
 			WHERE fs.tsv @@ to_tsquery('simple', ?) AND (fs.user_id = '' OR fs.user_id = ?)
 		)
@@ -292,7 +425,7 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 		       ufs.query_count, ufs.last_used
 		FROM user_food_stats ufs
 		JOIN foods f ON f.food_id = ufs.food_id
-		WHERE ufs.user_id = ? AND ufs.food_id IN (
+		WHERE ufs.user_id = ? AND (f.owner_user_id IS NULL OR f.owner_user_id = ?) AND ufs.food_id IN (
 			SELECT fs.food_id FROM food_search fs
 			WHERE food_search MATCH ? AND (fs.user_id = '' OR fs.user_id = ?)
 		)
@@ -301,20 +434,20 @@ func (s *Store) SearchFoods(ctx context.Context, userID, query string) ([]types.
 	`
 	}
 	var rows []foodDetailRow
-	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, searchParam, userID); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, userID, searchParam, userID); err != nil {
 		return nil, fmt.Errorf("store: search foods: %w", err)
 	}
 	return foodDetailRows(rows), nil
 }
 
-// SearchCatalog browses the global food catalog directly (unlike ListFoods/
-// SearchFoods/FrequentFoods, it is NOT scoped to foods this user has used):
-// every food ever bulk-imported or resolved is visible. It LEFT JOINs
+// SearchCatalog browses every global food plus this user's custom foods
+// directly (unlike ListFoods/SearchFoods/FrequentFoods, it is NOT scoped to
+// foods this user has used). It LEFT JOINs
 // user_food_stats so callers can tell which results are already in the
 // user's personal library (in_library, query_count, last_used), defaulting
 // those to false/0/"" for catalog-only foods.
 func (s *Store) SearchCatalog(ctx context.Context, userID, query, source string, limit, offset int) ([]types.FoodDetail, error) {
-	args := []any{userID}
+	args := []any{userID, userID}
 	q := `
 		SELECT f.food_id, f.name, f.source, f.kcal_100g, f.protein_100g, f.carbs_100g, f.fat_100g, f.fiber_100g,
 		       f.category, f.brand, f.barcode, f.image_url, f.serving_size, f.serving_unit,
@@ -322,22 +455,22 @@ func (s *Store) SearchCatalog(ctx context.Context, userID, query, source string,
 		       (ufs.food_id IS NOT NULL) AS in_library
 		FROM foods f
 		LEFT JOIN user_food_stats ufs ON ufs.user_id = ? AND ufs.food_id = f.food_id
-		WHERE 1 = 1`
+		WHERE (f.owner_user_id IS NULL OR f.owner_user_id = ?)`
 
 	if query != "" {
 		searchParam := s.dialect.SearchQuery(query)
 		if s.driver == "postgres" {
 			q += ` AND f.food_id IN (
 				SELECT fs.food_id FROM food_search fs
-				WHERE fs.tsv @@ to_tsquery('simple', ?) AND fs.user_id = ''
+				WHERE fs.tsv @@ to_tsquery('simple', ?) AND (fs.user_id = '' OR fs.user_id = ?)
 			)`
 		} else {
 			q += ` AND f.food_id IN (
 				SELECT fs.food_id FROM food_search fs
-				WHERE food_search MATCH ? AND fs.user_id = ''
+				WHERE food_search MATCH ? AND (fs.user_id = '' OR fs.user_id = ?)
 			)`
 		}
-		args = append(args, searchParam)
+		args = append(args, searchParam, userID)
 	}
 	if source != "" {
 		q += ` AND f.source = ?`
@@ -371,8 +504,9 @@ func (s *Store) SearchCatalog(ctx context.Context, userID, query, source string,
 // library next time the user logs it (UpsertFood re-inserts the stats row).
 // Returns types.ErrNotFound if no row was deleted.
 func (s *Store) RemoveFromLibrary(ctx context.Context, userID, foodID string) error {
-	const q = `DELETE FROM user_food_stats WHERE user_id = ? AND food_id = ?`
-	res, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID)
+	const q = `DELETE FROM user_food_stats WHERE user_id = ? AND food_id = ?
+		AND EXISTS (SELECT 1 FROM foods WHERE food_id = ? AND owner_user_id IS NULL)`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID, foodID)
 	if err != nil {
 		return fmt.Errorf("store: remove from library: %w", err)
 	}
@@ -389,7 +523,7 @@ func (s *Store) RemoveFromLibrary(ctx context.Context, userID, foodID string) er
 // ahead of time. Idempotent: does nothing if the food is already in the
 // library. Returns types.ErrNotFound if foodID doesn't exist in the catalog.
 func (s *Store) AddToLibrary(ctx context.Context, userID, foodID string) error {
-	if _, err := s.GetFood(ctx, foodID); err != nil {
+	if _, err := s.GetFoodForUser(ctx, userID, foodID); err != nil {
 		return err
 	}
 	const q = `
@@ -413,11 +547,12 @@ func (s *Store) FrequentFoods(ctx context.Context, userID string, limit int) ([]
 		FROM user_food_stats ufs
 		JOIN foods f ON f.food_id = ufs.food_id
 		WHERE ufs.user_id = ? AND ufs.query_count > 0
+		  AND (f.owner_user_id IS NULL OR f.owner_user_id = ?)
 		ORDER BY ufs.query_count DESC, ufs.last_used DESC
 		LIMIT ?
 	`
 	var rows []foodDetailRow
-	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, userID, limit); err != nil {
 		return nil, fmt.Errorf("store: frequent foods: %w", err)
 	}
 	return foodDetailRows(rows), nil
@@ -433,9 +568,10 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 		FROM user_food_stats ufs
 		JOIN foods f ON f.food_id = ufs.food_id
 		WHERE ufs.user_id = ? AND ufs.food_id = ?
+		  AND (f.owner_user_id IS NULL OR f.owner_user_id = ?)
 	`
 	var row foodDetailRow
-	if err := s.db.GetContext(ctx, &row, s.rewrite(foodQ), userID, foodID); err != nil {
+	if err := s.db.GetContext(ctx, &row, s.rewrite(foodQ), userID, foodID, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.FoodDetail{}, types.ErrNotFound
 		}
@@ -466,6 +602,12 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 // AddFoodAlias inserts a normalized alias for a food.
 func (s *Store) AddFoodAlias(ctx context.Context, userID, foodID, alias string) error {
 	normalized := normalize.Normalize(alias)
+	if normalized == "" {
+		return types.ErrNotFound
+	}
+	if _, err := s.GetFoodForUser(ctx, userID, foodID); err != nil {
+		return err
+	}
 	const q = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, normalized, foodID)
 	return err

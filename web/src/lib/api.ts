@@ -23,6 +23,7 @@ import type {
   Fast,
   FoodDetail,
   FoodImportStatus,
+  CustomFoodInput,
   GoalSuggestion,
   HevyImportResult,
   HevyKeyStatus,
@@ -419,6 +420,15 @@ export const api = {
       request<void>(`/foods/${encodeURIComponent(foodID)}/library`, { method: 'DELETE' }),
     addToLibrary: (foodID: string) =>
       request<{ status: string }>(`/foods/${encodeURIComponent(foodID)}/library`, { method: 'POST' }),
+    createCustom: (input: CustomFoodInput) =>
+      request<FoodDetail>('/foods/custom', { method: 'POST', body: JSON.stringify(input) }),
+    updateCustom: (foodID: string, input: CustomFoodInput) =>
+      request<FoodDetail>(`/foods/${encodeURIComponent(foodID)}/custom`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    deleteCustom: (foodID: string) =>
+      request<void>(`/foods/${encodeURIComponent(foodID)}/custom`, { method: 'DELETE' }),
   },
 
   // --- Pending Aliases --------------------------------------------

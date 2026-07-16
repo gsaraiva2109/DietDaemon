@@ -35,6 +35,7 @@ import type {
   BackupConfig,
   DailyRollup,
   FoodDetail,
+  CustomFoodInput,
   Macros,
   Meal,
   MeasurementEntry,
@@ -297,6 +298,36 @@ export function useAddToLibrary(foodID: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.foods.addToLibrary(foodID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
+export function useCreateCustomFood() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CustomFoodInput) => api.foods.createCustom(input),
+    onSuccess: (food) => {
+      qc.invalidateQueries({ queryKey: ['foods'] })
+      qc.setQueryData(['foods', 'detail', food.food_id, false], food)
+    },
+  })
+}
+
+export function useUpdateCustomFood(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CustomFoodInput) => api.foods.updateCustom(foodID, input),
+    onSuccess: (food) => {
+      qc.invalidateQueries({ queryKey: ['foods'] })
+      qc.setQueryData(['foods', 'detail', foodID, false], food)
+    },
+  })
+}
+
+export function useDeleteCustomFood(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.foods.deleteCustom(foodID),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
   })
 }

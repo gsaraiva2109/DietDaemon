@@ -18,6 +18,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export function sourceLabel(source: string, t: TFunction): string {
   if (source === 'food_library') return t('foodCard.sourceLibrary')
+  if (source === 'custom') return t('foodCard.sourceCustom')
   return SOURCE_LABEL[source] ?? source
 }
 
@@ -40,7 +41,7 @@ export function FoodCard({ food, onClick }: { food: FoodDetail; onClick?: () => 
     >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 truncate font-semibold text-ink">{food.name}</p>
-        <Pill tone={food.source === 'food_library' ? 'primary' : 'neutral'}>
+        <Pill tone={food.source === 'food_library' || food.source === 'custom' ? 'primary' : 'neutral'}>
           {sourceLabel(food.source, t)}
         </Pill>
       </div>

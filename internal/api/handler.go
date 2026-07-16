@@ -182,11 +182,15 @@ type MealStore interface {
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
 	GetFoodDetail(ctx context.Context, userID, foodID string) (types.FoodDetail, error)
 	GetFood(ctx context.Context, foodID string) (types.FoodMatch, error)
+	GetFoodForUser(ctx context.Context, userID, foodID string) (types.FoodMatch, error)
 	SearchCatalog(ctx context.Context, userID, query, source string, limit, offset int) ([]types.FoodDetail, error)
 	RemoveFromLibrary(ctx context.Context, userID, foodID string) error
 	AddToLibrary(ctx context.Context, userID, foodID string) error
 	AddFoodAlias(ctx context.Context, userID, foodID, alias string) error
 	DeleteFoodAlias(ctx context.Context, userID, foodID, alias string) error
+	CreateCustomFood(ctx context.Context, userID string, input types.CustomFoodInput) (types.FoodDetail, error)
+	UpdateCustomFood(ctx context.Context, userID, foodID string, input types.CustomFoodInput) (types.FoodDetail, error)
+	DeleteCustomFood(ctx context.Context, userID, foodID string) error
 
 	// Pending aliases (embedding near-misses awaiting confirmation).
 	ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error)
@@ -514,7 +518,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods", h.wrap(h.handleListFoods))
 	mux.HandleFunc("GET /api/v1/foods/search", h.wrap(h.handleSearchFoods))
 	mux.HandleFunc("GET /api/v1/foods/frequent", h.wrap(h.handleFrequentFoods))
+	mux.HandleFunc("POST /api/v1/foods/custom", h.wrap(h.handleCreateCustomFood))
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
+	mux.HandleFunc("PUT /api/v1/foods/{foodID}/custom", h.wrap(h.handleUpdateCustomFood))
+	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/custom", h.wrap(h.handleDeleteCustomFood))
 	mux.HandleFunc("GET /api/v1/suggest", h.wrap(h.handleSuggest))
 	mux.HandleFunc("POST /api/v1/suggest/ingredients", h.wrap(h.handleSuggestFromIngredients))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))
@@ -873,6 +880,9 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, types.ErrNotFound) || errors.Is(err, types.ErrNoMatch):
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	case errors.Is(err, types.ErrConflict):
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "conflict"})
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 		// Log the real error server-side; return a generic message to avoid
