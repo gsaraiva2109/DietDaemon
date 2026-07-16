@@ -19,7 +19,6 @@ import { stagger } from '@/lib/motion'
 // OpenFoodFacts/TACO/USDA are proper nouns, not translated.
 const SOURCES: { labelKey?: string; label?: string; value: string }[] = [
   { labelKey: 'foods.sourceAll', value: '' },
-  { labelKey: 'foods.sourceLibrary', value: 'food_library' },
   { labelKey: 'foods.sourceCustom', value: 'custom' },
   { label: 'OpenFoodFacts', value: 'openfoodfacts' },
   { label: 'TACO', value: 'taco' },
@@ -85,6 +84,7 @@ export function Foods() {
             key={tb}
             onClick={() => {
               setTab(tb)
+              if (tb === 'library') setSource('')
               setCatalogLimit(CATALOG_PAGE_SIZE)
             }}
             className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ${
