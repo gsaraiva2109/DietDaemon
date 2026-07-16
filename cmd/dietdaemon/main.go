@@ -355,6 +355,7 @@ func run() error {
 			LockoutCfg:       auth.DefaultLockoutConfig(),
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
+			CookieDomain:     cfg.CookieDomain,
 		}
 		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
 		for i, c := range cfg.OIDCProviders {

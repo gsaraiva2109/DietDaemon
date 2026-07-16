@@ -545,6 +545,9 @@ func (h *Handler) setSessionCookies(w http.ResponseWriter, token, csrf string, r
 	secure := h.cookieSecure
 	sameSite := http.SameSiteLaxMode
 	path := "/"
+	// Empty Domain is a no-op for net/http (Cookie.String only emits the
+	// Domain attribute when non-empty), so it's safe to always set this.
+	domain := h.cookieDomain
 
 	// dd_session — HttpOnly, readable only by the server.
 	maxAge := 0 // session cookie
@@ -556,6 +559,7 @@ func (h *Handler) setSessionCookies(w http.ResponseWriter, token, csrf string, r
 		Name:     "dd_session",
 		Value:    token,
 		Path:     path,
+		Domain:   domain,
 		MaxAge:   maxAge,
 		Secure:   secure,
 		HttpOnly: true,
@@ -569,6 +573,7 @@ func (h *Handler) setSessionCookies(w http.ResponseWriter, token, csrf string, r
 		Name:     "dd_csrf",
 		Value:    csrf,
 		Path:     path,
+		Domain:   domain,
 		MaxAge:   maxAge,
 		Secure:   secure,
 		HttpOnly: false,
@@ -578,10 +583,11 @@ func (h *Handler) setSessionCookies(w http.ResponseWriter, token, csrf string, r
 
 func (h *Handler) clearSessionCookies(w http.ResponseWriter) {
 	past := -1
+	domain := h.cookieDomain
 	// #nosec G124 — Secure is config-driven; SameSite + HttpOnly set as needed.
-	http.SetCookie(w, &http.Cookie{Name: "dd_session", Path: "/", MaxAge: past, Secure: h.cookieSecure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "dd_session", Path: "/", Domain: domain, MaxAge: past, Secure: h.cookieSecure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	// #nosec G124 — HttpOnly=false intentional; CSRF cookie must be JS-readable to clear properly.
-	http.SetCookie(w, &http.Cookie{Name: "dd_csrf", Path: "/", MaxAge: past, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "dd_csrf", Path: "/", Domain: domain, MaxAge: past, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode})
 }
 
 func readSessionCookie(r *http.Request) string {

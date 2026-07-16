@@ -131,6 +131,7 @@ type AuthConfig struct {
 	LockoutCfg       auth.LockoutConfig
 	RegistrationMode types.RegistrationMode
 	CookieSecure     bool
+	CookieDomain     string
 }
 
 // MealStore is the subset of the store the API needs.
@@ -326,6 +327,7 @@ type Handler struct {
 	lockoutCfg       auth.LockoutConfig
 	registrationMode types.RegistrationMode
 	cookieSecure     bool
+	cookieDomain     string
 
 	// Rate limiter for login/register endpoints.
 	ipLimiter *auth.IPRateLimiter
@@ -397,6 +399,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		lockoutCfg:       authCfg.LockoutCfg,
 		registrationMode: authCfg.RegistrationMode,
 		cookieSecure:     authCfg.CookieSecure,
+		cookieDomain:     authCfg.CookieDomain,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
 		trustedProxies:   trustedProxyPrefixes(c),
 		backupRunner:     backupRunner,
