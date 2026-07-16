@@ -679,12 +679,13 @@ func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, erro
 
 // GetMealsInRange returns meals for a user within a date range (inclusive).
 func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error) {
-	const mealQ = `
+	dateExpr := s.dialect.DateTrunc("at_utc")
+	mealQ := fmt.Sprintf(`
 		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
 		FROM meals
-		WHERE user_id = ? AND date(at_utc) >= ? AND date(at_utc) <= ?
+		WHERE user_id = ? AND %s >= ? AND %s <= ?
 		ORDER BY at_utc ASC
-	`
+	`, dateExpr, dateExpr)
 	var rows []mealRow
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(mealQ), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
