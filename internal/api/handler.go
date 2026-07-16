@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
@@ -704,9 +703,12 @@ func bearerToken(r *http.Request) string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// newHandlerID returns a short pseudo-unique ID for API-created entities.
+// newHandlerID returns a CSPRNG-derived ID for API-created entities. It
+// reuses auth.NewToken (32 crypto/rand bytes, base64url) rather than a wall
+// clock timestamp, since these IDs are also used for account/user/session/
+// API-key identifiers where predictability would enable guessing attacks.
 func newHandlerID() string {
-	return strconv.FormatInt(time.Now().UnixNano(), 36)
+	return auth.NewToken()
 }
 
 // calculateTDEE computes BMR, TDEE, and macro splits using Mifflin-St Jeor.
