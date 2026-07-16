@@ -1,11 +1,39 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
+
+func TestGetChatMessagesCapsHistoryAndPreservesOrder(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u-history"})
+	if err := s.CreateChatSession(ctx(), "sess-history", "u-history", "history"); err != nil {
+		t.Fatalf("CreateChatSession: %v", err)
+	}
+	for i := 0; i < chatHistoryLimit+2; i++ {
+		id := fmt.Sprintf("msg-%03d", i)
+		if err := s.AppendChatMessage(ctx(), id, "u-history", "sess-history", "user", id, ""); err != nil {
+			t.Fatalf("AppendChatMessage %d: %v", i, err)
+		}
+	}
+
+	msgs, err := s.GetChatMessages(ctx(), "u-history", "sess-history")
+	if err != nil {
+		t.Fatalf("GetChatMessages: %v", err)
+	}
+	if len(msgs) != chatHistoryLimit {
+		t.Fatalf("message count = %d, want %d", len(msgs), chatHistoryLimit)
+	}
+	if msgs[0].ID != "msg-002" || msgs[len(msgs)-1].ID != fmt.Sprintf("msg-%03d", chatHistoryLimit+1) {
+		t.Fatalf("history range = %q..%q, want msg-002..msg-%03d", msgs[0].ID, msgs[len(msgs)-1].ID, chatHistoryLimit+1)
+	}
+}
 
 func TestSoftDeleteChatSession(t *testing.T) {
 	s, cleanup := tempDB(t)

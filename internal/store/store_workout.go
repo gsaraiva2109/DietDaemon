@@ -38,25 +38,11 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 		return fmt.Errorf("store: insert workout: %w", err)
 	}
 
-	const exerciseQ = `
+	const exercisePrefix = `
 		INSERT INTO workout_exercises (id, workout_id, position, name, sets, reps, weight_kg, note)
-		VALUES (:id, :workout_id, :position, :name, :sets, :reps, :weight_kg, :note)
-	`
-	for i, e := range w.Exercises {
-		exID := e.ID
-		if exID == "" {
-			exID = newID()
-		}
-		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
-			"id": exID, "workout_id": w.ID, "position": i, "name": e.Name,
-			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
-		})
-		if err != nil {
-			return fmt.Errorf("store: bind insert exercise: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, s.rewrite(exerciseQuery), exerciseArgs...); err != nil {
-			return fmt.Errorf("store: insert exercise: %w", err)
-		}
+		VALUES `
+	if err := s.insertWorkoutExercises(ctx, tx, exercisePrefix, w); err != nil {
+		return err
 	}
 
 	return tx.Commit()
@@ -176,26 +162,27 @@ func (s *Store) ImportWorkout(ctx context.Context, w types.Workout) error {
 		return fmt.Errorf("store: insert workout: %w", err)
 	}
 
-	const exerciseQ = `
+	const exercisePrefix = `
 		INSERT INTO workout_exercises (id, workout_id, position, name, sets, reps, weight_kg, note)
-		VALUES (:id, :workout_id, :position, :name, :sets, :reps, :weight_kg, :note)
-	`
-	for i, e := range w.Exercises {
-		exID := e.ID
-		if exID == "" {
-			exID = newID()
-		}
-		exerciseQuery, exerciseArgs, err := sqlx.Named(exerciseQ, map[string]any{
-			"id": exID, "workout_id": w.ID, "position": i, "name": e.Name,
-			"sets": e.Sets, "reps": e.Reps, "weight_kg": e.WeightKg, "note": nullStr(e.Note),
-		})
-		if err != nil {
-			return fmt.Errorf("store: bind insert exercise: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, s.rewrite(exerciseQuery), exerciseArgs...); err != nil {
-			return fmt.Errorf("store: insert exercise: %w", err)
-		}
+		VALUES `
+	if err := s.insertWorkoutExercises(ctx, tx, exercisePrefix, w); err != nil {
+		return err
 	}
 
 	return tx.Commit()
+}
+
+func (s *Store) insertWorkoutExercises(ctx context.Context, tx *sqlx.Tx, prefix string, w types.Workout) error {
+	rows := make([][]any, 0, len(w.Exercises))
+	for i, e := range w.Exercises {
+		id := e.ID
+		if id == "" {
+			id = newID()
+		}
+		rows = append(rows, []any{id, w.ID, i, e.Name, e.Sets, e.Reps, e.WeightKg, nullStr(e.Note)})
+	}
+	if err := s.insertRows(ctx, tx, prefix, "", rows); err != nil {
+		return fmt.Errorf("store: insert exercises: %w", err)
+	}
+	return nil
 }

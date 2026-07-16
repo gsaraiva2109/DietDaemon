@@ -3,21 +3,18 @@
 // 7-day calorie sparkline, energy-split donut, honest insights, inline quick
 // log, and today's meal timeline.
 
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useToday, useMeals, useRange, useBodySummary, useStreak, useWeeklyBudget } from '@/lib/queries'
 import { MACRO_META, type Macros, type MacroKey } from '@/lib/types'
 import { MacroRing } from '@/components/MacroRing'
-import { MacroDonut } from '@/components/MacroDonut'
 import { Sparkline } from '@/components/Sparkline'
 import { MealCard } from '@/components/MealCard'
 import { QuickLogCard } from '@/components/QuickLogCard'
-import { WeeklyDashboard } from '@/components/WeeklyDashboard'
 import { WaterCard } from '@/components/WaterCard'
 import { WorkoutCard } from '@/components/WorkoutCard'
-import { SleepCard } from '@/components/SleepCard'
 import { FastingCard } from '@/components/FastingCard'
 import { FrequentFoods } from '@/components/FrequentFoods'
 import { ShareCard } from '@/components/ShareCard'
@@ -29,6 +26,11 @@ import { greeting, insights } from '@/lib/insights'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 const SATELLITES: MacroKey[] = ['Protein', 'Carbs', 'Fat', 'Fiber']
+const MacroDonut = lazy(() => import('@/components/MacroDonut').then(m => ({ default: m.MacroDonut })))
+const SleepCard = lazy(() => import('@/components/SleepCard').then(m => ({ default: m.SleepCard })))
+const WeeklyDashboard = lazy(() =>
+  import('@/components/WeeklyDashboard').then(m => ({ default: m.WeeklyDashboard })),
+)
 
 function isoDaysAgo(n: number): string {
   const d = new Date()
@@ -188,7 +190,9 @@ export function Dashboard() {
           </div>
 
           {view === 'week' ? (
-            <WeeklyDashboard />
+            <Suspense fallback={null}>
+              <WeeklyDashboard />
+            </Suspense>
           ) : (
             <>
               {/* Energy split + insights */}
@@ -196,7 +200,9 @@ export function Dashboard() {
                 <Card className="p-5">
                   <Eyebrow>{t('dashboard.energySplit')}</Eyebrow>
                   <div className="mt-4">
-                    <MacroDonut consumed={consumed} />
+                    <Suspense fallback={null}>
+                      <MacroDonut consumed={consumed} />
+                    </Suspense>
                   </div>
                 </Card>
                 <Card className="p-5 lg:col-span-2">
@@ -236,7 +242,11 @@ export function Dashboard() {
               <motion.div variants={fadeUp}><WaterCard /></motion.div>
               <motion.div variants={fadeUp}><FastingCard /></motion.div>
               <motion.div variants={fadeUp}><WorkoutCard /></motion.div>
-              <motion.div variants={fadeUp}><SleepCard /></motion.div>
+              <motion.div variants={fadeUp}>
+                <Suspense fallback={null}>
+                  <SleepCard />
+                </Suspense>
+              </motion.div>
             </motion.div>
           </section>
 

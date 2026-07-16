@@ -398,14 +398,14 @@ func (s *Store) RecordLoginAttempt(ctx context.Context, identifier string, succe
 		success = 1
 	}
 	const q = `INSERT INTO login_attempts (id, identifier, succeeded, created_at) VALUES (?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, newID(), identifier, success, utcNow())
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), newID(), identifier, success, utcNow())
 	return err
 }
 
 func (s *Store) RecentFailedAttempts(ctx context.Context, identifier string, since time.Time) (int, error) {
 	const q = `SELECT COUNT(*) FROM login_attempts
 		WHERE identifier = ? AND succeeded = 0 AND created_at > ?`
-	row := s.db.QueryRowContext(ctx, q, identifier, utcStr(since))
+	row := s.db.QueryRowContext(ctx, s.rewrite(q), identifier, utcStr(since))
 	var n int
 	if err := row.Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: recent failed attempts: %w", err)
@@ -413,16 +413,39 @@ func (s *Store) RecentFailedAttempts(ctx context.Context, identifier string, sin
 	return n, nil
 }
 
+// PurgeLoginAttempts deletes login attempts before olderThan. Callers retain
+// enough history for every active lockout window before scheduling this purge.
+func (s *Store) PurgeLoginAttempts(ctx context.Context, olderThan time.Time) (int, error) {
+	const q = `DELETE FROM login_attempts WHERE created_at < ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), olderThan.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge login attempts: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // --- Audit ---
 
 func (s *Store) WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error {
 	const q = `INSERT INTO auth_audit_log (id, account_id, user_id, event, ip, user_agent, meta, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.ExecContext(ctx, s.rewrite(q),
 		ev.ID, nullStr(ev.AccountID), nullStr(ev.UserID), ev.Event,
 		nullStr(ev.IP), nullStr(ev.UserAgent), nullStr(ev.Meta), utcStr(ev.CreatedAt),
 	)
 	return err
+}
+
+// PurgeAuthAuditEvents deletes audit events before olderThan.
+func (s *Store) PurgeAuthAuditEvents(ctx context.Context, olderThan time.Time) (int, error) {
+	const q = `DELETE FROM auth_audit_log WHERE created_at < ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), olderThan.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge auth audit events: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // --- TOTP secrets ---

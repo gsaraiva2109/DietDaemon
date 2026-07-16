@@ -7,7 +7,8 @@
 //
 // Vectors are stored as little-endian float32 BLOBs in the food_vectors
 // table. The whole table is loaded into memory lazily on first query and
-// cached until an Upsert or Delete invalidates the cache.
+// cached until a Delete invalidates the cache. Upserts keep a primed cache in
+// sync so bulk embedding backfills do not reload the whole table per food.
 package index
 
 import (
@@ -70,7 +71,19 @@ func (ix *SQLIndex) Upsert(ctx context.Context, foodID string, vec []float32) er
 		return fmt.Errorf("index: upsert: %w", err)
 	}
 
-	ix.invalidate()
+	ix.mu.Lock()
+	if ix.primed {
+		cachedVec := append([]float32(nil), vec...)
+		for i := range ix.cache {
+			if ix.cache[i].foodID == foodID {
+				ix.cache[i].vec = cachedVec
+				ix.mu.Unlock()
+				return nil
+			}
+		}
+		ix.cache = append(ix.cache, entry{foodID: foodID, vec: cachedVec})
+	}
+	ix.mu.Unlock()
 	return nil
 }
 

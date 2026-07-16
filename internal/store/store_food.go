@@ -152,17 +152,17 @@ func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodM
 
 	const aliasQ = `
 		INSERT INTO food_aliases (user_id, alias_normalized, food_id)
-		VALUES (?, ?, ?)
-		ON CONFLICT DO NOTHING
-	`
+		VALUES `
+	const aliasSuffix = ` ON CONFLICT DO NOTHING`
+	rows := make([][]any, 0, len(aliases))
 	for _, alias := range aliases {
 		normalized := normalize.Normalize(alias)
-		if normalized == "" {
-			continue
+		if normalized != "" {
+			rows = append(rows, []any{userID, normalized, match.FoodID})
 		}
-		if _, err := tx.ExecContext(ctx, s.rewrite(aliasQ), userID, normalized, match.FoodID); err != nil {
-			return fmt.Errorf("store: insert alias: %w", err)
-		}
+	}
+	if err := s.insertRows(ctx, tx, aliasQ, aliasSuffix, rows); err != nil {
+		return fmt.Errorf("store: insert aliases: %w", err)
 	}
 
 	return tx.Commit()

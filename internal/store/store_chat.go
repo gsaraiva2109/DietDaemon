@@ -9,6 +9,8 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
+const chatHistoryLimit = 100
+
 // CreateChatSession inserts a new chat session for a user.
 func (s *Store) CreateChatSession(ctx context.Context, id, userID, title string) error {
 	const q = `INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)`
@@ -58,18 +60,24 @@ func (s *Store) AppendChatMessage(ctx context.Context, id, userID, sessionID, ro
 	return nil
 }
 
-// GetChatMessages returns all messages in a session, oldest first. Returns an
-// empty slice (not an error) if sessionID doesn't belong to userID.
+// GetChatMessages returns the newest chatHistoryLimit messages in a session,
+// oldest first. Returns an empty slice (not an error) if sessionID doesn't
+// belong to userID.
 func (s *Store) GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error) {
 	const q = `
-		SELECT cm.id, cm.session_id, cm.role, cm.content, cm.tool_name, cm.created_at
-		FROM chat_messages cm
-		WHERE cm.session_id = ?
-		AND EXISTS (SELECT 1 FROM chat_sessions cs WHERE cs.id = cm.session_id AND cs.user_id = ?)
-		ORDER BY cm.created_at ASC
+		SELECT id, session_id, role, content, tool_name, created_at
+		FROM (
+			SELECT cm.id, cm.session_id, cm.role, cm.content, cm.tool_name, cm.created_at
+			FROM chat_messages cm
+			WHERE cm.session_id = ?
+			AND EXISTS (SELECT 1 FROM chat_sessions cs WHERE cs.id = cm.session_id AND cs.user_id = ?)
+			ORDER BY cm.created_at DESC, cm.id DESC
+			LIMIT ?
+		)
+		ORDER BY created_at ASC, id ASC
 	`
 	var rows []assistant.Message
-	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), sessionID, userID)
+	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), sessionID, userID, chatHistoryLimit)
 	if err != nil {
 		return nil, fmt.Errorf("store: get chat messages: %w", err)
 	}
