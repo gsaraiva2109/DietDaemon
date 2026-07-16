@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -204,7 +205,9 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 
 	link := h.publicBaseURL + "/verify-email?token=" + token
 	msg := mailer.VerificationEmail(link)
-	_ = h.mailer.Send(ctx, newEmail, msg)
+	if err := h.mailer.Send(ctx, newEmail, msg); err != nil {
+		slog.Error("send verification email failed", "err", err)
+	}
 
 	ip := h.clientIP(r)
 	h.writeAudit(ctx, u.AccountID, userID, "email.changed", ip, r.UserAgent(), u.Email+" → "+newEmail)
@@ -276,7 +279,9 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// If EMAIL_PROVIDER=none, the links will be logged by the none mailer.
 	link := h.publicBaseURL + "/reset-password?token=" + token
 	msg := mailer.PasswordResetEmail(link)
-	_ = h.mailer.Send(ctx, email, msg)
+	if err := h.mailer.Send(ctx, email, msg); err != nil {
+		slog.Error("send password reset email failed", "err", err)
+	}
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 }

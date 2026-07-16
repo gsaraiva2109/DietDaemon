@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -92,7 +93,9 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 
 	link := h.publicBaseURL + "/magic?token=" + linkToken
 	msg := mailer.MagicSigninEmail(link, code)
-	_ = h.mailer.Send(ctx, u.Email, msg)
+	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
+		slog.Error("send magic signin email failed", "err", err)
+	}
 
 	h.writeAudit(ctx, u.AccountID, u.ID, "user.magic_requested", ip, r.UserAgent(), u.Email)
 

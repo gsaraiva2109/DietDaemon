@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -171,7 +172,9 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		link := h.publicBaseURL + "/verify-email?token=" + token
 		msg := mailer.VerificationEmail(link)
-		_ = h.mailer.Send(ctx, u.Email, msg)
+		if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
+			slog.Error("send verification email failed", "err", err)
+		}
 		h.writeAudit(ctx, accountID, u.ID, "email.verification_sent", ip, ua, u.Email)
 	}
 
