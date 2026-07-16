@@ -760,16 +760,18 @@ func newHandler(store MealStore, logger MealLogger, sug ...Suggester) *Handler {
 	if len(sug) > 0 {
 		suggester = sug[0]
 	}
-	return New(store, store2, logger, time.UTC, store2, store2, store2, store2, store2, nil, "DietDaemon", nil, nil, "none", "", AuthConfig{
-		SessionCfg: auth.SessionConfig{
-			IdleTTL:     1 * time.Hour,
-			AbsoluteTTL: 24 * time.Hour,
-			RememberTTL: 72 * time.Hour,
-		},
-		LockoutCfg:       auth.DefaultLockoutConfig(),
-		RegistrationMode: types.RegistrationOpen,
-		CookieSecure:     false,
-	}, nil, nil, suggester, nil, nil, nil, nil, nil, nil, nil)
+	return New(store, logger, time.UTC, suggester, nil,
+		WithAuth(store2, store2, store2, store2, store2, store2, nil, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+	)
 }
 
 func doRequest(h *Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

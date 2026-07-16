@@ -68,16 +68,20 @@ func TestClientIPNoTrustedProxiesConfigured(t *testing.T) {
 
 func buildAuthSecurityHandler(authStore *fakeAuthStore) *Handler {
 	store := newFakeMealStore()
-	return New(store, authStore, &fakeMealLogger{}, time.UTC, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", nil, &fakeMailer{}, "none", "http://localhost:8080", AuthConfig{
-		SessionCfg: auth.SessionConfig{
-			IdleTTL:     1 * time.Hour,
-			AbsoluteTTL: 24 * time.Hour,
-			RememberTTL: 72 * time.Hour,
-		},
-		LockoutCfg:       auth.DefaultLockoutConfig(),
-		RegistrationMode: types.RegistrationOpen,
-		CookieSecure:     false,
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+		WithMailer(&fakeMailer{}, "none"),
+		WithPublicBaseURL("http://localhost:8080"),
+	)
 }
 
 // argon2id (memory=64MiB) takes tens of ms on ordinary hardware — comfortably
@@ -163,16 +167,20 @@ func TestHandleTOTPChallengeLockout(t *testing.T) {
 
 	store := newFakeMealStore()
 	lockoutCfg := auth.LockoutConfig{MaxAttempts: 3, Window: time.Hour, LockDuration: time.Hour}
-	h := New(store, authStore, &fakeMealLogger{}, time.UTC, authStore, authStore, authStore, authStore, authStore, encKey, "DietDaemon", nil, &fakeMailer{}, "none", "http://localhost:8080", AuthConfig{
-		SessionCfg: auth.SessionConfig{
-			IdleTTL:     1 * time.Hour,
-			AbsoluteTTL: 24 * time.Hour,
-			RememberTTL: 72 * time.Hour,
-		},
-		LockoutCfg:       lockoutCfg,
-		RegistrationMode: types.RegistrationOpen,
-		CookieSecure:     false,
-	}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := New(store, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, encKey, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       lockoutCfg,
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+		WithMailer(&fakeMailer{}, "none"),
+		WithPublicBaseURL("http://localhost:8080"),
+	)
 
 	body := map[string]string{"challenge_token": "any-token", "code": "000000"}
 

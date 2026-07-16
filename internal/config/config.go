@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -555,6 +556,21 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if c.RegistrationMode == "oidc-only" && len(c.OIDCProviders) == 0 {
 		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
+	}
+
+	// WebAuthn / passkey settings.
+	if c.WebAuthnRPID != "" {
+		if len(c.WebAuthnRPOrigins) == 0 {
+			add("WEBAUTHN_RP_ORIGINS is required when WEBAUTHN_RP_ID is set")
+		}
+		for _, origin := range c.WebAuthnRPOrigins {
+			if u, err := url.Parse(origin); err != nil || u.Scheme == "" || u.Host == "" {
+				add("WEBAUTHN_RP_ORIGINS entry %q is not a valid URL", origin)
+			}
+		}
+		if c.WebAuthnRPDisplayName == "" {
+			add("WEBAUTHN_RP_DISPLAY_NAME is required when WEBAUTHN_RP_ID is set")
+		}
 	}
 
 	// Mailer / email settings.

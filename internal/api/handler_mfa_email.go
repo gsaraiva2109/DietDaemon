@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"time"
@@ -75,7 +76,9 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 
 	// Best-effort send.
 	if h.mailer != nil && h.emailProvider != "none" {
-		_ = h.mailer.Send(ctx, u.Email, mailer.MFAEmailCodeEmail(code))
+		if err := h.mailer.Send(ctx, u.Email, mailer.MFAEmailCodeEmail(code)); err != nil {
+			slog.Error("send mfa email code failed", "err", err)
+		}
 	} else {
 		// Log the code for dev/homelab (mirrors forgot-password pattern).
 		h.logCode(u.Email, code)

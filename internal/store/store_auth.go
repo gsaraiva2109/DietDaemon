@@ -228,112 +228,129 @@ func scanSession(row *sql.Row) (auth.Session, error) {
 	return s, nil
 }
 
-// --- API keys ---
+// --- API keys & share tokens ---
+//
+// Both are revocable, user-owned credentials stored in tables with the same
+// shape: (id, user_id, <secret column>, label, created_at, last_used_at,
+// revoked_at). The only differences are the table name and the secret
+// column name, so create/list/revoke share one implementation below;
+// CreateAPIKey/ListAPIKeys/RevokeAPIKey and CreateShareToken/ListShareTokens/
+// RevokeShareToken just plug in those two names and convert the result to
+// their own named type.
+
+// credRow mirrors the common row shape of api_keys and share_tokens. It
+// converts directly to types.APIKey or types.ShareToken (identical fields).
+type credRow struct {
+	ID         string
+	UserID     string
+	Label      string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	RevokedAt  *time.Time
+}
+
+// createCred inserts a new row into table (api_keys or share_tokens).
+// secretCol is the column holding the hashed secret ("hashed_key" or
+// "hashed_token").
+func (s *Store) createCred(ctx context.Context, table, secretCol, id, userID, hashedSecret, label string) error {
+	q := fmt.Sprintf(`INSERT INTO %s (id, user_id, %s, label, created_at) VALUES (?, ?, ?, ?, ?)`, table, secretCol)
+	_, err := s.db.ExecContext(ctx, q, id, userID, hashedSecret, label, utcNow())
+	return err
+}
+
+// listCreds returns all non-revoked rows from table for userID.
+func (s *Store) listCreds(ctx context.Context, table, userID string) ([]credRow, error) {
+	q := fmt.Sprintf(`SELECT id, user_id, label, created_at, last_used_at, revoked_at
+		FROM %s WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`, table)
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []credRow
+	for rows.Next() {
+		var c credRow
+		var ca, lua, ra string
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Label, &ca, &lua, &ra); err != nil {
+			return nil, fmt.Errorf("store: scan %s row: %w", table, err)
+		}
+		c.CreatedAt = parseUTC(ca)
+		if lua != "" {
+			c.LastUsedAt = new(parseUTC(lua))
+		}
+		if ra != "" {
+			c.RevokedAt = new(parseUTC(ra))
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// revokeCred marks a row in table as revoked. The `id = ? AND user_id = ?`
+// scoping is a security boundary — it's what stops user A from revoking
+// user B's key/token — and must not be dropped or loosened. Returns
+// ErrNotFound if the row doesn't exist, is already revoked, or belongs to
+// another user.
+func (s *Store) revokeCred(ctx context.Context, table, userID, id string) error {
+	q := fmt.Sprintf(`UPDATE %s SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`, table)
+	res, err := s.db.ExecContext(ctx, q, utcNow(), id, userID)
+	if err != nil {
+		return fmt.Errorf("store: revoke %s: %w", table, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
+}
 
 // CreateAPIKey inserts a new machine API key.
 func (s *Store) CreateAPIKey(ctx context.Context, id, userID, hashedKey, label string) error {
-	const q = `INSERT INTO api_keys (id, user_id, hashed_key, label, created_at)
-		VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, id, userID, hashedKey, label, utcNow())
-	return err
+	return s.createCred(ctx, "api_keys", "hashed_key", id, userID, hashedKey, label)
 }
 
 // ListAPIKeys returns all non-revoked API keys for a user.
 func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey, error) {
-	const q = `SELECT id, user_id, label, created_at, last_used_at, revoked_at
-		FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`
-	rows, err := s.db.QueryContext(ctx, q, userID)
+	rows, err := s.listCreds(ctx, "api_keys", userID)
 	if err != nil {
-		return nil, fmt.Errorf("store: list api keys: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
 	var out []types.APIKey
-	for rows.Next() {
-		var k types.APIKey
-		var ca, lua, ra string
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Label, &ca, &lua, &ra); err != nil {
-			return nil, fmt.Errorf("store: scan api key: %w", err)
-		}
-		k.CreatedAt = parseUTC(ca)
-		if lua != "" {
-			k.LastUsedAt = new(parseUTC(lua))
-		}
-		if ra != "" {
-			k.RevokedAt = new(parseUTC(ra))
-		}
-		out = append(out, k)
+	for _, r := range rows {
+		out = append(out, types.APIKey(r))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RevokeAPIKey marks an API key as revoked. Returns ErrNotFound if the key
-// does not exist or is already revoked.
+// does not exist, is already revoked, or belongs to another user.
 func (s *Store) RevokeAPIKey(ctx context.Context, userID, keyID string) error {
-	const q = `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
-	res, err := s.db.ExecContext(ctx, q, utcNow(), keyID, userID)
-	if err != nil {
-		return fmt.Errorf("store: revoke api key: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return types.ErrNotFound
-	}
-	return nil
+	return s.revokeCred(ctx, "api_keys", userID, keyID)
 }
-
-// --- Share tokens (read-only dashboard links) ---
 
 // CreateShareToken inserts a new read-only share token.
 func (s *Store) CreateShareToken(ctx context.Context, id, userID, hashedToken, label string) error {
-	const q = `INSERT INTO share_tokens (id, user_id, hashed_token, label, created_at)
-		VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, q, id, userID, hashedToken, label, utcNow())
-	return err
+	return s.createCred(ctx, "share_tokens", "hashed_token", id, userID, hashedToken, label)
 }
 
 // ListShareTokens returns all non-revoked share tokens for a user.
 func (s *Store) ListShareTokens(ctx context.Context, userID string) ([]types.ShareToken, error) {
-	const q = `SELECT id, user_id, label, created_at, last_used_at, revoked_at
-		FROM share_tokens WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`
-	rows, err := s.db.QueryContext(ctx, q, userID)
+	rows, err := s.listCreds(ctx, "share_tokens", userID)
 	if err != nil {
-		return nil, fmt.Errorf("store: list share tokens: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
 	var out []types.ShareToken
-	for rows.Next() {
-		var t types.ShareToken
-		var ca, lua, ra string
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Label, &ca, &lua, &ra); err != nil {
-			return nil, fmt.Errorf("store: scan share token: %w", err)
-		}
-		t.CreatedAt = parseUTC(ca)
-		if lua != "" {
-			t.LastUsedAt = new(parseUTC(lua))
-		}
-		if ra != "" {
-			t.RevokedAt = new(parseUTC(ra))
-		}
-		out = append(out, t)
+	for _, r := range rows {
+		out = append(out, types.ShareToken(r))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RevokeShareToken marks a share token as revoked. Returns ErrNotFound if the
-// token does not exist or is already revoked.
+// token does not exist, is already revoked, or belongs to another user.
 func (s *Store) RevokeShareToken(ctx context.Context, userID, tokenID string) error {
-	const q = `UPDATE share_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
-	res, err := s.db.ExecContext(ctx, q, utcNow(), tokenID, userID)
-	if err != nil {
-		return fmt.Errorf("store: revoke share token: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return types.ErrNotFound
-	}
-	return nil
+	return s.revokeCred(ctx, "share_tokens", userID, tokenID)
 }
 
 // GetUserByShareToken resolves a hashed share token to its owning user.
@@ -504,7 +521,8 @@ func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, hash string) (b
 
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return false, tx.Rollback()
+		_ = tx.Rollback()
+		return false, nil
 	}
 
 	return true, tx.Commit()

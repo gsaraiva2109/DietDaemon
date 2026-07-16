@@ -355,6 +355,7 @@ func run() error {
 			LockoutCfg:       auth.DefaultLockoutConfig(),
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
+			CookieDomain:     cfg.CookieDomain,
 		}
 		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
 		for i, c := range cfg.OIDCProviders {
@@ -406,7 +407,16 @@ func run() error {
 			assistantRouter = assistant.New(chatModel, cmds, toolDescs)
 		}
 
-		apiHandler := api.New(st, st, engine, cfg.Location, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, oidcRegistry, m, cfg.EmailProvider, cfg.PublicBaseURL, authCfg, wa, backupRunner, suggestEngine, cfg, chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st, i18nBundle)
+		apiHandler := api.New(st, engine, cfg.Location, suggestEngine, cfg,
+			api.WithAuth(st, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg),
+			api.WithOIDC(oidcRegistry),
+			api.WithMailer(m, cfg.EmailProvider),
+			api.WithPublicBaseURL(cfg.PublicBaseURL),
+			api.WithWebAuthn(wa),
+			api.WithBackupRunner(backupRunner),
+			api.WithChat(chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st),
+			api.WithI18n(i18nBundle),
+		)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 
