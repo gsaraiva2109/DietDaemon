@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -122,8 +123,8 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Secure: h.cookieSecure, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 
-	// Constant-time-ish comparison of query state vs cookie state.
-	if !strings.EqualFold(qsState, cookieState) {
+	// Constant-time comparison of query state vs cookie state (CSRF token).
+	if subtle.ConstantTimeCompare([]byte(qsState), []byte(cookieState)) != 1 {
 		h.redirectAuthCallback(w, r, "invalid_state", "")
 		return
 	}
@@ -191,7 +192,7 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		emailVerified = true
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ua := r.UserAgent()
 
 	// --- Link flow ---
@@ -349,7 +350,7 @@ func (h *Handler) handleUnlinkIdentity(w http.ResponseWriter, r *http.Request, u
 	}
 
 	u, _ := h.store.GetUser(r.Context(), userID)
-	h.writeAudit(r.Context(), u.AccountID, userID, "oidc.unlinked", clientIP(r), r.UserAgent(), target.Provider+":"+target.Subject)
+	h.writeAudit(r.Context(), u.AccountID, userID, "oidc.unlinked", h.clientIP(r), r.UserAgent(), target.Provider+":"+target.Subject)
 
 	w.WriteHeader(http.StatusNoContent)
 }

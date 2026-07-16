@@ -23,6 +23,14 @@ const (
 	maxPasswordLen = 128
 )
 
+// DummyPHC is a well-formed argon2id PHC string with no corresponding known
+// password. Callers that must reject a login for a nonexistent user should
+// still run Verify(suppliedPassword, DummyPHC) so the CPU cost (and
+// therefore wall-clock time) matches the "user exists, wrong password" path
+// — otherwise an early return for "no such user" is a timing side-channel
+// that reveals account existence.
+const DummyPHC = "$argon2id$v=19$m=65536,t=3,p=4$pQgYGu7ZCFEhmrVlVYUDYA$X/wrq5tckxvEQ2phGf3M06Tau/j38rmBQQX/eJcTSdo"
+
 // Hash returns an argon2id PHC string for password. Returns
 // ErrPasswordTooShort / ErrPasswordTooLong for length violations.
 // The PHC format: $argon2id$v=19$m=...,t=...,p=...$<b64salt>$<b64hash>
@@ -55,11 +63,18 @@ func Hash(password string) (string, error) {
 func Verify(password, phc string) (bool, error) {
 	memory, time, threads, salt, hash, err := parsePHC(phc)
 	if err != nil {
-		// Malformed PHC — run a dummy argon2 to preserve constant-time-ish
-		// behaviour relative to the success path.
-		dummy := make([]byte, 32)
-		_, _ = rand.Read(dummy)
-		subtle.ConstantTimeCompare(dummy, dummy)
+		// Malformed PHC — still run the real argon2id KDF (fixed default
+		// cost params, since there are no parsed params to use) so this
+		// path costs the same as a genuine verify attempt, then compare in
+		// constant time. Without this, a malformed hash would return
+		// noticeably faster than a wrong password, leaking which case
+		// occurred via timing.
+		dummySalt := make([]byte, argonSaltLen)
+		_, _ = rand.Read(dummySalt)
+		dummyHash := make([]byte, argonKeyLen)
+		_, _ = rand.Read(dummyHash)
+		key := argon2.IDKey([]byte(password), dummySalt, argonTime, argonMemory, argonThreads, argonKeyLen)
+		subtle.ConstantTimeCompare(key, dummyHash)
 		return false, nil // return false, not error — don't reveal parse failure
 	}
 

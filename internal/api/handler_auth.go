@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -66,7 +68,7 @@ func (h *Handler) userToJSON(u types.User) userJSON {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 
 	var body struct {
 		Email       string `json:"email"`
@@ -108,21 +110,24 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Hash password (with length guards).
-	phc, err := auth.Hash(password)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	// Reject duplicate email.
+	// Reject duplicate email before hashing — hashing is the expensive step
+	// (argon2id, tuned to take tens of ms), so checking uniqueness first
+	// avoids wasting CPU (a cheap DoS amplifier) and avoids leaking
+	// account-existence timing through hash-then-reject.
 	if _, err := h.authStore.GetUserByEmail(ctx, email); err == nil {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrEmailTaken.Error()})
 		return
 	} else if !errors.Is(err, types.ErrNotFound) {
 		h.writeErr(w, err)
+		return
+	}
+
+	// Hash password (with length guards).
+	phc, err := auth.Hash(password)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -179,7 +184,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 
 	var body struct {
 		Email    string `json:"email"`
@@ -215,25 +220,25 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up user by email.
+	// Look up user by email. When the user doesn't exist (or has no password
+	// hash, e.g. an OIDC-only account), fall through to verifying against a
+	// dummy hash instead of returning early — an early return here would be
+	// much faster than the hash-and-compare path below, letting an attacker
+	// distinguish "no such account" from "wrong password" by timing.
 	u, err := h.authStore.GetUserByEmail(ctx, email)
-	if err != nil {
-		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
-		h.writeAuthError(w, auth.ErrInvalidCredentials)
-		return
+	phc := auth.DummyPHC
+	userFound := err == nil
+	if userFound {
+		if realPHC, phcErr := h.authStore.GetPasswordHash(ctx, u.ID); phcErr == nil {
+			phc = realPHC
+		} else {
+			userFound = false
+		}
 	}
 
-	// Get stored password hash.
-	phc, err := h.authStore.GetPasswordHash(ctx, u.ID)
-	if err != nil {
-		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
-		h.writeAuthError(w, auth.ErrInvalidCredentials)
-		return
-	}
-
-	// Verify.
+	// Verify (always runs, even for a nonexistent user — see above).
 	ok, err := auth.Verify(body.Password, phc)
-	if err != nil || !ok {
+	if !userFound || err != nil || !ok {
 		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
 		h.writeAuthError(w, auth.ErrInvalidCredentials)
 		return
@@ -369,7 +374,7 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 	// then create a fresh one for this device.
 	_ = h.sessions.DeleteUserSessions(ctx, userID)
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ua := r.UserAgent()
 	cookieTok, csrfTok, sess := auth.CreateSession(userID, false, ip, ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, false)
@@ -425,7 +430,7 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(r.Context(), "", userID, "api_key.created", ip, r.UserAgent(), keyID)
 
 	w.WriteHeader(http.StatusCreated)
@@ -496,7 +501,7 @@ func (h *Handler) handleCreateShareToken(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(r.Context(), "", userID, "share_token.created", ip, r.UserAgent(), tokenID)
 
 	w.WriteHeader(http.StatusCreated)
@@ -521,7 +526,7 @@ func (h *Handler) handleRevokeShareToken(w http.ResponseWriter, r *http.Request,
 		h.writeErr(w, err)
 		return
 	}
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(r.Context(), "", userID, "share_token.revoked", ip, r.UserAgent(), tokenID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -695,7 +700,7 @@ func (h *Handler) handleTOTPVerify(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(ctx, "", userID, "totp.enabled", ip, r.UserAgent(), "")
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -745,8 +750,26 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ua := r.UserAgent()
+
+	// Per-user lockout on TOTP/recovery-code guesses. The challenge endpoint
+	// is only IP-rate-limited (wrapPublicLimited), which a distributed or
+	// IP-rotating attacker can bypass; brute-forcing a 6-digit code (or a
+	// recovery code) needs a cap keyed on the account being attacked too.
+	lockKey := "totp:" + chUserID
+	locked, retryAfter, err := auth.CheckLockout(ctx, h.loginAttempts, lockKey, h.lockoutCfg)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if locked {
+		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
+		return
+	}
 
 	// Try recovery code first if provided.
 	if body.RecoveryCode != "" {
@@ -757,6 +780,7 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !consumed {
+			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad recovery code")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
@@ -765,6 +789,7 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Validate TOTP code.
 		if !isSixDigit(body.Code) {
+			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad code format")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
@@ -790,6 +815,7 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !auth.ValidateCode(string(plain), body.Code) {
+			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad totp code")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
@@ -798,6 +824,7 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Success — delete challenge, create session.
+	_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, true)
 	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, ua, h.sessionCfg)
@@ -833,7 +860,7 @@ func (h *Handler) handleTOTPDisable(w http.ResponseWriter, r *http.Request, user
 	// Also clean up recovery codes.
 	_ = h.recoveryCodes.ReplaceRecoveryCodes(ctx, userID, nil)
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(ctx, "", userID, "totp.disabled", ip, r.UserAgent(), "")
 
 	w.WriteHeader(http.StatusNoContent)
@@ -904,19 +931,57 @@ func isSixDigit(s string) bool {
 // Helpers
 // ---------------------------------------------------------------------------
 
-func clientIP(r *http.Request) string {
-	// Respect X-Forwarded-For when behind a trusted reverse proxy.
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		idx := strings.IndexByte(fwd, ',')
-		if idx > 0 {
-			return strings.TrimSpace(fwd[:idx])
+// clientIP resolves the request's client IP for rate limiting, lockout, and
+// audit logging. X-Forwarded-For / X-Real-IP are only honored when the
+// immediate peer (r.RemoteAddr) is a configured trusted proxy — otherwise
+// any client could set those headers itself to spoof an arbitrary IP and
+// dodge IP-based lockout/rate limiting entirely.
+func (h *Handler) clientIP(r *http.Request) string {
+	remoteHost := hostOnly(r.RemoteAddr)
+
+	if h.isTrustedProxy(remoteHost) {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			first := fwd
+			if idx := strings.IndexByte(fwd, ','); idx > 0 {
+				first = fwd[:idx]
+			}
+			if ip := strings.TrimSpace(first); ip != "" {
+				return ip
+			}
 		}
-		return strings.TrimSpace(fwd)
+		if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+			return real
+		}
 	}
-	// Strip port from RemoteAddr.
-	addr := r.RemoteAddr
-	if idx := strings.LastIndexByte(addr, ':'); idx > 0 {
-		return addr[:idx]
+
+	return remoteHost
+}
+
+// isTrustedProxy reports whether addr (no port) is in the Handler's
+// configured trusted-proxy allowlist (empty by default — see
+// config.TrustedProxies).
+func (h *Handler) isTrustedProxy(addr string) bool {
+	if len(h.trustedProxies) == 0 {
+		return false
+	}
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return false
+	}
+	for _, p := range h.trustedProxies {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOnly strips the port from an address of the form "host:port" (as used
+// by http.Request.RemoteAddr), including bracketed IPv6 addresses. Returns
+// addr unchanged if it isn't a valid host:port pair.
+func hostOnly(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
 	}
 	return addr
 }

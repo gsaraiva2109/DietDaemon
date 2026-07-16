@@ -180,7 +180,7 @@ func (h *Handler) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Req
 
 	h.clearWebAuthnCookie(w)
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(ctx, "", userID, "passkey.registered", ip, r.UserAgent(), credID)
 
 	w.WriteHeader(http.StatusCreated)
@@ -220,7 +220,7 @@ func (h *Handler) handleRenamePasskey(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(r.Context(), "", userID, "passkey.renamed", ip, r.UserAgent(), id)
 
 	// Return the updated passkey.
@@ -248,7 +248,7 @@ func (h *Handler) handleDeletePasskey(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(r.Context(), "", userID, "passkey.deleted", ip, r.UserAgent(), id)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -318,7 +318,7 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 
 // POST /auth/passkeys/login/finish
 func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ctx := r.Context()
 
 	ceremonyID := h.readWebAuthnCookie(r)
@@ -518,7 +518,7 @@ func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 
 // POST /auth/mfa/passkey/finish
 func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ctx := r.Context()
 
 	ceremonyID := h.readWebAuthnCookie(r)
