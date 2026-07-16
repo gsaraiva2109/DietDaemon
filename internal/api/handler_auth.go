@@ -392,96 +392,55 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 }
 
 // ---------------------------------------------------------------------------
-// GET /auth/api-keys  (auth required)
+// API-key / share-token CRUD  (auth required)
+//
+// The two credential types are structurally identical trios (list, create,
+// revoke) that differ only in secret generation, store method, audit event
+// name, and response JSON shape. Each trio below plugs those differences
+// into one shared handler body per verb.
 // ---------------------------------------------------------------------------
 
+// writeJSONList encodes items as JSON, substituting an empty slice for nil
+// so the response is always `[]`, never `null`.
+func writeJSONList[T any](w http.ResponseWriter, items []T) {
+	if items == nil {
+		items = []T{}
+	}
+	_ = json.NewEncoder(w).Encode(items)
+}
+
+// GET /auth/api-keys
 func (h *Handler) handleListAPIKeys(w http.ResponseWriter, r *http.Request, userID string) {
 	keys, err := h.authStore.ListAPIKeys(r.Context(), userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	if keys == nil {
-		keys = []types.APIKey{}
-	}
-	_ = json.NewEncoder(w).Encode(keys)
+	writeJSONList(w, keys)
 }
 
-// ---------------------------------------------------------------------------
-// POST /auth/api-keys  (auth required)
-// ---------------------------------------------------------------------------
-
-func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
-	var body struct {
-		Label string `json:"label"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
-		return
-	}
-
-	if strings.TrimSpace(body.Label) == "" {
-		body.Label = "default"
-	}
-
-	raw, hashed := auth.NewAPIKey()
-	keyID := newHandlerID()
-
-	if err := h.authStore.CreateAPIKey(r.Context(), keyID, userID, hashed, body.Label); err != nil {
-		h.writeErr(w, err)
-		return
-	}
-
-	ip := h.clientIP(r)
-	h.writeAudit(r.Context(), "", userID, "api_key.created", ip, r.UserAgent(), keyID)
-
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(types.NewAPIKeyResponse{
-		APIKey: types.APIKey{
-			ID:        keyID,
-			UserID:    userID,
-			Label:     body.Label,
-			CreatedAt: time.Now().UTC(),
-		},
-		Key: raw,
-	})
-}
-
-// ---------------------------------------------------------------------------
-// DELETE /auth/api-keys/{id}  (auth required)
-// ---------------------------------------------------------------------------
-
-func (h *Handler) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
-	keyID := r.PathValue("id")
-	if err := h.authStore.RevokeAPIKey(r.Context(), userID, keyID); err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ---------------------------------------------------------------------------
-// GET /auth/share-tokens  (auth required)
-// ---------------------------------------------------------------------------
-
+// GET /auth/share-tokens
 func (h *Handler) handleListShareTokens(w http.ResponseWriter, r *http.Request, userID string) {
 	tokens, err := h.authStore.ListShareTokens(r.Context(), userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	if tokens == nil {
-		tokens = []types.ShareToken{}
-	}
-	_ = json.NewEncoder(w).Encode(tokens)
+	writeJSONList(w, tokens)
 }
 
-// ---------------------------------------------------------------------------
-// POST /auth/share-tokens  (auth required)
-// ---------------------------------------------------------------------------
+// credCreateConfig bundles the per-type pieces of a "create credential"
+// request so handleCreateCred can serve both API keys and share tokens.
+type credCreateConfig struct {
+	genSecret  func() (raw, hashed string)
+	store      func(ctx context.Context, id, userID, hashed, label string) error
+	auditEvent string
+	// response builds the created-credential JSON body from the new id,
+	// label, creation time, and one-time raw secret.
+	response func(id, userID, label string, createdAt time.Time, raw string) any
+}
 
-func (h *Handler) handleCreateShareToken(w http.ResponseWriter, r *http.Request, userID string) {
+func (h *Handler) handleCreateCred(w http.ResponseWriter, r *http.Request, userID string, cfg credCreateConfig) {
 	var body struct {
 		Label string `json:"label"`
 	}
@@ -495,43 +454,87 @@ func (h *Handler) handleCreateShareToken(w http.ResponseWriter, r *http.Request,
 		body.Label = "default"
 	}
 
-	raw := auth.NewToken()
-	hashed := auth.HashToken(raw)
-	tokenID := newHandlerID()
+	raw, hashed := cfg.genSecret()
+	id := newHandlerID()
 
-	if err := h.authStore.CreateShareToken(r.Context(), tokenID, userID, hashed, body.Label); err != nil {
+	if err := cfg.store(r.Context(), id, userID, hashed, body.Label); err != nil {
 		h.writeErr(w, err)
 		return
 	}
 
 	ip := h.clientIP(r)
-	h.writeAudit(r.Context(), "", userID, "share_token.created", ip, r.UserAgent(), tokenID)
+	h.writeAudit(r.Context(), "", userID, cfg.auditEvent, ip, r.UserAgent(), id)
 
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(types.NewShareTokenResponse{
-		ShareToken: types.ShareToken{
-			ID:        tokenID,
-			UserID:    userID,
-			Label:     body.Label,
-			CreatedAt: time.Now().UTC(),
+	_ = json.NewEncoder(w).Encode(cfg.response(id, userID, body.Label, time.Now().UTC(), raw))
+}
+
+// POST /auth/api-keys
+func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
+	h.handleCreateCred(w, r, userID, credCreateConfig{
+		genSecret:  auth.NewAPIKey,
+		store:      h.authStore.CreateAPIKey,
+		auditEvent: "api_key.created",
+		response: func(id, userID, label string, createdAt time.Time, raw string) any {
+			return types.NewAPIKeyResponse{
+				APIKey: types.APIKey{ID: id, UserID: userID, Label: label, CreatedAt: createdAt},
+				Key:    raw,
+			}
 		},
-		Token: raw,
 	})
 }
 
-// ---------------------------------------------------------------------------
-// DELETE /auth/share-tokens/{id}  (auth required)
-// ---------------------------------------------------------------------------
+// POST /auth/share-tokens
+func (h *Handler) handleCreateShareToken(w http.ResponseWriter, r *http.Request, userID string) {
+	h.handleCreateCred(w, r, userID, credCreateConfig{
+		genSecret: func() (string, string) {
+			raw := auth.NewToken()
+			return raw, auth.HashToken(raw)
+		},
+		store:      h.authStore.CreateShareToken,
+		auditEvent: "share_token.created",
+		response: func(id, userID, label string, createdAt time.Time, raw string) any {
+			return types.NewShareTokenResponse{
+				ShareToken: types.ShareToken{ID: id, UserID: userID, Label: label, CreatedAt: createdAt},
+				Token:      raw,
+			}
+		},
+	})
+}
 
-func (h *Handler) handleRevokeShareToken(w http.ResponseWriter, r *http.Request, userID string) {
-	tokenID := r.PathValue("id")
-	if err := h.authStore.RevokeShareToken(r.Context(), userID, tokenID); err != nil {
+// credRevokeConfig bundles the per-type pieces of a "revoke credential"
+// request. auditEvent == "" skips the audit write, preserving the existing
+// (pre-refactor) asymmetry where API-key revocation isn't audited but
+// share-token revocation is.
+type credRevokeConfig struct {
+	revoke     func(ctx context.Context, userID, id string) error
+	auditEvent string
+}
+
+func (h *Handler) handleRevokeCred(w http.ResponseWriter, r *http.Request, userID string, cfg credRevokeConfig) {
+	id := r.PathValue("id")
+	if err := cfg.revoke(r.Context(), userID, id); err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	ip := h.clientIP(r)
-	h.writeAudit(r.Context(), "", userID, "share_token.revoked", ip, r.UserAgent(), tokenID)
+	if cfg.auditEvent != "" {
+		ip := h.clientIP(r)
+		h.writeAudit(r.Context(), "", userID, cfg.auditEvent, ip, r.UserAgent(), id)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// DELETE /auth/api-keys/{id}
+func (h *Handler) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
+	h.handleRevokeCred(w, r, userID, credRevokeConfig{revoke: h.authStore.RevokeAPIKey})
+}
+
+// DELETE /auth/share-tokens/{id}
+func (h *Handler) handleRevokeShareToken(w http.ResponseWriter, r *http.Request, userID string) {
+	h.handleRevokeCred(w, r, userID, credRevokeConfig{
+		revoke:     h.authStore.RevokeShareToken,
+		auditEvent: "share_token.revoked",
+	})
 }
 
 // ---------------------------------------------------------------------------
