@@ -55,11 +55,18 @@ func Hash(password string) (string, error) {
 func Verify(password, phc string) (bool, error) {
 	memory, time, threads, salt, hash, err := parsePHC(phc)
 	if err != nil {
-		// Malformed PHC — run a dummy argon2 to preserve constant-time-ish
-		// behaviour relative to the success path.
-		dummy := make([]byte, 32)
-		_, _ = rand.Read(dummy)
-		subtle.ConstantTimeCompare(dummy, dummy)
+		// Malformed PHC — still run the real argon2id KDF (fixed default
+		// cost params, since there are no parsed params to use) so this
+		// path costs the same as a genuine verify attempt, then compare in
+		// constant time. Without this, a malformed hash would return
+		// noticeably faster than a wrong password, leaking which case
+		// occurred via timing.
+		dummySalt := make([]byte, argonSaltLen)
+		_, _ = rand.Read(dummySalt)
+		dummyHash := make([]byte, argonKeyLen)
+		_, _ = rand.Read(dummyHash)
+		key := argon2.IDKey([]byte(password), dummySalt, argonTime, argonMemory, argonThreads, argonKeyLen)
+		subtle.ConstantTimeCompare(key, dummyHash)
 		return false, nil // return false, not error — don't reveal parse failure
 	}
 
