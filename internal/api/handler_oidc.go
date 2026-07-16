@@ -191,7 +191,7 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		emailVerified = true
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ua := r.UserAgent()
 
 	// --- Link flow ---
@@ -349,7 +349,7 @@ func (h *Handler) handleUnlinkIdentity(w http.ResponseWriter, r *http.Request, u
 	}
 
 	u, _ := h.store.GetUser(r.Context(), userID)
-	h.writeAudit(r.Context(), u.AccountID, userID, "oidc.unlinked", clientIP(r), r.UserAgent(), target.Provider+":"+target.Subject)
+	h.writeAudit(r.Context(), u.AccountID, userID, "oidc.unlinked", h.clientIP(r), r.UserAgent(), target.Provider+":"+target.Subject)
 
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -118,6 +119,15 @@ type Config struct {
 	CookieSecure       bool
 	CookieDomain       string
 
+	// TrustedProxies lists CIDRs (or bare IPs, treated as /32 or /128) whose
+	// X-Forwarded-For / X-Real-IP headers are honored when resolving the
+	// client IP (used for rate limiting, lockout, and audit logs). Requests
+	// arriving from any other peer have those headers ignored — otherwise
+	// any client could spoof them to dodge IP-based lockout entirely.
+	// Defaults to loopback only; set this when DietDaemon sits behind a
+	// reverse proxy so the real client IP is used instead of the proxy's.
+	TrustedProxies []string
+
 	// --- Auth — TOTP two-factor authentication ---
 	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
 	TOTPIssuer string // otpauth issuer label
@@ -172,6 +182,33 @@ func (c *Config) WebAuthnConfig() auth.WebAuthnConfig {
 		RPDisplayName: displayName,
 		RPOrigins:     origins,
 	}
+}
+
+// TrustedProxyPrefixes parses TrustedProxies into netip.Prefix values for
+// runtime IP-containment checks. Entries that fail to parse are skipped —
+// validate() rejects malformed entries at boot, so in practice this is
+// always well-formed by the time the server is serving requests.
+func (c *Config) TrustedProxyPrefixes() []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(c.TrustedProxies))
+	for _, raw := range c.TrustedProxies {
+		if p, err := parseProxyEntry(raw); err == nil {
+			prefixes = append(prefixes, p)
+		}
+	}
+	return prefixes
+}
+
+// parseProxyEntry accepts either a CIDR ("10.0.0.0/8") or a bare IP
+// ("127.0.0.1"), normalizing a bare IP to a single-address prefix.
+func parseProxyEntry(raw string) (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(raw); err == nil {
+		return p, nil
+	}
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 // hostFromBaseURL extracts the host from a URL like "https://example.com".
@@ -251,6 +288,7 @@ func Load() (*Config, error) {
 		SessionRememberTTL:      getDuration("SESSION_REMEMBER_TTL", 2160*time.Hour),
 		CookieSecure:            getBool("COOKIE_SECURE", true),
 		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
+		TrustedProxies:          splitCSV(getStr("TRUSTED_PROXIES", "127.0.0.0/8,::1/128")),
 		LogLevel:                getStr("LOG_LEVEL", "info"),
 		TOTPIssuer:              getStr("TOTP_ISSUER", "DietDaemon"),
 	}
@@ -492,6 +530,11 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if c.SessionRememberTTL <= 0 {
 		add("SESSION_REMEMBER_TTL must be positive")
+	}
+	for _, raw := range c.TrustedProxies {
+		if _, err := parseProxyEntry(raw); err != nil {
+			add("TRUSTED_PROXIES entry %q is not a valid IP or CIDR: %v", raw, err)
+		}
 	}
 
 	// OIDC settings.
