@@ -55,7 +55,7 @@ func (h *Handler) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	u, _ := h.store.GetUser(ctx, userID)
 	acctID := ""
 	if u.AccountID != "" {
@@ -119,10 +119,10 @@ func (h *Handler) handleResendVerify(w http.ResponseWriter, r *http.Request, use
 	msg := mailer.VerificationEmail(link)
 	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
 		// Log but don't fail — the token still exists.
-		h.writeAudit(ctx, u.AccountID, userID, "email.verification_send_failed", clientIP(r), r.UserAgent(), u.Email)
+		h.writeAudit(ctx, u.AccountID, userID, "email.verification_send_failed", h.clientIP(r), r.UserAgent(), u.Email)
 	}
 
-	h.writeAudit(ctx, u.AccountID, userID, "email.verification_sent", clientIP(r), r.UserAgent(), u.Email)
+	h.writeAudit(ctx, u.AccountID, userID, "email.verification_sent", h.clientIP(r), r.UserAgent(), u.Email)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -206,7 +206,7 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 	msg := mailer.VerificationEmail(link)
 	_ = h.mailer.Send(ctx, newEmail, msg)
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	h.writeAudit(ctx, u.AccountID, userID, "email.changed", ip, r.UserAgent(), u.Email+" → "+newEmail)
 	h.writeAudit(ctx, u.AccountID, userID, "email.verification_sent", ip, r.UserAgent(), newEmail)
 
@@ -328,7 +328,7 @@ func (h *Handler) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	// Revoke all sessions for this user — logout everywhere.
 	_ = h.sessions.DeleteUserSessions(ctx, userID)
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	u, _ := h.store.GetUser(ctx, userID)
 	acctID := ""
 	if u.AccountID != "" {

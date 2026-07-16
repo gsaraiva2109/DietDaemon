@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
@@ -291,6 +292,10 @@ type Handler struct {
 	// Rate limiter for login/register endpoints.
 	ipLimiter *auth.IPRateLimiter
 
+	// Peers whose X-Forwarded-For / X-Real-IP headers are trusted when
+	// resolving the client IP. See clientIP in handler_auth.go.
+	trustedProxies []netip.Prefix
+
 	// Scheduled backup manual trigger. Nil when backups aren't wired up.
 	backupRunner BackupRunner
 
@@ -355,6 +360,7 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		registrationMode: authCfg.RegistrationMode,
 		cookieSecure:     authCfg.CookieSecure,
 		ipLimiter:        auth.NewIPRateLimiter(10, time.Minute),
+		trustedProxies:   trustedProxyPrefixes(c),
 		backupRunner:     backupRunner,
 		suggester:        suggester,
 		cfg:              c,
@@ -365,6 +371,15 @@ func New(store MealStore, authStore AuthStore, logger MealLogger, loc *time.Loca
 		chatStore:        chatStore,
 		i18nBundle:       i18nBundle,
 	}
+}
+
+// trustedProxyPrefixes returns the configured trusted-proxy allowlist, or
+// nil when no config was supplied (e.g. in tests that pass a nil *config.Config).
+func trustedProxyPrefixes(c *config.Config) []netip.Prefix {
+	if c == nil {
+		return nil
+	}
+	return c.TrustedProxyPrefixes()
 }
 
 // RegisterRoutes mounts all API routes on the given mux.
@@ -639,7 +654,7 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // wrapPublicLimited adds per-IP rate limiting on top of wrapPublic.
 func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
 	return h.wrapPublic(func(w http.ResponseWriter, r *http.Request) {
-		if !h.ipLimiter.Allow(clientIP(r)) {
+		if !h.ipLimiter.Allow(h.clientIP(r)) {
 			w.Header().Set("Retry-After", "30")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})

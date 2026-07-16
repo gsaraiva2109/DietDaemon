@@ -23,6 +23,14 @@ const (
 	maxPasswordLen = 128
 )
 
+// DummyPHC is a well-formed argon2id PHC string with no corresponding known
+// password. Callers that must reject a login for a nonexistent user should
+// still run Verify(suppliedPassword, DummyPHC) so the CPU cost (and
+// therefore wall-clock time) matches the "user exists, wrong password" path
+// — otherwise an early return for "no such user" is a timing side-channel
+// that reveals account existence.
+const DummyPHC = "$argon2id$v=19$m=65536,t=3,p=4$pQgYGu7ZCFEhmrVlVYUDYA$X/wrq5tckxvEQ2phGf3M06Tau/j38rmBQQX/eJcTSdo"
+
 // Hash returns an argon2id PHC string for password. Returns
 // ErrPasswordTooShort / ErrPasswordTooLong for length violations.
 // The PHC format: $argon2id$v=19$m=...,t=...,p=...$<b64salt>$<b64hash>

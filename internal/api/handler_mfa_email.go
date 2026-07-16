@@ -22,7 +22,7 @@ const mfaEmailMaxAttempts = 5
 
 // POST /auth/mfa/email/send
 func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ctx := r.Context()
 
 	var body struct {
@@ -87,7 +87,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 
 // POST /auth/mfa/email/verify
 func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	ctx := r.Context()
 
 	var body struct {

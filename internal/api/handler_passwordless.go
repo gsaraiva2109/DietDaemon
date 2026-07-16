@@ -26,7 +26,7 @@ const magicTTL = 15 * time.Minute
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 
 	var body struct {
 		Email string `json:"email"`
@@ -104,7 +104,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 
 	var body struct {
 		Email string `json:"email"`

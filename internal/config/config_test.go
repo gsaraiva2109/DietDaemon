@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
 		"MULTI_USER", "API_AUTH_TOKEN",
 		"DB_DRIVER", "DATABASE_URL",
+		"TRUSTED_PROXIES",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
@@ -252,4 +254,64 @@ func TestSQLiteDriverDoesNotRequireDatabaseURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+}
+
+// --- TrustedProxies (clientIP spoofing fix) ---
+
+func TestTrustedProxiesDefaultsToLoopbackOnly(t *testing.T) {
+	setEnv(t, validBase())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	prefixes := c.TrustedProxyPrefixes()
+	if !containsAddr(prefixes, "127.0.0.1") || !containsAddr(prefixes, "::1") {
+		t.Fatalf("expected loopback to be trusted by default, got %v", c.TrustedProxies)
+	}
+	if containsAddr(prefixes, "203.0.113.5") {
+		t.Fatalf("public IP must not be trusted by default, got %v", c.TrustedProxies)
+	}
+}
+
+func TestTrustedProxiesCustomCIDRAndBareIP(t *testing.T) {
+	env := validBase()
+	env["TRUSTED_PROXIES"] = "10.0.0.0/8,203.0.113.5"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	prefixes := c.TrustedProxyPrefixes()
+	if !containsAddr(prefixes, "10.1.2.3") {
+		t.Errorf("expected 10.0.0.0/8 to cover 10.1.2.3")
+	}
+	if !containsAddr(prefixes, "203.0.113.5") {
+		t.Errorf("expected bare IP entry to be trusted as a /32")
+	}
+	if containsAddr(prefixes, "203.0.113.6") {
+		t.Errorf("bare IP entry must not cover a neighboring address")
+	}
+	if containsAddr(prefixes, "127.0.0.1") {
+		t.Errorf("loopback default must not apply once TRUSTED_PROXIES is set explicitly")
+	}
+}
+
+func TestTrustedProxiesInvalidEntryFails(t *testing.T) {
+	env := validBase()
+	env["TRUSTED_PROXIES"] = "not-an-ip"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+		t.Fatalf("expected TRUSTED_PROXIES validation error, got %v", err)
+	}
+}
+
+func containsAddr(prefixes []netip.Prefix, addr string) bool {
+	a := netip.MustParseAddr(addr)
+	for _, p := range prefixes {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
