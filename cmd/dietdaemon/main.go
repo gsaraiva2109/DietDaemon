@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -65,7 +66,8 @@ const (
 	nudgeInterval = 5 * time.Minute
 	// pendingTTL is how long a meal awaiting clarification is held before the
 	// state expires and the next message is treated as a fresh meal.
-	pendingTTL = 30 * time.Minute
+	pendingTTL     = 30 * time.Minute
+	messageWorkers = 4
 )
 
 func main() {
@@ -474,11 +476,19 @@ func run() error {
 
 	// Consumer: queue → pipeline. Runs until the queue drains after shutdown.
 	slog.Info("listening for messages")
-	for m := range q.Consume() {
-		if herr := engine.Handle(ctx, m); herr != nil {
-			slog.Error("handle message", "user", m.UserID, "err", herr)
-		}
+	var wg sync.WaitGroup
+	wg.Add(messageWorkers)
+	for range messageWorkers {
+		go func() {
+			defer wg.Done()
+			for m := range q.Consume() {
+				if herr := engine.Handle(ctx, m); herr != nil {
+					slog.Error("handle message", "user", m.UserID, "err", herr)
+				}
+			}
+		}()
 	}
+	wg.Wait()
 	slog.Info("shutdown complete")
 	return nil
 }

@@ -49,23 +49,18 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 		return fmt.Errorf("store: insert meal: %w", err)
 	}
 
-	const itemQ = `
+	const itemPrefix = `
 		INSERT INTO resolved_items
 			(id, meal_id, position, raw_phrase, quantity, unit, normalized_grams,
 			 food_id, food_name, source, match_score,
 			 kcal, protein, carbs, fat, fiber)
-		VALUES (:id, :meal_id, :position, :raw_phrase, :quantity, :unit, :normalized_grams,
-			:food_id, :food_name, :source, :match_score,
-			:kcal, :protein, :carbs, :fat, :fiber)
-	`
+		VALUES `
+	rows := make([][]any, 0, len(m.Items))
 	for i, it := range m.Items {
-		itemQuery, itemArgs, err := sqlx.Named(itemQ, resolvedItemNamedArgs(newID(), m.ID, i, it))
-		if err != nil {
-			return fmt.Errorf("store: bind resolved_item: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, s.rewrite(itemQuery), itemArgs...); err != nil {
-			return fmt.Errorf("store: insert resolved_item: %w", err)
-		}
+		rows = append(rows, resolvedItemValues(newID(), m.ID, i, it))
+	}
+	if err := s.insertRows(ctx, tx, itemPrefix, "", rows); err != nil {
+		return fmt.Errorf("store: insert resolved items: %w", err)
 	}
 
 	return tx.Commit()
@@ -93,6 +88,14 @@ func resolvedItemNamedArgs(id, mealID string, position int, it types.ResolvedIte
 		"carbs":            it.Macros.Carbs,
 		"fat":              it.Macros.Fat,
 		"fiber":            it.Macros.Fiber,
+	}
+}
+
+func resolvedItemValues(id, mealID string, position int, it types.ResolvedItem) []any {
+	return []any{
+		id, mealID, position, it.Parsed.RawPhrase, it.Parsed.Quantity, it.Parsed.Unit, it.Parsed.NormalizedGrams,
+		it.Match.FoodID, it.Match.Name, it.Match.Source, it.Match.MatchScore,
+		it.Macros.Calories, it.Macros.Protein, it.Macros.Carbs, it.Macros.Fat, it.Macros.Fiber,
 	}
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/jmoiron/sqlx"
 )
 
 // scanUser scans a single *sql.Row with the same column order as userRow.
@@ -74,4 +76,41 @@ var idCounter int64
 func newID() string {
 	n := atomic.AddInt64(&idCounter, 1)
 	return fmt.Sprintf("%d%x", time.Now().UnixNano(), n)
+}
+
+// insertRows executes one INSERT with a VALUES tuple for each row. Queries use
+// SQLite-style placeholders and are rewritten for Postgres by the caller.
+func (s *Store) insertRows(ctx context.Context, tx *sqlx.Tx, prefix, suffix string, rows [][]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	width := len(rows[0])
+	if width == 0 {
+		return fmt.Errorf("store: insert rows: empty row")
+	}
+
+	var q strings.Builder
+	q.WriteString(prefix)
+	args := make([]any, 0, len(rows)*width)
+	for i, row := range rows {
+		if len(row) != width {
+			return fmt.Errorf("store: insert rows: row %d has %d values, want %d", i, len(row), width)
+		}
+		if i > 0 {
+			q.WriteByte(',')
+		}
+		q.WriteByte('(')
+		for j := range row {
+			if j > 0 {
+				q.WriteByte(',')
+			}
+			q.WriteByte('?')
+		}
+		q.WriteByte(')')
+		args = append(args, row...)
+	}
+	q.WriteString(suffix)
+	_, err := tx.ExecContext(ctx, s.rewrite(q.String()), args...)
+	return err
 }

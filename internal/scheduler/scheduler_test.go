@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,6 +98,52 @@ func proteinRule() []Rule {
 
 func newSched(st Store, nd NudgeStore, nt Notifier) *Scheduler {
 	return New(st, nd, nt, proteinRule(), time.UTC, time.Minute)
+}
+
+type blockingStore struct {
+	users   []types.User
+	started chan struct{}
+	release <-chan struct{}
+	calls   atomic.Int32
+}
+
+func (s *blockingStore) ListUsers(context.Context) ([]types.User, error) { return s.users, nil }
+func (s *blockingStore) GetTargets(context.Context, string) (types.DailyTargets, error) {
+	s.calls.Add(1)
+	s.started <- struct{}{}
+	<-s.release
+	return types.DailyTargets{}, types.ErrNotFound
+}
+func (*blockingStore) GetRollup(context.Context, string, string) (types.DailyRollup, error) {
+	return types.DailyRollup{}, types.ErrNotFound
+}
+
+func TestTickBoundsConcurrentUserEvaluation(t *testing.T) {
+	users := make([]types.User, schedulerWorkers+1)
+	for i := range users {
+		users[i].ID = string(rune('a' + i))
+	}
+	release := make(chan struct{})
+	st := &blockingStore{users: users, started: make(chan struct{}, len(users)), release: release}
+	s := New(st, newFakeNudges(), &fakeNotifier{}, nil, time.UTC, time.Minute)
+	done := make(chan struct{})
+	go func() {
+		s.tick(context.Background(), time.Now())
+		close(done)
+	}()
+	for range schedulerWorkers {
+		<-st.started
+	}
+	select {
+	case <-st.started:
+		t.Fatal("evaluated more users than the worker limit")
+	default:
+	}
+	close(release)
+	<-done
+	if got := int(st.calls.Load()); got != len(users) {
+		t.Fatalf("evaluated %d users, want %d", got, len(users))
+	}
 }
 
 // --- Macro rule tests ---

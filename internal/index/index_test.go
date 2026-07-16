@@ -216,7 +216,7 @@ func TestUpsertReplaces(t *testing.T) {
 	}
 }
 
-func TestCacheInvalidation(t *testing.T) {
+func TestCacheUpdatesOnUpsertAndInvalidatesOnDelete(t *testing.T) {
 	db := openTestDB(t)
 	ix := New(db)
 	ctx := context.Background()
@@ -234,17 +234,17 @@ func TestCacheInvalidation(t *testing.T) {
 		t.Fatal("expected cache to be populated")
 	}
 
-	// Upsert should invalidate.
+	// Upsert should preserve the primed cache and add the new vector.
 	requireNoErr(t, ix.Upsert(ctx, "b", []float32{0, 1}))
 	ix.mu.RLock()
 	cached = ix.cache != nil
+	entries := len(ix.cache)
 	ix.mu.RUnlock()
-	if cached {
-		t.Error("cache should be invalidated after Upsert")
+	if !cached || entries != 2 {
+		t.Fatalf("cache after Upsert = primed:%t entries:%d, want primed with 2 entries", cached, entries)
 	}
 
 	// Delete should invalidate.
-	_, _ = ix.Nearest(ctx, []float32{1, 0}, 1) // reload
 	requireNoErr(t, ix.Delete(ctx, "b"))
 	ix.mu.RLock()
 	cached = ix.cache != nil

@@ -9,10 +9,32 @@ import (
 
 // fakePurgeStore is a test double for PurgeStore.
 type fakePurgeStore struct {
-	mu     sync.Mutex
-	purges []time.Time // recorded olderThan values
-	count  int         // number of sessions to report purged
-	err    error
+	mu                 sync.Mutex
+	purges             []time.Time // recorded chat-session olderThan values
+	loginAttemptPurges []time.Time
+	auditPurges        []time.Time
+	count              int // number of rows to report purged
+	err                error
+}
+
+func (f *fakePurgeStore) PurgeLoginAttempts(_ context.Context, olderThan time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loginAttemptPurges = append(f.loginAttemptPurges, olderThan)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
+}
+
+func (f *fakePurgeStore) PurgeAuthAuditEvents(_ context.Context, olderThan time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditPurges = append(f.auditPurges, olderThan)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
 }
 
 func (f *fakePurgeStore) PurgeDeletedChatSessions(ctx context.Context, olderThan time.Time) (int, error) {
@@ -43,6 +65,9 @@ func TestPurgeRunnerTicksAndPurges(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.purges) == 0 {
 		t.Fatal("expected at least one purge call, got 0")
+	}
+	if len(store.loginAttemptPurges) == 0 || len(store.auditPurges) == 0 {
+		t.Fatal("expected login-attempt and audit purges")
 	}
 
 	// olderThan should be ~30 days ago.

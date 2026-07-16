@@ -15,10 +15,13 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
+
+const schedulerWorkers = 8
 
 // Store is the read side the scheduler needs. The concrete *store.Store
 // satisfies it once it gains ListUsers (its other methods already exist).
@@ -278,9 +281,26 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 		s.log.Error("scheduler: list users", "err", err)
 		return
 	}
-	for _, u := range users {
-		s.evalUser(ctx, now, u)
+	workers := min(schedulerWorkers, len(users))
+	if workers == 0 {
+		return
 	}
+	jobs := make(chan types.User)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for u := range jobs {
+				s.evalUser(ctx, now, u)
+			}
+		}()
+	}
+	for _, u := range users {
+		jobs <- u
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // evalUser checks all rules for one user at the given instant. Health rules

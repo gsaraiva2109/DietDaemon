@@ -7,6 +7,35 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+func TestPurgeAuthRecords(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	if err := s.RecordLoginAttempt(ctx(), "old@example.com", false); err != nil {
+		t.Fatalf("RecordLoginAttempt old: %v", err)
+	}
+	if err := s.RecordLoginAttempt(ctx(), "new@example.com", false); err != nil {
+		t.Fatalf("RecordLoginAttempt new: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE login_attempts SET created_at = ? WHERE identifier = ?`, utcStr(now.Add(-48*time.Hour)), "old@example.com"); err != nil {
+		t.Fatalf("backdate login attempt: %v", err)
+	}
+	if n, err := s.PurgeLoginAttempts(ctx(), now.Add(-24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("PurgeLoginAttempts = %d, %v; want 1, nil", n, err)
+	}
+
+	if err := s.WriteAuditEvent(ctx(), types.AuditEvent{ID: "audit-old", Event: "login.fail", CreatedAt: now.Add(-120 * 24 * time.Hour)}); err != nil {
+		t.Fatalf("WriteAuditEvent old: %v", err)
+	}
+	if err := s.WriteAuditEvent(ctx(), types.AuditEvent{ID: "audit-new", Event: "login.success", CreatedAt: now}); err != nil {
+		t.Fatalf("WriteAuditEvent new: %v", err)
+	}
+	if n, err := s.PurgeAuthAuditEvents(ctx(), now.Add(-90*24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("PurgeAuthAuditEvents = %d, %v; want 1, nil", n, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OIDC state create / consume — single-use + expiry
 // ---------------------------------------------------------------------------
