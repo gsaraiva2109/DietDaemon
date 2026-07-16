@@ -211,29 +211,6 @@ func (r templateItemRow) toResolvedItem() types.ResolvedItem {
 	}
 }
 
-// templateItemNamedArgs builds the named-parameter map for inserting a
-// meal_template_items row.
-func templateItemNamedArgs(id, templateID string, position int, it types.ResolvedItem) map[string]any {
-	return map[string]any{
-		"id":               id,
-		"template_id":      templateID,
-		"position":         position,
-		"raw_phrase":       it.Parsed.RawPhrase,
-		"quantity":         it.Parsed.Quantity,
-		"unit":             it.Parsed.Unit,
-		"normalized_grams": it.Parsed.NormalizedGrams,
-		"food_id":          it.Match.FoodID,
-		"food_name":        it.Match.Name,
-		"source":           it.Match.Source,
-		"match_score":      it.Match.MatchScore,
-		"kcal":             it.Macros.Calories,
-		"protein":          it.Macros.Protein,
-		"carbs":            it.Macros.Carbs,
-		"fat":              it.Macros.Fat,
-		"fiber":            it.Macros.Fiber,
-	}
-}
-
 func templateItemValues(id, templateID string, position int, it types.ResolvedItem) []any {
 	return []any{
 		id, templateID, position, it.Parsed.RawPhrase, it.Parsed.Quantity, it.Parsed.Unit, it.Parsed.NormalizedGrams,
