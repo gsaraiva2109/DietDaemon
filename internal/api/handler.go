@@ -25,25 +25,39 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
 
-// AuthStore is the subset of store methods the auth endpoints need.
-type AuthStore interface {
+// AccountStore covers core user account and credential lookups.
+type AccountStore interface {
 	GetUserByEmail(ctx context.Context, email string) (types.User, error)
 	CreateUserWithPassword(ctx context.Context, accountID, userID, email, displayName, phcHash string) (types.User, error)
 	GetPasswordHash(ctx context.Context, userID string) (string, error)
 	SetPasswordHash(ctx context.Context, userID, phcHash string) error
 	CountUsers(ctx context.Context) (int, error)
+}
+
+// APIKeyStore covers long-lived API key issuance and revocation.
+type APIKeyStore interface {
 	GetUserByAPIKey(ctx context.Context, hashedKey string) (types.User, error)
 	CreateAPIKey(ctx context.Context, id, userID, hashedKey, label string) error
 	ListAPIKeys(ctx context.Context, userID string) ([]types.APIKey, error)
 	RevokeAPIKey(ctx context.Context, userID, keyID string) error
+}
+
+// ShareTokenStore covers read-only share links.
+type ShareTokenStore interface {
 	GetUserByShareToken(ctx context.Context, hashedToken string) (types.User, error)
 	CreateShareToken(ctx context.Context, id, userID, hashedToken, label string) error
 	ListShareTokens(ctx context.Context, userID string) ([]types.ShareToken, error)
 	RevokeShareToken(ctx context.Context, userID, tokenID string) error
+}
+
+// AuditStore covers audit logging and login-attempt bookkeeping.
+type AuditStore interface {
 	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
 	RecordLoginAttempt(ctx context.Context, identifier string, succeeded bool) error
+}
 
-	// OIDC.
+// OIDCStore covers OIDC identity linking and login-flow state.
+type OIDCStore interface {
 	GetUserByOIDCIdentity(ctx context.Context, provider, subject string) (types.User, error)
 	LinkOIDCIdentity(ctx context.Context, id, userID, provider, subject, email string) error
 	ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error)
@@ -52,21 +66,27 @@ type AuthStore interface {
 	CreateOIDCState(ctx context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error
 	ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error)
 	DeleteOIDCState(ctx context.Context, id string) error
+}
 
-	// Email tokens.
+// EmailTokenStore covers single-use email verification / address-change tokens.
+type EmailTokenStore interface {
 	MarkEmailVerified(ctx context.Context, userID string) error
 	UpdateUserEmail(ctx context.Context, userID, email string) error
 	CreateEmailToken(ctx context.Context, id, userID, purpose, expiresAt string) error
 	ConsumeEmailToken(ctx context.Context, id, purpose string) (userID string, err error)
+	DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error
+}
 
-	// Magic codes.
+// MagicCodeStore covers passwordless magic-link sign-in codes.
+type MagicCodeStore interface {
 	UpsertMagicCode(ctx context.Context, userID, codeHash, expiresAt string) error
 	GetMagicCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error)
 	IncrementMagicCodeAttempts(ctx context.Context, userID string) error
 	DeleteMagicCode(ctx context.Context, userID string) error
-	DeleteEmailTokensByUserAndPurpose(ctx context.Context, userID, purpose string) error
+}
 
-	// WebAuthn passkeys.
+// WebAuthnStore covers passkey handles, credentials, and ceremony sessions.
+type WebAuthnStore interface {
 	GetOrCreateWebAuthnHandle(ctx context.Context, userID string) (string, error)
 	GetUserByWebAuthnHandle(ctx context.Context, handle string) (types.User, error)
 	CreateWebAuthnCredential(ctx context.Context, id, userID, label, credentialJSON string, signCount int, createdAt string) error
@@ -76,15 +96,33 @@ type AuthStore interface {
 	RenameWebAuthnCredential(ctx context.Context, userID, id, label string) error
 	DeleteWebAuthnCredential(ctx context.Context, userID, id string) error
 
-	// WebAuthn ceremony sessions.
+	// Ceremony sessions.
 	CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error
 	ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error)
+}
 
-	// MFA email codes.
+// MFAEmailCodeStore covers one-time MFA codes delivered by email.
+type MFAEmailCodeStore interface {
 	UpsertMFAEmailCode(ctx context.Context, userID, codeHash, expiresAt string) error
 	GetMFAEmailCode(ctx context.Context, userID string) (codeHash, expiresAt string, attempts int, err error)
 	IncrementMFAEmailCodeAttempts(ctx context.Context, userID string) error
 	DeleteMFAEmailCode(ctx context.Context, userID string) error
+}
+
+// AuthStore is the subset of store methods the auth endpoints need. It is
+// composed of focused sub-interfaces (one per auth concern) so handlers and
+// test doubles that only care about one concern can depend on that narrower
+// interface instead of this god interface.
+type AuthStore interface {
+	AccountStore
+	APIKeyStore
+	ShareTokenStore
+	AuditStore
+	OIDCStore
+	EmailTokenStore
+	MagicCodeStore
+	WebAuthnStore
+	MFAEmailCodeStore
 }
 
 // AuthConfig bundles auth-related configuration for the Handler.
