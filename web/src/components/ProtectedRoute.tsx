@@ -2,6 +2,7 @@
 // /login (preserving where we were headed via ?next); authed → render the
 // matched child route. Demo mode reports as authed, so it passes through.
 
+import { useEffect } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
@@ -11,6 +12,10 @@ export function ProtectedRoute() {
   const { t } = useTranslation()
   const { status } = useAuth()
   const location = useLocation()
+
+  useEffect(() => {
+    if (status === 'checking') void import('@/routes/Dashboard')
+  }, [status])
 
   if (status === 'checking') {
     return (

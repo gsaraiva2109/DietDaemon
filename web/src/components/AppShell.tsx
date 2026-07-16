@@ -27,6 +27,7 @@ interface NavItem {
   labelKey: string
   Icon: typeof TodayIcon
   end?: boolean
+  preload: () => Promise<unknown>
 }
 
 // Desktop sidebar, grouped into sections. Mobile keeps a curated 5-item bar;
@@ -34,39 +35,39 @@ interface NavItem {
 const NAV_GROUPS: { headingKey?: string; items: NavItem[] }[] = [
   {
     items: [
-      { to: '/', labelKey: 'today', Icon: TodayIcon, end: true },
-      { to: '/chat', labelKey: 'chat', Icon: ChatIcon },
-      { to: '/log', labelKey: 'log', Icon: LogIcon },
-      { to: '/history', labelKey: 'history', Icon: HistoryIcon },
+      { to: '/', labelKey: 'today', Icon: TodayIcon, end: true, preload: () => import('@/routes/Dashboard') },
+      { to: '/chat', labelKey: 'chat', Icon: ChatIcon, preload: () => import('@/routes/Chat') },
+      { to: '/log', labelKey: 'log', Icon: LogIcon, preload: () => import('@/routes/LogMeal') },
+      { to: '/history', labelKey: 'history', Icon: HistoryIcon, preload: () => import('@/routes/History') },
     ],
   },
   {
     headingKey: 'discover',
     items: [
-      { to: '/foods', labelKey: 'foods', Icon: FoodsIcon },
-      { to: '/templates', labelKey: 'templates', Icon: TemplateIcon },
+      { to: '/foods', labelKey: 'foods', Icon: FoodsIcon, preload: () => import('@/routes/Foods') },
+      { to: '/templates', labelKey: 'templates', Icon: TemplateIcon, preload: () => import('@/routes/Templates') },
     ],
   },
   {
     headingKey: 'track',
     items: [
-      { to: '/body', labelKey: 'body', Icon: BodyIcon },
-      { to: '/goals', labelKey: 'goals', Icon: GoalIcon },
-      { to: '/trends', labelKey: 'trends', Icon: TrendsIcon },
-      { to: '/summary', labelKey: 'summary', Icon: SummaryIcon },
+      { to: '/body', labelKey: 'body', Icon: BodyIcon, preload: () => import('@/routes/Body') },
+      { to: '/goals', labelKey: 'goals', Icon: GoalIcon, preload: () => import('@/routes/Goals') },
+      { to: '/trends', labelKey: 'trends', Icon: TrendsIcon, preload: () => import('@/routes/Trends') },
+      { to: '/summary', labelKey: 'summary', Icon: SummaryIcon, preload: () => import('@/routes/Summary') },
     ],
   },
   {
-    items: [{ to: '/settings', labelKey: 'settings', Icon: SettingsIcon }],
+    items: [{ to: '/settings', labelKey: 'settings', Icon: SettingsIcon, preload: () => import('@/routes/Settings') }],
   },
 ]
 
 const MOBILE_NAV: NavItem[] = [
-  { to: '/', labelKey: 'today', Icon: TodayIcon, end: true },
-  { to: '/log', labelKey: 'log', Icon: LogIcon },
-  { to: '/foods', labelKey: 'foods', Icon: FoodsIcon },
-  { to: '/body', labelKey: 'body', Icon: BodyIcon },
-  { to: '/settings', labelKey: 'more', Icon: SettingsIcon },
+  { to: '/', labelKey: 'today', Icon: TodayIcon, end: true, preload: () => import('@/routes/Dashboard') },
+  { to: '/log', labelKey: 'log', Icon: LogIcon, preload: () => import('@/routes/LogMeal') },
+  { to: '/foods', labelKey: 'foods', Icon: FoodsIcon, preload: () => import('@/routes/Foods') },
+  { to: '/body', labelKey: 'body', Icon: BodyIcon, preload: () => import('@/routes/Body') },
+  { to: '/settings', labelKey: 'more', Icon: SettingsIcon, preload: () => import('@/routes/Settings') },
 ]
 
 function Brand() {
@@ -101,12 +102,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {t(`nav.${group.headingKey}`)}
                 </p>
               )}
-              {group.items.map(({ to, labelKey, Icon, end }) => (
+              {group.items.map(({ to, labelKey, Icon, end, preload }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={end}
-                  prefetch="intent"
+                  onMouseEnter={() => { void preload() }}
                   className={({ isActive }) =>
                     `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                       isActive
@@ -136,12 +137,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Bottom bar, mobile */}
       <nav className="fixed inset-x-0 bottom-0 z-[1100] flex items-stretch justify-around border-t border-line bg-surface/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        {MOBILE_NAV.map(({ to, labelKey, Icon, end }) => (
+        {MOBILE_NAV.map(({ to, labelKey, Icon, end, preload }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
-            prefetch="intent"
+            onMouseEnter={() => { void preload() }}
             className={({ isActive }) =>
               `flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium transition ${
                 isActive ? 'text-primary' : 'text-muted'
