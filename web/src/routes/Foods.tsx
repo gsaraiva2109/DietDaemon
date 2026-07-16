@@ -20,6 +20,7 @@ import { stagger } from '@/lib/motion'
 const SOURCES: { labelKey?: string; label?: string; value: string }[] = [
   { labelKey: 'foods.sourceAll', value: '' },
   { labelKey: 'foods.sourceLibrary', value: 'food_library' },
+  { labelKey: 'foods.sourceCustom', value: 'custom' },
   { label: 'OpenFoodFacts', value: 'openfoodfacts' },
   { label: 'TACO', value: 'taco' },
   { label: 'USDA', value: 'usda' },
