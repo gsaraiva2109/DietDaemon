@@ -133,7 +133,8 @@ func (h *Handler) handleResendVerify(w http.ResponseWriter, r *http.Request, use
 
 func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
-		Email string `json:"email"`
+		Email           string `json:"email"`
+		CurrentPassword string `json:"current_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -148,7 +149,27 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 
+	if body.CurrentPassword == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "current_password is required"})
+		return
+	}
+
 	ctx := r.Context()
+
+	// Require re-authentication before allowing an email change (mirrors handleChangePassword).
+	phc, err := h.authStore.GetPasswordHash(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	ok, err := auth.Verify(body.CurrentPassword, phc)
+	if err != nil || !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "current password is incorrect"})
+		return
+	}
 
 	// Check for conflict.
 	if existing, err := h.authStore.GetUserByEmail(ctx, newEmail); err == nil {
