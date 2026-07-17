@@ -130,6 +130,7 @@ type AuthConfig struct {
 	SessionCfg       auth.SessionConfig
 	LockoutCfg       auth.LockoutConfig
 	RegistrationMode types.RegistrationMode
+	MultiUser        bool
 	CookieSecure     bool
 	CookieDomain     string
 }
@@ -330,6 +331,7 @@ type Handler struct {
 	sessionCfg       auth.SessionConfig
 	lockoutCfg       auth.LockoutConfig
 	registrationMode types.RegistrationMode
+	multiUser        bool
 	cookieSecure     bool
 	cookieDomain     string
 
@@ -395,6 +397,7 @@ func WithAuth(authStore AuthStore, sessions auth.SessionRepo, loginAttempts auth
 		h.sessionCfg = cfg.SessionCfg
 		h.lockoutCfg = cfg.LockoutCfg
 		h.registrationMode = cfg.RegistrationMode
+		h.multiUser = cfg.MultiUser
 		h.cookieSecure = cfg.CookieSecure
 		h.cookieDomain = cfg.CookieDomain
 	}
