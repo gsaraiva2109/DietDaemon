@@ -16,6 +16,7 @@ Closes #
 - [ ] Code builds: `go build ./...`
 - [ ] Tests pass: `go test ./...`
 - [ ] No new `go vet` warnings
+- [ ] No new staticcheck warnings
 - [ ] No new ESLint or TypeScript errors in `web/`
 
 ### Go changes (`**/*.go`, `go.mod`, `go.sum`, `migrations/`)

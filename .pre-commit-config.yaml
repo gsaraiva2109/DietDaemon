@@ -16,6 +16,8 @@ repos:
       # --- Correctness ---
       - id: go-vet-repo-mod
 
+      - id: go-staticcheck-mod
+
       - id: go-test-repo-mod
 
       - id: go-build-repo-mod

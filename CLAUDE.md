@@ -15,5 +15,5 @@ Run the Make targets instead of raw `go ... ./...` commands; they exclude `web/`
 - `make test` — Go tests
 - `make vet` — Go vet
 - `make fmt` — formatting check
-- `make staticcheck` — optional static analysis
+- `make staticcheck` — Go static analysis (required in PR CI; pre-commit runs it locally on Go changes)
 - `make govulncheck` — Go vulnerability scan (full module, incl. `web/`, for accurate reachability)

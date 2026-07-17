@@ -69,6 +69,12 @@ jobs:
       - name: Vulnerability scan
         run: make govulncheck
 
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.1
+
+      - name: Static analysis
+        run: make staticcheck
+
       - name: Stub web/dist for go:embed
         run: |
           mkdir -p internal/web/dist
