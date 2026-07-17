@@ -18,6 +18,7 @@ npm ci
 npm run build    # produces dist/ that Go embeds
 
 # Local checks, including Conventional Commit validation
+go install honnef.co/go/tools/cmd/staticcheck@2026.1
 pre-commit install
 ```
 
@@ -83,14 +84,13 @@ go test ./... -count=1
 Tests use a real PostgreSQL connection via `TEST_DATABASE_URL` (see `.env.example`).
 Fixtures live in `fixtures/`.
 
-Run `make govulncheck` to check for known, reachable Go vulnerabilities
-before pushing.
+Run `make staticcheck` and `make govulncheck` before pushing — CI treats both as required.
 
 ## PR workflow
 
 1. Branch off `main`
 2. Make changes, keep commits clean
-3. Push — CI runs Go lint/test/build + govulncheck + frontend lint/tsc/build
+3. Push — CI runs Go lint/test/build/staticcheck + govulncheck + frontend lint/tsc/build
 4. Use the PR template, link the issue, add screenshots if UI changed
 5. Merge when checks pass and review is done
 
