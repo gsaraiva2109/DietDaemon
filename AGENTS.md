@@ -16,3 +16,4 @@ Run the Make targets instead of raw `go ... ./...` commands; they exclude `web/`
 - `make vet` — Go vet
 - `make fmt` — formatting check
 - `make staticcheck` — optional static analysis
+- `make govulncheck` — Go vulnerability scan (full module, incl. `web/`, for accurate reachability)

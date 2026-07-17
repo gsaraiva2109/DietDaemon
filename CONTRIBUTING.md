@@ -83,11 +83,14 @@ go test ./... -count=1
 Tests use a real PostgreSQL connection via `TEST_DATABASE_URL` (see `.env.example`).
 Fixtures live in `fixtures/`.
 
+Run `make govulncheck` to check for known, reachable Go vulnerabilities
+before pushing.
+
 ## PR workflow
 
 1. Branch off `main`
 2. Make changes, keep commits clean
-3. Push — CI runs Go lint/test/build + frontend lint/tsc/build
+3. Push — CI runs Go lint/test/build + govulncheck + frontend lint/tsc/build
 4. Use the PR template, link the issue, add screenshots if UI changed
 5. Merge when checks pass and review is done
 
