@@ -22,7 +22,9 @@ go install honnef.co/go/tools/cmd/staticcheck@2026.1
 pre-commit install
 ```
 
-Use `docker compose up -d` for a full-stack dev environment with PostgreSQL.
+Use `docker compose up -d` for the SQLite-backed dev environment. To use
+PostgreSQL, configure `DB_DRIVER` and `DATABASE_URL` in `.env`, then run
+`docker compose --profile postgres up -d`.
 
 ## Branch and commit conventions
 

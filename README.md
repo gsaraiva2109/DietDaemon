@@ -61,10 +61,33 @@ cp .env.example .env
 docker compose up -d
 ```
 
+For deliberate upgrades and rollbacks, see [docs/UPGRADING.md](docs/UPGRADING.md).
+
 For AI-powered parsing (optional):
 
 ```bash
 docker compose --profile ai up -d
+```
+
+For PostgreSQL (optional), set these values in `.env`. Use the same password in
+both places, URL-encoded in `DATABASE_URL`:
+
+```dotenv
+DB_DRIVER=postgres
+POSTGRES_PASSWORD=choose-a-strong-password
+DATABASE_URL=postgres://dietdaemon:<URL-encoded-password>@postgres:5432/dietdaemon?sslmode=disable
+```
+
+Then start the PostgreSQL profile:
+
+```bash
+docker compose --profile postgres up -d
+```
+
+To use PostgreSQL with AI-powered parsing, enable both profiles:
+
+```bash
+docker compose --profile ai --profile postgres up -d
 ```
 
 ## Auth

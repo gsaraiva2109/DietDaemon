@@ -3,8 +3,7 @@ services:
     # Image pulled from GHCR (built by CI). Remove the image line and
     # uncomment build: . for local development with `docker compose up --build`.
     # build: .
-    image: ghcr.io/gsaraiva2109/dietdaemon:latest
-    pull_policy: always
+    image: ghcr.io/gsaraiva2109/dietdaemon:v0.1.0-alpha.3 # x-release-please-version
     container_name: dietdaemon
     restart: unless-stopped
 
@@ -39,6 +38,21 @@ services:
     profiles:
       - ai
 
+  # Opt-in Postgres: docker compose --profile postgres up
+  postgres:
+    image: postgres:16-alpine
+    container_name: dietdaemon-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dietdaemon}
+      POSTGRES_USER: ${POSTGRES_USER:-dietdaemon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    profiles:
+      - postgres
+
 volumes:
   dietdaemon_data:
   ollama_data:
+  postgres_data:
