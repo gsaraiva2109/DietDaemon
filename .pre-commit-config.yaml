@@ -45,7 +45,7 @@ repos:
       - id: conventional-commit
         name: Conventional Commit subject
         entry: >-
-          bash -c 'subject=$(head -n1 "$1"); [[ "$subject" =~ ^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([[:alnum:]./_-]+\))?!?:[[:space:]]+.+$ ]] || { echo "Use Conventional Commits, e.g. feat(api): add meal export" >&2; exit 1; }' --
+          bash -c 'subject=$(head -n1 "$1"); [[ "$subject" =~ ^(build|chore|ci|docs|feat|fix|perf|refactor|revert|security|style|test)(\([[:alnum:]./_-]+\))?!?:[[:space:]]+.+$ ]] || { echo "Use Conventional Commits, e.g. feat(api): add meal export" >&2; exit 1; }' --
         language: system
         stages: [commit-msg]
 
