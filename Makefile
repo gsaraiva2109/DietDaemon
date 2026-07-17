@@ -13,7 +13,7 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 DOCKER_IMAGE ?= ghcr.io/gsaraiva2109/dietdaemon
 
 .PHONY: all build build-go build-web test test-web lint lint-go lint-web \
-        vet fmt staticcheck dev-web ai-setup docker-build docker-run docker-stop clean
+        vet fmt staticcheck govulncheck dev-web ai-setup docker-build docker-run docker-stop clean
 
 all: build
 
@@ -84,6 +84,10 @@ fmt:
 staticcheck:
 	@echo ">> running staticcheck..."
 	staticcheck $(GO_PACKAGES)
+
+govulncheck:
+	@echo ">> running govulncheck..."
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
 # ============================================================
 # AI (optional)
