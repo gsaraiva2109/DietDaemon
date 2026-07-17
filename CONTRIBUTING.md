@@ -33,24 +33,23 @@ Use `docker compose up -d` for a full-stack dev environment with PostgreSQL.
 ```
 feat(parser): add TACO food database support
 fix(chat): lazy session creation stops empty rows
+security(auth): tighten session validation
 refactor(db): migrate to sqlx
 chore: bump Go to 1.26.4
 ```
 
 `pre-commit install` also installs a `commit-msg` hook that rejects subjects
-outside this format. GitHub release notes group merged PRs by their labels, so
-keep PR titles equally clear and add the relevant label:
+outside this format. Release Please groups the visible changelog by commit type:
 
-| Release section | PR label                             |
-|-----------------|--------------------------------------|
-| 🔒 Security     | `security`                           |
-| ✨ Enhancements  | `enhancement`                        |
-| 🐛 Bug fixes    | `bug`                                |
-| ⚡ Performance   | `performance`                        |
-| 🛠 Maintenance  | `documentation`, `refactor`, `tests` |
+| Release section | Commit type |
+|-----------------|-------------|
+| Security        | `security`  |
+| Features        | `feat`      |
+| Fixes           | `fix`       |
+| Performance     | `perf`      |
 
-GitHub generates the release body from those PRs, including **New Contributors**
-only when a first-time contributor is part of that release.
+Build, CI, documentation, refactoring, style, and test commits are hidden and
+do not create release PRs on their own.
 
 ## Architecture
 
