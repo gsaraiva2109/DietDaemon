@@ -519,6 +519,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/meals/{mealID}/items", h.wrap(h.handleAddItem))
 	mux.HandleFunc("DELETE /api/v1/meals/{mealID}/items/{itemID}", h.wrap(h.handleDeleteItem))
 	mux.HandleFunc("POST /api/v1/meals/log", h.wrap(h.handleLogMeal))
+	mux.HandleFunc("POST /api/v1/meals", h.wrap(h.handleCreateStructuredMeal))
 	mux.HandleFunc("GET /api/v1/targets", h.wrap(h.handleGetTargets))
 	mux.HandleFunc("PUT /api/v1/targets", h.wrap(h.handleSetTargets))
 	mux.HandleFunc("GET /api/v1/budget/weekly", h.wrap(h.handleGetBudgetWeekly))

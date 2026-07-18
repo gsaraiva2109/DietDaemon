@@ -209,6 +209,13 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
+  // 201 Created; synchronous — response contains the fully-created Meal.
+  logMealStructured: (items: { food_id: string; grams: number }[]) =>
+    request<Meal>('/meals', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    }),
+
   // --- Auth: sessions, registration, API keys ------------------
   auth: {
     // Boot probe + route guard. 401 → anonymous (UnauthorizedError). Suppresses

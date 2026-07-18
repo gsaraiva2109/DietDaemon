@@ -38,7 +38,7 @@ func (c *WaterCommand) Handle(ctx context.Context, msg types.InboundMessage, arg
 		logs, total, err := c.store.GetWaterToday(ctx, msg.UserID, today)
 		if err != nil || len(logs) == 0 {
 			return types.Reply{
-				Text:        "No water logged today. Drink up! 💧",
+				Text:        "No water logged today. Drink up!",
 				ChannelMeta: msg.ChannelMeta,
 			}, nil
 		}
