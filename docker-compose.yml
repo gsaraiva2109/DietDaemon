@@ -3,10 +3,9 @@ services:
     # Image pulled from GHCR (built by CI). Remove the image line and
     # uncomment build: . for local development with `docker compose up --build`.
     # build: .
-    image: ghcr.io/gsaraiva2109/dietdaemon:v0.2.0-alpha.3 # x-release-please-version
+    image: ghcr.io/gsaraiva2109/dietdaemon:v0.2.0-alpha.1 # x-release-please-version
     container_name: dietdaemon
     restart: unless-stopped
-
 
     env_file:
       - .env
@@ -27,8 +26,7 @@ services:
         reservations:
           memory: 64M
 
-
-#  # Opt-in AI: docker compose --profile ai up
+  #  # Opt-in AI: docker compose --profile ai up
   ollama:
     image: ollama/ollama:latest
     container_name: dietdaemon-ollama
