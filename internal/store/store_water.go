@@ -24,6 +24,42 @@ func (s *Store) LogWater(ctx context.Context, w types.WaterLog) error {
 	return nil
 }
 
+// RestoreWater inserts a water log entry for backup restore. On a
+// unique-constraint violation (duplicate id — the re-run-safety case), the
+// call is a safe no-op and returns nil rather than an error.
+func (s *Store) RestoreWater(ctx context.Context, w types.WaterLog) error {
+	const q = `
+		INSERT INTO water_logs (id, user_id, amount_ml, logged_at, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), w.ID, w.UserID, w.AmountML, w.LoggedAt, nullStr(w.Note), utcNow())
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already restored
+		}
+		return fmt.Errorf("store: restore water: %w", err)
+	}
+	return nil
+}
+
+// GetWaterInRange returns individual water log rows for a user within a date
+// range (inclusive, "YYYY-MM-DD" format), ordered oldest first. Unlike
+// GetWaterDailyTotals, rows are not aggregated per day.
+func (s *Store) GetWaterInRange(ctx context.Context, userID, startDate, endDate string) ([]types.WaterLog, error) {
+	dateExpr := s.dialect.DateTrunc("logged_at")
+	q := fmt.Sprintf(`
+		SELECT id, user_id, amount_ml, logged_at, COALESCE(note, '') AS note
+		FROM water_logs
+		WHERE user_id = ? AND %s >= ? AND %s <= ?
+		ORDER BY logged_at ASC
+	`, dateExpr, dateExpr)
+	var out []types.WaterLog
+	if err := s.db.SelectContext(ctx, &out, s.rewrite(q), userID, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("store: get water in range: %w", err)
+	}
+	return out, nil
+}
+
 // GetWaterToday returns water logs for a specific local date, along with the
 // total ml consumed that day.
 func (s *Store) GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error) {

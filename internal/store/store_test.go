@@ -1231,3 +1231,189 @@ func TestSourcePrecedenceRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Restore (backup restore idempotent inserts + range queries)
+// ---------------------------------------------------------------------------
+
+func TestRestoreSleep_Idempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	sl := types.SleepLog{
+		ID: "sleep-1", UserID: "user-1",
+		SleepAt: "2026-06-17T22:00:00Z", Quality: "good", Note: "slept well",
+	}
+	if err := s.RestoreSleep(ctx(), sl); err != nil {
+		t.Fatalf("RestoreSleep (first): %v", err)
+	}
+	if err := s.RestoreSleep(ctx(), sl); err != nil {
+		t.Fatalf("RestoreSleep (second, idempotent): %v", err)
+	}
+
+	got, err := s.ListSleep(ctx(), "user-1", 10)
+	if err != nil {
+		t.Fatalf("ListSleep: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(sleep logs) = %d, want 1", len(got))
+	}
+}
+
+func TestRestorePhoto_Idempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	p := types.ProgressPhoto{
+		ID: "photo-1", UserID: "user-1", Date: "2026-06-17", View: "front",
+		MimeType: "image/jpeg", Data: []byte("fake-jpeg-bytes"), CreatedAt: time.Now().UTC(),
+	}
+	if err := s.RestorePhoto(ctx(), p); err != nil {
+		t.Fatalf("RestorePhoto (first): %v", err)
+	}
+	if err := s.RestorePhoto(ctx(), p); err != nil {
+		t.Fatalf("RestorePhoto (second, idempotent): %v", err)
+	}
+
+	got, err := s.ListPhotoMetadata(ctx(), "user-1")
+	if err != nil {
+		t.Fatalf("ListPhotoMetadata: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(photos) = %d, want 1", len(got))
+	}
+}
+
+func TestRestoreWater_Idempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	w := types.WaterLog{ID: "water-1", UserID: "user-1", AmountML: 250, LoggedAt: "2026-06-17T08:00:00Z"}
+	if err := s.RestoreWater(ctx(), w); err != nil {
+		t.Fatalf("RestoreWater (first): %v", err)
+	}
+	if err := s.RestoreWater(ctx(), w); err != nil {
+		t.Fatalf("RestoreWater (second, idempotent): %v", err)
+	}
+
+	got, err := s.GetWaterInRange(ctx(), "user-1", "2026-06-17", "2026-06-17")
+	if err != nil {
+		t.Fatalf("GetWaterInRange: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(water logs) = %d, want 1", len(got))
+	}
+}
+
+func TestGetWaterInRange_ReturnsIndividualRows(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	entries := []types.WaterLog{
+		{ID: "water-1", UserID: "user-1", AmountML: 250, LoggedAt: "2026-06-17T08:00:00Z"},
+		{ID: "water-2", UserID: "user-1", AmountML: 300, LoggedAt: "2026-06-17T14:00:00Z"},
+		{ID: "water-3", UserID: "user-1", AmountML: 500, LoggedAt: "2026-06-18T09:00:00Z"},
+	}
+	for _, w := range entries {
+		if err := s.RestoreWater(ctx(), w); err != nil {
+			t.Fatalf("RestoreWater(%s): %v", w.ID, err)
+		}
+	}
+
+	got, err := s.GetWaterInRange(ctx(), "user-1", "2026-06-17", "2026-06-18")
+	if err != nil {
+		t.Fatalf("GetWaterInRange: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(rows) = %d, want 3 (individual, not aggregated)", len(got))
+	}
+	byID := make(map[string]int)
+	for _, w := range got {
+		byID[w.ID] = w.AmountML
+	}
+	for _, want := range entries {
+		if byID[want.ID] != want.AmountML {
+			t.Errorf("water %s amount = %d, want %d", want.ID, byID[want.ID], want.AmountML)
+		}
+	}
+}
+
+func TestRestoreFast_Idempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	start := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
+	end := start.Add(16 * time.Hour)
+	f := types.Fast{
+		ID: "fast-1", UserID: "user-1", StartAt: start, EndAt: &end,
+		TargetHours: 16, Completed: true, CreatedAt: start,
+	}
+	if err := s.RestoreFast(ctx(), f); err != nil {
+		t.Fatalf("RestoreFast (first): %v", err)
+	}
+	if err := s.RestoreFast(ctx(), f); err != nil {
+		t.Fatalf("RestoreFast (second, idempotent): %v", err)
+	}
+
+	hist, err := s.ListFasts(ctx(), "user-1", 10)
+	if err != nil {
+		t.Fatalf("ListFasts: %v", err)
+	}
+	if len(hist) != 1 {
+		t.Fatalf("len(fasts) = %d, want 1", len(hist))
+	}
+	got := hist[0]
+	if !got.Completed {
+		t.Error("restored fast Completed = false, want true")
+	}
+	if got.EndAt == nil || !got.EndAt.Equal(end) {
+		t.Errorf("restored fast EndAt = %v, want %v", got.EndAt, end)
+	}
+}
+
+func TestGetWorkoutsInRangeWithExercises_PopulatesExercises(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "user-1", CreatedAt: time.Now().UTC()})
+
+	w := types.Workout{
+		ID: "workout-1", UserID: "user-1", Name: "Leg day", DurationMin: 60,
+		Intensity: "high", LoggedAt: "2026-06-17T18:00:00Z",
+		Exercises: []types.WorkoutExercise{
+			{Name: "Squat"},
+			{Name: "Lunge"},
+		},
+	}
+	if err := s.LogWorkout(ctx(), w); err != nil {
+		t.Fatalf("LogWorkout: %v", err)
+	}
+
+	got, err := s.GetWorkoutsInRangeWithExercises(ctx(), "user-1", "2026-06-17", "2026-06-17")
+	if err != nil {
+		t.Fatalf("GetWorkoutsInRangeWithExercises: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(workouts) = %d, want 1", len(got))
+	}
+	if len(got[0].Exercises) != 2 {
+		t.Fatalf("len(exercises) = %d, want 2", len(got[0].Exercises))
+	}
+	names := map[string]bool{}
+	for _, e := range got[0].Exercises {
+		names[e.Name] = true
+	}
+	if !names["Squat"] || !names["Lunge"] {
+		t.Errorf("exercises = %+v, want Squat and Lunge", got[0].Exercises)
+	}
+}

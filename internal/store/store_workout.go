@@ -118,6 +118,24 @@ func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endD
 	return out, nil
 }
 
+// GetWorkoutsInRangeWithExercises returns every workout between startDate and
+// endDate (inclusive, "YYYY-MM-DD" format) with each workout's exercises
+// populated, composing ListWorkoutsInRange and loadWorkoutExercises.
+func (s *Store) GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error) {
+	workouts, err := s.ListWorkoutsInRange(ctx, userID, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	for i := range workouts {
+		exercises, err := s.loadWorkoutExercises(ctx, workouts[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		workouts[i].Exercises = exercises
+	}
+	return workouts, nil
+}
+
 func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]types.WorkoutExercise, error) {
 	const q = `
 		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '') AS note
