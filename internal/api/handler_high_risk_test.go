@@ -40,6 +40,12 @@ func TestHighRiskHandlersRejectUnavailableOrMalformedRequests(t *testing.T) {
 		"streak empty history": {http.StatusOK, func(rec *httptest.ResponseRecorder) {
 			h.handleStreak(rec, httptest.NewRequest(http.MethodGet, "/", nil), "user-1")
 		}},
+		"delete account missing confirm": {http.StatusBadRequest, func(rec *httptest.ResponseRecorder) {
+			h.handleDeleteAccount(rec, httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(`{}`)), "user-1")
+		}},
+		"delete account malformed body": {http.StatusBadRequest, func(rec *httptest.ResponseRecorder) {
+			h.handleDeleteAccount(rec, httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(`{`)), "user-1")
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

@@ -99,6 +99,14 @@ anything OIDC-compliant) are all available, with `AUTH_REGISTRATION_MODE` decidi
 up (`invite`, `open`, `oidc-only`). Accounts don't share data — no household/shared-target mode
 yet.
 
+## Data export & account deletion
+
+- `GET /api/v1/export/all` — one JSON file bundling every tracked data type (weight,
+  measurements, sleep, workouts, fasts, meals, daily rollups, water, progress photos with
+  embedded images, profile, meal templates). Downloads as an attachment.
+- `DELETE /api/v1/account` — permanently deletes the account and all associated data.
+  Requires `{"confirm": "DELETE"}` in the request body as a safety guard.
+
 ## Configuration
 
 All behaviour is driven by environment variables. See `.env.example` for every option.
