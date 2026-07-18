@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0-alpha.3](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.2...v0.2.0-alpha.3) (2026-07-18)
+
+
+### Fixes
+
+* **food:** guard catalog writes against implausible macros, add repair tool ([3efe4c1](https://github.com/gsaraiva2109/DietDaemon/commit/3efe4c1ca18c0e5a2e8b39689d2336fc12a292e2))
+* **food:** guard catalog writes against implausible macros, add repair tool ([f5c23c4](https://github.com/gsaraiva2109/DietDaemon/commit/f5c23c4ff28cd3dd79f2212b29bb4f5199fc4d7a))
+* **taco:** parse the official TACO/NEPA spreadsheet layout instead of rejecting it ([2e33d24](https://github.com/gsaraiva2109/DietDaemon/commit/2e33d244ad1f35e496d49d52e92431ba73de8d2f))
+* **taco:** reject TACO_DATA_PATH files with a mismatched column layout ([34f446f](https://github.com/gsaraiva2109/DietDaemon/commit/34f446f3298cb02294924b550d884ea19c091728))
+
 ## [0.2.0-alpha.2](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.1...v0.2.0-alpha.2) (2026-07-18)
 
 
