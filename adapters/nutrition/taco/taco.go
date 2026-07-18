@@ -42,7 +42,11 @@ type Source struct {
 // New loads the dataset and builds the in-memory index. When dataPath is empty
 // the embedded taco.csv is used; otherwise the file at dataPath is loaded.
 // Format is chosen by file extension: .csv → encoding/csv, .xlsx → excelize.
-// Expected columns (in order): food_id, name, kcal, protein, carb, fat, fiber.
+// Two column layouts are recognized: the simplified schema used by the
+// embedded dataset (food_id, name, kcal, protein, carb, fat, fiber), and the
+// raw official TACO/NEPA spreadsheet an operator may point TACO_DATA_PATH at
+// directly. Anything matching neither is a loud error instead of a silent
+// misparse (see issue #111).
 func New(dataPath string) (*Source, error) {
 	var rows [][]string
 	var err error
@@ -62,11 +66,11 @@ func New(dataPath string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkHeader(rows); err != nil {
+
+	foods, err := parseRows(rows)
+	if err != nil {
 		return nil, err
 	}
-
-	foods := rowsToFoods(rows)
 	if len(foods) == 0 {
 		src := dataPath
 		if src == "" {
@@ -181,14 +185,27 @@ func loadXLSX(path string) ([][]string, error) {
 // Row → FoodMatch
 // ---------------------------------------------------------------------------
 
-// checkHeader fails loud when a file doesn't match the documented simple
-// schema (food_id, name, kcal, protein, carb, fat, fiber). Without this, an
-// operator who points TACO_DATA_PATH at the raw official TACO/NEPA
-// spreadsheet — which has a completely different column layout (moisture%
-// and kJ columns before protein, category-separator rows, three merged
-// header rows) — gets no error at all: rowsToFoods just reads whichever
-// columns happen to line up and writes silently wrong macros for every row.
-func checkHeader(rows [][]string) error {
+// parseRows dispatches between the two column layouts New() accepts. Without
+// this, a file that doesn't match the simplified schema (e.g. the raw
+// official TACO/NEPA spreadsheet, which has moisture% and kJ columns before
+// protein, category-separator rows, and a three-row merged header) got no
+// error at all: rowsToFoods just read whichever columns happened to line
+// up and wrote silently wrong macros for every row (issue #111).
+func parseRows(rows [][]string) (map[string]types.FoodMatch, error) {
+	headerErr := checkSimpleHeader(rows)
+	if headerErr == nil {
+		return rowsToFoods(rows), nil
+	}
+	if foods := officialRowsToFoods(rows); len(foods) > 0 {
+		return foods, nil
+	}
+	return nil, headerErr
+}
+
+// checkSimpleHeader reports whether rows starts with the simplified schema's
+// header (food_id, name, ...), used by both the embedded dataset and any
+// operator-supplied file meant to match it.
+func checkSimpleHeader(rows [][]string) error {
 	if len(rows) == 0 || len(rows[0]) < 2 {
 		return fmt.Errorf("taco: file has no header row")
 	}
@@ -196,13 +213,63 @@ func checkHeader(rows [][]string) error {
 	got1 := strings.ToLower(strings.TrimSpace(rows[0][1]))
 	if got0 != "food_id" || got1 != "name" {
 		return fmt.Errorf(
-			"taco: unexpected header %v, want columns food_id,name,kcal,protein,carb,fat,fiber — "+
-				"this loader expects that simplified schema, not the raw official TACO/NEPA spreadsheet; "+
-				"convert it to the simplified schema first (see adapters/nutrition/taco/taco.csv for the format)",
+			"taco: unexpected header %v, want columns food_id,name,kcal,protein,carb,fat,fiber "+
+				"(simplified schema, see adapters/nutrition/taco/taco.csv) or the official TACO/NEPA "+
+				"spreadsheet layout — neither matched",
 			rows[0],
 		)
 	}
 	return nil
+}
+
+// officialRowsToFoods parses the raw official TACO/NEPA spreadsheet layout:
+// a three-row merged header, food-group separator rows (only column 0
+// populated, e.g. "Cereais e derivados"), and columns id, name, moisture%,
+// kcal, kJ, protein, fat, cholesterol, carbs, fiber, ... — a completely
+// different order and width than the simplified schema. Food IDs are
+// prefixed with "TACO" to match the embedded dataset's ID scheme, since the
+// official file's "Número do Alimento" column is a bare integer.
+func officialRowsToFoods(rows [][]string) map[string]types.FoodMatch {
+	const (
+		colID      = 0
+		colName    = 1
+		colKcal    = 3
+		colProtein = 5
+		colFat     = 6
+		colCarbs   = 8
+		colFiber   = 9
+	)
+	foods := make(map[string]types.FoodMatch)
+	for _, row := range rows {
+		if len(row) <= colFiber {
+			continue
+		}
+		id := strings.TrimSpace(row[colID])
+		if _, err := strconv.Atoi(id); err != nil {
+			continue // header row or food-group separator, not a food row
+		}
+		name := strings.TrimSpace(row[colName])
+		if name == "" {
+			continue
+		}
+		fm := types.FoodMatch{
+			FoodID:     "TACO" + id,
+			Name:       name,
+			Source:     "taco",
+			MatchScore: 1.0,
+		}
+		fm.Per100g.Calories = parseFloat(row[colKcal])
+		fm.Per100g.Protein = parseFloat(row[colProtein])
+		fm.Per100g.Carbs = parseFloat(row[colCarbs])
+		fm.Per100g.Fat = parseFloat(row[colFat])
+		fm.Per100g.Fiber = parseFloat(row[colFiber])
+
+		key := normalizePhrase(fm.Name)
+		if key != "" {
+			foods[key] = fm
+		}
+	}
+	return foods
 }
 
 // rowsToFoods converts raw string rows (first row is header) into a normalized
