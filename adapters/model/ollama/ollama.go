@@ -21,10 +21,19 @@ var _ ports.ModelAdapter = (*Adapter)(nil)
 
 // Adapter satisfies ports.ModelAdapter via Ollama's HTTP API.
 type Adapter struct {
-	url        string // base URL, e.g. "http://localhost:11434"
-	embedModel string // model for embeddings, e.g. "nomic-embed-text"
-	llmModel   string // model for completions, e.g. "llama3.1"
-	client     *http.Client
+	url         string // base URL, e.g. "http://localhost:11434"
+	embedModel  string // model for embeddings, e.g. "nomic-embed-text"
+	llmModel    string // model for completions, e.g. "llama3.1"
+	visionModel string // model for ExtractLabel, e.g. "llava"; set via SetVisionModel
+	client      *http.Client
+}
+
+// SetVisionModel sets the model used by ExtractLabel (e.g. "llava"), which is
+// distinct from llmModel since a default chat model like llama3.1 has no
+// vision support. A setter avoids changing New's signature and every
+// existing call site.
+func (a *Adapter) SetVisionModel(model string) {
+	a.visionModel = model
 }
 
 // New returns a ready Adapter. url is the Ollama base (no trailing slash),
