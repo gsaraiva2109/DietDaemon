@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import {
   useProfile,
+  useLogWeight,
   useUpsertProfile,
   useSetTargets,
   useTDEE,
@@ -110,6 +111,7 @@ export function OnboardingWizard() {
   const { t } = useTranslation()
   const { demo } = useDemo()
   const { data: profile, isLoading } = useProfile()
+  const logWeight = useLogWeight()
   const upsert = useUpsertProfile()
   const setTargets = useSetTargets()
 
@@ -203,6 +205,9 @@ export function OnboardingWizard() {
 
   function save() {
     upsert.mutate(profilePayload(), { onSuccess: close })
+    if (!editMode && draft.weight_kg > 0) {
+      logWeight.mutate({ date: new Date().toISOString().slice(0, 10), weightKg: draft.weight_kg })
+    }
     if (recommended) setTargets.mutate(recommended)
   }
 
@@ -213,6 +218,9 @@ export function OnboardingWizard() {
     }
     // Mark onboarded with whatever was filled, so it won't reappear.
     upsert.mutate(profilePayload(), { onSuccess: close })
+    if (!editMode && draft.weight_kg > 0) {
+      logWeight.mutate({ date: new Date().toISOString().slice(0, 10), weightKg: draft.weight_kg })
+    }
   }
 
   return (
