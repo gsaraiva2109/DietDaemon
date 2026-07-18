@@ -149,6 +149,10 @@ func (s *Store) ListFoodsWithoutVectors(ctx context.Context) ([]types.FoodMatch,
 // how many users log it), ensures a per-user usage-stats row exists, and adds
 // any new normalized aliases for this user, all within a single transaction.
 func (s *Store) UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error {
+	if !plausibleMacros(match.Per100g) {
+		return fmt.Errorf("store: implausible macros for food %q: %+v", match.FoodID, match.Per100g)
+	}
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -206,6 +210,20 @@ func (s *Store) RecordFoodQuery(ctx context.Context, userID, foodID string) erro
 	`
 	_, err := s.db.ExecContext(ctx, s.rewrite(q), userID, foodID, utcNow())
 	return err
+}
+
+// plausibleMacros reports whether per-100g macro values are physically
+// possible. Guards every food-catalog write against corrupted source data
+// (e.g. a parser/import bug that shifts values across fields) regardless of
+// which source or code path produced them. Calories tops out higher than the
+// other macros since pure fat/alcohol foods run close to 900-900+ kcal/100g.
+func plausibleMacros(m types.Macros) bool {
+	for _, v := range []float64{m.Calories, m.Protein, m.Carbs, m.Fat, m.Fiber} {
+		if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+	}
+	return m.Calories <= 900 && m.Protein <= 100 && m.Carbs <= 100 && m.Fat <= 100 && m.Fiber <= 100
 }
 
 func validCustomFood(input types.CustomFoodInput) bool {

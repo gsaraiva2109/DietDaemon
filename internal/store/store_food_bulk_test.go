@@ -18,7 +18,7 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 			FoodID:      fmt.Sprintf("bulk-%d", i),
 			Name:        fmt.Sprintf("Food %d", i),
 			Source:      "usda",
-			Per100g:     types.Macros{Calories: float64(i), Protein: 1, Carbs: 2, Fat: 3, Fiber: 0.5},
+			Per100g:     types.Macros{Calories: float64(i % 800), Protein: 1, Carbs: 2, Fat: 3, Fiber: 0.5},
 			Category:    "test-category",
 			Brand:       "test-brand",
 			Barcode:     fmt.Sprintf("barcode-%d", i),
@@ -46,15 +46,15 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetFood bulk-%d: %v", i, err)
 		}
-		if got.Name != fmt.Sprintf("Food %d", i) || got.Per100g.Calories != float64(i) {
+		if got.Name != fmt.Sprintf("Food %d", i) || got.Per100g.Calories != float64(i%800) {
 			t.Fatalf("GetFood bulk-%d: unexpected row %+v", i, got)
 		}
 	}
 
 	// Re-run with overlapping IDs but changed data — must update, not duplicate.
 	updated := []types.FoodMatch{
-		{FoodID: "bulk-0", Name: "Updated Food 0", Source: "usda", Per100g: types.Macros{Calories: 999}},
-		{FoodID: "bulk-500", Name: "Updated Food 500", Source: "usda", Per100g: types.Macros{Calories: 999}},
+		{FoodID: "bulk-0", Name: "Updated Food 0", Source: "usda", Per100g: types.Macros{Calories: 899}},
+		{FoodID: "bulk-500", Name: "Updated Food 500", Source: "usda", Per100g: types.Macros{Calories: 899}},
 	}
 	if err := s.BulkUpsertFoods(ctx(), updated); err != nil {
 		t.Fatalf("BulkUpsertFoods (update pass): %v", err)
@@ -71,7 +71,7 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFood bulk-0 after update: %v", err)
 	}
-	if got.Name != "Updated Food 0" || got.Per100g.Calories != 999 {
+	if got.Name != "Updated Food 0" || got.Per100g.Calories != 899 {
 		t.Fatalf("expected updated row, got %+v", got)
 	}
 
@@ -88,6 +88,84 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 	}
 	if aliasCount != 0 {
 		t.Fatalf("expected 0 food_aliases rows, got %d", aliasCount)
+	}
+}
+
+func TestBulkUpsertFoodsSkipsImplausibleMacros(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	foods := []types.FoodMatch{
+		{FoodID: "good-1", Name: "Good Food", Source: "taco", Per100g: types.Macros{Calories: 100, Protein: 5, Carbs: 10, Fat: 2, Fiber: 1}},
+		{FoodID: "bad-1", Name: "Corrupted Food", Source: "taco", Per100g: types.Macros{Calories: 2, Protein: 606, Carbs: 2535, Fat: 23, Fiber: 54}},
+	}
+	if err := s.BulkUpsertFoods(ctx(), foods); err != nil {
+		t.Fatalf("BulkUpsertFoods: %v", err)
+	}
+
+	var count int
+	if err := s.db.Get(&count, "SELECT COUNT(*) FROM foods"); err != nil {
+		t.Fatalf("count foods: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected only the plausible row to be written, got %d rows", count)
+	}
+	if _, err := s.GetFood(ctx(), "good-1"); err != nil {
+		t.Fatalf("GetFood good-1: %v", err)
+	}
+	if _, err := s.GetFood(ctx(), "bad-1"); err == nil {
+		t.Fatal("expected bad-1 to be skipped, not written")
+	}
+}
+
+func TestUpsertFoodRejectsImplausibleMacros(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	match := types.FoodMatch{
+		FoodID: "bad-2", Name: "Corrupted Food", Source: "taco",
+		Per100g: types.Macros{Calories: 2, Protein: 606, Carbs: 2535, Fat: 23, Fiber: 54},
+	}
+	if err := s.UpsertFood(ctx(), "user-1", match, nil); err == nil {
+		t.Fatal("expected UpsertFood to reject implausible macros")
+	}
+	if _, err := s.GetFood(ctx(), "bad-2"); err == nil {
+		t.Fatal("expected bad-2 to not be written")
+	}
+}
+
+func TestRepairFoodMacros(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	// Seed a row exactly as issue #111's stale importer left it: a legacy
+	// numeric food_id with shuffled, implausible macros. Written directly via
+	// SQL since BulkUpsertFoods now rightly refuses to write such a row.
+	if _, err := s.db.Exec(
+		`INSERT INTO foods (food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
+		 VALUES ('558', 'Amendoim', 'taco', 2, 606, 2535, 23, 54, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	fresh := []types.FoodMatch{
+		{FoodID: "TACO558", Name: "Amendoim", Source: "taco", Per100g: types.Macros{Calories: 606, Protein: 22.5, Carbs: 18.7, Fat: 54, Fiber: 7.8}},
+		{FoodID: "no-match", Name: "Nothing Stored", Source: "taco", Per100g: types.Macros{Calories: 1}},
+	}
+	fixed, err := s.RepairFoodMacros(ctx(), fresh)
+	if err != nil {
+		t.Fatalf("RepairFoodMacros: %v", err)
+	}
+	if fixed != 1 {
+		t.Fatalf("expected 1 row fixed, got %d", fixed)
+	}
+
+	got, err := s.GetFood(ctx(), "558")
+	if err != nil {
+		t.Fatalf("GetFood 558: %v", err)
+	}
+	if got.Per100g.Calories != 606 || got.Per100g.Protein != 22.5 || got.Per100g.Carbs != 18.7 || got.Per100g.Fat != 54 || got.Per100g.Fiber != 7.8 {
+		t.Fatalf("unexpected repaired macros: %+v", got.Per100g)
 	}
 }
 

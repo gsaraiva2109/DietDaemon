@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -35,8 +36,12 @@ func (s *Store) bulkUpsertFoodsChunk(ctx context.Context, foods []types.FoodMatc
 	defer func() { _ = tx.Rollback() }()
 
 	rows := make([][]any, 0, len(foods))
+	now := utcNow()
 	for _, food := range foods {
-		now := utcNow()
+		if !plausibleMacros(food.Per100g) {
+			log.Printf("store: skip bulk upsert of food %q (source=%s): implausible macros %+v", food.FoodID, food.Source, food.Per100g)
+			continue
+		}
 		rows = append(rows, []any{
 			food.FoodID, food.Name, food.Source,
 			food.Per100g.Calories, food.Per100g.Protein, food.Per100g.Carbs, food.Per100g.Fat, food.Per100g.Fiber,
@@ -59,4 +64,38 @@ func (s *Store) bulkUpsertFoodsChunk(ctx context.Context, foods []types.FoodMatc
 	}
 
 	return tx.Commit()
+}
+
+// RepairFoodMacros overwrites macros on existing global foods rows that match
+// a fresh source row by (source, name), rather than by food_id. It exists
+// for one-time repair of catalog rows written by an older/different importer
+// under a different food_id scheme, where BulkUpsertFoods' ON CONFLICT(food_id)
+// can't reach the stale row at all (see issue #111). Matching by name instead
+// of food_id also means the stale row's food_id is never touched, so any
+// meal_items/food_aliases/user_food_stats referencing it stay intact — only
+// the wrong macro values get corrected in place. Returns the number of source
+// rows that matched (and were fixed) an existing catalog row.
+func (s *Store) RepairFoodMacros(ctx context.Context, foods []types.FoodMatch) (int, error) {
+	const q = `
+		UPDATE foods SET kcal_100g = ?, protein_100g = ?, carbs_100g = ?, fat_100g = ?, fiber_100g = ?, updated_at = ?
+		WHERE source = ? AND name = ? AND owner_user_id IS NULL
+	`
+	now := utcNow()
+	fixed := 0
+	for _, food := range foods {
+		if !plausibleMacros(food.Per100g) {
+			log.Printf("store: skip repair of food %q (source=%s): implausible macros %+v", food.FoodID, food.Source, food.Per100g)
+			continue
+		}
+		res, err := s.db.ExecContext(ctx, s.rewrite(q),
+			food.Per100g.Calories, food.Per100g.Protein, food.Per100g.Carbs, food.Per100g.Fat, food.Per100g.Fiber, now,
+			food.Source, food.Name)
+		if err != nil {
+			return fixed, fmt.Errorf("store: repair food macros %q: %w", food.FoodID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			fixed++
+		}
+	}
+	return fixed, nil
 }
