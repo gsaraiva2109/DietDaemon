@@ -332,6 +332,14 @@ export function useDeleteCustomFood(foodID: string) {
   })
 }
 
+// Extracts a nutrition-label draft from a photo, for the caller to prefill a
+// form for review. Nothing is persisted server-side, so no cache to invalidate.
+export function useOcrExtractCustomFood() {
+  return useMutation({
+    mutationFn: (file: File) => api.foods.ocrScan(file),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Pending Aliases
 // ---------------------------------------------------------------------------

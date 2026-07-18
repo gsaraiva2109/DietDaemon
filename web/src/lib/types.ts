@@ -170,6 +170,22 @@ export interface CustomFoodInput {
   basis_grams: number
 }
 
+// POST /foods/custom/ocr response, a best-effort extraction from a photo of a
+// nutrition label. Every nutrient is nullable (the model may not find it) and
+// the caller only ever prefills a form for the user to review, nothing here
+// is persisted server-side.
+export interface NutritionLabelDraft {
+  name: string | null
+  basis_grams: number | null
+  calories: number | null
+  protein_g: number | null
+  carbs_g: number | null
+  fat_g: number | null
+  fiber_g: number | null
+  low_confidence_fields: string[]
+  unreadable: boolean
+}
+
 export interface MealTemplate {
   id: string
   user_id: string

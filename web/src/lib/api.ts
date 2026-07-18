@@ -36,6 +36,7 @@ import type {
   NewApiKey,
   NudgeRuleUpdate,
   NudgeRuleView,
+  NutritionLabelDraft,
   Passkey,
   PendingAlias,
   ProgressPhoto,
@@ -429,6 +430,12 @@ export const api = {
       }),
     deleteCustom: (foodID: string) =>
       request<void>(`/foods/${encodeURIComponent(foodID)}/custom`, { method: 'DELETE' }),
+    // Multipart upload, the request() helper is JSON-only, so go direct.
+    ocrScan: (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return multipart<NutritionLabelDraft>('/foods/custom/ocr', fd)
+    },
   },
 
   // --- Pending Aliases --------------------------------------------
