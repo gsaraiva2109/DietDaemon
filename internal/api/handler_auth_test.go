@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -110,6 +111,98 @@ func TestHandleRegisterCreatesSession(t *testing.T) {
 	}
 	if cookieNamed(t, rec, "dd_csrf").HttpOnly {
 		t.Error("dd_csrf must be readable by JavaScript")
+	}
+}
+
+func TestRegistrationAllowed(t *testing.T) {
+	cases := []struct {
+		name      string
+		mode      types.RegistrationMode
+		multiUser bool
+		userCount int
+		viaOIDC   bool
+		want      bool
+	}{
+		{"open/single-user/no-existing/password", types.RegistrationOpen, false, 0, false, true},
+		{"open/single-user/existing/password", types.RegistrationOpen, false, 1, false, false},
+		{"open/multi-user/existing/password", types.RegistrationOpen, true, 5, false, true},
+		{"invite/single-user/no-existing/password", types.RegistrationInvite, false, 0, false, true},
+		{"invite/single-user/existing/password", types.RegistrationInvite, false, 1, false, false},
+		{"invite/multi-user/no-existing/oidc", types.RegistrationInvite, true, 0, true, true},
+		{"invite/multi-user/existing/oidc", types.RegistrationInvite, true, 1, true, false},
+		{"oidc-only/multi-user/password-blocked", types.RegistrationOIDCOnly, true, 0, false, false},
+		{"oidc-only/multi-user/oidc-allowed", types.RegistrationOIDCOnly, true, 0, true, true},
+		{"oidc-only/single-user/existing/oidc-capped", types.RegistrationOIDCOnly, false, 1, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeAuthStore()
+			store.userCount = tc.userCount
+			h := &Handler{authStore: store, registrationMode: tc.mode, multiUser: tc.multiUser}
+			got, err := h.registrationAllowed(context.Background(), tc.viaOIDC)
+			if err != nil {
+				t.Fatalf("registrationAllowed: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("registrationAllowed(viaOIDC=%v) = %v, want %v", tc.viaOIDC, got, tc.want)
+			}
+		})
+	}
+}
+
+// erroringCountAuthStore forces CountUsers to fail, to exercise
+// registrationAllowed's error propagation path.
+type erroringCountAuthStore struct {
+	*fakeAuthStore
+}
+
+func (s *erroringCountAuthStore) CountUsers(_ context.Context) (int, error) {
+	return 0, errors.New("boom")
+}
+
+func TestRegistrationAllowedCountUsersError(t *testing.T) {
+	store := &erroringCountAuthStore{fakeAuthStore: newFakeAuthStore()}
+	h := &Handler{authStore: store, registrationMode: types.RegistrationOpen, multiUser: false}
+
+	allowed, err := h.registrationAllowed(context.Background(), false)
+	if err == nil {
+		t.Fatal("registrationAllowed: expected error from CountUsers")
+	}
+	if allowed {
+		t.Error("registrationAllowed: allowed must be false on error")
+	}
+}
+
+func TestHandleRegisterBlockedWhenMultiUserFalseAndOneUserExists(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	store.userCount = 1
+	h, _ := newAuthHandlerForTest(store, testAuthConfig())
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"email":    "second@example.com",
+		"password": "correct horse battery staple",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("register status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.sessions) != 0 {
+		t.Errorf("created sessions = %d, want 0", len(store.sessions))
+	}
+}
+
+func TestHandleRegisterAllowedWhenMultiUserTrueUnderOpenMode(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	store.userCount = 1
+	cfg := testAuthConfig()
+	cfg.MultiUser = true
+	h, _ := newAuthHandlerForTest(store, cfg)
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"email":    "second@example.com",
+		"password": "correct horse battery staple",
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

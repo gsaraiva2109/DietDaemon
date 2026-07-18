@@ -358,6 +358,7 @@ func run() error {
 			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
 			CookieSecure:     cfg.CookieSecure,
 			CookieDomain:     cfg.CookieDomain,
+			MultiUser:        cfg.MultiUser,
 		}
 		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
 		for i, c := range cfg.OIDCProviders {

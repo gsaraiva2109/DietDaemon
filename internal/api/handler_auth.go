@@ -64,6 +64,30 @@ func (h *Handler) userToJSON(u types.User) userJSON {
 	}
 }
 
+// registrationAllowed reports whether a new account may be created.
+// viaOIDC distinguishes OIDC auto-provisioning (where RegistrationOIDCOnly
+// permits account creation) from password registration (where it never does).
+func (h *Handler) registrationAllowed(ctx context.Context, viaOIDC bool) (bool, error) {
+	if h.registrationMode == types.RegistrationOIDCOnly && !viaOIDC {
+		return false, nil
+	}
+	if !h.multiUser {
+		count, err := h.authStore.CountUsers(ctx)
+		if err != nil {
+			return false, err
+		}
+		return count == 0, nil
+	}
+	if h.registrationMode == types.RegistrationInvite {
+		count, err := h.authStore.CountUsers(ctx)
+		if err != nil {
+			return false, err
+		}
+		return count == 0, nil
+	}
+	return true, nil
+}
+
 // ---------------------------------------------------------------------------
 // POST /auth/register
 // ---------------------------------------------------------------------------
@@ -92,23 +116,16 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Registration-mode gate.
-	switch h.registrationMode {
-	case types.RegistrationOIDCOnly:
+	// Registration-mode / multi-user gate.
+	allowed, err := h.registrationAllowed(ctx, false)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if !allowed {
 		w.WriteHeader(http.StatusForbidden)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
 		return
-	case types.RegistrationInvite:
-		count, err := h.authStore.CountUsers(ctx)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-		if count > 0 {
-			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrRegistrationClosed.Error()})
-			return
-		}
 	}
 
 	// Reject duplicate email before hashing — hashing is the expensive step

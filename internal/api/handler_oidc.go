@@ -239,16 +239,11 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.ID == "" {
-		// No existing user — registration gate.
-		switch h.registrationMode {
-		case types.RegistrationOIDCOnly, types.RegistrationOpen:
-			// Allow creation.
-		case types.RegistrationInvite:
-			count, countErr := h.authStore.CountUsers(ctx)
-			if countErr != nil || count > 0 {
-				h.redirectAuthCallback(w, r, "registration_closed", "")
-				return
-			}
+		// No existing user — registration/multi-user gate.
+		allowed, err := h.registrationAllowed(ctx, true)
+		if err != nil || !allowed {
+			h.redirectAuthCallback(w, r, "registration_closed", "")
+			return
 		}
 
 		if !emailVerified || email == "" {
