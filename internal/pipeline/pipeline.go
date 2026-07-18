@@ -475,7 +475,7 @@ func (e *Engine) summary(meal types.Meal) string {
 	fmt.Fprintf(&b, "Logged %d item(s).\n", len(meal.Items))
 	fmt.Fprintf(&b, "~%.0f kcal | P %.0fg · C %.0fg · F %.0fg", t.Calories, t.Protein, t.Carbs, t.Fat)
 	if meal.Confidence < e.threshold {
-		b.WriteString("\n⚠ Low confidence — double-check the amounts.")
+		b.WriteString("\nLow confidence — double-check the amounts.")
 	}
 	return b.String()
 }

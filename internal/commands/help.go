@@ -69,7 +69,7 @@ func (c *HelpCommand) Handle(ctx context.Context, msg types.InboundMessage, args
 	title := c.i18n.T(locale, "cmd.help.title", nil)
 	footer := c.i18n.T(locale, "cmd.help.footer", nil)
 
-	fmt.Fprintf(&b, "📋 <b>%s</b>\n", title)
+	fmt.Fprintf(&b, "<b>%s</b>\n", title)
 	for _, cmd := range cmds {
 		aliases := ""
 		if len(cmd.Aliases()) > 0 {
