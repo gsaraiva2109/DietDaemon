@@ -136,6 +136,14 @@ func run() error {
 	}
 	slog.Info("chat adapter ready", "adapter", cfg.CompletionAdapter)
 
+	visionModel, err := buildOCRAdapter(cfg)
+	if err != nil {
+		return err
+	}
+	if visionModel != nil {
+		slog.Info("OCR adapter ready", "adapter", cfg.OCRAdapter)
+	}
+
 	var (
 		parser  ports.Parser
 		matcher resolver.Matcher  = nil
@@ -419,6 +427,7 @@ func run() error {
 			api.WithBackupRunner(backupRunner),
 			api.WithChat(chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st),
 			api.WithI18n(i18nBundle),
+			api.WithOCR(visionModel),
 		)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
@@ -530,6 +539,9 @@ func requiredOllamaModels(cfg *config.Config) []string {
 	if cfg.CompletionAdapter == "ollama" && (cfg.ParserTier >= types.TierLLM || cfg.EnableDashboard) {
 		models = append(models, cfg.LLMModel)
 	}
+	if cfg.OCRAdapter == "ollama" {
+		models = append(models, cfg.OllamaVisionModel)
+	}
 	return models
 }
 
@@ -546,6 +558,26 @@ func buildCompletionAdapter(cfg *config.Config) (ports.ModelAdapter, error) {
 		return openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.ModelTimeout), nil
 	default:
 		return nil, fmt.Errorf("unsupported COMPLETION_ADAPTER %q", cfg.CompletionAdapter)
+	}
+}
+
+// buildOCRAdapter creates the VisionAdapter for OCR nutrition-label capture
+// (issue #87). Returns nil, nil when OCR_ADAPTER is unset — the feature is
+// opt-in, so an unset adapter is not an error; the endpoint returns 501.
+func buildOCRAdapter(cfg *config.Config) (ports.VisionAdapter, error) {
+	switch cfg.OCRAdapter {
+	case "":
+		return nil, nil
+	case "ollama":
+		a := ollama.New(cfg.OllamaURL, cfg.EmbedModel, cfg.LLMModel, cfg.ModelTimeout)
+		a.SetVisionModel(cfg.OllamaVisionModel)
+		return a, nil
+	case "anthropic":
+		return anthropic.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.ModelTimeout), nil
+	case "openai":
+		return openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.ModelTimeout), nil
+	default:
+		return nil, fmt.Errorf("unsupported OCR_ADAPTER %q", cfg.OCRAdapter)
 	}
 }
 

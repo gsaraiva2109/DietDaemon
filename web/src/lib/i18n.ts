@@ -562,6 +562,11 @@ const en = {
     saving: 'Saving…',
     save: 'Save food',
     saveChanges: 'Save changes',
+    scanLabel: 'Scan label',
+    scanning: 'Scanning…',
+    scanError: "Couldn't scan that label. Try again or enter the nutrients manually.",
+    scanUnreadable: "Couldn't read a label in that photo. Try a clearer photo or enter the nutrients manually.",
+    lowConfidenceHint: 'Low confidence — double-check this value.',
   },
   templates: {
     eyebrow: 'Templates',
@@ -1649,6 +1654,11 @@ const ptBR: typeof en = {
     saving: 'Salvando…',
     save: 'Salvar alimento',
     saveChanges: 'Salvar alterações',
+    scanLabel: 'Escanear rótulo',
+    scanning: 'Escaneando…',
+    scanError: 'Não foi possível escanear o rótulo. Tente novamente ou informe os nutrientes manualmente.',
+    scanUnreadable: 'Não foi possível ler um rótulo nessa foto. Tente uma foto mais nítida ou informe os nutrientes manualmente.',
+    lowConfidenceHint: 'Confiança baixa — confira este valor.',
   },
   templates: {
     eyebrow: 'Modelos',

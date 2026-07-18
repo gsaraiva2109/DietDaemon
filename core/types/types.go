@@ -301,6 +301,26 @@ type CustomFoodInput struct {
 	BasisGrams float64
 }
 
+// NutritionLabelDraft is the result of OCR-extracting a photographed
+// nutrition label, offered as a prefill for the manual custom-food form.
+// Every field is a pointer so "not readable on the label" is nil, never a
+// guessed zero — the extractor must never invent a value. The user reviews
+// and explicitly saves; nothing here is persisted automatically.
+type NutritionLabelDraft struct {
+	Name       *string  `json:"name"`
+	BasisGrams *float64 `json:"basis_grams"`
+	Calories   *float64 `json:"calories"`
+	ProteinG   *float64 `json:"protein_g"`
+	CarbsG     *float64 `json:"carbs_g"`
+	FatG       *float64 `json:"fat_g"`
+	FiberG     *float64 `json:"fiber_g"`
+	// LowConfidenceFields names populated fields the extractor is unsure
+	// about (e.g. "calories"), so the UI can flag them for extra review.
+	LowConfidenceFields []string `json:"low_confidence_fields,omitempty"`
+	// Unreadable is true when no nutrition label could be found/read at all.
+	Unreadable bool `json:"unreadable"`
+}
+
 // FoodAlias is one alias for a food library entry.
 type FoodAlias struct {
 	FoodID     string `json:"food_id"`

@@ -353,6 +353,9 @@ type Handler struct {
 	// Chat adapter for the conversational assistant (nil when unsupported).
 	chatAdapter ports.ChatAdapter
 
+	// Vision adapter for OCR nutrition-label capture (nil when OCR_ADAPTER unset).
+	visionAdapter ports.VisionAdapter
+
 	// Assistant router for the chat endpoint (nil when unsupported).
 	assistantRouter *assistant.Router
 
@@ -461,6 +464,12 @@ func WithI18n(bundle *i18n.Bundle) Option {
 	return func(h *Handler) { h.i18nBundle = bundle }
 }
 
+// WithOCR attaches the vision adapter used for OCR nutrition-label capture
+// (issue #87). When not passed, the scan endpoint returns 501.
+func WithOCR(adapter ports.VisionAdapter) Option {
+	return func(h *Handler) { h.visionAdapter = adapter }
+}
+
 // New returns a ready API Handler. store, logger, loc, suggester, and c are
 // the params every caller needs regardless of configuration; everything else
 // is attached via Option (see WithAuth, WithMailer, WithChat, etc.) so that
@@ -524,6 +533,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods/search", h.wrap(h.handleSearchFoods))
 	mux.HandleFunc("GET /api/v1/foods/frequent", h.wrap(h.handleFrequentFoods))
 	mux.HandleFunc("POST /api/v1/foods/custom", h.wrap(h.handleCreateCustomFood))
+	mux.HandleFunc("POST /api/v1/foods/custom/ocr", h.wrap(h.handleOCRExtractCustomFood))
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
 	mux.HandleFunc("PUT /api/v1/foods/{foodID}/custom", h.wrap(h.handleUpdateCustomFood))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/custom", h.wrap(h.handleDeleteCustomFood))

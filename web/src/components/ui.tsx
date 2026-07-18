@@ -153,9 +153,17 @@ export function Field({
   error,
   hint,
   className = '',
+  inputClassName,
   id,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; hint?: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & {
+  label: string
+  error?: string
+  hint?: string
+  // Extra classes for the underlying <input> only (e.g. flagging low
+  // OCR-confidence fields), independent of `className` on the wrapping div.
+  inputClassName?: string
+}) {
   const autoId = useId()
   const fieldId = id ?? autoId
   const errId = `${fieldId}-err`
@@ -166,6 +174,7 @@ export function Field({
       </label>
       <Input
         id={fieldId}
+        className={inputClassName}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errId : undefined}
         {...rest}

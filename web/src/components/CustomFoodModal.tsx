@@ -2,11 +2,27 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useCreateCustomFood, useUpdateCustomFood } from '@/lib/queries'
-import type { CustomFoodInput, FoodDetail } from '@/lib/types'
-import { Button, Field } from './ui'
+import type { CustomFoodInput, FoodDetail, NutritionLabelDraft } from '@/lib/types'
+import { Button, Field, FormError } from './ui'
 import { CloseIcon } from './icons'
+import { OcrLabelUpload } from './OcrLabelUpload'
 
 type FormValues = Record<keyof CustomFoodInput, string>
+
+// Amber, matching the confidence-colour shade already used elsewhere (see
+// lib/format.ts confidence text colour) rather than inventing a new tone.
+const LOW_CONFIDENCE_CLASS = 'border-amber-600 dark:border-amber-400'
+
+// NutritionLabelDraft field name -> the matching FormValues key.
+const DRAFT_FIELD_MAP: Record<string, keyof FormValues> = {
+  name: 'name',
+  basis_grams: 'basis_grams',
+  calories: 'calories',
+  protein_g: 'protein',
+  carbs_g: 'carbs',
+  fat_g: 'fat',
+  fiber_g: 'fiber',
+}
 
 const nutrientFields: { key: keyof Pick<CustomFoodInput, 'calories' | 'protein' | 'carbs' | 'fat' | 'fiber'>; labelKey: string; unit: string }[] = [
   { key: 'calories', labelKey: 'common.macro.Calories', unit: 'kcal' },
@@ -37,6 +53,8 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
 }) {
   const { t } = useTranslation()
   const [values, setValues] = useState(() => valuesFor(food))
+  const [lowConfidence, setLowConfidence] = useState<Set<keyof FormValues>>(new Set())
+  const [unreadable, setUnreadable] = useState(false)
   const create = useCreateCustomFood()
   const update = useUpdateCustomFood(food?.food_id ?? '')
   const saving = create.isPending || update.isPending
@@ -44,6 +62,28 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
 
   function set(key: keyof FormValues, value: string) {
     setValues((current) => ({ ...current, [key]: value }))
+  }
+
+  // Prefill-only: fills in whichever fields the scan found, flags
+  // low-confidence ones, and never submits anything itself (issue #87).
+  function onExtracted(draft: NutritionLabelDraft) {
+    if (draft.unreadable) {
+      setUnreadable(true)
+      setLowConfidence(new Set())
+      return
+    }
+    setUnreadable(false)
+    setValues((current) => {
+      const next = { ...current }
+      for (const [draftKey, formKey] of Object.entries(DRAFT_FIELD_MAP)) {
+        const value = draft[draftKey as keyof NutritionLabelDraft]
+        if (value !== null && value !== undefined) next[formKey] = String(value)
+      }
+      return next
+    })
+    setLowConfidence(
+      new Set(draft.low_confidence_fields.map((f) => DRAFT_FIELD_MAP[f]).filter((f): f is keyof FormValues => Boolean(f))),
+    )
   }
 
   function submit(e: React.FormEvent) {
@@ -106,12 +146,21 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
         </h2>
         <p className="mt-1 text-sm text-muted">{t('customFood.labelHint')}</p>
 
+        {!food && (
+          <div className="mt-4">
+            <OcrLabelUpload onExtracted={onExtracted} />
+            {unreadable && <FormError>{t('customFood.scanUnreadable')}</FormError>}
+          </div>
+        )}
+
         <div className="mt-5">
           <Field
             label={t('customFood.nameLabel')}
             value={values.name}
             onChange={(e) => set('name', e.target.value)}
             placeholder={t('customFood.namePlaceholder')}
+            inputClassName={lowConfidence.has('name') ? LOW_CONFIDENCE_CLASS : undefined}
+            hint={lowConfidence.has('name') ? t('customFood.lowConfidenceHint') : undefined}
             autoFocus
           />
         </div>
@@ -125,7 +174,8 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
             step="any"
             value={values.basis_grams}
             onChange={(e) => set('basis_grams', e.target.value)}
-            hint={t('customFood.basisHint')}
+            inputClassName={lowConfidence.has('basis_grams') ? LOW_CONFIDENCE_CLASS : undefined}
+            hint={lowConfidence.has('basis_grams') ? t('customFood.lowConfidenceHint') : t('customFood.basisHint')}
           />
           <p className="self-end pb-3 text-sm text-muted">{t('customFood.nutrientHint')}</p>
         </div>
@@ -141,6 +191,8 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
               step="any"
               value={values[key]}
               onChange={(e) => set(key, e.target.value)}
+              inputClassName={lowConfidence.has(key) ? LOW_CONFIDENCE_CLASS : undefined}
+              hint={lowConfidence.has(key) ? t('customFood.lowConfidenceHint') : undefined}
             />
           ))}
         </div>

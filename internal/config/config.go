@@ -82,6 +82,15 @@ type Config struct {
 	OpenAIAPIKey  string
 	OpenAIModel   string
 
+	// OCRAdapter selects the vision-capable model used to extract nutrition
+	// labels from photos (issue #87). Empty disables the feature — unlike
+	// CompletionAdapter, this is opt-in, not core, so it gets no
+	// credential-based auto-inference. Separate from CompletionAdapter
+	// because not every chat model is vision-capable and vision calls have
+	// different cost/latency characteristics.
+	OCRAdapter        string
+	OllamaVisionModel string
+
 	EmbedMatchThreshold     float64
 	AliasWriteBackThreshold float64
 
@@ -263,6 +272,8 @@ func Load() (*Config, error) {
 		OpenAIBaseURL:           getStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		OpenAIAPIKey:            getStr("OPENAI_API_KEY", ""),
 		OpenAIModel:             getStr("OPENAI_MODEL", "gpt-4o-mini"),
+		OCRAdapter:              getStr("OCR_ADAPTER", ""),
+		OllamaVisionModel:       getStr("OLLAMA_VISION_MODEL", "llava"),
 		EmbedMatchThreshold:     getFloat("EMBED_MATCH_THRESHOLD", 0.80),
 		AliasWriteBackThreshold: getFloat("ALIAS_WRITE_BACK_THRESHOLD", 0.92),
 		Notifier:                getStr("NOTIFIER", "ntfy"),
@@ -463,6 +474,23 @@ func (c *Config) validate(tierErr error) error {
 	}
 	if c.CompletionAdapter == "openai" && c.OpenAIBaseURL == "" {
 		add("OPENAI_BASE_URL is required when COMPLETION_ADAPTER=openai")
+	}
+
+	// OCR_ADAPTER is opt-in: only validated when set, and left unset means
+	// the "Scan label" feature is disabled rather than an error.
+	if c.OCRAdapter != "" {
+		if !validCompletion[c.OCRAdapter] {
+			add("OCR_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.OCRAdapter)
+		}
+		if c.OCRAdapter == "anthropic" && c.AnthropicAPIKey == "" {
+			add("ANTHROPIC_API_KEY is required when OCR_ADAPTER=anthropic")
+		}
+		if c.OCRAdapter == "openai" && c.OpenAIBaseURL == "" {
+			add("OPENAI_BASE_URL is required when OCR_ADAPTER=openai")
+		}
+		if c.OCRAdapter == "ollama" && c.OllamaURL == "" {
+			add("OLLAMA_URL is required when OCR_ADAPTER=ollama")
+		}
 	}
 
 	if c.ParserTier > types.TierDeterministic && c.OllamaURL == "" {
