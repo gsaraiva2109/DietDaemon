@@ -63,6 +63,38 @@ func (f *fakeStore) GetRollups(context.Context, string, string, string) ([]types
 	return nil, nil
 }
 
+func (f *fakeStore) ListWeight(context.Context, string, int) ([]types.WeightEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ListMeasurements(context.Context, string, int) ([]types.MeasurementEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ListSleep(context.Context, string, int) ([]types.SleepLog, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ListFasts(context.Context, string, int) ([]types.Fast, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ListPhotoMetadata(context.Context, string) ([]types.ProgressPhoto, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetPhotoData(context.Context, string) (types.ProgressPhoto, error) {
+	return types.ProgressPhoto{}, nil
+}
+
+func (f *fakeStore) GetWaterInRange(context.Context, string, string, string) ([]types.WaterLog, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetWorkoutsInRangeWithExercises(context.Context, string, string, string) ([]types.Workout, error) {
+	return nil, nil
+}
+
 type fakeDest struct {
 	writes int
 }
@@ -85,8 +117,8 @@ func TestTick_RunsWhenIntervalElapsed(t *testing.T) {
 
 	r.tick(context.Background())
 
-	if dst.writes != 2 { // meals.csv + rollups.csv
-		t.Fatalf("expected 2 writes (meals+rollups), got %d", dst.writes)
+	if dst.writes != 9 { // meals, rollups, weight, measurements, sleep, workouts, water, fasts, photos csv (no photo blobs)
+		t.Fatalf("expected 9 writes (9 empty CSVs), got %d", dst.writes)
 	}
 	if store.lastRuns["u1"].IsZero() {
 		t.Fatalf("expected last_run_at to be updated")
@@ -142,7 +174,7 @@ func TestRunOnce_IgnoresIntervalGate(t *testing.T) {
 	if err := r.RunOnce(context.Background(), "u1"); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if dst.writes != 2 {
+	if dst.writes != 9 {
 		t.Fatalf("expected RunOnce to write regardless of interval, got %d writes", dst.writes)
 	}
 }
@@ -172,6 +204,68 @@ func TestRunFor_SetsBackupCounts(t *testing.T) {
 	}
 	if store.rollCounts["u1"] != 0 {
 		t.Fatalf("expected rollup count 0, got %d", store.rollCounts["u1"])
+	}
+}
+
+// allEntitiesFakeStore embeds fakeStore and overrides every list/get method
+// to return exactly one row, so a run exercises every entity's export path.
+type allEntitiesFakeStore struct {
+	*fakeStore
+}
+
+func (f *allEntitiesFakeStore) GetMealsInRange(context.Context, string, string, string) ([]types.Meal, error) {
+	return []types.Meal{{ID: "m1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) GetRollups(context.Context, string, string, string) ([]types.DailyRollup, error) {
+	return []types.DailyRollup{{Date: "2026-01-01"}}, nil
+}
+
+func (f *allEntitiesFakeStore) ListWeight(context.Context, string, int) ([]types.WeightEntry, error) {
+	return []types.WeightEntry{{ID: "w1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) ListMeasurements(context.Context, string, int) ([]types.MeasurementEntry, error) {
+	return []types.MeasurementEntry{{ID: "meas1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) ListSleep(context.Context, string, int) ([]types.SleepLog, error) {
+	return []types.SleepLog{{ID: "s1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) ListFasts(context.Context, string, int) ([]types.Fast, error) {
+	return []types.Fast{{ID: "f1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) ListPhotoMetadata(context.Context, string) ([]types.ProgressPhoto, error) {
+	return []types.ProgressPhoto{{ID: "p1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) GetPhotoData(_ context.Context, photoID string) (types.ProgressPhoto, error) {
+	return types.ProgressPhoto{ID: photoID, Data: []byte("jpeg-bytes")}, nil
+}
+
+func (f *allEntitiesFakeStore) GetWaterInRange(context.Context, string, string, string) ([]types.WaterLog, error) {
+	return []types.WaterLog{{ID: "wt1"}}, nil
+}
+
+func (f *allEntitiesFakeStore) GetWorkoutsInRangeWithExercises(context.Context, string, string, string) ([]types.Workout, error) {
+	return []types.Workout{{ID: "wk1"}}, nil
+}
+
+func TestRunFor_ExportsAllEntities(t *testing.T) {
+	store := &allEntitiesFakeStore{newFakeStore()}
+	store.configs["u1"] = types.BackupConfig{UserID: "u1", Enabled: true, Destination: "local"}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	if err := r.RunOnce(context.Background(), "u1"); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	// 9 CSVs (meals, rollups, weight, measurements, sleep, workouts, water,
+	// fasts, photos) + 1 photo blob = 10.
+	if dst.writes != 10 {
+		t.Fatalf("expected 10 writes (9 CSVs + 1 photo blob), got %d", dst.writes)
 	}
 }
 

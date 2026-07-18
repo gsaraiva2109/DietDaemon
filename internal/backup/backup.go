@@ -26,6 +26,13 @@ const earliestDate = "1970-01-01"
 // interval_hrs (defensive; the store default is 24).
 const defaultIntervalHrs = 24
 
+// largeDaysWindow and largeRowLimit stand in for "export everything" on the
+// store methods that take a days/limit window instead of a date range.
+const (
+	largeDaysWindow = 36600 // ~100 years
+	largeRowLimit   = 1_000_000
+)
+
 // backupCountDropThreshold is the fraction of previously-seen rows below which
 // a backup run logs a warning. 0.5 means a >50% drop triggers a warning.
 const backupCountDropThreshold = 0.5
@@ -38,6 +45,14 @@ type Store interface {
 	SetBackupCounts(ctx context.Context, userID string, mealsCount, rollupsCount int) error
 	GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error)
 	GetRollups(ctx context.Context, userID, startDate, endDate string) ([]types.DailyRollup, error)
+	ListWeight(ctx context.Context, userID string, days int) ([]types.WeightEntry, error)
+	ListMeasurements(ctx context.Context, userID string, days int) ([]types.MeasurementEntry, error)
+	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
+	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
+	ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error)
+	GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error)
+	GetWaterInRange(ctx context.Context, userID, startDate, endDate string) ([]types.WaterLog, error)
+	GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
 }
 
 // Destination abstracts where a backup file goes. cfg carries the per-user
@@ -188,6 +203,101 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 	}
 	if err := dst.Write(ctx, cfg, "rollups.csv", rollupsBuf.Bytes()); err != nil {
 		return fmt.Errorf("backup: write rollups: %w", err)
+	}
+
+	weight, err := r.store.ListWeight(ctx, userID, largeDaysWindow)
+	if err != nil {
+		return fmt.Errorf("backup: load weight: %w", err)
+	}
+	var weightBuf bytes.Buffer
+	if err := exportfmt.WriteWeightCSV(&weightBuf, weight); err != nil {
+		return fmt.Errorf("backup: write weight csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "weight.csv", weightBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write weight: %w", err)
+	}
+
+	measurements, err := r.store.ListMeasurements(ctx, userID, largeDaysWindow)
+	if err != nil {
+		return fmt.Errorf("backup: load measurements: %w", err)
+	}
+	var measurementsBuf bytes.Buffer
+	if err := exportfmt.WriteMeasurementsCSV(&measurementsBuf, measurements); err != nil {
+		return fmt.Errorf("backup: write measurements csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "measurements.csv", measurementsBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write measurements: %w", err)
+	}
+
+	sleep, err := r.store.ListSleep(ctx, userID, largeRowLimit)
+	if err != nil {
+		return fmt.Errorf("backup: load sleep: %w", err)
+	}
+	var sleepBuf bytes.Buffer
+	if err := exportfmt.WriteSleepCSV(&sleepBuf, sleep); err != nil {
+		return fmt.Errorf("backup: write sleep csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "sleep.csv", sleepBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write sleep: %w", err)
+	}
+
+	workouts, err := r.store.GetWorkoutsInRangeWithExercises(ctx, userID, earliestDate, today)
+	if err != nil {
+		return fmt.Errorf("backup: load workouts: %w", err)
+	}
+	var workoutsBuf bytes.Buffer
+	if err := exportfmt.WriteWorkoutsCSV(&workoutsBuf, workouts); err != nil {
+		return fmt.Errorf("backup: write workouts csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "workouts.csv", workoutsBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write workouts: %w", err)
+	}
+
+	water, err := r.store.GetWaterInRange(ctx, userID, earliestDate, today)
+	if err != nil {
+		return fmt.Errorf("backup: load water: %w", err)
+	}
+	var waterBuf bytes.Buffer
+	if err := exportfmt.WriteWaterCSV(&waterBuf, water); err != nil {
+		return fmt.Errorf("backup: write water csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "water.csv", waterBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write water: %w", err)
+	}
+
+	fasts, err := r.store.ListFasts(ctx, userID, largeRowLimit)
+	if err != nil {
+		return fmt.Errorf("backup: load fasts: %w", err)
+	}
+	var fastsBuf bytes.Buffer
+	if err := exportfmt.WriteFastsCSV(&fastsBuf, fasts); err != nil {
+		return fmt.Errorf("backup: write fasts csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "fasts.csv", fastsBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write fasts: %w", err)
+	}
+
+	// Photos last: write every blob before the index, so a recovered
+	// photos.csv never references a blob that isn't actually there.
+	photos, err := r.store.ListPhotoMetadata(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("backup: load photos: %w", err)
+	}
+	for _, p := range photos {
+		full, err := r.store.GetPhotoData(ctx, p.ID)
+		if err != nil {
+			return fmt.Errorf("backup: load photo data: %w", err)
+		}
+		if err := dst.Write(ctx, cfg, exportfmt.PhotoFilename(p.ID), full.Data); err != nil {
+			return fmt.Errorf("backup: write photo blob: %w", err)
+		}
+	}
+	var photosBuf bytes.Buffer
+	if err := exportfmt.WritePhotosCSV(&photosBuf, photos); err != nil {
+		return fmt.Errorf("backup: write photos csv: %w", err)
+	}
+	if err := dst.Write(ctx, cfg, "photos.csv", photosBuf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write photos: %w", err)
 	}
 
 	if err := r.store.SetBackupLastRun(ctx, userID, now); err != nil {
