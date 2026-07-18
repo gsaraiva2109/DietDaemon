@@ -202,6 +202,42 @@ func TestUnsupportedExtension(t *testing.T) {
 	}
 }
 
+// TestOfficialSpreadsheetLayoutRejected reproduces the corruption behind
+// issue #111: pointing TACO_DATA_PATH at the raw official TACO/NEPA
+// spreadsheet (moisture% and kJ columns before protein, category-separator
+// rows, merged multi-row header) instead of the documented simplified
+// schema used to silently load with every macro shuffled into the wrong
+// field. New must now fail loud instead.
+func TestOfficialSpreadsheetLayoutRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "taco_official.xlsx")
+
+	f := excelize.NewFile()
+	header := []string{
+		"Número do Alimento", "Descrição dos alimentos", "Umidade (%)", "Energia (kcal)",
+		"Energia (kJ)", "Proteína (g)", "Lipídeos (g)", "Colesterol (mg)", "Carboidrato (g)", "Fibra Alimentar (g)",
+	}
+	for i, h := range header {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = f.SetCellValue("Sheet1", cell, h)
+	}
+	_ = f.SetCellValue("Sheet1", "A2", "Cereais e derivados")
+	data := []any{558, "Amendoim, torrado, salgado", 1.7, 606.0, 2535.0, 22.5, 54.0, "NA", 18.7, 7.8}
+	for j, val := range data {
+		cell, _ := excelize.CoordinatesToCellName(j+1, 3)
+		_ = f.SetCellValue("Sheet1", cell, val)
+	}
+	if err := f.SaveAs(path); err != nil {
+		t.Fatalf("save xlsx: %v", err)
+	}
+	_ = f.Close()
+
+	_, err := New(path)
+	if err == nil {
+		t.Fatal("expected New to reject the official spreadsheet layout, got nil error")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FetchBulk
 // ---------------------------------------------------------------------------

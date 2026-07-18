@@ -62,6 +62,9 @@ func New(dataPath string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkHeader(rows); err != nil {
+		return nil, err
+	}
 
 	foods := rowsToFoods(rows)
 	if len(foods) == 0 {
@@ -177,6 +180,30 @@ func loadXLSX(path string) ([][]string, error) {
 // ---------------------------------------------------------------------------
 // Row → FoodMatch
 // ---------------------------------------------------------------------------
+
+// checkHeader fails loud when a file doesn't match the documented simple
+// schema (food_id, name, kcal, protein, carb, fat, fiber). Without this, an
+// operator who points TACO_DATA_PATH at the raw official TACO/NEPA
+// spreadsheet — which has a completely different column layout (moisture%
+// and kJ columns before protein, category-separator rows, three merged
+// header rows) — gets no error at all: rowsToFoods just reads whichever
+// columns happen to line up and writes silently wrong macros for every row.
+func checkHeader(rows [][]string) error {
+	if len(rows) == 0 || len(rows[0]) < 2 {
+		return fmt.Errorf("taco: file has no header row")
+	}
+	got0 := strings.ToLower(strings.TrimSpace(rows[0][0]))
+	got1 := strings.ToLower(strings.TrimSpace(rows[0][1]))
+	if got0 != "food_id" || got1 != "name" {
+		return fmt.Errorf(
+			"taco: unexpected header %v, want columns food_id,name,kcal,protein,carb,fat,fiber — "+
+				"this loader expects that simplified schema, not the raw official TACO/NEPA spreadsheet; "+
+				"convert it to the simplified schema first (see adapters/nutrition/taco/taco.csv for the format)",
+			rows[0],
+		)
+	}
+	return nil
+}
 
 // rowsToFoods converts raw string rows (first row is header) into a normalized
 // name → FoodMatch map.
