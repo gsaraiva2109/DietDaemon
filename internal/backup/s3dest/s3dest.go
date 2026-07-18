@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,14 +33,11 @@ func New(ctx context.Context) (*Dest, error) {
 	return &Dest{awsCfg: cfg}, nil
 }
 
-// Write uploads data to cfg.S3Bucket at "<S3Prefix>/<filename>". A per-user
-// S3Region/S3Endpoint override (e.g. a self-hosted MinIO) is applied to a
-// client built for this call only; the base credential chain is shared.
-func (d *Dest) Write(ctx context.Context, cfg types.BackupConfig, filename string, data []byte) error {
-	if cfg.S3Bucket == "" {
-		return fmt.Errorf("s3dest: s3_bucket not configured")
-	}
-	client := s3.NewFromConfig(d.awsCfg, func(o *s3.Options) {
+// client builds an S3 client for this call only, applying a per-user
+// S3Region/S3Endpoint override (e.g. a self-hosted MinIO) on top of the
+// shared base credential chain.
+func (d *Dest) client(cfg types.BackupConfig) *s3.Client {
+	return s3.NewFromConfig(d.awsCfg, func(o *s3.Options) {
 		if cfg.S3Region != "" {
 			o.Region = cfg.S3Region
 		}
@@ -48,6 +46,14 @@ func (d *Dest) Write(ctx context.Context, cfg types.BackupConfig, filename strin
 			o.UsePathStyle = true // required by most non-AWS S3-compatible endpoints
 		}
 	})
+}
+
+// Write uploads data to cfg.S3Bucket at "<S3Prefix>/<filename>".
+func (d *Dest) Write(ctx context.Context, cfg types.BackupConfig, filename string, data []byte) error {
+	if cfg.S3Bucket == "" {
+		return fmt.Errorf("s3dest: s3_bucket not configured")
+	}
+	client := d.client(cfg)
 
 	key := filename
 	if cfg.S3Prefix != "" {
@@ -63,4 +69,62 @@ func (d *Dest) Write(ctx context.Context, cfg types.BackupConfig, filename strin
 		return fmt.Errorf("s3dest: put object %s/%s: %w", cfg.S3Bucket, key, err)
 	}
 	return nil
+}
+
+// List returns filenames under cfg.S3Bucket/cfg.S3Prefix, prefix-stripped so
+// results are directly usable as Write/Read filenames.
+func (d *Dest) List(ctx context.Context, cfg types.BackupConfig) ([]string, error) {
+	if cfg.S3Bucket == "" {
+		return nil, fmt.Errorf("s3dest: s3_bucket not configured")
+	}
+	client := d.client(cfg)
+	prefix := ""
+	if cfg.S3Prefix != "" {
+		prefix = strings.TrimSuffix(cfg.S3Prefix, "/") + "/"
+	}
+	var out []string
+	var token *string
+	for {
+		resp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(cfg.S3Bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("s3dest: list objects %s/%s: %w", cfg.S3Bucket, prefix, err)
+		}
+		for _, obj := range resp.Contents {
+			out = append(out, strings.TrimPrefix(aws.ToString(obj.Key), prefix))
+		}
+		if !aws.ToBool(resp.IsTruncated) {
+			break
+		}
+		token = resp.NextContinuationToken
+	}
+	return out, nil
+}
+
+// Read fetches cfg.S3Bucket/cfg.S3Prefix/filename.
+func (d *Dest) Read(ctx context.Context, cfg types.BackupConfig, filename string) ([]byte, error) {
+	if cfg.S3Bucket == "" {
+		return nil, fmt.Errorf("s3dest: s3_bucket not configured")
+	}
+	client := d.client(cfg)
+	key := filename
+	if cfg.S3Prefix != "" {
+		key = strings.TrimSuffix(cfg.S3Prefix, "/") + "/" + filename
+	}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(cfg.S3Bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3dest: get object %s/%s: %w", cfg.S3Bucket, key, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("s3dest: read object body %s/%s: %w", cfg.S3Bucket, key, err)
+	}
+	return data, nil
 }
