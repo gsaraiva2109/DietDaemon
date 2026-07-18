@@ -1,6 +1,6 @@
 # Scheduled Backup
 
-DietDaemon can automatically export a user's meals and daily rollups on a recurring
+DietDaemon can automatically export all of a user's trackable data on a recurring
 schedule, in addition to the on-demand CSV/JSON export already available from
 Settings → Export data. Each user opts in independently and picks where their backup
 goes: the server's local disk, or an S3-compatible bucket.
@@ -10,10 +10,25 @@ goes: the server's local disk, or an S3-compatible bucket.
 ```
 [Backup runner] --tick (BACKUP_CHECK_INTERVAL)--> for each user with backup_config.enabled
                                                       is (now - last_run_at) >= interval_hrs?
-                                                        yes -> export meals.csv + rollups.csv
-                                                               -> write to destination
+                                                        yes -> export meals.csv, rollups.csv,
+                                                               weight.csv, measurements.csv,
+                                                               sleep.csv, workouts.csv, water.csv,
+                                                               fasts.csv, and progress photos
+                                                               (each blob written before photos.csv,
+                                                               its index)
+                                                               -> write each file to destination
                                                                -> update last_run_at
 ```
+
+Every backup run exports all 9 trackable entities: meals, daily rollups, weight,
+body measurements, sleep, workouts, water, fasts, and progress photos. Each entity
+writes to its own CSV file (`meals.csv`, `rollups.csv`, `weight.csv`,
+`measurements.csv`, `sleep.csv`, `workouts.csv`, `water.csv`, `fasts.csv`). Progress
+photos are handled differently: each photo's binary data is written as a separate
+blob file named `photo-<id>` (see `exportfmt.PhotoFilename`), and `photos.csv` is an
+index of metadata (id, date, view, mime_type, filename) pointing at those blobs.
+Blobs are always written before the index file, so a partially-failed run never
+leaves `photos.csv` referencing a blob that doesn't exist.
 
 The runner is a second, independent background loop alongside the existing nudge
 scheduler — same shape (a ticker + a per-user check), separate concern. It reuses the
@@ -22,6 +37,19 @@ scheduled backups and manual exports are byte-identical in format.
 
 A user can also trigger a backup immediately via "Run now" in the dashboard, which
 calls the same export logic outside the interval gate.
+
+## Restore
+
+A CLI restore tool reads these exported files back into the store. See
+[docs/RESTORE.md](RESTORE.md) for usage.
+
+## Out of scope
+
+This backup exports application-level data (the 9 entities above) as CSV/blob files,
+not a full database dump. Full DB-level backup (e.g. `pg_dump` for Postgres, or a raw
+file copy for SQLite) is out of scope for v1. Self-hosters who need a complete
+point-in-time database snapshot (schema, indexes, every table) should use
+`sqlite3 <path> .backup <dest>` or `pg_dump` directly against their database.
 
 ## Prerequisites
 

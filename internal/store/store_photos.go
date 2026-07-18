@@ -73,6 +73,24 @@ func (s *Store) UploadPhoto(ctx context.Context, p types.ProgressPhoto) error {
 	return err
 }
 
+// RestorePhoto inserts a progress photo for backup restore. On a
+// unique-constraint violation (duplicate id — the re-run-safety case), the
+// call is a safe no-op and returns nil rather than an error.
+func (s *Store) RestorePhoto(ctx context.Context, p types.ProgressPhoto) error {
+	const q = `
+		INSERT INTO progress_photos (id, user_id, date, view, mime_type, data, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), p.ID, p.UserID, p.Date, p.View, p.MimeType, p.Data, utcStr(p.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already restored
+		}
+		return fmt.Errorf("store: restore photo: %w", err)
+	}
+	return nil
+}
+
 // DeletePhoto deletes a progress photo by user + ID. Returns ErrNotFound if absent.
 func (s *Store) DeletePhoto(ctx context.Context, userID, photoID string) error {
 	const q = `DELETE FROM progress_photos WHERE id = ? AND user_id = ?`

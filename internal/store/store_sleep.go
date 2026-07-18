@@ -33,6 +33,30 @@ func (s *Store) LogSleep(ctx context.Context, sl types.SleepLog) error {
 	return nil
 }
 
+// RestoreSleep inserts a sleep log for backup restore. On a unique-constraint
+// violation (duplicate id — the re-run-safety case), the call is a safe
+// no-op and returns nil rather than an error.
+func (s *Store) RestoreSleep(ctx context.Context, sl types.SleepLog) error {
+	const q = `
+		INSERT INTO sleep_logs (id, user_id, sleep_at, wake_at, quality, note, created_at)
+		VALUES (:id, :user_id, :sleep_at, :wake_at, :quality, :note, :created_at)
+	`
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id": sl.ID, "user_id": sl.UserID, "sleep_at": sl.SleepAt, "wake_at": sl.WakeAt,
+		"quality": sl.Quality, "note": nullStr(sl.Note), "created_at": utcNow(),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind restore sleep: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, s.rewrite(query), args...); err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already restored
+		}
+		return fmt.Errorf("store: restore sleep: %w", err)
+	}
+	return nil
+}
+
 // GetActiveSleep returns the user's in-progress sleep (wake_at IS NULL), or
 // ErrNotFound if none is active.
 func (s *Store) GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error) {

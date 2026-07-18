@@ -45,6 +45,46 @@ func (d *Dest) Write(_ context.Context, cfg types.BackupConfig, filename string,
 	return nil
 }
 
+// List returns the filenames present under cfg.LocalSubdir (base names only,
+// no directory component — symmetric with Write's filepath.Base handling).
+// Returns an empty slice, not an error, if the directory doesn't exist yet
+// (a fresh/never-backed-up user).
+func (d *Dest) List(_ context.Context, cfg types.BackupConfig) ([]string, error) {
+	dir, err := d.userDir(cfg.LocalSubdir)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("localdisk: list %s: %w", dir, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	return out, nil
+}
+
+// Read returns the contents of <base>/<subdir>/<filename>, using the same
+// path-escape validation as Write.
+func (d *Dest) Read(_ context.Context, cfg types.BackupConfig, filename string) ([]byte, error) {
+	dir, err := d.userDir(cfg.LocalSubdir)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, filepath.Base(filename))
+	data, err := os.ReadFile(path) // #nosec G304 -- filename base-name-only, dir already escape-validated
+	if err != nil {
+		return nil, fmt.Errorf("localdisk: read %s: %w", path, err)
+	}
+	return data, nil
+}
+
 // userDir resolves subdir against the base directory and rejects anything
 // that would escape it (via ".." or an absolute path), before the caller
 // ever touches the filesystem. filepath.Join cleans the result, so the only

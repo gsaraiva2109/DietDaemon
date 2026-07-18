@@ -26,6 +26,29 @@ func (s *Store) StartFast(ctx context.Context, f types.Fast) error {
 	return nil
 }
 
+// RestoreFast inserts a fast for backup restore, including its end state —
+// unlike StartFast, which always inserts an open (end_at NULL, completed 0)
+// fast. On a unique-constraint violation (duplicate id — the re-run-safety
+// case), the call is a safe no-op and returns nil rather than an error.
+func (s *Store) RestoreFast(ctx context.Context, f types.Fast) error {
+	const q = `
+		INSERT INTO fasts (id, user_id, start_at, end_at, target_hours, completed, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	var endAt any
+	if f.EndAt != nil {
+		endAt = utcStr(*f.EndAt)
+	}
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), f.ID, f.UserID, utcStr(f.StartAt), endAt, f.TargetHours, boolToInt(f.Completed), utcStr(f.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // safe no-op: already restored
+		}
+		return fmt.Errorf("store: restore fast: %w", err)
+	}
+	return nil
+}
+
 // GetActiveFast returns the user's in-progress fast (end_at IS NULL), or
 // ErrNotFound if none is active.
 func (s *Store) GetActiveFast(ctx context.Context, userID string) (types.Fast, error) {
