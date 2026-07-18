@@ -1,26 +1,39 @@
 // Log a meal as natural text. POST is async (202); we show an accepted state
 // and let the dashboard/history pick up the result on the next poll.
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useLogMeal, useTemplates, useLogTemplate } from '@/lib/queries'
+import {
+  useLogMeal,
+  useTemplates,
+  useLogTemplate,
+  useLogStructuredMeal,
+  useFoods,
+  useSearchFoods,
+  useCatalogSearch,
+} from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
-import { Button, Card } from '@/components/ui'
+import { Button, Card, EmptyState, Spinner } from '@/components/ui'
 import { DuplicateMealModal } from '@/components/DuplicateMealModal'
-import type { MealTemplate } from '@/lib/types'
-import { TemplateIcon, CopyIcon } from '@/components/icons'
-import { fadeUp } from '@/lib/motion'
+import { FoodCard } from '@/components/FoodCard'
+import { CustomFoodModal } from '@/components/CustomFoodModal'
+import type { MealTemplate, FoodDetail } from '@/lib/types'
+import { TemplateIcon, CopyIcon, SearchIcon, FoodsIcon, TrashIcon } from '@/components/icons'
+import { fadeUp, stagger } from '@/lib/motion'
 
 const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
+
+type SelectedFood = { food: FoodDetail; grams: number }
 
 export function LogMeal() {
   const { t } = useTranslation()
   const [params] = useSearchParams()
   // Pre-fill from a deep link (e.g. "Log this" on a food / frequent-food pill).
   const [text, setText] = useState(() => params.get('text') ?? '')
+  const [mode, setMode] = useState<'text' | 'picker'>('text')
   const log = useLogMeal()
   const templates = useTemplates()
   const logTemplate = useLogTemplate()
@@ -38,40 +51,62 @@ export function LogMeal() {
   return (
     <div>
       <PageHeader eyebrow={t('logMeal.eyebrow')} title={t('logMeal.title')} />
-      <Card className="p-5">
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            placeholder={t('logMeal.placeholder')}
-            aria-label={t('logMeal.mealDescriptionAria')}
-            className="w-full resize-none rounded-lg border border-line bg-bg px-4 py-3 text-lg text-ink outline-none transition focus:border-primary"
-          />
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-muted">{t('logMeal.parserHint')}</p>
-            <Button type="submit" disabled={log.isPending || !text.trim()}>
-              {log.isPending ? t('logMeal.sending') : t('logMeal.logMealButton')}
-            </Button>
-          </div>
-        </form>
 
-        {log.isSuccess && (
-          <motion.p
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
-            className="mt-4 rounded-lg bg-primary-soft px-4 py-3 text-sm font-medium text-primary"
+      <div className="mb-4 flex gap-2">
+        {(['text', 'picker'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ${
+              mode === m
+                ? 'border-transparent bg-primary text-white'
+                : 'border-line bg-surface text-muted hover:text-ink'
+            }`}
           >
-            {t('logMeal.loggedSuccess')}
-          </motion.p>
-        )}
-        {log.isError && (
-          <p className="mt-4 text-sm font-medium text-accent" role="alert">
-            {log.error instanceof Error ? log.error.message : t('logMeal.logFailed')}
-          </p>
-        )}
-      </Card>
+            {t(m === 'text' ? 'logMeal.textTab' : 'logMeal.pickerTab')}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'text' ? (
+        <Card className="p-5">
+          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={3}
+              placeholder={t('logMeal.placeholder')}
+              aria-label={t('logMeal.mealDescriptionAria')}
+              className="w-full resize-none rounded-lg border border-line bg-bg px-4 py-3 text-lg text-ink outline-none transition focus:border-primary"
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted">{t('logMeal.parserHint')}</p>
+              <Button type="submit" disabled={log.isPending || !text.trim()}>
+                {log.isPending ? t('logMeal.sending') : t('logMeal.logMealButton')}
+              </Button>
+            </div>
+          </form>
+
+          {log.isSuccess && (
+            <motion.p
+              variants={fadeUp}
+              initial="hidden"
+              animate="show"
+              className="mt-4 rounded-lg bg-primary-soft px-4 py-3 text-sm font-medium text-primary"
+            >
+              {t('logMeal.loggedSuccess')}
+            </motion.p>
+          )}
+          {log.isError && (
+            <p className="mt-4 text-sm font-medium text-accent" role="alert">
+              {log.error instanceof Error ? log.error.message : t('logMeal.logFailed')}
+            </p>
+          )}
+        </Card>
+      ) : (
+        <FoodPicker />
+      )}
 
       {/* Quick actions: log a saved template, or copy a meal from a past day. */}
       <div className="mt-6 flex flex-col gap-3">
@@ -103,23 +138,197 @@ export function LogMeal() {
         )}
       </div>
 
-      <div className="mt-6">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('logMeal.examplesHeading')}</p>
-        <div className="flex flex-wrap gap-2">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex}
-              type="button"
-              onClick={() => setText(ex)}
-              className="rounded-full border border-line bg-surface px-3 py-1.5 text-sm text-muted transition hover:text-ink"
-            >
-              {ex}
-            </button>
-          ))}
+      {mode === 'text' && (
+        <div className="mt-6">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('logMeal.examplesHeading')}</p>
+          <div className="flex flex-wrap gap-2">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setText(ex)}
+                className="rounded-full border border-line bg-surface px-3 py-1.5 text-sm text-muted transition hover:text-ink"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {duplicating && <DuplicateMealModal onClose={() => setDuplicating(false)} />}
     </div>
+  )
+}
+
+// Precise alternative to the free-text parser: search the library/catalog,
+// pick exact foods, set grams, log synchronously via POST /meals.
+function FoodPicker() {
+  const { t } = useTranslation()
+  const { demo } = useDemo()
+  const [tab, setTab] = useState<'library' | 'catalog'>('library')
+  const [rawQuery, setRawQuery] = useState('')
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<SelectedFood[]>([])
+  const [customFoodOpen, setCustomFoodOpen] = useState(false)
+  const logStructured = useLogStructuredMeal()
+
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(rawQuery.trim()), 250)
+    return () => clearTimeout(id)
+  }, [rawQuery])
+
+  const searching = query.length > 0
+  const search = useSearchFoods(query)
+  const browse = useFoods()
+  const catalog = useCatalogSearch(query, '', 30)
+
+  const isLoading = tab === 'catalog' ? catalog.isLoading : searching ? search.isLoading : browse.isLoading
+  const foods = useMemo(() => {
+    if (tab === 'catalog') return catalog.data ?? []
+    return (searching ? search.data : browse.data) ?? []
+  }, [tab, catalog.data, searching, search.data, browse.data])
+
+  const selectedIds = useMemo(() => new Set(selected.map((s) => s.food.food_id)), [selected])
+
+  function addFood(food: FoodDetail) {
+    if (selectedIds.has(food.food_id)) return
+    setSelected((cur) => [...cur, { food, grams: food.serving_size || 100 }])
+  }
+
+  function removeFood(foodID: string) {
+    setSelected((cur) => cur.filter((s) => s.food.food_id !== foodID))
+  }
+
+  function setGrams(foodID: string, grams: number) {
+    setSelected((cur) => cur.map((s) => (s.food.food_id === foodID ? { ...s, grams } : s)))
+  }
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!selected.length) return
+    logStructured.mutate(
+      selected.map((s) => ({ food_id: s.food.food_id, grams: s.grams })),
+      { onSuccess: () => setSelected([]) },
+    )
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex gap-2">
+        {(['library', 'catalog'] as const).map((tb) => (
+          <button
+            key={tb}
+            type="button"
+            onClick={() => setTab(tb)}
+            className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition ${
+              tab === tb
+                ? 'border-transparent bg-primary text-white'
+                : 'border-line bg-surface text-muted hover:text-ink'
+            }`}
+          >
+            {t(tb === 'library' ? 'foods.libraryTab' : 'foods.catalogTab')}
+          </button>
+        ))}
+      </div>
+
+      <div className="relative mb-4">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+          <SearchIcon width={18} height={18} />
+        </span>
+        <input
+          value={rawQuery}
+          onChange={(e) => setRawQuery(e.target.value)}
+          placeholder={t('foods.searchPlaceholder')}
+          aria-label={t('foods.searchAriaLabel')}
+          className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-4 text-ink outline-none transition focus:border-primary"
+        />
+      </div>
+
+      {isLoading ? (
+        <Spinner label={t('foods.loadingLabel')} />
+      ) : !foods.length ? (
+        <EmptyState
+          icon={<FoodsIcon />}
+          title={tab === 'catalog' ? t('foods.catalogEmptyTitle') : searching ? t('foods.noMatchesTitle') : t('foods.emptyTitle')}
+          hint={tab === 'catalog' ? t('foods.catalogEmptyHint') : searching ? t('foods.noMatchesHint') : t('foods.emptyHint')}
+        />
+      ) : (
+        <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {foods.map((f: FoodDetail) => (
+            <FoodCard key={f.food_id} food={f} onClick={() => addFood(f)} />
+          ))}
+        </motion.div>
+      )}
+
+      <div className="mt-5 flex justify-end">
+        <button
+          type="button"
+          disabled={demo}
+          onClick={() => setCustomFoodOpen(true)}
+          className="rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:border-primary disabled:opacity-50"
+        >
+          {t('foods.addCustom')}
+        </button>
+      </div>
+
+      <form onSubmit={onSubmit} className="mt-6 border-t border-line pt-5">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('logMeal.selectedHeading')}</p>
+        {selected.length ? (
+          <ul className="flex flex-col gap-2">
+            {selected.map((s) => (
+              <li key={s.food.food_id} className="flex items-center gap-3 border-b border-line pb-2 last:border-0">
+                <p className="min-w-0 flex-1 truncate font-medium text-ink">{s.food.name}</p>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="1"
+                  step="any"
+                  value={s.grams}
+                  onChange={(e) => setGrams(s.food.food_id, Number(e.target.value))}
+                  aria-label={t('logMeal.gramsAria', { name: s.food.name })}
+                  className="w-20 rounded-lg border border-line bg-bg px-2 py-1 text-right text-ink tnum outline-none focus:border-primary"
+                />
+                <span className="text-xs text-muted">g</span>
+                <button
+                  type="button"
+                  onClick={() => removeFood(s.food.food_id)}
+                  aria-label={t('mealDetail.removeItem', { name: s.food.name })}
+                  className="text-muted transition hover:text-accent"
+                >
+                  <TrashIcon width={16} height={16} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">{t('logMeal.emptySelection')}</p>
+        )}
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          {logStructured.isSuccess && (
+            <p className="text-sm font-medium text-primary">{t('logMeal.pickerLoggedSuccess')}</p>
+          )}
+          {logStructured.isError && (
+            <p className="text-sm font-medium text-accent" role="alert">
+              {logStructured.error instanceof Error ? logStructured.error.message : t('logMeal.logFailed')}
+            </p>
+          )}
+          <Button type="submit" className="ml-auto" disabled={!selected.length || logStructured.isPending}>
+            {logStructured.isPending ? t('logMeal.sending') : t('logMeal.logMealButton')}
+          </Button>
+        </div>
+      </form>
+
+      {customFoodOpen && (
+        <CustomFoodModal
+          onClose={() => setCustomFoodOpen(false)}
+          onSaved={(food) => {
+            setCustomFoodOpen(false)
+            addFood(food)
+          }}
+        />
+      )}
+    </Card>
   )
 }

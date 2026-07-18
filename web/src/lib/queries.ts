@@ -450,6 +450,17 @@ export function useLogTemplate() {
   })
 }
 
+export function useLogStructuredMeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (items: { food_id: string; grams: number }[]) => api.logMealStructured(items),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rollup'] })
+      qc.invalidateQueries({ queryKey: ['meals'] })
+    },
+  })
+}
+
 export function useDuplicateMeal() {
   const qc = useQueryClient()
   return useMutation({

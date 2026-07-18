@@ -377,6 +377,57 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
+func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Request, userID string) {
+	var body struct {
+		Items []struct {
+			FoodID string  `json:"food_id"`
+			Grams  float64 `json:"grams"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if len(body.Items) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "items are required"})
+		return
+	}
+
+	items := make([]types.ResolvedItem, 0, len(body.Items))
+	for _, it := range body.Items {
+		food, err := h.store.GetFoodForUser(r.Context(), userID, it.FoodID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown food_id: " + it.FoodID})
+			return
+		}
+		items = append(items, types.ResolvedItem{
+			Parsed: types.ParsedItem{RawPhrase: food.Name, NormalizedGrams: it.Grams},
+			Match:  food,
+			Macros: food.Per100g.Scale(it.Grams / 100.0),
+		})
+	}
+
+	now := time.Now().UTC()
+	meal := types.Meal{
+		ID:         newHandlerID(),
+		UserID:     userID,
+		At:         now,
+		RawText:    "structured entry",
+		Items:      items,
+		Confidence: 1.0,
+		CreatedAt:  now,
+	}
+	if err := h.logger.LogMeal(r.Context(), meal); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(meal)
+}
+
 // ---------------------------------------------------------------------------
 // Meals — latest
 // ---------------------------------------------------------------------------
