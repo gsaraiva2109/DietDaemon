@@ -118,6 +118,10 @@ type fakeMealStore struct {
 	// Body tracking / shared.
 	mealsInRange    []types.Meal
 	mealsInRangeErr error
+
+	// Water — daily aggregates (export).
+	waterDailyTotals    []types.WaterDayTotal
+	waterDailyTotalsErr error
 }
 
 func newFakeMealStore() *fakeMealStore {
@@ -475,6 +479,9 @@ func (s *fakeMealStore) GetWaterToday(_ context.Context, _, _ string) ([]types.W
 func (s *fakeMealStore) DeleteWater(_ context.Context, _, _ string) error {
 	return nil
 }
+func (s *fakeMealStore) GetWaterDailyTotals(_ context.Context, _, _, _ string) ([]types.WaterDayTotal, error) {
+	return s.waterDailyTotals, s.waterDailyTotalsErr
+}
 func (s *fakeMealStore) LogWorkout(_ context.Context, _ types.Workout) error {
 	return nil
 }
@@ -571,6 +578,11 @@ func (s *fakeAuthStore) SetPasswordHash(_ context.Context, userID, phcHash strin
 
 func (s *fakeAuthStore) CountUsers(_ context.Context) (int, error) {
 	return s.userCount, nil
+}
+
+func (s *fakeAuthStore) DeleteAccount(_ context.Context, userID string) error {
+	delete(s.users, userID)
+	return nil
 }
 
 func (s *fakeAuthStore) GetUserByAPIKey(_ context.Context, hashedKey string) (types.User, error) {

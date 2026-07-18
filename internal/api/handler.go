@@ -32,6 +32,7 @@ type AccountStore interface {
 	GetPasswordHash(ctx context.Context, userID string) (string, error)
 	SetPasswordHash(ctx context.Context, userID, phcHash string) error
 	CountUsers(ctx context.Context) (int, error)
+	DeleteAccount(ctx context.Context, userID string) error
 }
 
 // APIKeyStore covers long-lived API key issuance and revocation.
@@ -254,6 +255,7 @@ type MealStore interface {
 	LogWater(ctx context.Context, w types.WaterLog) error
 	GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error)
 	DeleteWater(ctx context.Context, userID, id string) error
+	GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error)
 
 	// Workout tracking.
 	LogWorkout(ctx context.Context, w types.Workout) error
@@ -607,6 +609,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Data export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
+	mux.HandleFunc("GET /api/v1/export/all", h.wrap(h.handleExportAll))
+
+	// Account deletion.
+	mux.HandleFunc("DELETE /api/v1/account", h.wrap(h.handleDeleteAccount))
 
 	// Scheduled backup settings.
 	mux.HandleFunc("GET /api/v1/settings/backup", h.wrap(h.handleGetBackupConfig))
