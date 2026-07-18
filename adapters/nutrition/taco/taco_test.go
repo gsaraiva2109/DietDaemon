@@ -202,6 +202,76 @@ func TestUnsupportedExtension(t *testing.T) {
 	}
 }
 
+// TestOfficialSpreadsheetLayout reproduces the corruption behind issue #111:
+// pointing TACO_DATA_PATH at the raw official TACO/NEPA spreadsheet —
+// moisture% and kJ columns land between name and protein, plus a
+// food-group separator row with only column 0 populated — instead of the
+// simplified schema. New must parse this layout correctly (via
+// officialRowsToFoods), not silently shuffle macros into the wrong fields.
+func TestOfficialSpreadsheetLayout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "taco_official.xlsx")
+
+	f := excelize.NewFile()
+	header := []string{
+		"Número do Alimento", "Descrição dos alimentos", "Umidade (%)", "Energia (kcal)",
+		"Energia (kJ)", "Proteína (g)", "Lipídeos (g)", "Colesterol (mg)", "Carboidrato (g)", "Fibra Alimentar (g)",
+	}
+	for i, h := range header {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = f.SetCellValue("Sheet1", cell, h)
+	}
+	_ = f.SetCellValue("Sheet1", "A2", "Oleaginosas e sementes")
+	data := []any{558, "Amendoim, torrado, salgado", 1.7, 606.0, 2535.0, 22.5, 54.0, "NA", 18.7, 7.8}
+	for j, val := range data {
+		cell, _ := excelize.CoordinatesToCellName(j+1, 3)
+		_ = f.SetCellValue("Sheet1", cell, val)
+	}
+	if err := f.SaveAs(path); err != nil {
+		t.Fatalf("save xlsx: %v", err)
+	}
+	_ = f.Close()
+
+	src, err := New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	fm, err := src.Resolve(context.Background(), types.ParsedItem{RawPhrase: "Amendoim, torrado, salgado"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if fm.FoodID != "TACO558" {
+		t.Errorf("FoodID = %q, want TACO558", fm.FoodID)
+	}
+	if fm.Per100g.Calories != 606 || fm.Per100g.Protein != 22.5 || fm.Per100g.Carbs != 18.7 ||
+		fm.Per100g.Fat != 54 || fm.Per100g.Fiber != 7.8 {
+		t.Errorf("got macros %+v, want 606/22.5/18.7/54/7.8", fm.Per100g)
+	}
+}
+
+// TestOfficialSpreadsheetLayoutNoDataRows checks the loud-error fallback:
+// a file matching neither the simplified schema nor the official layout
+// (no row's first column parses as an integer food ID) still fails clearly
+// instead of silently returning an empty catalog.
+func TestOfficialSpreadsheetLayoutNoDataRows(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "not_taco.xlsx")
+
+	f := excelize.NewFile()
+	_ = f.SetCellValue("Sheet1", "A1", "Título do Documento")
+	_ = f.SetCellValue("Sheet1", "A2", "Nenhum dado aqui")
+	if err := f.SaveAs(path); err != nil {
+		t.Fatalf("save xlsx: %v", err)
+	}
+	_ = f.Close()
+
+	_, err := New(path)
+	if err == nil {
+		t.Fatal("expected New to reject a file matching neither known layout")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FetchBulk
 // ---------------------------------------------------------------------------

@@ -17,6 +17,13 @@
 // Ollama endpoint (OLLAMA_URL / EMBED_MODEL from config):
 //
 //	go run ./cmd/import-foods -backfill-embeddings -db ./data/dietdaemon.db
+//
+// A third maintenance mode repairs catalog rows whose macros were written
+// wrong by an older/different importer (matched by source+name instead of
+// food_id, so it reaches rows a normal re-import's ON CONFLICT(food_id)
+// upsert cannot):
+//
+//	go run ./cmd/import-foods -source taco -repair-macros -db ./data/dietdaemon.db
 package main
 
 import (
@@ -47,6 +54,7 @@ func main() {
 	maxRows := flag.Int("max-rows", 0, "cap on rows imported for this run, 0 = use the source's configured default")
 	dryRun := flag.Bool("dry-run", false, "fetch and count rows without writing to the store")
 	backfillEmbeddings := flag.Bool("backfill-embeddings", false, "embed every catalog food that is missing a vector, instead of importing (maintenance operation against an already-populated DB; requires a reachable Ollama endpoint)")
+	repairMacros := flag.Bool("repair-macros", false, "re-fetch -source and overwrite macros on existing catalog rows matched by (source, name) instead of food_id, instead of importing (one-time fix for rows written under an older food_id scheme, see issue #111)")
 	flag.Parse()
 
 	if *dbPath == "" || (!*backfillEmbeddings && *source == "") {
@@ -62,9 +70,12 @@ func main() {
 	defer stop()
 
 	var err error
-	if *backfillEmbeddings {
+	switch {
+	case *backfillEmbeddings:
 		err = runBackfill(ctx, *dbPath)
-	} else {
+	case *repairMacros:
+		err = runRepair(ctx, *source, *dbPath)
+	default:
 		err = run(ctx, *source, *dbPath, *maxRows, *dryRun)
 	}
 	if err != nil {
@@ -147,6 +158,49 @@ func runBackfill(ctx context.Context, dbPath string) error {
 	}
 
 	fmt.Printf("import-foods: backfill complete: embedded=%d failed=%d\n", embedded, failed)
+	return nil
+}
+
+// runRepair re-fetches source and overwrites macros on existing catalog rows
+// matched by (source, name) rather than food_id, fixing rows that a
+// different/older importer wrote under a different food_id scheme (so
+// BulkUpsertFoods' ON CONFLICT(food_id) upsert can never reach them). See
+// issue #111.
+func runRepair(ctx context.Context, source, dbPath string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	src, filter, err := foodimport.BuildSource(source, cfg)
+	if err != nil {
+		return err
+	}
+
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() {
+		if cerr := st.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "import-foods: close store: %v\n", cerr)
+		}
+	}()
+
+	var batch []types.FoodMatch
+	if err := src.FetchBulk(ctx, filter, func(fm types.FoodMatch) error {
+		batch = append(batch, fm)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("fetch %s: %w", source, err)
+	}
+
+	fixed, err := st.RepairFoodMacros(ctx, batch)
+	if err != nil {
+		return fmt.Errorf("repair %s: %w", source, err)
+	}
+
+	fmt.Printf("import-foods: repair source=%s rows_checked=%d rows_fixed=%d\n", source, len(batch), fixed)
 	return nil
 }
 
