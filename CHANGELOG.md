@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0-alpha.2](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.1...v0.2.0-alpha.2) (2026-07-18)
+
+
+### Features
+
+* **log:** add structured food picker as precise alternative to text parser ([305baa0](https://github.com/gsaraiva2109/DietDaemon/commit/305baa07041d1a8bfacf5dc3fcd3c3b4a97c3216))
+* **log:** structured food picker, onboarding weight logging, bot emoji cleanup ([d4dccba](https://github.com/gsaraiva2109/DietDaemon/commit/d4dccbacb39da3d6ea668150fc22b6c5ea8fa510))
+
+
+### Fixes
+
+* fixed docker compose dietdaemon version tag ([b3d477d](https://github.com/gsaraiva2109/DietDaemon/commit/b3d477d40b02c08275c28e3cd1760a986436bb99))
+* **onboarding:** log initial weight to weight_log on first-time completion ([1e9d169](https://github.com/gsaraiva2109/DietDaemon/commit/1e9d16923fd4a2976781cd68bc67181c3e18547b))
+* **release:** continue alpha prerelease sequence ([7e2814b](https://github.com/gsaraiva2109/DietDaemon/commit/7e2814b32b0ae0b5192598a51a6e32b6da718836))
+
 ## [0.2.0-alpha.3](https://github.com/gsaraiva2109/DietDaemon/compare/v0.1.0-alpha.3...v0.2.0-alpha.3) (2026-07-18)
 
 
