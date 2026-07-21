@@ -22,7 +22,7 @@ var wake = "2024-01-10T07:00:00Z"
 // used by cmd/import-mfp's tempStore helper.
 func newTestStore(t *testing.T, path string) *store.Store {
 	t.Helper()
-	st, err := store.New("sqlite", path, store.SQLiteDialect())
+	st, err := store.New("sqlite", path, store.SQLiteDialect(), nil)
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}

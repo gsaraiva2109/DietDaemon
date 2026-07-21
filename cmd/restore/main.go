@@ -107,7 +107,7 @@ func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket
 		return nil
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("restore: open store: %w", err)
 	}

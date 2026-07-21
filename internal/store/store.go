@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
@@ -21,7 +22,8 @@ import (
 type Store struct {
 	db      *sqlx.DB
 	dialect Dialect
-	driver  string // "sqlite" or "postgres"
+	driver  string         // "sqlite" or "postgres"
+	loc     *time.Location // default timezone; per-user timezone wins when set, see userLoc
 }
 
 // Compile-time guarantees that Store satisfies every interface boundary it must.
@@ -45,7 +47,12 @@ var (
 //
 // driver is "sqlite" or "postgres". dsn is the file path for SQLite or a
 // connection URL for Postgres (e.g. "postgres://user:pass@host/db?sslmode=disable").
-func New(driver, dsn string, dialect Dialect) (*Store, error) {
+// loc is the fallback timezone used for date computations when a user has no
+// timezone set; nil defaults to UTC.
+func New(driver, dsn string, dialect Dialect, loc *time.Location) (*Store, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open db: %w", err)
@@ -81,7 +88,7 @@ func New(driver, dsn string, dialect Dialect) (*Store, error) {
 		db.SetMaxOpenConns(25)
 	}
 
-	s := &Store{db: sqlx.NewDb(db, driver), dialect: dialect, driver: driver}
+	s := &Store{db: sqlx.NewDb(db, driver), dialect: dialect, driver: driver, loc: loc}
 	if err := s.runMigrations(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)

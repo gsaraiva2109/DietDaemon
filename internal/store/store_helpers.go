@@ -41,6 +41,22 @@ func nullStr(s string) any {
 	return s
 }
 
+// userLoc returns userID's timezone, falling back to the store's default
+// location when the user has none set or it fails to load. Mirrors
+// pipeline.Engine.userLoc; kept separate since Store has no dependency on
+// the pipeline package.
+func (s *Store) userLoc(ctx context.Context, userID string) *time.Location {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil || u.Timezone == "" {
+		return s.loc
+	}
+	loc, err := time.LoadLocation(u.Timezone)
+	if err != nil {
+		return s.loc
+	}
+	return loc
+}
+
 func parseUTC(s string) time.Time {
 	if s == "" {
 		return time.Time{}

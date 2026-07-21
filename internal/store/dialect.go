@@ -37,16 +37,6 @@ type Dialect interface {
 	// full-text query parameter. SQLite returns FTS5 prefix syntax (token*);
 	// Postgres returns tsquery prefix syntax (token:* & token2:*).
 	SearchQuery(raw string) string
-
-	// DateTrunc returns a SQL expression that truncates the named TEXT column
-	// (storing timestamps as "YYYY-MM-DDTHH:MM:SSZ" or "YYYY-MM-DD HH:MM:SS")
-	// down to its "YYYY-MM-DD" date portion, as text comparable to, and
-	// groupable/orderable with, a "YYYY-MM-DD" parameter. SQLite's date()
-	// accepts a text argument directly; Postgres's date() has no text
-	// overload, so we take the same first-10-characters substring the
-	// Postgres migration already uses for the generated logged_date columns
-	// (see migrations/postgres/001_init.sql, water_logs.logged_date).
-	DateTrunc(col string) string
 }
 
 // ---------------------------------------------------------------------------
@@ -70,10 +60,6 @@ func (d sqliteDialect) ColumnExists(table, column string) string {
 func (d sqliteDialect) SearchQuery(raw string) string {
 	tokens := strings.Fields(raw)
 	return strings.Join(tokens, "* ") + "*"
-}
-
-func (d sqliteDialect) DateTrunc(col string) string {
-	return fmt.Sprintf("date(%s)", col)
 }
 
 // ---------------------------------------------------------------------------
@@ -111,12 +97,6 @@ func (d postgresDialect) ColumnExists(table, column string) string {
 func (d postgresDialect) SearchQuery(raw string) string {
 	tokens := strings.Fields(raw)
 	return strings.Join(tokens, ":* & ") + ":*"
-}
-
-func (d postgresDialect) DateTrunc(col string) string {
-	// date(text) has no Postgres overload; substring matches the format the
-	// migration's generated logged_date columns already produce.
-	return fmt.Sprintf("substring(%s from 1 for 10)", col)
 }
 
 // ---------------------------------------------------------------------------

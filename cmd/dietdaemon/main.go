@@ -93,7 +93,7 @@ func run() error {
 	if cfg.DBDriver == "postgres" {
 		dsn = cfg.DatabaseURL
 	}
-	st, err := store.New(cfg.DBDriver, dsn, dialect)
+	st, err := store.New(cfg.DBDriver, dsn, dialect, cfg.Location)
 	if err != nil {
 		return err
 	}
