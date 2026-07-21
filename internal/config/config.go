@@ -251,13 +251,14 @@ func hostFromBaseURL(raw string) string {
 	return s
 }
 
-// Load reads configuration from the environment, applying values from a .env
-// file in the working directory first (without overriding variables already set
-// in the environment), then validates the result.
-func Load() (*Config, error) {
-	loadDotEnv(".env")
-
-	c := &Config{
+// populate builds a Config from the environment by reading every field's
+// getStr/getBool/... default, without any cross-field inference or
+// validation. Load() layers cross-field inference (e.g. COMPLETION_ADAPTER)
+// and validate() on top; LoadMinimal() uses this directly for callers (like
+// cmd/import-foods) that only need a handful of fields and must not require
+// daemon-only env vars (messaging, notifier, OIDC, email, ...).
+func populate() *Config {
+	return &Config{
 		MessagingAdapter:                         getStr("MESSAGING_ADAPTER", "telegram"),
 		TelegramBotToken:                         getStr("TELEGRAM_BOT_TOKEN", ""),
 		DiscordBotToken:                          getStr("DISCORD_BOT_TOKEN", ""),
@@ -333,6 +334,15 @@ func Load() (*Config, error) {
 		PendingTTL:                               getDuration("PENDING_TTL", 30*time.Minute),
 		MessageWorkers:                           getInt("MESSAGE_WORKERS", 4),
 	}
+}
+
+// Load reads configuration from the environment, applying values from a .env
+// file in the working directory first (without overriding variables already set
+// in the environment), then validates the result.
+func Load() (*Config, error) {
+	loadDotEnv(".env")
+
+	c := populate()
 
 	// COMPLETION_ADAPTER left unset: infer from which credentials are
 	// actually present instead of defaulting to ollama, so setting
@@ -417,6 +427,44 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// LoadMinimal reads configuration from the environment like Load, but
+// validates only the fields a one-shot CLI tool actually needs (currently:
+// the DB driver/URL) instead of the full daemon validation — so running
+// e.g. cmd/import-foods doesn't require unrelated daemon-only env vars
+// (messaging, notifier, OIDC, email, ...) to be set. See issue #133.
+func LoadMinimal() (*Config, error) {
+	loadDotEnv(".env")
+	c := populate()
+	return c, c.validateMinimal()
+}
+
+// validateMinimal checks only the configuration a minimal caller (see
+// LoadMinimal) actually depends on. Source-specific requirements (e.g.
+// USDA_FDC_API_KEY) are intentionally not duplicated here — BuildSource
+// (internal/foodimport/sources.go) already reports those the moment a
+// source is actually requested, and this is the only place that should.
+func (c *Config) validateMinimal() error {
+	var problems []string
+	add := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	switch c.DBDriver {
+	case "sqlite":
+	case "postgres":
+		if c.DatabaseURL == "" {
+			add("DATABASE_URL is required when DB_DRIVER=postgres")
+		}
+	default:
+		add("DB_DRIVER must be \"sqlite\" or \"postgres\", got %q", c.DBDriver)
+	}
+
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+	return nil
 }
 
 // validate collects every configuration problem and returns them as one error
