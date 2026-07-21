@@ -229,8 +229,9 @@ type PendingMeal struct {
 
 // DailyTargets holds a user's daily macro goals.
 type DailyTargets struct {
-	UserID  string
-	Targets Macros
+	UserID      string
+	Targets     Macros
+	WaterGoalMl int
 }
 
 // DailyRollup is the materialized sum of a user's macros for one local calendar

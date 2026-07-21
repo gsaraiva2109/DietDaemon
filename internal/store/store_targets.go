@@ -16,7 +16,7 @@ import (
 
 // GetTargets returns the daily targets for a user, or types.ErrNotFound.
 func (s *Store) GetTargets(ctx context.Context, userID string) (types.DailyTargets, error) {
-	const q = `SELECT user_id, kcal, protein, carbs, fat, fiber FROM daily_targets WHERE user_id = ?`
+	const q = `SELECT user_id, kcal, protein, carbs, fat, fiber, water_goal_ml FROM daily_targets WHERE user_id = ?`
 	var row targetsRow
 	if err := s.db.GetContext(ctx, &row, s.rewrite(q), userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -30,37 +30,40 @@ func (s *Store) GetTargets(ctx context.Context, userID string) (types.DailyTarge
 // targetsRow is the flat DB shape of daily_targets; types.DailyTargets groups
 // the macro columns into a nested Macros struct.
 type targetsRow struct {
-	UserID  string  `db:"user_id"`
-	Kcal    float64 `db:"kcal"`
-	Protein float64 `db:"protein"`
-	Carbs   float64 `db:"carbs"`
-	Fat     float64 `db:"fat"`
-	Fiber   float64 `db:"fiber"`
+	UserID      string  `db:"user_id"`
+	Kcal        float64 `db:"kcal"`
+	Protein     float64 `db:"protein"`
+	Carbs       float64 `db:"carbs"`
+	Fat         float64 `db:"fat"`
+	Fiber       float64 `db:"fiber"`
+	WaterGoalMl int     `db:"water_goal_ml"`
 }
 
 func (r targetsRow) toTargets() types.DailyTargets {
 	return types.DailyTargets{
-		UserID:  r.UserID,
-		Targets: types.Macros{Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber},
+		UserID:      r.UserID,
+		Targets:     types.Macros{Calories: r.Kcal, Protein: r.Protein, Carbs: r.Carbs, Fat: r.Fat, Fiber: r.Fiber},
+		WaterGoalMl: r.WaterGoalMl,
 	}
 }
 
 // SetTargets inserts or replaces the daily targets row.
 func (s *Store) SetTargets(ctx context.Context, t types.DailyTargets) error {
 	const q = `
-		INSERT INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber)
-		VALUES (:user_id, :kcal, :protein, :carbs, :fat, :fiber)
+		INSERT INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber, water_goal_ml)
+		VALUES (:user_id, :kcal, :protein, :carbs, :fat, :fiber, :water_goal_ml)
 		ON CONFLICT(user_id) DO UPDATE SET
-			kcal    = excluded.kcal,
-			protein = excluded.protein,
-			carbs   = excluded.carbs,
-			fat     = excluded.fat,
-			fiber   = excluded.fiber
+			kcal          = excluded.kcal,
+			protein       = excluded.protein,
+			carbs         = excluded.carbs,
+			fat           = excluded.fat,
+			fiber         = excluded.fiber,
+			water_goal_ml = excluded.water_goal_ml
 	`
 	query, args, err := sqlx.Named(q, map[string]any{
 		"user_id": t.UserID,
 		"kcal":    t.Targets.Calories, "protein": t.Targets.Protein, "carbs": t.Targets.Carbs,
-		"fat": t.Targets.Fat, "fiber": t.Targets.Fiber,
+		"fat": t.Targets.Fat, "fiber": t.Targets.Fiber, "water_goal_ml": t.WaterGoalMl,
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind set targets: %w", err)
