@@ -118,8 +118,8 @@ func TestHandleExportAllUserNotFound(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Body.String() != "{\"error\":\"internal server error\"}\n" {
-		t.Fatalf("expected generic 500, got %q", rec.Body.String())
+	if body := decodeJSON[errorEnvelope](t, rec); body.Error.Code != ErrorInternal {
+		t.Fatalf("expected generic 500, got %#v", body)
 	}
 }
 

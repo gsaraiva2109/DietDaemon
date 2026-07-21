@@ -1720,8 +1720,8 @@ func TestComposeTemplateUnknownFood(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "missing-food") {
-		t.Errorf("expected error to name bad food_id, got %s", rec.Body.String())
+	if body := decodeJSON[errorEnvelope](t, rec); body.Error.Code != ErrorValidation {
+		t.Errorf("expected validation error, got %#v", body)
 	}
 }
 

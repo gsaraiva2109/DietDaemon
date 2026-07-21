@@ -508,7 +508,7 @@ func trustedProxyPrefixes(c *config.Config) []netip.Prefix {
 // RegisterRoutes mounts all API routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Health — no auth, no rate limit. Used by orchestration probes.
-	mux.HandleFunc("GET /api/v1/healthz", h.handleHealthz)
+	mux.HandleFunc("GET /api/v1/healthz", withAPIErrorEnvelope(http.HandlerFunc(h.handleHealthz)))
 
 	// Existing.
 	mux.HandleFunc("GET /api/v1/rollups/today", h.wrap(h.handleRollupsToday))
@@ -726,7 +726,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // wrap applies auth middleware and JSON content-type headers to a handler.
 // The handler receives the authenticated userID.
 func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		userID, err := h.authenticate(r)
@@ -736,7 +736,7 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 			return
 		}
 		next(w, r, userID)
-	}
+	}))
 }
 
 // wrapReadOnly authenticates via a share token embedded in the URL path
@@ -746,7 +746,7 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 // link has no session to forge a CSRF token against, and the GET-only
 // restriction is what keeps it from being a mutation vector.
 func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method != http.MethodGet {
@@ -764,15 +764,15 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		next(w, r, u.ID)
-	}
+	}))
 }
 
 // wrapPublic sets JSON headers but performs no authentication.
 func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		next(w, r)
-	}
+	}))
 }
 
 // handleHealthz is a liveness probe for orchestration health checks.

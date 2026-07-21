@@ -87,9 +87,13 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  code: string
+  requestID: string | null
+  constructor(status: number, message: string, code = 'internal_error', requestID: string | null = null) {
     super(message)
     this.status = status
+    this.code = code
+    this.requestID = requestID
     this.name = 'ApiError'
   }
 }
@@ -97,7 +101,7 @@ export class ApiError extends Error {
 // Thrown on 401 so the app can bounce to the login screen.
 export class UnauthorizedError extends ApiError {
   constructor(message = 'unauthorized') {
-    super(401, message)
+    super(401, message, 'unauthorized')
     this.name = 'UnauthorizedError'
   }
 }
@@ -106,7 +110,7 @@ export class UnauthorizedError extends ApiError {
 export class RateLimitError extends ApiError {
   retryAfter: number | null
   constructor(retryAfter: number | null, message = 'too many attempts') {
-    super(429, message)
+    super(429, message, 'rate_limited')
     this.name = 'RateLimitError'
     this.retryAfter = retryAfter
   }
@@ -139,7 +143,7 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
   try {
     res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })
   } catch {
-    throw new ApiError(0, 'Network error, is the DietDaemon server running?')
+    throw new ApiError(0, 'Network error, is the DietDaemon server running?', 'service_unavailable')
   }
 
   if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized)
@@ -150,13 +154,15 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
 
   if (!res.ok) {
     let msg = `Request failed (${res.status})`
+    let code = 'internal_error'
     try {
-      const body = (await res.json()) as { error?: string }
-      if (body?.error) msg = body.error
+      const body = (await res.json()) as { error?: { code?: string; message?: string } }
+      if (body?.error?.message) msg = body.error.message
+      if (body?.error?.code) code = body.error.code
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, msg)
+    throw new ApiError(res.status, msg, code, res.headers.get('X-Request-ID'))
   }
 
   if (res.status === 204) return undefined as T
