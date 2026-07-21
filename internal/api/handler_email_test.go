@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -30,12 +31,14 @@ func (m *fakeMailer) Send(_ context.Context, to string, msg mailer.Message) erro
 // emailTestAuthStore wraps fakeAuthStore with email token storage.
 type emailTestAuthStore struct {
 	*fakeAuthStore
-	emailTokens          map[string]emailToken
-	emailVerified        map[string]bool
-	userEmails           map[string]string
-	markVerifiedFail     bool
-	updateEmailFail      bool
-	deleteUserSessionsCb func(userID string)
+	emailTokens           map[string]emailToken
+	emailVerified         map[string]bool
+	userEmails            map[string]string
+	markVerifiedFail      bool
+	updateEmailFail       bool
+	deleteUserSessionsCb  func(userID string)
+	createEmailTokenErr   error
+	deleteUserSessionsErr error
 }
 
 type emailToken struct {
@@ -54,6 +57,9 @@ func newEmailTestAuthStore() *emailTestAuthStore {
 }
 
 func (s *emailTestAuthStore) CreateEmailToken(_ context.Context, id, userID, purpose, expiresAt string) error {
+	if s.createEmailTokenErr != nil {
+		return s.createEmailTokenErr
+	}
 	s.emailTokens[id] = emailToken{userID: userID, purpose: purpose, expiresAt: expiresAt}
 	return nil
 }
@@ -97,7 +103,7 @@ func (s *emailTestAuthStore) DeleteUserSessions(_ context.Context, userID string
 	if s.deleteUserSessionsCb != nil {
 		s.deleteUserSessionsCb(userID)
 	}
-	return nil
+	return s.deleteUserSessionsErr
 }
 
 // Magic codes.
@@ -218,6 +224,48 @@ func TestForgotPasswordGenericResponse(t *testing.T) {
 	}
 }
 
+func TestForgotPasswordLockoutFailuresAreGenericNoOps(t *testing.T) {
+	for _, name := range []string{"locked", "store error"} {
+		t.Run(name, func(t *testing.T) {
+			authStore := newEmailTestAuthStore()
+			authStore.userByEmail["test@example.com"] = types.User{ID: "test-user", Email: "test@example.com"}
+			authStore.phcHash["test-user"] = "password hash"
+			if name == "locked" {
+				for range 3 {
+					_ = authStore.RecordLoginAttempt(t.Context(), "forgot:test@example.com", false)
+				}
+			} else {
+				authStore.recentFailedAttemptsErr = errors.New("store unavailable")
+			}
+
+			fm := &fakeMailer{}
+			rec := doRequest(buildEmailHandler(authStore, fm), http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "test@example.com"}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected generic 200, got %d", rec.Code)
+			}
+			if len(authStore.emailTokens) != 0 || len(fm.sent) != 0 {
+				t.Error("lockout failure must not issue a reset token or send email")
+			}
+		})
+	}
+}
+
+func TestForgotPasswordTokenPersistenceFailureIsGeneric(t *testing.T) {
+	authStore := newEmailTestAuthStore()
+	authStore.userByEmail["test@example.com"] = types.User{ID: "test-user", Email: "test@example.com"}
+	authStore.phcHash["test-user"] = "password hash"
+	authStore.createEmailTokenErr = errors.New("store unavailable")
+	fm := &fakeMailer{}
+
+	rec := doRequest(buildEmailHandler(authStore, fm), http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "test@example.com"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected generic 200, got %d", rec.Code)
+	}
+	if len(fm.sent) != 0 {
+		t.Error("must not send when token persistence fails")
+	}
+}
+
 func TestPasswordResetRevokesSessions(t *testing.T) {
 	authStore := newEmailTestAuthStore()
 	// Give the test user a password so forgot→reset works.
@@ -247,6 +295,25 @@ func TestPasswordResetRevokesSessions(t *testing.T) {
 
 	if !sessionsDeleted {
 		t.Error("password reset should delete all user sessions")
+	}
+}
+
+func TestPasswordResetRevocationFailureLeavesPasswordUnchanged(t *testing.T) {
+	authStore := newEmailTestAuthStore()
+	oldHash := "old password hash"
+	authStore.phcHash["test-user"] = oldHash
+	authStore.deleteUserSessionsErr = errors.New("store unavailable")
+	tok := auth.NewToken()
+	_ = authStore.CreateEmailToken(t.Context(), auth.HashToken(tok), "test-user", "reset", time.Now().UTC().Add(time.Hour).Format(time.RFC3339))
+
+	rec := doRequest(buildEmailHandler(authStore, &fakeMailer{}), http.MethodPost, "/api/v1/auth/password/reset", map[string]string{
+		"token": tok, "password": "newSecurePassword123!",
+	}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if authStore.phcHash["test-user"] != oldHash {
+		t.Error("password changed despite session revocation failure")
 	}
 }
 

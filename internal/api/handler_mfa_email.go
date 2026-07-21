@@ -78,6 +78,9 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	if h.mailer != nil && h.emailProvider != "none" {
 		if err := h.mailer.Send(ctx, u.Email, mailer.MFAEmailCodeEmail(code)); err != nil {
 			slog.Error("send mfa email code failed", "err", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+			return
 		}
 	} else {
 		// Log the code for dev/homelab (mirrors forgot-password pattern).

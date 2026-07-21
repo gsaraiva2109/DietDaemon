@@ -260,7 +260,7 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		Window:       15 * time.Minute,
 		LockDuration: 5 * time.Minute,
 	})
-	if lockErr == nil && locked {
+	if lockErr != nil || locked {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
 	}
@@ -270,7 +270,8 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().UTC().Add(resetTokenTTL).Format(time.RFC3339)
 
 	if err := h.authStore.CreateEmailToken(ctx, hashedID, u.ID, "reset", expiresAt); err != nil {
-		h.writeErr(w, err)
+		slog.Error("create password reset token failed", "err", err)
+		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
 	}
 
@@ -325,13 +326,18 @@ func (h *Handler) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revoke all sessions for this user — logout everywhere.
+	if err := h.sessions.DeleteUserSessions(ctx, userID); err != nil {
+		slog.Error("revoke sessions before password reset", "err", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+		return
+	}
+
 	if err := h.authStore.SetPasswordHash(ctx, userID, phc); err != nil {
 		h.writeErr(w, err)
 		return
 	}
-
-	// Revoke all sessions for this user — logout everywhere.
-	_ = h.sessions.DeleteUserSessions(ctx, userID)
 
 	ip := h.clientIP(r)
 	u, _ := h.store.GetUser(ctx, userID)

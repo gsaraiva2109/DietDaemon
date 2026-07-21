@@ -115,8 +115,11 @@ func TestHandleExportAllUserNotFound(t *testing.T) {
 	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/export/all", nil, nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "{\"error\":\"internal server error\"}\n" {
+		t.Fatalf("expected generic 500, got %q", rec.Body.String())
 	}
 }
 

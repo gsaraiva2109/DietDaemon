@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -175,6 +176,23 @@ func TestMFAEmailSendInvalidChallenge(t *testing.T) {
 	}
 	if body := decodeJSON[map[string]string](t, rec); body["error"] != "invalid challenge" {
 		t.Errorf("expected invalid challenge response, got %#v", body)
+	}
+}
+
+func TestMFAEmailSendDeliveryFailureIsInternalAndNotSentAudit(t *testing.T) {
+	authStore := newMFAEmailTestStore()
+	h := buildMFAEmailHandler(authStore, &fakeMailer{sendErr: errors.New("mail unavailable")})
+	challengeToken := "valid-challenge"
+	authStore.addChallenge(challengeToken, time.Now().UTC().Add(time.Minute))
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/mfa/email/send", map[string]string{"challenge_token": challengeToken}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	for _, event := range authStore.auditEvents {
+		if event.Event == "mfa.email_code_sent" {
+			t.Error("delivery failure must not be audited as sent")
+		}
 	}
 }
 

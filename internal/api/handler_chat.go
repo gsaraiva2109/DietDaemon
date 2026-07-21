@@ -37,7 +37,11 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 
 	// Inject BYOK override (if AI_KEY_MODE=byok and the user has a key) before
 	// falling back to the boot-configured adapter.
-	ctx := h.injectChatAdapterOverride(r.Context(), userID)
+	ctx, err := h.injectChatAdapterOverride(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
 	router := h.assistantRouter
 	if override, ok := ports.ChatAdapterOverrideFromContext(ctx); ok {
 		router = assistant.New(override, h.chatCommands, h.toolDescs)

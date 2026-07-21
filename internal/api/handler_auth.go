@@ -385,14 +385,20 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 
+	// Invalidate all existing sessions (force re-login on other devices),
+	// then create a fresh one for this device. Revoke first so a failure leaves
+	// the existing password unchanged.
+	if err := h.sessions.DeleteUserSessions(ctx, userID); err != nil {
+		slog.Error("revoke sessions before password change", "err", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+		return
+	}
+
 	if err := h.authStore.SetPasswordHash(ctx, userID, newPhc); err != nil {
 		h.writeErr(w, err)
 		return
 	}
-
-	// Invalidate all existing sessions (force re-login on other devices),
-	// then create a fresh one for this device.
-	_ = h.sessions.DeleteUserSessions(ctx, userID)
 
 	ip := h.clientIP(r)
 	ua := r.UserAgent()

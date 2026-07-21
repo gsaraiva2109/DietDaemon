@@ -111,6 +111,8 @@ type Config struct {
 	EnableDashboard     bool
 	EnableSTT           bool
 	WhisperURL          string
+	HSTSEnabled         bool
+	CORSAllowedOrigins  []string
 
 	// --- Scheduled backup/export ---
 	BackupLocalDir      string        // base dir for the "local" destination; empty disables it
@@ -288,6 +290,8 @@ func Load() (*Config, error) {
 		EnableDashboard:         getBool("ENABLE_DASHBOARD", false),
 		EnableSTT:               getBool("ENABLE_STT", false),
 		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
+		HSTSEnabled:             getBool("HSTS_ENABLED", false),
+		CORSAllowedOrigins:      splitCSV(getStr("CORS_ALLOWED_ORIGINS", "")),
 		BackupLocalDir:          getStr("BACKUP_LOCAL_DIR", ""),
 		BackupCheckInterval:     getDuration("BACKUP_CHECK_INTERVAL", time.Hour),
 		MultiUser:               getBool("MULTI_USER", false),
@@ -563,6 +567,12 @@ func (c *Config) validate(tierErr error) error {
 	for _, raw := range c.TrustedProxies {
 		if _, err := parseProxyEntry(raw); err != nil {
 			add("TRUSTED_PROXIES entry %q is not a valid IP or CIDR: %v", raw, err)
+		}
+	}
+	for _, raw := range c.CORSAllowedOrigins {
+		u, err := url.ParseRequestURI(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.String() != raw {
+			add("CORS_ALLOWED_ORIGINS entry %q is not an exact http(s) origin", raw)
 		}
 	}
 

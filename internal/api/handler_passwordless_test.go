@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -169,6 +170,46 @@ func TestMagicRequestEmptyEmailGeneric(t *testing.T) {
 
 	if len(fm.sent) != 0 {
 		t.Error("no email should be sent for empty email")
+	}
+}
+
+func TestMagicRequestLockoutFailuresAreGenericNoOps(t *testing.T) {
+	for _, name := range []string{"locked", "store error"} {
+		t.Run(name, func(t *testing.T) {
+			authStore := newMagicTestAuthStore()
+			if name == "locked" {
+				for range 3 {
+					_ = authStore.RecordLoginAttempt(t.Context(), "magic:test@example.com", false)
+				}
+			} else {
+				authStore.recentFailedAttemptsErr = errors.New("store unavailable")
+			}
+			fm := &fakeMailer{}
+
+			rec := doRequest(buildMagicHandler(authStore, fm), http.MethodPost, "/api/v1/auth/magic/request", map[string]string{"email": "test@example.com"}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected generic 200, got %d", rec.Code)
+			}
+			if len(authStore.emailTokens) != 0 || len(authStore.magicCodes) != 0 || len(fm.sent) != 0 {
+				t.Error("lockout failure must not issue credentials or send email")
+			}
+		})
+	}
+}
+
+func TestMagicRequestDeliveryFailureDoesNotConsumeLockoutAttempt(t *testing.T) {
+	authStore := newMagicTestAuthStore()
+	fm := &fakeMailer{sendErr: errors.New("mail unavailable")}
+
+	rec := doRequest(buildMagicHandler(authStore, fm), http.MethodPost, "/api/v1/auth/magic/request", map[string]string{"email": "test@example.com"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected generic 200, got %d", rec.Code)
+	}
+	if len(authStore.loginAttempts) != 0 {
+		t.Errorf("delivery failure recorded lockout attempts: %#v", authStore.loginAttempts)
+	}
+	if len(authStore.auditEvents) != 1 || authStore.auditEvents[0].Event != "user.magic_request_failed" {
+		t.Errorf("expected failed-delivery audit event, got %#v", authStore.auditEvents)
 	}
 }
 

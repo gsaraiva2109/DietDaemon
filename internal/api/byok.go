@@ -40,19 +40,22 @@ func buildAdapterForProvider(provider, apiKey, anthropicModel, openaiModel, open
 }
 
 // injectModelOverride checks AI_KEY_MODE, looks up the user's stored key, decrypts
-// it, builds a per-user adapter, and injects it into ctx. Returns ctx unchanged
-// when BYOK is disabled or the user has no key.
-func (h *Handler) injectModelOverride(ctx context.Context, userID string) context.Context {
+// it, builds a per-user adapter, and injects it into ctx. It returns ctx
+// unchanged when BYOK is disabled or the user has no key.
+func (h *Handler) injectModelOverride(ctx context.Context, userID string) (context.Context, error) {
 	if h.cfg == nil || h.cfg.AIKeyMode != "byok" {
-		return ctx
+		return ctx, nil
 	}
 	provider, encKey, found, err := h.store.GetUserAIKey(ctx, userID)
-	if err != nil || !found {
-		return ctx
+	if err != nil {
+		return nil, fmt.Errorf("get BYOK key: %v", err)
+	}
+	if !found {
+		return ctx, nil
 	}
 	plaintext, err := decryptAIKey(encKey, h.cfg.AIKeyEncKey)
 	if err != nil {
-		return ctx
+		return nil, fmt.Errorf("decrypt BYOK key: %v", err)
 	}
 	adapter, err := buildAdapterForProvider(
 		provider,
@@ -63,9 +66,9 @@ func (h *Handler) injectModelOverride(ctx context.Context, userID string) contex
 		h.cfg.ModelTimeout,
 	)
 	if err != nil {
-		return ctx
+		return nil, fmt.Errorf("build BYOK adapter: %v", err)
 	}
-	return ports.WithModelOverride(ctx, adapter)
+	return ports.WithModelOverride(ctx, adapter), nil
 }
 
 // buildChatAdapterForProvider mirrors buildChatAdapter in main.go but takes an
@@ -83,17 +86,20 @@ func buildChatAdapterForProvider(provider, apiKey, anthropicModel, openaiModel, 
 
 // injectChatAdapterOverride checks AI_KEY_MODE, looks up the user's stored key,
 // decrypts it, builds a per-user chat adapter, and injects it into ctx.
-func (h *Handler) injectChatAdapterOverride(ctx context.Context, userID string) context.Context {
+func (h *Handler) injectChatAdapterOverride(ctx context.Context, userID string) (context.Context, error) {
 	if h.cfg == nil || h.cfg.AIKeyMode != "byok" {
-		return ctx
+		return ctx, nil
 	}
 	provider, encKey, found, err := h.store.GetUserAIKey(ctx, userID)
-	if err != nil || !found {
-		return ctx
+	if err != nil {
+		return nil, fmt.Errorf("get BYOK key: %v", err)
+	}
+	if !found {
+		return ctx, nil
 	}
 	plaintext, err := decryptAIKey(encKey, h.cfg.AIKeyEncKey)
 	if err != nil {
-		return ctx
+		return nil, fmt.Errorf("decrypt BYOK key: %v", err)
 	}
 	adapter, err := buildChatAdapterForProvider(
 		provider,
@@ -104,7 +110,7 @@ func (h *Handler) injectChatAdapterOverride(ctx context.Context, userID string) 
 		h.cfg.ModelTimeout,
 	)
 	if err != nil {
-		return ctx
+		return nil, fmt.Errorf("build BYOK chat adapter: %v", err)
 	}
-	return ports.WithChatAdapterOverride(ctx, adapter)
+	return ports.WithChatAdapterOverride(ctx, adapter), nil
 }
