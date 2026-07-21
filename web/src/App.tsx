@@ -24,6 +24,7 @@ import { VerifyEmail } from '@/routes/VerifyEmail'
 import { ForgotPassword } from '@/routes/ForgotPassword'
 import { ResetPassword } from '@/routes/ResetPassword'
 import { MagicLink } from '@/routes/MagicLink'
+import { NotFound } from '@/routes/NotFound'
 
 // Lazy-load all routes so recharts (~300KB) only ships when Trends or
 // Summary is visited. Route components use named exports, wrap with
@@ -146,6 +147,7 @@ function AppRoutes() {
           <Route path="/goals" element={<Goals />} />
         </Route>
       </Route>
+      <Route path="*" element={<NotFound />} />
     </Routes>
   )
 }

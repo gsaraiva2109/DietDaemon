@@ -39,3 +39,18 @@ func TestAPIErrorEnvelopePreservesStreaming(t *testing.T) {
 		t.Fatalf("stream body = %q", got)
 	}
 }
+
+func TestAPIRouteFallbackUsesErrorEnvelope(t *testing.T) {
+	h := New(nil, nil, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/missing", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Body.String(); got != "{\"error\":{\"code\":\"not_found\",\"message\":\"Not found.\"}}\n" {
+		t.Fatalf("body = %q", got)
+	}
+}

@@ -132,3 +132,16 @@ func TestIPRateLimiter(t *testing.T) {
 		t.Error("different IP should be allowed")
 	}
 }
+
+func TestIPRateLimiterCleanup(t *testing.T) {
+	lim := NewIPRateLimiter(1, time.Minute)
+	lim.buckets["old"] = &ipBucket{lastSeen: time.Now().Add(-time.Minute)}
+	lim.buckets["recent"] = &ipBucket{lastSeen: time.Now()}
+	lim.Cleanup()
+	if _, ok := lim.buckets["old"]; ok {
+		t.Fatal("old bucket was not removed")
+	}
+	if _, ok := lim.buckets["recent"]; !ok {
+		t.Fatal("recent bucket was removed")
+	}
+}

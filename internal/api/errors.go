@@ -30,13 +30,21 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-func writeAPIError(w http.ResponseWriter, status int, code ErrorCode, message string) {
+// WriteError writes the public structured API error contract. It is exported
+// for the root HTTP recovery middleware, which must use the same format.
+func WriteError(w http.ResponseWriter, status int, code ErrorCode, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	var body errorEnvelope
 	body.Error.Code = code
 	body.Error.Message = message
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeAPIError keeps internal callers source-compatible while the root HTTP
+// middleware uses the exported form above.
+func writeAPIError(w http.ResponseWriter, status int, code ErrorCode, message string) {
+	WriteError(w, status, code, message)
 }
 
 func errorForStatus(status int) (ErrorCode, string) {
@@ -127,7 +135,7 @@ func (w *errorEnvelopeWriter) finish() {
 		if w.status < http.StatusInternalServerError {
 			message = publicErrorMessage(w.buf.Bytes(), message)
 		}
-		writeAPIError(w.ResponseWriter, w.status, code, message)
+		WriteError(w.ResponseWriter, w.status, code, message)
 		return
 	}
 	w.ResponseWriter.WriteHeader(w.status)

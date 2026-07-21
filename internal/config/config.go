@@ -140,6 +140,13 @@ type Config struct {
 	// reverse proxy so the real client IP is used instead of the proxy's.
 	TrustedProxies []string
 
+	// Per-minute request limits. Public auth endpoints are limited per client
+	// IP; authenticated endpoints are limited per user and request category.
+	PublicRateLimitPerMinute                 int
+	AuthenticatedReadRateLimitPerMinute      int
+	AuthenticatedWriteRateLimitPerMinute     int
+	AuthenticatedExpensiveRateLimitPerMinute int
+
 	// --- Auth — TOTP two-factor authentication ---
 	TOTPEncKey []byte // AES-256-GCM key, 32 bytes; empty = TOTP disabled
 	TOTPIssuer string // otpauth issuer label
@@ -243,70 +250,74 @@ func Load() (*Config, error) {
 	loadDotEnv(".env")
 
 	c := &Config{
-		MessagingAdapter:        getStr("MESSAGING_ADAPTER", "telegram"),
-		TelegramBotToken:        getStr("TELEGRAM_BOT_TOKEN", ""),
-		DiscordBotToken:         getStr("DISCORD_BOT_TOKEN", ""),
-		MatrixHomeserverURL:     getStr("MATRIX_HOMESERVER_URL", ""),
-		MatrixUserID:            getStr("MATRIX_USER_ID", ""),
-		MatrixToken:             getStr("MATRIX_TOKEN", ""),
-		NutritionSources:        splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
-		USDAFDCAPIKey:           getStr("USDA_FDC_API_KEY", ""),
-		TacoDataPath:            getStr("TACO_DATA_PATH", ""),
-		FoodImportEnabled:       getBool("FOOD_IMPORT_ENABLED", false),
-		FoodImportSources:       splitCSV(getStr("FOOD_IMPORT_SOURCES", "")),
-		FoodImportInterval:      getDuration("FOOD_IMPORT_INTERVAL", 24*time.Hour),
-		USDABulkFile:            getStr("USDA_BULK_FILE", ""),
-		USDABulkDataTypes:       splitCSV(getStr("USDA_BULK_DATA_TYPES", "Foundation,SR Legacy")),
-		USDABulkMaxRows:         getInt("USDA_BULK_MAX_ROWS", 0),
-		OFFBulkFile:             getStr("OFF_BULK_FILE", ""),
-		OFFBulkMinPopularity:    getInt("OFF_BULK_MIN_POPULARITY", 0),
-		OFFBulkMaxRows:          getInt("OFF_BULK_MAX_ROWS", 0),
-		TacoBulkMaxRows:         getInt("TACO_BULK_MAX_ROWS", 0),
-		EmbedAdapter:            getStr("EMBED_ADAPTER", "ollama"),
-		CompletionAdapter:       getStr("COMPLETION_ADAPTER", ""),
-		OllamaURL:               getStr("OLLAMA_URL", ""),
-		EmbedModel:              getStr("EMBED_MODEL", "nomic-embed-text"),
-		LLMModel:                getStr("LLM_MODEL", "llama3.1"),
-		ModelTimeout:            getDuration("MODEL_TIMEOUT", 30*time.Second),
-		OllamaAutoPull:          getBool("OLLAMA_AUTO_PULL", false),
-		AnthropicAPIKey:         getStr("ANTHROPIC_API_KEY", ""),
-		AnthropicModel:          getStr("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
-		OpenAIBaseURL:           getStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		OpenAIAPIKey:            getStr("OPENAI_API_KEY", ""),
-		OpenAIModel:             getStr("OPENAI_MODEL", "gpt-4o-mini"),
-		OCRAdapter:              getStr("OCR_ADAPTER", ""),
-		OllamaVisionModel:       getStr("OLLAMA_VISION_MODEL", "llava"),
-		EmbedMatchThreshold:     getFloat("EMBED_MATCH_THRESHOLD", 0.80),
-		AliasWriteBackThreshold: getFloat("ALIAS_WRITE_BACK_THRESHOLD", 0.92),
-		Notifier:                getStr("NOTIFIER", "ntfy"),
-		NtfyURL:                 getStr("NTFY_URL", ""),
-		NtfyTopic:               getStr("NTFY_TOPIC", ""),
-		NtfyToken:               getStr("NTFY_TOKEN", ""),
-		GotifyURL:               getStr("GOTIFY_URL", ""),
-		GotifyToken:             getStr("GOTIFY_TOKEN", ""),
-		DefaultTimezone:         getStr("DEFAULT_TIMEZONE", "UTC"),
-		DBPath:                  getStr("DB_PATH", "/data/dietdaemon.db"),
-		EnableNotifications:     getBool("ENABLE_NOTIFICATIONS", true),
-		EnableDashboard:         getBool("ENABLE_DASHBOARD", false),
-		EnableSTT:               getBool("ENABLE_STT", false),
-		WhisperURL:              getStr("WHISPER_URL", "http://whisper:8080"),
-		HSTSEnabled:             getBool("HSTS_ENABLED", false),
-		CORSAllowedOrigins:      splitCSV(getStr("CORS_ALLOWED_ORIGINS", "")),
-		BackupLocalDir:          getStr("BACKUP_LOCAL_DIR", ""),
-		BackupCheckInterval:     getDuration("BACKUP_CHECK_INTERVAL", time.Hour),
-		MultiUser:               getBool("MULTI_USER", false),
-		APIAuthToken:            getStr("API_AUTH_TOKEN", ""),
-		DBDriver:                getStr("DB_DRIVER", "sqlite"),
-		DatabaseURL:             getStr("DATABASE_URL", ""),
-		RegistrationMode:        getStr("AUTH_REGISTRATION_MODE", "invite"),
-		SessionIdleTTL:          getDuration("SESSION_IDLE_TTL", 168*time.Hour),
-		SessionAbsoluteTTL:      getDuration("SESSION_ABSOLUTE_TTL", 720*time.Hour),
-		SessionRememberTTL:      getDuration("SESSION_REMEMBER_TTL", 2160*time.Hour),
-		CookieSecure:            getBool("COOKIE_SECURE", true),
-		CookieDomain:            getStr("COOKIE_DOMAIN", ""),
-		TrustedProxies:          splitCSV(getStr("TRUSTED_PROXIES", "127.0.0.0/8,::1/128")),
-		LogLevel:                getStr("LOG_LEVEL", "info"),
-		TOTPIssuer:              getStr("TOTP_ISSUER", "DietDaemon"),
+		MessagingAdapter:                         getStr("MESSAGING_ADAPTER", "telegram"),
+		TelegramBotToken:                         getStr("TELEGRAM_BOT_TOKEN", ""),
+		DiscordBotToken:                          getStr("DISCORD_BOT_TOKEN", ""),
+		MatrixHomeserverURL:                      getStr("MATRIX_HOMESERVER_URL", ""),
+		MatrixUserID:                             getStr("MATRIX_USER_ID", ""),
+		MatrixToken:                              getStr("MATRIX_TOKEN", ""),
+		NutritionSources:                         splitCSV(getStr("NUTRITION_SOURCE", "openfoodfacts")),
+		USDAFDCAPIKey:                            getStr("USDA_FDC_API_KEY", ""),
+		TacoDataPath:                             getStr("TACO_DATA_PATH", ""),
+		FoodImportEnabled:                        getBool("FOOD_IMPORT_ENABLED", false),
+		FoodImportSources:                        splitCSV(getStr("FOOD_IMPORT_SOURCES", "")),
+		FoodImportInterval:                       getDuration("FOOD_IMPORT_INTERVAL", 24*time.Hour),
+		USDABulkFile:                             getStr("USDA_BULK_FILE", ""),
+		USDABulkDataTypes:                        splitCSV(getStr("USDA_BULK_DATA_TYPES", "Foundation,SR Legacy")),
+		USDABulkMaxRows:                          getInt("USDA_BULK_MAX_ROWS", 0),
+		OFFBulkFile:                              getStr("OFF_BULK_FILE", ""),
+		OFFBulkMinPopularity:                     getInt("OFF_BULK_MIN_POPULARITY", 0),
+		OFFBulkMaxRows:                           getInt("OFF_BULK_MAX_ROWS", 0),
+		TacoBulkMaxRows:                          getInt("TACO_BULK_MAX_ROWS", 0),
+		EmbedAdapter:                             getStr("EMBED_ADAPTER", "ollama"),
+		CompletionAdapter:                        getStr("COMPLETION_ADAPTER", ""),
+		OllamaURL:                                getStr("OLLAMA_URL", ""),
+		EmbedModel:                               getStr("EMBED_MODEL", "nomic-embed-text"),
+		LLMModel:                                 getStr("LLM_MODEL", "llama3.1"),
+		ModelTimeout:                             getDuration("MODEL_TIMEOUT", 30*time.Second),
+		OllamaAutoPull:                           getBool("OLLAMA_AUTO_PULL", false),
+		AnthropicAPIKey:                          getStr("ANTHROPIC_API_KEY", ""),
+		AnthropicModel:                           getStr("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+		OpenAIBaseURL:                            getStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenAIAPIKey:                             getStr("OPENAI_API_KEY", ""),
+		OpenAIModel:                              getStr("OPENAI_MODEL", "gpt-4o-mini"),
+		OCRAdapter:                               getStr("OCR_ADAPTER", ""),
+		OllamaVisionModel:                        getStr("OLLAMA_VISION_MODEL", "llava"),
+		EmbedMatchThreshold:                      getFloat("EMBED_MATCH_THRESHOLD", 0.80),
+		AliasWriteBackThreshold:                  getFloat("ALIAS_WRITE_BACK_THRESHOLD", 0.92),
+		Notifier:                                 getStr("NOTIFIER", "ntfy"),
+		NtfyURL:                                  getStr("NTFY_URL", ""),
+		NtfyTopic:                                getStr("NTFY_TOPIC", ""),
+		NtfyToken:                                getStr("NTFY_TOKEN", ""),
+		GotifyURL:                                getStr("GOTIFY_URL", ""),
+		GotifyToken:                              getStr("GOTIFY_TOKEN", ""),
+		DefaultTimezone:                          getStr("DEFAULT_TIMEZONE", "UTC"),
+		DBPath:                                   getStr("DB_PATH", "/data/dietdaemon.db"),
+		EnableNotifications:                      getBool("ENABLE_NOTIFICATIONS", true),
+		EnableDashboard:                          getBool("ENABLE_DASHBOARD", false),
+		EnableSTT:                                getBool("ENABLE_STT", false),
+		WhisperURL:                               getStr("WHISPER_URL", "http://whisper:8080"),
+		HSTSEnabled:                              getBool("HSTS_ENABLED", false),
+		CORSAllowedOrigins:                       splitCSV(getStr("CORS_ALLOWED_ORIGINS", "")),
+		BackupLocalDir:                           getStr("BACKUP_LOCAL_DIR", ""),
+		BackupCheckInterval:                      getDuration("BACKUP_CHECK_INTERVAL", time.Hour),
+		MultiUser:                                getBool("MULTI_USER", false),
+		APIAuthToken:                             getStr("API_AUTH_TOKEN", ""),
+		DBDriver:                                 getStr("DB_DRIVER", "sqlite"),
+		DatabaseURL:                              getStr("DATABASE_URL", ""),
+		RegistrationMode:                         getStr("AUTH_REGISTRATION_MODE", "invite"),
+		SessionIdleTTL:                           getDuration("SESSION_IDLE_TTL", 168*time.Hour),
+		SessionAbsoluteTTL:                       getDuration("SESSION_ABSOLUTE_TTL", 720*time.Hour),
+		SessionRememberTTL:                       getDuration("SESSION_REMEMBER_TTL", 2160*time.Hour),
+		CookieSecure:                             getBool("COOKIE_SECURE", true),
+		CookieDomain:                             getStr("COOKIE_DOMAIN", ""),
+		TrustedProxies:                           splitCSV(getStr("TRUSTED_PROXIES", "127.0.0.0/8,::1/128")),
+		PublicRateLimitPerMinute:                 getInt("PUBLIC_RATE_LIMIT_PER_MINUTE", 10),
+		AuthenticatedReadRateLimitPerMinute:      getInt("AUTH_READ_RATE_LIMIT_PER_MINUTE", 120),
+		AuthenticatedWriteRateLimitPerMinute:     getInt("AUTH_WRITE_RATE_LIMIT_PER_MINUTE", 30),
+		AuthenticatedExpensiveRateLimitPerMinute: getInt("AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE", 10),
+		LogLevel:                                 getStr("LOG_LEVEL", "info"),
+		TOTPIssuer:                               getStr("TOTP_ISSUER", "DietDaemon"),
 	}
 
 	// COMPLETION_ADAPTER left unset: infer from which credentials are
@@ -567,6 +578,19 @@ func (c *Config) validate(tierErr error) error {
 	for _, raw := range c.TrustedProxies {
 		if _, err := parseProxyEntry(raw); err != nil {
 			add("TRUSTED_PROXIES entry %q is not a valid IP or CIDR: %v", raw, err)
+		}
+	}
+	for _, limit := range []struct {
+		name  string
+		value int
+	}{
+		{"PUBLIC_RATE_LIMIT_PER_MINUTE", c.PublicRateLimitPerMinute},
+		{"AUTH_READ_RATE_LIMIT_PER_MINUTE", c.AuthenticatedReadRateLimitPerMinute},
+		{"AUTH_WRITE_RATE_LIMIT_PER_MINUTE", c.AuthenticatedWriteRateLimitPerMinute},
+		{"AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE", c.AuthenticatedExpensiveRateLimitPerMinute},
+	} {
+		if limit.value <= 0 {
+			add("%s must be positive", limit.name)
 		}
 	}
 	for _, raw := range c.CORSAllowedOrigins {

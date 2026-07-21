@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -18,8 +17,10 @@ func (h *Handler) handleStartFast(w http.ResponseWriter, r *http.Request, userID
 	var body struct {
 		TargetHours float64 `json:"target_hours"`
 	}
-	// Body is optional; ignore decode errors on empty bodies.
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := decodeOptionalRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
+		return
+	}
 	if body.TargetHours <= 0 {
 		body.TargetHours = 16
 	}
@@ -76,11 +77,9 @@ func (h *Handler) handleGetActiveFast(w http.ResponseWriter, r *http.Request, us
 }
 
 func (h *Handler) handleListFasts(w http.ResponseWriter, r *http.Request, userID string) {
-	limit := 10
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 10, 1, 100)
+	if !ok {
+		return
 	}
 	fasts, err := h.store.ListFasts(r.Context(), userID, limit)
 	if err != nil {

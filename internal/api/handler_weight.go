@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -14,11 +13,9 @@ import (
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleListWeight(w http.ResponseWriter, r *http.Request, userID string) {
-	days := 30
-	if s := r.URL.Query().Get("days"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
+	days, ok := boundedQueryInt(w, r, "days", 30, 1, 365)
+	if !ok {
+		return
 	}
 	entries, err := h.store.ListWeight(r.Context(), userID, days)
 	if err != nil {
@@ -37,14 +34,16 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 		WeightKg float64 `json:"weight_kg"`
 		Note     string  `json:"note"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
 		return
 	}
-	if body.WeightKg <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "weight_kg must be positive"})
+	if !isFinite(body.WeightKg) || body.WeightKg < 20 || body.WeightKg > 500 {
+		writeValidationError(w, "weight_kg must be between 20 and 500")
+		return
+	}
+	if !validDate(body.Date, h.loc) {
+		writeValidationError(w, "date must be a non-future YYYY-MM-DD date")
 		return
 	}
 	entry := types.WeightEntry{
@@ -69,11 +68,9 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (h *Handler) handleWeightTrend(w http.ResponseWriter, r *http.Request, userID string) {
-	days := 30
-	if s := r.URL.Query().Get("days"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
+	days, ok := boundedQueryInt(w, r, "days", 30, 1, 365)
+	if !ok {
+		return
 	}
 	trend, err := h.store.WeightTrend(r.Context(), userID, days)
 	if err != nil {

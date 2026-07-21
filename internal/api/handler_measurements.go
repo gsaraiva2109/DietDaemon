@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -14,11 +13,9 @@ import (
 // ---------------------------------------------------------------------------
 
 func (h *Handler) handleListMeasurements(w http.ResponseWriter, r *http.Request, userID string) {
-	days := 30
-	if s := r.URL.Query().Get("days"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
+	days, ok := boundedQueryInt(w, r, "days", 30, 1, 365)
+	if !ok {
+		return
 	}
 	entries, err := h.store.ListMeasurements(r.Context(), userID, days)
 	if err != nil {
@@ -32,16 +29,37 @@ func (h *Handler) handleListMeasurements(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, userID string) {
-	var body types.MeasurementEntry
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	var body struct {
+		Date         string   `json:"date"`
+		WaistCm      *float64 `json:"waist_cm"`
+		HipsCm       *float64 `json:"hips_cm"`
+		ChestCm      *float64 `json:"chest_cm"`
+		LeftArmCm    *float64 `json:"left_arm_cm"`
+		RightArmCm   *float64 `json:"right_arm_cm"`
+		LeftThighCm  *float64 `json:"left_thigh_cm"`
+		RightThighCm *float64 `json:"right_thigh_cm"`
+		Note         string   `json:"note"`
+	}
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
 		return
 	}
-	body.ID = newHandlerID()
-	body.UserID = userID
-	body.CreatedAt = time.Now().UTC()
-	id, err := h.store.LogMeasurement(r.Context(), body)
+	if !validDate(body.Date, h.loc) {
+		writeValidationError(w, "date must be a non-future YYYY-MM-DD date")
+		return
+	}
+	values := []*float64{body.WaistCm, body.HipsCm, body.ChestCm, body.LeftArmCm, body.RightArmCm, body.LeftThighCm, body.RightThighCm}
+	if !validMeasurements(values) {
+		writeValidationError(w, "at least one finite non-negative measurement is required")
+		return
+	}
+	entry := types.MeasurementEntry{
+		ID: newHandlerID(), UserID: userID, Date: body.Date, Note: body.Note, CreatedAt: time.Now().UTC(),
+		WaistCm: valueOrZero(body.WaistCm), HipsCm: valueOrZero(body.HipsCm), ChestCm: valueOrZero(body.ChestCm),
+		LeftArmCm: valueOrZero(body.LeftArmCm), RightArmCm: valueOrZero(body.RightArmCm),
+		LeftThighCm: valueOrZero(body.LeftThighCm), RightThighCm: valueOrZero(body.RightThighCm),
+	}
+	id, err := h.store.LogMeasurement(r.Context(), entry)
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -49,9 +67,30 @@ func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, 
 	// LogMeasurement upserts by (user_id, date): logging twice the same day
 	// overwrites the earlier entry, so the persisted ID may not be the one
 	// just generated above — always report back what was actually stored.
-	body.ID = id
+	entry.ID = id
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(body)
+	_ = json.NewEncoder(w).Encode(entry)
+}
+
+func validMeasurements(values []*float64) bool {
+	found := false
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		found = true
+		if !isFinite(*value) || *value < 0 {
+			return false
+		}
+	}
+	return found
+}
+
+func valueOrZero(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func (h *Handler) handleDeleteMeasurement(w http.ResponseWriter, r *http.Request, userID string) {
