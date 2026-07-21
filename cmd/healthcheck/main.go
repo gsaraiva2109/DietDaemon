@@ -9,7 +9,11 @@ import (
 )
 
 func main() {
-	data, err := os.ReadFile("/data/healthy")
+	path := os.Getenv("HEALTH_CHECK_PATH")
+	if path == "" {
+		path = "/data/healthy"
+	}
+	data, err := os.ReadFile(path) // #nosec G304 G703 -- path provided by operator via env var, intentional file read
 	if err != nil {
 		os.Exit(1)
 	}

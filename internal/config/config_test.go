@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -26,6 +27,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"DB_DRIVER", "DATABASE_URL",
 		"TRUSTED_PROXIES",
 		"PUBLIC_RATE_LIMIT_PER_MINUTE", "AUTH_READ_RATE_LIMIT_PER_MINUTE", "AUTH_WRITE_RATE_LIMIT_PER_MINUTE", "AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE",
+		"PORT", "HEALTH_CHECK_PATH", "CONFIDENCE_THRESHOLD", "NUDGE_INTERVAL", "PENDING_TTL", "MESSAGE_WORKERS",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
@@ -234,6 +236,80 @@ func TestThresholdValidation(t *testing.T) {
 	_, err = Load()
 	if err == nil || !strings.Contains(err.Error(), "ALIAS_WRITE_BACK_THRESHOLD") {
 		t.Fatalf("expected ALIAS_WRITE_BACK_THRESHOLD validation error, got %v", err)
+	}
+}
+
+func TestOperationalDefaults(t *testing.T) {
+	setEnv(t, validBase())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.Port != "8080" {
+		t.Errorf("Port = %q, want 8080", c.Port)
+	}
+	if c.HealthCheckPath != "/data/healthy" {
+		t.Errorf("HealthCheckPath = %q, want /data/healthy", c.HealthCheckPath)
+	}
+	if c.ConfidenceThreshold != 0.6 {
+		t.Errorf("ConfidenceThreshold = %v, want 0.6", c.ConfidenceThreshold)
+	}
+	if c.NudgeInterval != 5*time.Minute {
+		t.Errorf("NudgeInterval = %v, want 5m", c.NudgeInterval)
+	}
+	if c.PendingTTL != 30*time.Minute {
+		t.Errorf("PendingTTL = %v, want 30m", c.PendingTTL)
+	}
+	if c.MessageWorkers != 4 {
+		t.Errorf("MessageWorkers = %d, want 4", c.MessageWorkers)
+	}
+}
+
+func TestOperationalOverrides(t *testing.T) {
+	env := validBase()
+	env["PORT"] = "9090"
+	env["HEALTH_CHECK_PATH"] = "/tmp/alive"
+	env["CONFIDENCE_THRESHOLD"] = "0.75"
+	env["NUDGE_INTERVAL"] = "10m"
+	env["PENDING_TTL"] = "1h"
+	env["MESSAGE_WORKERS"] = "8"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.Port != "9090" || c.HealthCheckPath != "/tmp/alive" || c.ConfidenceThreshold != 0.75 ||
+		c.NudgeInterval != 10*time.Minute || c.PendingTTL != time.Hour || c.MessageWorkers != 8 {
+		t.Fatalf("operational overrides = %+v", c)
+	}
+}
+
+func TestOperationalValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  string
+		want string
+	}{
+		{"bad port too low", "PORT", "0", "PORT"},
+		{"bad port too high", "PORT", "70000", "PORT"},
+		{"bad port not numeric", "PORT", "abc", "PORT"},
+		{"confidence threshold too low", "CONFIDENCE_THRESHOLD", "0", "CONFIDENCE_THRESHOLD"},
+		{"confidence threshold too high", "CONFIDENCE_THRESHOLD", "1.5", "CONFIDENCE_THRESHOLD"},
+		{"nudge interval non-positive", "NUDGE_INTERVAL", "0s", "NUDGE_INTERVAL"},
+		{"pending ttl non-positive", "PENDING_TTL", "0s", "PENDING_TTL"},
+		{"message workers below one", "MESSAGE_WORKERS", "0", "MESSAGE_WORKERS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := validBase()
+			env[tc.key] = tc.val
+			setEnv(t, env)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %s validation error, got %v", tc.want, err)
+			}
+		})
 	}
 }
 
