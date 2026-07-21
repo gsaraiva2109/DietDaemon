@@ -407,6 +407,13 @@ func run() error {
 			assistantRouter = assistant.New(chatModel, cmds, toolDescs)
 		}
 
+		// Admin food-import/repair/backfill trigger (issue #136). Built
+		// unconditionally — not gated on FOOD_IMPORT_ENABLED — so an operator
+		// can trigger a one-off import/repair/backfill even when scheduled
+		// auto-sync is off. Actual access is gated by wrapAdmin's
+		// API_AUTH_TOKEN check.
+		foodAdmin := &foodImportAdmin{store: st, cfg: cfg}
+
 		apiHandler := api.New(st, engine, cfg.Location, suggestEngine, cfg,
 			api.WithAuth(st, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg),
 			api.WithOIDC(oidcRegistry),
@@ -414,6 +421,7 @@ func run() error {
 			api.WithPublicBaseURL(cfg.PublicBaseURL),
 			api.WithWebAuthn(wa),
 			api.WithBackupRunner(backupRunner),
+			api.WithFoodImportRunner(foodAdmin),
 			api.WithChat(chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st),
 			api.WithI18n(i18nBundle),
 			api.WithOCR(visionModel),
