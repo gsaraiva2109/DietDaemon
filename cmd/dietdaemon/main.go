@@ -59,17 +59,6 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/web"
 )
 
-const (
-	// confidenceThreshold below which the pipeline nudges the user to double-check.
-	confidenceThreshold = 0.6
-	// nudgeInterval is how often the scheduler re-evaluates daily progress.
-	nudgeInterval = 5 * time.Minute
-	// pendingTTL is how long a meal awaiting clarification is held before the
-	// state expires and the next message is treated as a fresh meal.
-	pendingTTL     = 30 * time.Minute
-	messageWorkers = 4
-)
-
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -94,7 +83,7 @@ func run() error {
 	// binary checks /tmp/healthy age — works even without the dashboard HTTP
 	// server (bot-only deployments). Goroutine dies with the process; no
 	// explicit cancellation needed.
-	go touchHealthy()
+	go touchHealthy(cfg.HealthCheckPath)
 
 	dialect, err := store.NewDialect(cfg.DBDriver)
 	if err != nil {
@@ -184,7 +173,7 @@ func run() error {
 	}
 
 	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, st, sources...)
-	pend := pendingstore.New(st.DB(), pendingTTL)
+	pend := pendingstore.New(st.DB(), cfg.PendingTTL)
 
 	var transcriber pipeline.Transcriber
 	if cfg.EnableSTT {
@@ -252,7 +241,7 @@ func run() error {
 		return fmt.Errorf("register suggest command: %w", err)
 	}
 
-	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, confidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
+	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, cfg.ConfidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
 
 	if err := cmdRegistry.Register(commands.NewTemplateCommand(st, engine, engine)); err != nil {
 		return fmt.Errorf("register template command: %w", err)
@@ -286,7 +275,7 @@ func run() error {
 	// a route is known for the user, falling back to the notifier (ntfy/gotify)
 	// when it isn't or when EnableNotifications is false, notifier is nil and
 	// deliver() surfaces the "no delivery channel" error instead of nudging.
-	sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, nudgeInterval,
+	sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, cfg.NudgeInterval,
 		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()),
 		scheduler.WithRuleConfig(st),
 		scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
@@ -296,7 +285,7 @@ func run() error {
 		scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
 	)
 	go sched.Run(ctx)
-	slog.Info("scheduler running", "interval", nudgeInterval.String())
+	slog.Info("scheduler running", "interval", cfg.NudgeInterval.String())
 
 	// Scheduled backup/export: an independent background loop (separate from
 	// the nudge scheduler above). The "local" destination only exists when an
@@ -442,14 +431,10 @@ func run() error {
 			mux.Handle("/", spa)
 		}
 
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
-		srv := newHTTPServer(":"+port, newHTTPHandler(mux, cfg))
+		srv := newHTTPServer(":"+cfg.Port, newHTTPHandler(mux, cfg))
 
 		go func() {
-			slog.Info("dashboard listening", "port", port)
+			slog.Info("dashboard listening", "port", cfg.Port)
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("dashboard server", "err", err)
 			}
@@ -484,8 +469,8 @@ func run() error {
 	// Consumer: queue → pipeline. Runs until the queue drains after shutdown.
 	slog.Info("listening for messages")
 	var wg sync.WaitGroup
-	wg.Add(messageWorkers)
-	for range messageWorkers {
+	wg.Add(cfg.MessageWorkers)
+	for range cfg.MessageWorkers {
 		go func() {
 			defer wg.Done()
 			for m := range q.Consume() {
@@ -643,12 +628,19 @@ func buildSources(cfg *config.Config) ([]resolver.Source, error) {
 // touchHealthy writes a timestamp file every 5 seconds so the distroless
 // HEALTHCHECK probe (/bin/healthcheck) can verify the process is alive
 // without depending on the dashboard HTTP server.
-func touchHealthy() {
+func touchHealthy(path string) {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for range t.C {
-		_ = os.WriteFile("/data/healthy", []byte(time.Now().UTC().Format(time.RFC3339)), 0600)
+		writeHealthy(path)
 	}
+}
+
+// writeHealthy writes the current UTC timestamp to path, the single write
+// touchHealthy performs on every tick. Split out so it's testable without
+// waiting on the 5s ticker.
+func writeHealthy(path string) {
+	_ = os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)), 0600)
 }
 
 func setupLogging(level string) {

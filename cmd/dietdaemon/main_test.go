@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
@@ -26,5 +29,22 @@ func TestRequiredOllamaModels(t *testing.T) {
 				t.Errorf("requiredOllamaModels() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWriteHealthy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "healthy")
+	writeHealthy(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	ts, err := time.Parse(time.RFC3339, string(data))
+	if err != nil {
+		t.Fatalf("file content %q is not RFC3339: %v", data, err)
+	}
+	if time.Since(ts) > time.Minute {
+		t.Errorf("timestamp %v is not recent", ts)
 	}
 }

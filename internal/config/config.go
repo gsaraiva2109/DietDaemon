@@ -176,6 +176,14 @@ type Config struct {
 	WebAuthnRPDisplayName string
 
 	LogLevel string
+
+	// --- Operational (server port, pipeline tuning, health check) ---
+	Port                string        // PORT, default "8080"
+	HealthCheckPath     string        // HEALTH_CHECK_PATH, default "/data/healthy"
+	ConfidenceThreshold float64       // CONFIDENCE_THRESHOLD, default 0.6
+	NudgeInterval       time.Duration // NUDGE_INTERVAL, default 5m
+	PendingTTL          time.Duration // PENDING_TTL, default 30m
+	MessageWorkers      int           // MESSAGE_WORKERS, default 4
 }
 
 // WebAuthnConfig builds a WebAuthnConfig from the parsed configuration.
@@ -318,6 +326,12 @@ func Load() (*Config, error) {
 		AuthenticatedExpensiveRateLimitPerMinute: getInt("AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE", 10),
 		LogLevel:                                 getStr("LOG_LEVEL", "info"),
 		TOTPIssuer:                               getStr("TOTP_ISSUER", "DietDaemon"),
+		Port:                                     getStr("PORT", "8080"),
+		HealthCheckPath:                          getStr("HEALTH_CHECK_PATH", "/data/healthy"),
+		ConfidenceThreshold:                      getFloat("CONFIDENCE_THRESHOLD", 0.6),
+		NudgeInterval:                            getDuration("NUDGE_INTERVAL", 5*time.Minute),
+		PendingTTL:                               getDuration("PENDING_TTL", 30*time.Minute),
+		MessageWorkers:                           getInt("MESSAGE_WORKERS", 4),
 	}
 
 	// COMPLETION_ADAPTER left unset: infer from which credentials are
@@ -658,6 +672,28 @@ func (c *Config) validate(tierErr error) error {
 		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
 			add("SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
 		}
+	}
+
+	// Operational settings.
+	if c.Port == "" {
+		add("PORT is required")
+	} else if port, err := strconv.Atoi(c.Port); err != nil || port < 1 || port > 65535 {
+		add("PORT must be an integer between 1 and 65535, got %q", c.Port)
+	}
+	if c.HealthCheckPath == "" {
+		add("HEALTH_CHECK_PATH is required")
+	}
+	if c.ConfidenceThreshold <= 0 || c.ConfidenceThreshold > 1 {
+		add("CONFIDENCE_THRESHOLD must be between 0 and 1")
+	}
+	if c.NudgeInterval <= 0 {
+		add("NUDGE_INTERVAL must be positive")
+	}
+	if c.PendingTTL <= 0 {
+		add("PENDING_TTL must be positive")
+	}
+	if c.MessageWorkers < 1 {
+		add("MESSAGE_WORKERS must be at least 1")
 	}
 
 	if len(problems) > 0 {
