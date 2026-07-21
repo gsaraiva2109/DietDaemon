@@ -85,7 +85,7 @@ func main() {
 }
 
 func run(ctx context.Context, source, dbPath string, maxRows int, dryRun bool) error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -121,7 +121,7 @@ func run(ctx context.Context, source, dbPath string, maxRows int, dryRun bool) e
 // live Ollama endpoint. Unlike run, this does not use dryRun/maxRows: it's a
 // standalone maintenance pass over whatever the DB already holds.
 func runBackfill(ctx context.Context, dbPath string) error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -167,7 +167,7 @@ func runBackfill(ctx context.Context, dbPath string) error {
 // BulkUpsertFoods' ON CONFLICT(food_id) upsert can never reach them). See
 // issue #111.
 func runRepair(ctx context.Context, source, dbPath string) error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
