@@ -583,6 +583,7 @@ func TestTargetsSetGet(t *testing.T) {
 		Targets: types.Macros{
 			Calories: 3000, Protein: 180, Carbs: 350, Fat: 80, Fiber: 30,
 		},
+		WaterGoalMl: 2000,
 	}
 	if err := s.SetTargets(ctx(), targets); err != nil {
 		t.Fatalf("SetTargets: %v", err)
@@ -595,15 +596,47 @@ func TestTargetsSetGet(t *testing.T) {
 	if got.Targets != targets.Targets {
 		t.Fatalf("targets mismatch: got %+v, want %+v", got.Targets, targets.Targets)
 	}
+	if got.WaterGoalMl != 2000 {
+		t.Fatalf("expected water goal 2000, got %d", got.WaterGoalMl)
+	}
 
 	// Verify upsert semantics (replace, not duplicate).
 	targets.Targets.Calories = 3200
+	targets.WaterGoalMl = 2500
 	if err := s.SetTargets(ctx(), targets); err != nil {
 		t.Fatalf("SetTargets (update): %v", err)
 	}
 	got, _ = s.GetTargets(ctx(), "u1")
 	if got.Targets.Calories != 3200 {
 		t.Fatalf("expected updated calories 3200, got %f", got.Targets.Calories)
+	}
+	if got.WaterGoalMl != 2500 {
+		t.Fatalf("expected updated water goal 2500, got %d", got.WaterGoalMl)
+	}
+}
+
+// TestTargetsWaterGoalDefaultOnLegacyRow simulates a row written before the
+// water_goal_ml column existed conceptually: an INSERT that omits the column
+// relies on the migration's NOT NULL DEFAULT 2000 to backfill it.
+func TestTargetsWaterGoalDefaultOnLegacyRow(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "legacy-user"})
+
+	_, err := s.db.ExecContext(ctx(), s.rewrite(
+		`INSERT INTO daily_targets (user_id, kcal, protein, carbs, fat, fiber) VALUES (?, ?, ?, ?, ?, ?)`),
+		"legacy-user", 2000.0, 150.0, 250.0, 70.0, 25.0)
+	if err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	got, err := s.GetTargets(ctx(), "legacy-user")
+	if err != nil {
+		t.Fatalf("GetTargets: %v", err)
+	}
+	if got.WaterGoalMl != 2000 {
+		t.Fatalf("expected column default 2000 for legacy row, got %d", got.WaterGoalMl)
 	}
 }
 

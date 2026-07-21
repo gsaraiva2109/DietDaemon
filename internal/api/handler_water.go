@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 // ---------------------------------------------------------------------------
 // Water tracking handlers.
 // ---------------------------------------------------------------------------
+
+// defaultWaterGoalMl is used when the user has no stored targets row yet, or
+// the row predates the water_goal_ml column (zero value).
+const defaultWaterGoalMl = 2000
 
 func (h *Handler) handleLogWater(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
@@ -56,8 +61,15 @@ func (h *Handler) handleGetWaterToday(w http.ResponseWriter, r *http.Request, us
 	if logs == nil {
 		logs = []types.WaterLog{}
 	}
-	// Default water goal; TODO: read from daily_targets.water_goal_ml.
-	goalMl := 2000
+	goalMl := defaultWaterGoalMl
+	dt, err := h.store.GetTargets(r.Context(), userID)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		h.writeErr(w, err)
+		return
+	}
+	if err == nil && dt.WaterGoalMl > 0 {
+		goalMl = dt.WaterGoalMl
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"logs":     logs,
 		"today_ml": total,
