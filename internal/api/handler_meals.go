@@ -164,23 +164,47 @@ func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userI
 }
 
 func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userID string) {
-	var body types.Macros
+	// types.Macros is embedded anonymously so the existing frontend, which
+	// POSTs a bare Macros object, keeps decoding correctly; water_goal_ml is
+	// an addition new clients can optionally include.
+	var body struct {
+		types.Macros
+		WaterGoalMl *int `json:"water_goal_ml"`
+	}
 	if err := decodeRequestJSON(r, &body); err != nil {
 		writeValidationError(w, "invalid JSON body")
 		return
 	}
-	if !validMacros(body) {
+	if !validMacros(body.Macros) {
 		writeValidationError(w, "macro targets must be finite and non-negative")
 		return
 	}
-	dt := types.DailyTargets{UserID: userID, Targets: body}
+	if body.WaterGoalMl != nil && *body.WaterGoalMl <= 0 {
+		writeValidationError(w, "water_goal_ml must be positive")
+		return
+	}
+	// Preserve the existing stored water goal when the field is omitted,
+	// defaulting sensibly on a user's first-ever call.
+	waterGoalMl := defaultWaterGoalMl
+	if existing, err := h.store.GetTargets(r.Context(), userID); err == nil {
+		if existing.WaterGoalMl > 0 {
+			waterGoalMl = existing.WaterGoalMl
+		}
+	} else if !errors.Is(err, types.ErrNotFound) {
+		h.writeErr(w, err)
+		return
+	}
+	if body.WaterGoalMl != nil {
+		waterGoalMl = *body.WaterGoalMl
+	}
+	dt := types.DailyTargets{UserID: userID, Targets: body.Macros, WaterGoalMl: waterGoalMl}
 	if err := h.store.SetTargets(r.Context(), dt); err != nil {
 		h.writeErr(w, err)
 		return
 	}
 	// Reflect immediately on the dashboard, which reads targets from the rollup.
 	today := time.Now().In(h.loc).Format("2006-01-02")
-	if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body); err != nil {
+	if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body.Macros); err != nil {
 		h.writeErr(w, err)
 		return
 	}

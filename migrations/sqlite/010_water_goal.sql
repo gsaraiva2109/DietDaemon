@@ -1,0 +1,1 @@
+ALTER TABLE daily_targets ADD COLUMN water_goal_ml INTEGER NOT NULL DEFAULT 2000;

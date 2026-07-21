@@ -1347,6 +1347,125 @@ func TestSetTargets(t *testing.T) {
 	}
 }
 
+// TestSetTargetsWaterGoalFirstCallDefaults verifies that a first-ever PUT
+// with no water_goal_ml in the body (old-frontend bare-Macros payload)
+// defaults the stored water goal sensibly rather than leaving it zero.
+func TestSetTargetsWaterGoalFirstCallDefaults(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT targets expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.targets.WaterGoalMl != defaultWaterGoalMl {
+		t.Errorf("expected default water goal %d on first call, got %d", defaultWaterGoalMl, store.targets.WaterGoalMl)
+	}
+}
+
+// TestSetTargetsWaterGoalPreservedWhenOmitted verifies a subsequent PUT that
+// omits water_goal_ml (backward-compatible bare Macros body) keeps the
+// previously stored value instead of resetting it.
+func TestSetTargetsWaterGoalPreservedWhenOmitted(t *testing.T) {
+	store := newFakeMealStore()
+	store.targets = types.DailyTargets{UserID: "test-user", WaterGoalMl: 2500}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT targets expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.targets.WaterGoalMl != 2500 {
+		t.Errorf("expected water goal preserved at 2500, got %d", store.targets.WaterGoalMl)
+	}
+}
+
+// TestSetTargetsWaterGoalUpdatedWhenPresent verifies an explicit, positive
+// water_goal_ml in the body is stored.
+func TestSetTargetsWaterGoalUpdatedWhenPresent(t *testing.T) {
+	store := newFakeMealStore()
+	store.targets = types.DailyTargets{UserID: "test-user", WaterGoalMl: 2000}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := struct {
+		types.Macros
+		WaterGoalMl int `json:"water_goal_ml"`
+	}{
+		Macros:      types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30},
+		WaterGoalMl: 3000,
+	}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT targets expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if store.targets.WaterGoalMl != 3000 {
+		t.Errorf("expected water goal updated to 3000, got %d", store.targets.WaterGoalMl)
+	}
+}
+
+// TestSetTargetsWaterGoalRejectsNonPositive verifies a present but <= 0
+// water_goal_ml is rejected as a validation error, matching the handler's
+// existing macro validation error style/status code.
+func TestSetTargetsWaterGoalRejectsNonPositive(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := struct {
+		types.Macros
+		WaterGoalMl int `json:"water_goal_ml"`
+	}{
+		Macros:      types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30},
+		WaterGoalMl: 0,
+	}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT targets with water_goal_ml=0 expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetWaterToday verifies the goal_ml field falls back to the package
+// default when there's no stored targets row, and otherwise reflects the
+// stored (possibly non-default) water goal.
+func TestGetWaterToday(t *testing.T) {
+	t.Run("no targets row falls back to default", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.targetsErr = types.ErrNotFound
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET water expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if out["goal_ml"] != float64(defaultWaterGoalMl) {
+			t.Errorf("expected default goal_ml %d, got %v", defaultWaterGoalMl, out["goal_ml"])
+		}
+	})
+
+	t.Run("stored non-default water goal", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.targets = types.DailyTargets{UserID: "test-user", WaterGoalMl: 3200}
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET water expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if out["goal_ml"] != float64(3200) {
+			t.Errorf("expected stored goal_ml 3200, got %v", out["goal_ml"])
+		}
+	})
+}
+
 func TestAddMealItem(t *testing.T) {
 	store := newFakeMealStore()
 	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user", Items: []types.ResolvedItem{}}
