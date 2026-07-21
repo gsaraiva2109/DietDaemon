@@ -174,7 +174,7 @@ func TestMFAEmailSendInvalidChallenge(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
-	if body := decodeJSON[map[string]string](t, rec); body["error"] != "invalid challenge" {
+	if body := decodeJSON[errorEnvelope](t, rec); body.Error.Code != ErrorUnauthorized || body.Error.Message != "invalid challenge" {
 		t.Errorf("expected invalid challenge response, got %#v", body)
 	}
 }
@@ -210,7 +210,7 @@ func TestMFAEmailVerifyExpiredChallenge(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
-	if body := decodeJSON[map[string]string](t, rec); body["error"] != "invalid challenge" {
+	if body := decodeJSON[errorEnvelope](t, rec); body.Error.Code != ErrorUnauthorized || body.Error.Message != "invalid challenge" {
 		t.Errorf("expected invalid challenge response, got %#v", body)
 	}
 	if len(authStore.challenges) != 0 || len(authStore.codes) != 0 {
@@ -232,7 +232,7 @@ func TestMFAEmailVerifyWrongCode(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
-	if body := decodeJSON[map[string]string](t, rec); body["error"] != "invalid code" {
+	if body := decodeJSON[errorEnvelope](t, rec); body.Error.Code != ErrorUnauthorized || body.Error.Message != "invalid code" {
 		t.Errorf("expected invalid code response, got %#v", body)
 	}
 	if got := authStore.codes["test-user"].attempts; got != 1 {

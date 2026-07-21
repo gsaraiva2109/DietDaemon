@@ -21,7 +21,7 @@ func TestHTTPServerTimeouts(t *testing.T) {
 
 func TestHTTPHandlerRecoversAndKeepsServing(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/panic" {
+		if r.URL.Path == "/panic" || r.URL.Path == "/api/v1/panic" {
 			panic("boom")
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -30,13 +30,53 @@ func TestHTTPHandlerRecoversAndKeepsServing(t *testing.T) {
 
 	panicRec := httptest.NewRecorder()
 	h.ServeHTTP(panicRec, httptest.NewRequest(http.MethodGet, "/panic", nil))
-	if panicRec.Code != http.StatusInternalServerError || panicRec.Header().Get("Content-Type") != "application/json" || !strings.Contains(panicRec.Body.String(), "internal server error") {
+	if panicRec.Code != http.StatusInternalServerError || panicRec.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(panicRec.Body.String(), "Something went wrong") {
 		t.Fatalf("panic response = %d, headers %v, body %q", panicRec.Code, panicRec.Header(), panicRec.Body.String())
+	}
+	apiRec := httptest.NewRecorder()
+	h.ServeHTTP(apiRec, httptest.NewRequest(http.MethodGet, "/api/v1/panic", nil))
+	if apiRec.Code != http.StatusInternalServerError || apiRec.Header().Get("Content-Type") != "application/json" || apiRec.Body.String() != "{\"error\":{\"code\":\"internal_error\",\"message\":\"Internal server error.\"}}\n" {
+		t.Fatalf("api panic response = %d, headers %v, body %q", apiRec.Code, apiRec.Header(), apiRec.Body.String())
 	}
 	okRec := httptest.NewRecorder()
 	h.ServeHTTP(okRec, httptest.NewRequest(http.MethodGet, "/ok", nil))
 	if okRec.Code != http.StatusNoContent {
 		t.Fatalf("subsequent response = %d, want %d", okRec.Code, http.StatusNoContent)
+	}
+}
+
+func TestRequestID(t *testing.T) {
+	h := newHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), nil)
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "valid propagated", input: "trace.1_test-2", want: "trace.1_test-2"},
+		{name: "invalid regenerated", input: "bad request"},
+		{name: "too long regenerated", input: strings.Repeat("x", 129)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/healthz", nil)
+			req.Header.Set("X-Request-ID", tt.input)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			got := rec.Header().Get("X-Request-ID")
+			if got == "" || !validRequestID(got) || (tt.want != "" && got != tt.want) || (tt.want == "" && got == tt.input) {
+				t.Fatalf("request ID = %q", got)
+			}
+		})
+	}
+}
+
+func TestRoutePatternDoesNotLogConcreteAPIPath(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/secret/meals", nil)
+	if got := routePattern(req); got != "/api/*" {
+		t.Fatalf("route pattern = %q", got)
+	}
+	req.Pattern = "GET /api/v1/meals/{mealID}"
+	if got := routePattern(req); got != req.Pattern {
+		t.Fatalf("matched route pattern = %q", got)
 	}
 }
 
@@ -90,6 +130,9 @@ func TestHTTPCORS(t *testing.T) {
 			}
 			if tt.wantCORS && (rec.Header().Get("Access-Control-Allow-Credentials") != "true" || !strings.Contains(rec.Header().Get("Vary"), "Origin")) {
 				t.Fatalf("missing credentialed CORS headers: %v", rec.Header())
+			}
+			if tt.wantCORS && rec.Header().Get("Access-Control-Expose-Headers") != "X-Request-ID" {
+				t.Fatalf("missing request ID exposure header: %v", rec.Header())
 			}
 			if tt.method == http.MethodOptions && (rec.Header().Get("Access-Control-Allow-Methods") == "" || rec.Header().Get("Access-Control-Allow-Headers") == "") {
 				t.Fatalf("missing preflight headers: %v", rec.Header())

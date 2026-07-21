@@ -45,11 +45,9 @@ func (h *Handler) handleRollupsRange(w http.ResponseWriter, r *http.Request, use
 }
 
 func (h *Handler) handleMealsList(w http.ResponseWriter, r *http.Request, userID string) {
-	limit := 10
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 10, 1, 100)
+	if !ok {
+		return
 	}
 	meals, err := h.store.RecentMeals(r.Context(), userID, limit)
 	if err != nil {
@@ -167,9 +165,12 @@ func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userI
 
 func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userID string) {
 	var body types.Macros
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
+		return
+	}
+	if !validMacros(body) {
+		writeValidationError(w, "macro targets must be finite and non-negative")
 		return
 	}
 	dt := types.DailyTargets{UserID: userID, Targets: body}
@@ -401,6 +402,10 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 
 	items := make([]types.ResolvedItem, 0, len(body.Items))
 	for _, it := range body.Items {
+		if !isFinite(it.Grams) || it.Grams <= 0 {
+			writeValidationError(w, "grams must be a positive finite number")
+			return
+		}
 		food, err := h.store.GetFoodForUser(r.Context(), userID, it.FoodID)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)

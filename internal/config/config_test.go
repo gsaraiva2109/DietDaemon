@@ -25,6 +25,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"MULTI_USER", "API_AUTH_TOKEN",
 		"DB_DRIVER", "DATABASE_URL",
 		"TRUSTED_PROXIES",
+		"PUBLIC_RATE_LIMIT_PER_MINUTE", "AUTH_READ_RATE_LIMIT_PER_MINUTE", "AUTH_WRITE_RATE_LIMIT_PER_MINUTE", "AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")
@@ -93,6 +94,32 @@ func TestHTTPHardeningConfig(t *testing.T) {
 	}
 	if got, want := strings.Join(c.CORSAllowedOrigins, ","), env["CORS_ALLOWED_ORIGINS"]; got != want {
 		t.Errorf("CORSAllowedOrigins = %q, want %q", got, want)
+	}
+}
+
+func TestRateLimitConfig(t *testing.T) {
+	env := validBase()
+	env["PUBLIC_RATE_LIMIT_PER_MINUTE"] = "11"
+	env["AUTH_READ_RATE_LIMIT_PER_MINUTE"] = "121"
+	env["AUTH_WRITE_RATE_LIMIT_PER_MINUTE"] = "31"
+	env["AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE"] = "12"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicRateLimitPerMinute != 11 || c.AuthenticatedReadRateLimitPerMinute != 121 || c.AuthenticatedWriteRateLimitPerMinute != 31 || c.AuthenticatedExpensiveRateLimitPerMinute != 12 {
+		t.Fatalf("rate limits = %+v", c)
+	}
+}
+
+func TestRateLimitConfigRejectsNonPositive(t *testing.T) {
+	env := validBase()
+	env["AUTH_WRITE_RATE_LIMIT_PER_MINUTE"] = "0"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "AUTH_WRITE_RATE_LIMIT_PER_MINUTE") {
+		t.Fatalf("expected rate limit validation error, got %v", err)
 	}
 }
 

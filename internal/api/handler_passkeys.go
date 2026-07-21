@@ -264,7 +264,10 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 	var body struct {
 		Email string `json:"email"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // ignore decode errors — defaults are fine
+	if err := decodeOptionalRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
+		return
+	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 
 	var (

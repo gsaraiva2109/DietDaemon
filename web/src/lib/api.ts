@@ -87,17 +87,21 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  code: string
+  requestID: string | null
+  constructor(status: number, message: string, code = 'internal_error', requestID: string | null = null) {
     super(message)
     this.status = status
+    this.code = code
+    this.requestID = requestID
     this.name = 'ApiError'
   }
 }
 
 // Thrown on 401 so the app can bounce to the login screen.
 export class UnauthorizedError extends ApiError {
-  constructor(message = 'unauthorized') {
-    super(401, message)
+  constructor(message = 'Unauthorized.', requestID: string | null = null) {
+    super(401, message, 'unauthorized', requestID)
     this.name = 'UnauthorizedError'
   }
 }
@@ -105,19 +109,19 @@ export class UnauthorizedError extends ApiError {
 // Thrown on 429 (auth lockout). Carries the Retry-After seconds when present.
 export class RateLimitError extends ApiError {
   retryAfter: number | null
-  constructor(retryAfter: number | null, message = 'too many attempts') {
-    super(429, message)
+  constructor(retryAfter: number | null, message = 'Too many requests.', requestID: string | null = null) {
+    super(429, message, 'rate_limited', requestID)
     this.name = 'RateLimitError'
     this.retryAfter = retryAfter
   }
 }
 
-function handleUnauthorized(suppress = false): UnauthorizedError {
+function handleUnauthorized(suppress = false, message?: string, requestID?: string | null): UnauthorizedError {
   // Fire the interceptor out-of-band so the throw still propagates to callers.
   // `suppress` is set for the anonymous boot/route-guard probe, where a 401 is
   // expected and means "not signed in", not an expired session.
   if (!suppress && onUnauthorized) queueMicrotask(onUnauthorized)
-  return new UnauthorizedError()
+  return new UnauthorizedError(message, requestID)
 }
 
 interface RequestOpts {
@@ -139,24 +143,26 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
   try {
     res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })
   } catch {
-    throw new ApiError(0, 'Network error, is the DietDaemon server running?')
-  }
-
-  if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized)
-  if (res.status === 429) {
-    const ra = res.headers.get('Retry-After')
-    throw new RateLimitError(ra ? Number(ra) : null)
+    throw new ApiError(0, 'Network error, is the DietDaemon server running?', 'service_unavailable')
   }
 
   if (!res.ok) {
     let msg = `Request failed (${res.status})`
+    let code = 'internal_error'
     try {
-      const body = (await res.json()) as { error?: string }
-      if (body?.error) msg = body.error
+      const body = (await res.json()) as { error?: { code?: string; message?: string } }
+      if (body?.error?.message) msg = body.error.message
+      if (body?.error?.code) code = body.error.code
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, msg)
+    const requestID = res.headers.get('X-Request-ID')
+    if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized, msg, requestID)
+    if (res.status === 429) {
+      const ra = res.headers.get('Retry-After')
+      throw new RateLimitError(ra ? Number(ra) : null, msg, requestID)
+    }
+    throw new ApiError(res.status, msg, code, res.headers.get('X-Request-ID'))
   }
 
   if (res.status === 204) return undefined as T

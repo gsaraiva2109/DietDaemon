@@ -78,6 +78,10 @@ func (h *Handler) handleComposeTemplate(w http.ResponseWriter, r *http.Request, 
 
 	items := make([]types.ResolvedItem, 0, len(body.Items))
 	for _, it := range body.Items {
+		if !isFinite(it.Grams) || it.Grams <= 0 {
+			writeValidationError(w, "grams must be a positive finite number")
+			return
+		}
 		food, err := h.store.GetFoodForUser(r.Context(), userID, it.FoodID)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)

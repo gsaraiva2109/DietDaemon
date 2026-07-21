@@ -429,6 +429,7 @@ func run() error {
 			api.WithI18n(i18nBundle),
 			api.WithOCR(visionModel),
 		)
+		apiHandler.StartRateLimiterCleanup(ctx)
 		mux := http.NewServeMux()
 		apiHandler.RegisterRoutes(mux)
 

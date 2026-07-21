@@ -48,9 +48,8 @@ func CheckLockout(ctx context.Context, repo LoginAttemptRepo, identifier string,
 	return false, 0, nil
 }
 
-// IPRateLimiter is a lightweight in-memory per-IP token-bucket for raw
-// request throttling on /auth/* endpoints. It's defense-in-depth outside
-// the DB-backed lockout.
+// IPRateLimiter is a lightweight in-memory fixed-window limiter. Callers use
+// client IPs for public endpoints and user IDs for authenticated endpoints.
 type IPRateLimiter struct {
 	mu       sync.Mutex
 	buckets  map[string]*ipBucket
@@ -72,16 +71,15 @@ func NewIPRateLimiter(maxReqs int, interval time.Duration) *IPRateLimiter {
 	}
 }
 
-// Allow reports whether this IP may proceed. True = allowed, false = throttled.
-// It also triggers periodic cleanup of stale entries (every 1000 calls).
-func (l *IPRateLimiter) Allow(ip string) bool {
+// Allow reports whether this key may proceed. True = allowed, false = throttled.
+func (l *IPRateLimiter) Allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := time.Now()
-	b, ok := l.buckets[ip]
+	b, ok := l.buckets[key]
 	if !ok || now.Sub(b.lastSeen) > l.interval {
-		l.buckets[ip] = &ipBucket{tokens: l.maxReqs - 1, lastSeen: now}
+		l.buckets[key] = &ipBucket{tokens: l.maxReqs - 1, lastSeen: now}
 		return true
 	}
 
@@ -91,4 +89,16 @@ func (l *IPRateLimiter) Allow(ip string) bool {
 		return true
 	}
 	return false
+}
+
+// Cleanup removes keys idle for at least one limiter interval.
+func (l *IPRateLimiter) Cleanup() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	for key, bucket := range l.buckets {
+		if now.Sub(bucket.lastSeen) >= l.interval {
+			delete(l.buckets, key)
+		}
+	}
 }

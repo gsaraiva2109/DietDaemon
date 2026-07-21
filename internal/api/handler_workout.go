@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -23,23 +22,24 @@ func (h *Handler) handleLogWorkout(w http.ResponseWriter, r *http.Request, userI
 		LoggedAt       string                  `json:"loggedAt"`
 		Exercises      []types.WorkoutExercise `json:"exercises,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
 		return
 	}
 	if body.Name == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name is required"})
+		writeValidationError(w, "name is required")
 		return
 	}
 	if body.DurationMin <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "duration_min must be positive"})
+		writeValidationError(w, "duration_min must be positive")
 		return
 	}
 	if body.Intensity == "" {
 		body.Intensity = "moderate"
+	}
+	if !validWorkoutIntensity(body.Intensity) {
+		writeValidationError(w, "intensity is invalid")
+		return
 	}
 	if body.LoggedAt == "" {
 		body.LoggedAt = time.Now().UTC().Format(time.RFC3339)
@@ -67,11 +67,9 @@ func (h *Handler) handleLogWorkout(w http.ResponseWriter, r *http.Request, userI
 }
 
 func (h *Handler) handleListWorkouts(w http.ResponseWriter, r *http.Request, userID string) {
-	limit := 10
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 10, 1, 100)
+	if !ok {
+		return
 	}
 	workouts, err := h.store.ListWorkouts(r.Context(), userID, limit)
 	if err != nil {

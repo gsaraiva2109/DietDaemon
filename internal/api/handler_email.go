@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -144,9 +145,9 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 	}
 
 	newEmail := strings.ToLower(strings.TrimSpace(body.Email))
-	if newEmail == "" || !strings.ContainsRune(newEmail, '@') {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid email"})
+	parsedEmail, err := mail.ParseAddress(newEmail)
+	if newEmail == "" || err != nil || parsedEmail.Address != newEmail {
+		writeValidationError(w, "invalid email")
 		return
 	}
 

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -39,9 +38,8 @@ func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID 
 		Quality string  `json:"quality"`
 		Note    string  `json:"note,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
 		return
 	}
 	if body.SleepAt == "" {
@@ -49,6 +47,10 @@ func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID 
 	}
 	if body.Quality == "" {
 		body.Quality = "ok"
+	}
+	if !validSleepQuality(body.Quality) {
+		writeValidationError(w, "quality is invalid")
+		return
 	}
 	entry := types.SleepLog{
 		ID:            newHandlerID(),
@@ -68,11 +70,9 @@ func (h *Handler) handleLogSleep(w http.ResponseWriter, r *http.Request, userID 
 }
 
 func (h *Handler) handleListSleep(w http.ResponseWriter, r *http.Request, userID string) {
-	limit := 10
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 10, 1, 100)
+	if !ok {
+		return
 	}
 	sleeps, err := h.store.ListSleep(r.Context(), userID, limit)
 	if err != nil {
@@ -104,9 +104,8 @@ func (h *Handler) handleEndSleep(w http.ResponseWriter, r *http.Request, userID 
 		WakeAt  string `json:"wake_at"`
 		Quality string `json:"quality"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "invalid JSON body")
 		return
 	}
 	if body.WakeAt == "" {
@@ -114,6 +113,10 @@ func (h *Handler) handleEndSleep(w http.ResponseWriter, r *http.Request, userID 
 	}
 	if body.Quality == "" {
 		body.Quality = "ok"
+	}
+	if !validSleepQuality(body.Quality) {
+		writeValidationError(w, "quality is invalid")
+		return
 	}
 	if err := h.store.EndSleep(r.Context(), userID, id, body.WakeAt, body.Quality); err != nil {
 		h.writeErr(w, err)

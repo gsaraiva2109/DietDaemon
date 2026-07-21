@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -17,17 +16,13 @@ import (
 
 func (h *Handler) handleListFoods(w http.ResponseWriter, r *http.Request, userID string) {
 	source := r.URL.Query().Get("source")
-	limit := 20
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 20, 1, 100)
+	if !ok {
+		return
 	}
-	offset := 0
-	if s := r.URL.Query().Get("offset"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			offset = n
-		}
+	offset, ok := boundedQueryInt(w, r, "offset", 0, 0, int(^uint(0)>>1))
+	if !ok {
+		return
 	}
 	foods, err := h.store.ListFoods(r.Context(), userID, source, limit, offset)
 	if err != nil {
@@ -59,11 +54,9 @@ func (h *Handler) handleSearchFoods(w http.ResponseWriter, r *http.Request, user
 }
 
 func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, userID string) {
-	limit := 10
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 50 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 10, 1, 50)
+	if !ok {
+		return
 	}
 	foods, err := h.store.FrequentFoods(r.Context(), userID, limit)
 	if err != nil {
@@ -236,17 +229,13 @@ func (h *Handler) handleDeleteCustomFood(w http.ResponseWriter, r *http.Request,
 func (h *Handler) handleSearchCatalog(w http.ResponseWriter, r *http.Request, userID string) {
 	q := r.URL.Query().Get("q")
 	source := r.URL.Query().Get("source")
-	limit := 20
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
+	limit, ok := boundedQueryInt(w, r, "limit", 20, 1, 100)
+	if !ok {
+		return
 	}
-	offset := 0
-	if s := r.URL.Query().Get("offset"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			offset = n
-		}
+	offset, ok := boundedQueryInt(w, r, "offset", 0, 0, int(^uint(0)>>1))
+	if !ok {
+		return
 	}
 	foods, err := h.store.SearchCatalog(r.Context(), userID, q, source, limit, offset)
 	if err != nil {
@@ -376,9 +365,22 @@ func (h *Handler) handleSetPrecedence(w http.ResponseWriter, r *http.Request, us
 	var body struct {
 		Order []string `json:"order"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "order field is required"})
+	if err := decodeRequestJSON(r, &body); err != nil {
+		writeValidationError(w, "order field is required")
+		return
+	}
+	if len(body.Order) == 0 {
+		writeValidationError(w, "order field is required")
+		return
+	}
+	for _, source := range body.Order {
+		if !validNutritionSource(source) {
+			writeValidationError(w, "order contains an invalid nutrition source")
+			return
+		}
+	}
+	if hasDuplicate(body.Order) {
+		writeValidationError(w, "order must not contain duplicate nutrition sources")
 		return
 	}
 	if err := h.store.SetSourcePrecedence(r.Context(), userID, body.Order); err != nil {
@@ -386,4 +388,15 @@ func (h *Handler) handleSetPrecedence(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func hasDuplicate(values []string) bool {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			return true
+		}
+		seen[value] = struct{}{}
+	}
+	return false
 }

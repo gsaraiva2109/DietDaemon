@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	gowa "github.com/go-webauthn/webauthn/webauthn"
@@ -337,8 +338,11 @@ type Handler struct {
 	cookieSecure     bool
 	cookieDomain     string
 
-	// Rate limiter for login/register endpoints.
-	ipLimiter *auth.IPRateLimiter
+	// Rate limiters use client IPs for public auth and user IDs after auth.
+	ipLimiter        *auth.IPRateLimiter
+	readLimiter      *auth.IPRateLimiter
+	writeLimiter     *auth.IPRateLimiter
+	expensiveLimiter *auth.IPRateLimiter
 
 	// Peers whose X-Forwarded-For / X-Real-IP headers are trusted when
 	// resolving the client IP. See clientIP in handler_auth.go.
@@ -480,20 +484,64 @@ func New(store MealStore, logger MealLogger, loc *time.Location, suggester Sugge
 	if loc == nil {
 		loc = time.UTC
 	}
+	publicLimit, readLimit, writeLimit, expensiveLimit := rateLimits(c)
 	h := &Handler{
-		store:          store,
-		logger:         logger,
-		loc:            loc,
-		suggester:      suggester,
-		cfg:            c,
-		providers:      map[string]*oidc.Provider{},
-		ipLimiter:      auth.NewIPRateLimiter(10, time.Minute),
-		trustedProxies: trustedProxyPrefixes(c),
+		store:            store,
+		logger:           logger,
+		loc:              loc,
+		suggester:        suggester,
+		cfg:              c,
+		providers:        map[string]*oidc.Provider{},
+		ipLimiter:        auth.NewIPRateLimiter(publicLimit, time.Minute),
+		readLimiter:      auth.NewIPRateLimiter(readLimit, time.Minute),
+		writeLimiter:     auth.NewIPRateLimiter(writeLimit, time.Minute),
+		expensiveLimiter: auth.NewIPRateLimiter(expensiveLimit, time.Minute),
+		trustedProxies:   trustedProxyPrefixes(c),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
+}
+
+func rateLimits(c *config.Config) (public, read, write, expensive int) {
+	public, read, write, expensive = 10, 120, 30, 10
+	if c == nil {
+		return
+	}
+	if c.PublicRateLimitPerMinute > 0 {
+		public = c.PublicRateLimitPerMinute
+	}
+	if c.AuthenticatedReadRateLimitPerMinute > 0 {
+		read = c.AuthenticatedReadRateLimitPerMinute
+	}
+	if c.AuthenticatedWriteRateLimitPerMinute > 0 {
+		write = c.AuthenticatedWriteRateLimitPerMinute
+	}
+	if c.AuthenticatedExpensiveRateLimitPerMinute > 0 {
+		expensive = c.AuthenticatedExpensiveRateLimitPerMinute
+	}
+	return
+}
+
+// StartRateLimiterCleanup releases inactive per-IP and per-user limiter
+// buckets until ctx is canceled by application shutdown.
+func (h *Handler) StartRateLimiterCleanup(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				h.ipLimiter.Cleanup()
+				h.readLimiter.Cleanup()
+				h.writeLimiter.Cleanup()
+				h.expensiveLimiter.Cleanup()
+			}
+		}
+	}()
 }
 
 // trustedProxyPrefixes returns the configured trusted-proxy allowlist, or
@@ -508,7 +556,7 @@ func trustedProxyPrefixes(c *config.Config) []netip.Prefix {
 // RegisterRoutes mounts all API routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Health — no auth, no rate limit. Used by orchestration probes.
-	mux.HandleFunc("GET /api/v1/healthz", h.handleHealthz)
+	mux.HandleFunc("GET /api/v1/healthz", withAPIErrorEnvelope(http.HandlerFunc(h.handleHealthz)))
 
 	// Existing.
 	mux.HandleFunc("GET /api/v1/rollups/today", h.wrap(h.handleRollupsToday))
@@ -721,22 +769,59 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/shared/{token}/budget/weekly", h.wrapReadOnly(h.handleGetBudgetWeekly))
 	mux.HandleFunc("GET /api/v1/shared/{token}/body/summary", h.wrapReadOnly(h.handleBodySummary))
 	mux.HandleFunc("GET /api/v1/shared/{token}/streak", h.wrapReadOnly(h.handleStreak))
+	mux.HandleFunc("/api/v1/shared/{token}/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, ErrorMethodNotAllowed, "Method not allowed.")
+			return
+		}
+		WriteError(w, http.StatusNotFound, ErrorNotFound, "Not found.")
+	})
+
+	// Keep API misses inside the JSON contract instead of falling through to
+	// the dashboard handler mounted at "/".
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, _ *http.Request) {
+		WriteError(w, http.StatusNotFound, ErrorNotFound, "Not found.")
+	})
 }
 
 // wrap applies auth middleware and JSON content-type headers to a handler.
 // The handler receives the authenticated userID.
 func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		userID, err := h.authenticate(r)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			return
+		}
+		if !h.authLimiter(r).Allow(userID) {
+			w.Header().Set("Retry-After", "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
 			return
 		}
 		next(w, r, userID)
+	}))
+}
+
+func (h *Handler) authLimiter(r *http.Request) *auth.IPRateLimiter {
+	if isExpensiveRequest(r) {
+		return h.expensiveLimiter
 	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return h.readLimiter
+	}
+	return h.writeLimiter
+}
+
+func isExpensiveRequest(r *http.Request) bool {
+	path := r.URL.Path
+	return strings.HasPrefix(path, "/api/v1/chat/") ||
+		path == "/api/v1/suggest" ||
+		path == "/api/v1/suggest/ingredients" ||
+		path == "/api/v1/goals/suggestions" ||
+		path == "/api/v1/foods/custom/ocr" ||
+		path == "/api/v1/settings/backup/run"
 }
 
 // wrapReadOnly authenticates via a share token embedded in the URL path
@@ -746,12 +831,11 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 // link has no session to forge a CSRF token against, and the GET-only
 // restriction is what keeps it from being a mutation vector.
 func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			WriteError(w, http.StatusMethodNotAllowed, ErrorMethodNotAllowed, "Method not allowed.")
 			return
 		}
 
@@ -759,20 +843,24 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 		hashed := auth.HashToken(token)
 		u, err := h.authStore.GetUserByShareToken(r.Context(), hashed)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			return
+		}
+		if !h.authLimiter(r).Allow(u.ID) {
+			w.Header().Set("Retry-After", "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
 			return
 		}
 		next(w, r, u.ID)
-	}
+	}))
 }
 
 // wrapPublic sets JSON headers but performs no authentication.
 func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		next(w, r)
-	}
+	}))
 }
 
 // handleHealthz is a liveness probe for orchestration health checks.
@@ -787,9 +875,8 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
 	return h.wrapPublic(func(w http.ResponseWriter, r *http.Request) {
 		if !h.ipLimiter.Allow(h.clientIP(r)) {
-			w.Header().Set("Retry-After", "30")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+			w.Header().Set("Retry-After", "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
 			return
 		}
 		next(w, r)

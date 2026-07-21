@@ -25,6 +25,11 @@ const en = {
     macro: { Calories: 'Calories', Protein: 'Protein', Carbs: 'Carbs', Fat: 'Fat', Fiber: 'Fiber' },
     measurement: { waist_cm: 'Waist', hips_cm: 'Hips', chest_cm: 'Chest', left_arm_cm: 'Left arm', right_arm_cm: 'Right arm', left_thigh_cm: 'Left thigh', right_thigh_cm: 'Right thigh' },
   },
+  notFound: {
+    title: 'Page not found',
+    subtitle: 'The page you requested does not exist or has moved.',
+    goHome: 'Go to dashboard',
+  },
   settings: {
     language: 'Language', languageHint: 'Interface display language',
     preferencesTitle: 'Preferences',
@@ -1126,6 +1131,11 @@ const ptBR: typeof en = {
     loading: 'Carregando', justNow: 'agora mesmo', minutesAgo: 'há {{count}} min', hoursAgo: 'há {{count}} h',
     macro: { Calories: 'Calorias', Protein: 'Proteína', Carbs: 'Carboidratos', Fat: 'Gordura', Fiber: 'Fibras' },
     measurement: { waist_cm: 'Cintura', hips_cm: 'Quadril', chest_cm: 'Peito', left_arm_cm: 'Braço esquerdo', right_arm_cm: 'Braço direito', left_thigh_cm: 'Coxa esquerda', right_thigh_cm: 'Coxa direita' },
+  },
+  notFound: {
+    title: 'Página não encontrada',
+    subtitle: 'A página solicitada não existe ou foi movida.',
+    goHome: 'Ir para o painel',
   },
   settings: {
     language: 'Idioma', languageHint: 'Idioma de exibição da interface',
