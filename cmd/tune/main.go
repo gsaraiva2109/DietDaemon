@@ -50,7 +50,7 @@ func run(ollamaURL, embedModel, dbPath string) error {
 	}
 	fmt.Printf("Loaded %d benchmark phrases.\n", len(phrases))
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

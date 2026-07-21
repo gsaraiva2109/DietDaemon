@@ -23,7 +23,7 @@ func adminTempStore(t *testing.T) *store.Store {
 	_ = f.Close()
 	_ = os.Remove(path) // store.New creates it
 
-	st, err := store.New("sqlite", path, store.SQLiteDialect())
+	st, err := store.New("sqlite", path, store.SQLiteDialect(), nil)
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}

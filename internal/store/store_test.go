@@ -21,7 +21,7 @@ func tempDB(t *testing.T) (*Store, func()) {
 	_ = f.Close()
 	_ = os.Remove(path) // New will create it
 
-	s, err := New("sqlite", path, SQLiteDialect())
+	s, err := New("sqlite", path, SQLiteDialect(), nil)
 	if err != nil {
 		t.Fatalf("New(%q): %v", path, err)
 	}

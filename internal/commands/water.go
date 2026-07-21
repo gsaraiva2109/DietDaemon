@@ -74,7 +74,7 @@ func (c *WaterCommand) Handle(ctx context.Context, msg types.InboundMessage, arg
 		ID:       randomID(),
 		UserID:   msg.UserID,
 		AmountML: amount,
-		LoggedAt: time.Now().UTC().Format("2006-01-02 15:04:05"),
+		LoggedAt: time.Now().UTC().Format(time.RFC3339),
 		Note:     note,
 	}
 	if err := c.store.LogWater(ctx, entry); err != nil {

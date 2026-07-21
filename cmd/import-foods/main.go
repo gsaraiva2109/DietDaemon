@@ -98,7 +98,7 @@ func run(ctx context.Context, source, dbPath string, maxRows int, dryRun bool) e
 		filter.MaxRows = maxRows
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -126,7 +126,7 @@ func runBackfill(ctx context.Context, dbPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -177,7 +177,7 @@ func runRepair(ctx context.Context, source, dbPath string) error {
 		return err
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

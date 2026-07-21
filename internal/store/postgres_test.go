@@ -35,7 +35,7 @@ func postgresDB(t *testing.T) (*Store, func()) {
 		t.Fatalf("postgres connection string: %v", err)
 	}
 
-	s, err := New("postgres", dsn, postgresDialect{})
+	s, err := New("postgres", dsn, postgresDialect{}, nil)
 	if err != nil {
 		t.Fatalf("New(postgres): %v", err)
 	}

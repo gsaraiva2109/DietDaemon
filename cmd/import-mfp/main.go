@@ -85,7 +85,7 @@ func run(ctx context.Context, userID, csvPath, dbPath, tz string, dryRun bool) e
 		return nil
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect())
+	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

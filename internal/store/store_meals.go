@@ -19,6 +19,8 @@ import (
 
 // SaveMeal inserts a meal and all its resolved items inside a transaction.
 func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
+	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format("2006-01-02")
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -26,13 +28,14 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const mealQ = `
-		INSERT INTO meals (id, user_id, at_utc, raw_text, confidence, parser_tier, created_at, external_id)
-		VALUES (:id, :user_id, :at_utc, :raw_text, :confidence, :parser_tier, :created_at, :external_id)
+		INSERT INTO meals (id, user_id, at_utc, local_date, raw_text, confidence, parser_tier, created_at, external_id)
+		VALUES (:id, :user_id, :at_utc, :local_date, :raw_text, :confidence, :parser_tier, :created_at, :external_id)
 	`
 	mealQuery, mealArgs, err := sqlx.Named(mealQ, map[string]any{
 		"id":          m.ID,
 		"user_id":     m.UserID,
 		"at_utc":      utcStr(m.At),
+		"local_date":  localDate,
 		"raw_text":    m.RawText,
 		"confidence":  m.Confidence,
 		"parser_tier": int(m.ParserTier),
@@ -331,13 +334,15 @@ func (s *Store) mealOwner(ctx context.Context, tx *sqlx.Tx, mealID, userID strin
 // logs use the corrected values. itemIndex is the 0-based position of the item
 // within the meal's items (ordered by the position column).
 func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) error {
+	loc := s.userLoc(ctx, userID)
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected)
+	_, err = s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected, loc)
 	if err != nil {
 		return err
 	}
@@ -347,13 +352,15 @@ func (s *Store) CorrectMealItem(ctx context.Context, userID string, mealID strin
 // CorrectMealItemWithFeedback corrects an item and learns its original phrase
 // atomically. Conflicting aliases are queued for an explicit replacement.
 func (s *Store) CorrectMealItemWithFeedback(ctx context.Context, userID, mealID string, itemIndex int, corrected types.ResolvedItem) (types.CorrectionFeedback, error) {
+	loc := s.userLoc(ctx, userID)
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return types.CorrectionFeedback{}, fmt.Errorf("store: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	phrase, err := s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected)
+	phrase, err := s.correctMealItemTx(ctx, tx, userID, mealID, itemIndex, corrected, loc)
 	if err != nil {
 		return types.CorrectionFeedback{}, err
 	}
@@ -390,7 +397,7 @@ func (s *Store) CorrectMealItemWithFeedback(ctx context.Context, userID, mealID 
 
 // correctMealItemTx performs the shared direct/API correction work and returns
 // the original phrase of the corrected item for chat feedback learning.
-func (s *Store) correctMealItemTx(ctx context.Context, tx *sqlx.Tx, userID string, mealID string, itemIndex int, corrected types.ResolvedItem) (string, error) {
+func (s *Store) correctMealItemTx(ctx context.Context, tx *sqlx.Tx, userID string, mealID string, itemIndex int, corrected types.ResolvedItem, loc *time.Location) (string, error) {
 	// Load the meal to get the at time for rollup lookup and the original items.
 	meal, err := s.mealOwner(ctx, tx, mealID, userID)
 	if err != nil {
@@ -466,7 +473,7 @@ func (s *Store) correctMealItemTx(ctx context.Context, tx *sqlx.Tx, userID strin
 	}
 
 	// Update the daily rollup: remove old macros, add new ones.
-	localDate := mealAt.Format("2006-01-02")
+	localDate := mealAt.In(loc).Format("2006-01-02")
 	const rollupQ = `
 		INSERT INTO daily_rollups
 			(user_id, date,
@@ -546,6 +553,8 @@ type mealItemRow struct {
 // AddMealItem appends a resolved item to an existing meal and adds its macros
 // to that day's rollup. Mirrors CorrectMealItem's delta approach.
 func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item types.ResolvedItem) error {
+	loc := s.userLoc(ctx, userID)
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -582,7 +591,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 		return fmt.Errorf("store: insert resolved_item: %w", err)
 	}
 
-	localDate := parseUTC(meal.AtUTC).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).In(loc).Format("2006-01-02")
 	const rollupQ = `
 		INSERT INTO daily_rollups
 			(user_id, date,
@@ -614,6 +623,8 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 // DeleteMealItem removes the item at itemIndex (zero-based, position order)
 // from a meal and subtracts its macros from that day's rollup.
 func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemIndex int) error {
+	loc := s.userLoc(ctx, userID)
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -642,7 +653,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 		return fmt.Errorf("store: delete item: %w", err)
 	}
 
-	localDate := parseUTC(meal.AtUTC).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).In(loc).Format("2006-01-02")
 	const rollupQ = `
 		UPDATE daily_rollups SET
 			consumed_kcal    = consumed_kcal    - ?,
@@ -682,13 +693,12 @@ func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, erro
 
 // GetMealsInRange returns meals for a user within a date range (inclusive).
 func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error) {
-	dateExpr := s.dialect.DateTrunc("at_utc")
-	mealQ := fmt.Sprintf(`
+	const mealQ = `
 		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
 		FROM meals
-		WHERE user_id = ? AND %s >= ? AND %s <= ?
+		WHERE user_id = ? AND local_date >= ? AND local_date <= ?
 		ORDER BY at_utc ASC
-	`, dateExpr, dateExpr)
+	`
 	var rows []mealRow
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(mealQ), userID, startDate, endDate); err != nil {
 		return nil, fmt.Errorf("store: query meals in range: %w", err)
