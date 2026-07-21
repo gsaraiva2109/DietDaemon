@@ -449,3 +449,36 @@ func containsAddr(prefixes []netip.Prefix, addr string) bool {
 	}
 	return false
 }
+
+// TestLoadMinimalSQLiteOnly is the whole point of issue #133: a one-shot CLI
+// tool (cmd/import-foods) must not be forced to set daemon-only env vars
+// (messaging, notifier, OIDC, email, ...) just to load config.
+func TestLoadMinimalSQLiteOnly(t *testing.T) {
+	setEnv(t, map[string]string{"DB_DRIVER": "sqlite"})
+	c, err := LoadMinimal()
+	if err != nil {
+		t.Fatalf("LoadMinimal() error = %v", err)
+	}
+	if c.DBDriver != "sqlite" {
+		t.Errorf("DBDriver = %q, want sqlite", c.DBDriver)
+	}
+}
+
+func TestLoadMinimalPostgresRequiresDatabaseURL(t *testing.T) {
+	setEnv(t, map[string]string{"DB_DRIVER": "postgres"})
+	_, err := LoadMinimal()
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("expected DATABASE_URL validation error, got %v", err)
+	}
+}
+
+func TestLoadMinimalPostgresWithDatabaseURL(t *testing.T) {
+	setEnv(t, map[string]string{"DB_DRIVER": "postgres", "DATABASE_URL": "postgres://user:pass@host/db"})
+	c, err := LoadMinimal()
+	if err != nil {
+		t.Fatalf("LoadMinimal() error = %v", err)
+	}
+	if c.DatabaseURL != "postgres://user:pass@host/db" {
+		t.Errorf("DatabaseURL = %q, want postgres://user:pass@host/db", c.DatabaseURL)
+	}
+}
