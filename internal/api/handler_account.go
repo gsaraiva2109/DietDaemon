@@ -56,6 +56,10 @@ func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID
 
 	user, err := h.store.GetUser(ctx, userID)
 	if err != nil {
+		if errors.Is(err, types.ErrNotFound) {
+			h.writeErr(w, fmt.Errorf("export authenticated user missing: %v", err))
+			return
+		}
 		h.writeErr(w, err)
 		return
 	}

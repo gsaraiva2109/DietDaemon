@@ -78,7 +78,11 @@ func (h *Handler) handleFrequentFoods(w http.ResponseWriter, r *http.Request, us
 
 // handleSuggest recommends a next meal from what's left of today's targets.
 func (h *Handler) handleSuggest(w http.ResponseWriter, r *http.Request, userID string) {
-	ctx := h.injectModelOverride(r.Context(), userID)
+	ctx, err := h.injectModelOverride(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
 	sug, err := h.suggester.Suggest(ctx, userID)
 	if err != nil {
 		h.writeErr(w, err)
@@ -99,7 +103,11 @@ func (h *Handler) handleSuggestFromIngredients(w http.ResponseWriter, r *http.Re
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "food_ids field is required"})
 		return
 	}
-	ctx := h.injectModelOverride(r.Context(), userID)
+	ctx, err := h.injectModelOverride(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
 	sug, err := h.suggester.SuggestFromIngredients(ctx, userID, body.FoodIDs)
 	if err != nil {
 		h.writeErr(w, err)

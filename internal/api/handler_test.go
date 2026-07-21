@@ -110,6 +110,12 @@ type fakeMealStore struct {
 	uploadPhotoErr       error
 	deletePhotoErr       error
 
+	// BYOK AI keys.
+	aiKeyProvider  string
+	aiKeyEncrypted string
+	aiKeyFound     bool
+	aiKeyErr       error
+
 	// Goals & profile.
 	profile          types.UserProfile
 	profileErr       error
@@ -429,7 +435,7 @@ func (s *fakeMealStore) GetMealsInRange(_ context.Context, _, _, _ string) ([]ty
 
 // BYOK: per-user AI API keys.
 func (s *fakeMealStore) GetUserAIKey(_ context.Context, _ string) (string, string, bool, error) {
-	return "", "", false, nil
+	return s.aiKeyProvider, s.aiKeyEncrypted, s.aiKeyFound, s.aiKeyErr
 }
 func (s *fakeMealStore) SetUserAIKey(_ context.Context, _, _, _ string) error {
 	return nil
@@ -515,15 +521,18 @@ func (s *fakeMealStore) DeleteSleep(_ context.Context, _, _ string) error {
 
 // fakeAuthStore implements AuthStore for tests.
 type fakeAuthStore struct {
-	users         map[string]types.User
-	userByEmail   map[string]types.User
-	phcHash       map[string]string
-	userCount     int
-	apiKeys       map[string][]types.APIKey
-	keyUserID     map[string]string // hashed key -> userID
-	shareTokens   map[string][]types.ShareToken
-	shareUserID   map[string]string // hashed token -> userID
-	loginAttempts []loginAttemptEntry
+	users                   map[string]types.User
+	userByEmail             map[string]types.User
+	phcHash                 map[string]string
+	userCount               int
+	apiKeys                 map[string][]types.APIKey
+	keyUserID               map[string]string // hashed key -> userID
+	shareTokens             map[string][]types.ShareToken
+	shareUserID             map[string]string // hashed token -> userID
+	loginAttempts           []loginAttemptEntry
+	recentFailedAttemptsErr error
+	deleteUserSessionsErr   error
+	auditEvents             []types.AuditEvent
 }
 
 type loginAttemptEntry struct {
@@ -643,6 +652,7 @@ func (s *fakeAuthStore) RevokeShareToken(_ context.Context, userID, tokenID stri
 }
 
 func (s *fakeAuthStore) WriteAuditEvent(_ context.Context, ev types.AuditEvent) error {
+	s.auditEvents = append(s.auditEvents, ev)
 	return nil
 }
 
@@ -660,12 +670,17 @@ func (s *fakeAuthStore) GetSession(_ context.Context, id string) (auth.Session, 
 func (s *fakeAuthStore) TouchSession(_ context.Context, id string, lastSeen, idleExpires time.Time) error {
 	return nil
 }
-func (s *fakeAuthStore) DeleteSession(_ context.Context, id string) error          { return nil }
-func (s *fakeAuthStore) DeleteUserSessions(_ context.Context, userID string) error { return nil }
+func (s *fakeAuthStore) DeleteSession(_ context.Context, id string) error { return nil }
+func (s *fakeAuthStore) DeleteUserSessions(_ context.Context, userID string) error {
+	return s.deleteUserSessionsErr
+}
 
 // --- auth.LoginAttemptRepo ---
 
 func (s *fakeAuthStore) RecentFailedAttempts(_ context.Context, identifier string, since time.Time) (int, error) {
+	if s.recentFailedAttemptsErr != nil {
+		return 0, s.recentFailedAttemptsErr
+	}
 	count := 0
 	for _, a := range s.loginAttempts {
 		if a.identifier == identifier && !a.succeeded && a.at.After(since) {

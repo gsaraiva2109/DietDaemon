@@ -21,7 +21,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "OLLAMA_AUTO_PULL", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
 		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
-		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "LOG_LEVEL",
+		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "HSTS_ENABLED", "CORS_ALLOWED_ORIGINS", "LOG_LEVEL",
 		"MULTI_USER", "API_AUTH_TOKEN",
 		"DB_DRIVER", "DATABASE_URL",
 		"TRUSTED_PROXIES",
@@ -76,6 +76,37 @@ func TestOllamaAutoPull(t *testing.T) {
 	}
 	if !c.OllamaAutoPull {
 		t.Error("OllamaAutoPull = false, want true")
+	}
+}
+
+func TestHTTPHardeningConfig(t *testing.T) {
+	env := validBase()
+	env["HSTS_ENABLED"] = "true"
+	env["CORS_ALLOWED_ORIGINS"] = "https://app.example.com,http://localhost:5173"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !c.HSTSEnabled {
+		t.Error("HSTSEnabled = false, want true")
+	}
+	if got, want := strings.Join(c.CORSAllowedOrigins, ","), env["CORS_ALLOWED_ORIGINS"]; got != want {
+		t.Errorf("CORSAllowedOrigins = %q, want %q", got, want)
+	}
+}
+
+func TestCORSAllowedOriginsRejectsNonOrigins(t *testing.T) {
+	for _, raw := range []string{"*", "example.com", "https://app.example.com/path", "https://app.example.com/"} {
+		t.Run(raw, func(t *testing.T) {
+			env := validBase()
+			env["CORS_ALLOWED_ORIGINS"] = raw
+			setEnv(t, env)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "CORS_ALLOWED_ORIGINS") {
+				t.Fatalf("expected CORS_ALLOWED_ORIGINS error, got %v", err)
+			}
+		})
 	}
 }
 

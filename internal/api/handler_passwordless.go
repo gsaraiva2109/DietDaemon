@@ -53,7 +53,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 		Window:       15 * time.Minute,
 		LockDuration: 5 * time.Minute,
 	})
-	if lockErr == nil && locked {
+	if lockErr != nil || locked {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
 	}
@@ -89,14 +89,16 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-
 	link := h.publicBaseURL + "/magic?token=" + linkToken
 	msg := mailer.MagicSigninEmail(link, code)
 	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
 		slog.Error("send magic signin email failed", "err", err)
+		h.writeAudit(ctx, u.AccountID, u.ID, "user.magic_request_failed", ip, r.UserAgent(), "delivery failed")
+		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+		return
 	}
 
+	_ = h.authStore.RecordLoginAttempt(ctx, key, false)
 	h.writeAudit(ctx, u.AccountID, u.ID, "user.magic_requested", ip, r.UserAgent(), u.Email)
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})

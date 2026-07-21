@@ -445,11 +445,7 @@ func run() error {
 		if port == "" {
 			port = "8080"
 		}
-		srv := &http.Server{
-			Addr:              ":" + port,
-			Handler:           mux,
-			ReadHeaderTimeout: 3 * time.Second,
-		}
+		srv := newHTTPServer(":"+port, newHTTPHandler(mux, cfg))
 
 		go func() {
 			slog.Info("dashboard listening", "port", port)

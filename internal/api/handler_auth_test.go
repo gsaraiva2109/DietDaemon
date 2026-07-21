@@ -256,6 +256,28 @@ func TestHandleLoginSuccessAndWrongPassword(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRevocationFailureLeavesPasswordUnchanged(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	oldHash, err := auth.Hash("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.phcHash["test-user"] = oldHash
+	store.deleteUserSessionsErr = errors.New("store unavailable")
+	h, _ := newAuthHandlerForTest(store, testAuthConfig())
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/change-password", map[string]string{
+		"current_password": "correct horse battery staple",
+		"new_password":     "newSecurePassword123!",
+	}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if store.phcHash["test-user"] != oldHash {
+		t.Error("password changed despite session revocation failure")
+	}
+}
+
 func TestHandleLoginCookieAttributes(t *testing.T) {
 	store := newAuthHandlerTestStore()
 	password := "correct horse battery staple"
