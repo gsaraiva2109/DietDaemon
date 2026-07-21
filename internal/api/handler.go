@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -351,6 +352,9 @@ type Handler struct {
 	// Scheduled backup manual trigger. Nil when backups aren't wired up.
 	backupRunner BackupRunner
 
+	// Admin-only food-import/repair/backfill trigger. Nil when unwired.
+	foodImportRunner FoodImportRunner
+
 	// Full config (needed by BYOK adapter construction).
 	cfg *config.Config
 
@@ -378,6 +382,17 @@ type Handler struct {
 // export logic the scheduled ticker uses. Satisfied by *backup.Runner.
 type BackupRunner interface {
 	RunOnce(ctx context.Context, userID string) error
+}
+
+// FoodImportRunner triggers the global food-catalog bulk import, macro repair,
+// and embedding backfill operations that cmd/import-foods otherwise requires
+// direct DB/filesystem access to run, so an operator can trigger them against
+// a live daemon over HTTP instead (issue #136). Satisfied by
+// cmd/dietdaemon's foodImportAdmin.
+type FoodImportRunner interface {
+	ImportSource(ctx context.Context, source string, maxRows int) (rows int, err error)
+	RepairSource(ctx context.Context, source string) (checked, fixed int, err error)
+	BackfillEmbeddings(ctx context.Context) (embedded, failed int, err error)
 }
 
 // Option configures a Handler. Used with the variadic New constructor. This
@@ -447,6 +462,12 @@ func WithWebAuthn(wa *gowa.WebAuthn) Option {
 // passed, the endpoint returns 503, same as passing nil did before options.
 func WithBackupRunner(r BackupRunner) Option {
 	return func(h *Handler) { h.backupRunner = r }
+}
+
+// WithFoodImportRunner attaches the admin food-import/repair/backfill
+// trigger. When not passed, the admin/food-import/* endpoints return 503.
+func WithFoodImportRunner(r FoodImportRunner) Option {
+	return func(h *Handler) { h.foodImportRunner = r }
 }
 
 // WithChat attaches the conversational assistant subsystem: its model
@@ -678,6 +699,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings/backup", h.wrap(h.handleSetBackupConfig))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", h.wrap(h.handleRunBackupNow))
 
+	// Admin: operator-only food-catalog import/repair/backfill triggers.
+	// Gated by API_AUTH_TOKEN via wrapAdmin, not the per-user session/API-key
+	// auth the rest of this file uses — these mutate the global food catalog,
+	// not user-scoped data. See issue #136.
+	mux.HandleFunc("POST /api/v1/admin/food-import/run", h.wrapAdmin(h.handleAdminFoodImportRun))
+	mux.HandleFunc("POST /api/v1/admin/food-import/repair", h.wrapAdmin(h.handleAdminFoodImportRepair))
+	mux.HandleFunc("POST /api/v1/admin/food-import/backfill-embeddings", h.wrapAdmin(h.handleAdminFoodImportBackfillEmbeddings))
+
 	// BYOK: per-user AI API keys.
 	mux.HandleFunc("GET /api/v1/settings/ai-key", h.wrap(h.handleGetAIKey))
 	mux.HandleFunc("POST /api/v1/settings/ai-key", h.wrap(h.handleSetAIKey))
@@ -881,6 +910,35 @@ func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	})
+}
+
+// wrapAdmin gates operator-only admin endpoints behind the static
+// API_AUTH_TOKEN bearer token (cfg.APIAuthToken) instead of the normal
+// per-user authenticate() path: these endpoints trigger a global food-catalog
+// import/repair/embedding pass, not a user-scoped action, so there is no
+// userID to authenticate as. When no token is configured, admin endpoints are
+// disabled entirely (503) rather than left open. See issue #136.
+func (h *Handler) wrapAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if h.cfg == nil || h.cfg.APIAuthToken == "" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "admin endpoints are not enabled on this server"})
+			return
+		}
+		token := bearerToken(r)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(h.cfg.APIAuthToken)) != 1 {
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			return
+		}
+		if !h.expensiveLimiter.Allow("admin") {
+			w.Header().Set("Retry-After", "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
+			return
+		}
+		next(w, r)
+	}))
 }
 
 // authenticate tries cookie-session first, then Bearer API key. Returns the
