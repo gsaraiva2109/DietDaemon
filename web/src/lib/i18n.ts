@@ -1092,6 +1092,19 @@ const en = {
     dateOfBirth: 'Date of birth', gender: 'Gender', male: 'Male', female: 'Female',
     targetWeight: 'Target weight', weeklyRate: 'Weekly rate', crunchingNumbers: 'Crunching your numbers…',
     back: 'Back', cancel: 'Cancel', skip: 'Skip', next: 'Next', saving: 'Saving…', savePlan: 'Save plan',
+    dateFormatHint: 'Format: {{example}}',
+    activity: {
+      sedentary: { label: 'Sedentary', hint: 'Little or no exercise, desk job' },
+      light: { label: 'Lightly active', hint: 'Light exercise 1 to 3 days/week' },
+      moderate: { label: 'Moderately active', hint: 'Moderate exercise 3 to 5 days/week' },
+      active: { label: 'Very active', hint: 'Hard exercise 6 to 7 days/week' },
+      very_active: { label: 'Extra active', hint: 'Physical job or 2× daily training' },
+    },
+    goal: {
+      cut: { label: 'Cut', hint: 'Lose fat in a calorie deficit' },
+      maintain: { label: 'Maintain', hint: 'Hold your current weight' },
+      bulk: { label: 'Bulk', hint: 'Build muscle in a calorie surplus' },
+    },
   },
   exportModal: {
     dialogLabel: 'Export data', eyebrow: 'Export', title: 'Download your data', close: 'Close',
@@ -2192,6 +2205,19 @@ const ptBR: typeof en = {
     dateOfBirth: 'Data de nascimento', gender: 'Gênero', male: 'Masculino', female: 'Feminino',
     targetWeight: 'Peso desejado', weeklyRate: 'Ritmo semanal', crunchingNumbers: 'Calculando seus números…',
     back: 'Voltar', cancel: 'Cancelar', skip: 'Pular', next: 'Próximo', saving: 'Salvando…', savePlan: 'Salvar plano',
+    dateFormatHint: 'Formato: {{example}}',
+    activity: {
+      sedentary: { label: 'Sedentário', hint: 'Pouco ou nenhum exercício, trabalho sentado' },
+      light: { label: 'Levemente ativo', hint: 'Exercício leve de 1 a 3 dias por semana' },
+      moderate: { label: 'Moderadamente ativo', hint: 'Exercício moderado de 3 a 5 dias por semana' },
+      active: { label: 'Muito ativo', hint: 'Exercício intenso de 6 a 7 dias por semana' },
+      very_active: { label: 'Extremamente ativo', hint: 'Trabalho físico ou treino 2x ao dia' },
+    },
+    goal: {
+      cut: { label: 'Emagrecer', hint: 'Perca gordura em déficit calórico' },
+      maintain: { label: 'Manter', hint: 'Mantenha seu peso atual' },
+      bulk: { label: 'Ganhar massa', hint: 'Ganhe músculo em superávit calórico' },
+    },
   },
   exportModal: {
     dialogLabel: 'Exportar dados', eyebrow: 'Exportar', title: 'Baixe seus dados', close: 'Fechar',

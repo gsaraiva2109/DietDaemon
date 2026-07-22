@@ -345,17 +345,17 @@ export interface GoalSuggestion {
 }
 
 export const ACTIVITY_LEVELS = [
-  { value: 'sedentary', label: 'Sedentary', hint: 'Little or no exercise, desk job' },
-  { value: 'light', label: 'Lightly active', hint: 'Light exercise 1 to 3 days/week' },
-  { value: 'moderate', label: 'Moderately active', hint: 'Moderate exercise 3 to 5 days/week' },
-  { value: 'active', label: 'Very active', hint: 'Hard exercise 6 to 7 days/week' },
-  { value: 'very_active', label: 'Extra active', hint: 'Physical job or 2× daily training' },
+  { value: 'sedentary' },
+  { value: 'light' },
+  { value: 'moderate' },
+  { value: 'active' },
+  { value: 'very_active' },
 ] as const
 
 export const GOALS = [
-  { value: 'cut', label: 'Cut', hint: 'Lose fat in a calorie deficit' },
-  { value: 'maintain', label: 'Maintain', hint: 'Hold your current weight' },
-  { value: 'bulk', label: 'Bulk', hint: 'Build muscle in a calorie surplus' },
+  { value: 'cut' },
+  { value: 'maintain' },
+  { value: 'bulk' },
 ] as const
 
 export interface User {

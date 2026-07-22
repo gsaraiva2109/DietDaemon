@@ -108,7 +108,7 @@ function NumberField({
 }
 
 export function OnboardingWizard() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { demo } = useDemo()
   const { data: profile, isLoading } = useProfile()
   const logWeight = useLogWeight()
@@ -307,10 +307,16 @@ export function OnboardingWizard() {
                       <span className="mb-1 block text-xs font-medium text-muted">{t('onboardingWizard.dateOfBirth')}</span>
                       <input
                         type="date"
+                        lang={i18n.language}
                         value={draft.birth_date}
                         onChange={(e) => set('birth_date', e.target.value)}
                         className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none transition focus:border-primary"
                       />
+                      <p className="mt-1 text-xs text-muted">
+                        {t('onboardingWizard.dateFormatHint', {
+                          example: new Intl.DateTimeFormat(i18n.language, { dateStyle: 'short' }).format(new Date()),
+                        })}
+                      </p>
                     </label>
                     <div>
                       <span className="mb-1.5 block text-xs font-medium text-muted">{t('onboardingWizard.gender')}</span>
@@ -356,9 +362,9 @@ export function OnboardingWizard() {
                           </span>
                           <span>
                             <span className={`block text-sm font-semibold ${active ? 'text-primary' : 'text-ink'}`}>
-                              {a.label}
+                              {t(`onboardingWizard.activity.${a.value}.label`)}
                             </span>
-                            <span className="block text-xs text-muted">{a.hint}</span>
+                            <span className="block text-xs text-muted">{t(`onboardingWizard.activity.${a.value}.hint`)}</span>
                           </span>
                         </button>
                       )
@@ -381,8 +387,8 @@ export function OnboardingWizard() {
                                 : 'border-line bg-surface text-ink hover:bg-surface-2'
                             }`}
                           >
-                            <span className="block text-sm font-semibold">{g.label}</span>
-                            <span className="mt-0.5 block text-[11px] leading-tight text-muted">{g.hint}</span>
+                            <span className="block text-sm font-semibold">{t(`onboardingWizard.goal.${g.value}.label`)}</span>
+                            <span className="mt-0.5 block text-[11px] leading-tight text-muted">{t(`onboardingWizard.goal.${g.value}.hint`)}</span>
                           </button>
                         )
                       })}
@@ -397,7 +403,7 @@ export function OnboardingWizard() {
                       <NumberField
                         label={t('onboardingWizard.weeklyRate')}
                         value={draft.weekly_rate}
-                        unit="kg/wk"
+                        unit={t('goalSuggestion.weeklyUnit')}
                         onChange={(v) => set('weekly_rate', v)}
                       />
                     </div>
