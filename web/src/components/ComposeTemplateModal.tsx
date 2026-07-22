@@ -5,11 +5,11 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import type { FoodDetail, Macros } from '@/lib/types'
+import type { FoodDetail } from '@/lib/types'
 import { useSearchFoods, useComposeTemplate } from '@/lib/queries'
 import { Button } from './ui'
 import { CloseIcon, SearchIcon } from './icons'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, scaleMacros, sumMacros } from '@/lib/format'
 import { scaleIn } from '@/lib/motion'
 
 interface Props {
@@ -19,11 +19,6 @@ interface Props {
 interface Picked {
   food: FoodDetail
   grams: number
-}
-
-function scale(m: Macros, grams: number): Macros {
-  const f = grams / 100
-  return { Calories: m.Calories * f, Protein: m.Protein * f, Carbs: m.Carbs * f, Fat: m.Fat * f, Fiber: m.Fiber * f }
 }
 
 export function ComposeTemplateModal({ onClose }: Props) {
@@ -51,16 +46,7 @@ export function ComposeTemplateModal({ onClose }: Props) {
   const search = useSearchFoods(query)
   const results = (search.data ?? []).filter((f) => !picked.some((p) => p.food.food_id === f.food_id)).slice(0, 8)
 
-  const total = picked.reduce((sum, p) => {
-    const m = scale(p.food.per_100g, p.grams)
-    return {
-      Calories: sum.Calories + m.Calories,
-      Protein: sum.Protein + m.Protein,
-      Carbs: sum.Carbs + m.Carbs,
-      Fat: sum.Fat + m.Fat,
-      Fiber: sum.Fiber + m.Fiber,
-    }
-  }, { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 })
+  const total = sumMacros(picked.map((p) => scaleMacros(p.food.per_100g, p.grams)))
 
   const disabled = !name.trim() || !picked.length || compose.isPending
 
@@ -179,7 +165,7 @@ export function ComposeTemplateModal({ onClose }: Props) {
           </div>
           <ul className="mb-3 flex-1 divide-y divide-line overflow-y-auto rounded-lg border border-line">
             {picked.map((p) => {
-              const m = scale(p.food.per_100g, p.grams)
+              const m = scaleMacros(p.food.per_100g, p.grams)
               return (
                 <li key={p.food.food_id} className="flex items-center gap-3 px-3 py-2">
                   <div className="min-w-0 flex-1">

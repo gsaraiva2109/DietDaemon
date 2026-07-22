@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -427,6 +428,7 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 	}
 
 	items := make([]types.ResolvedItem, 0, len(body.Items))
+	names := make([]string, 0, len(body.Items))
 	for _, it := range body.Items {
 		if !isFinite(it.Grams) || it.Grams <= 0 {
 			writeValidationError(w, "grams must be a positive finite number")
@@ -443,6 +445,7 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 			Match:  food,
 			Macros: food.Per100g.Scale(it.Grams / 100.0),
 		})
+		names = append(names, food.Name)
 	}
 
 	now := time.Now().UTC()
@@ -450,7 +453,7 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 		ID:         newHandlerID(),
 		UserID:     userID,
 		At:         now,
-		RawText:    "structured entry",
+		RawText:    strings.Join(names, ", "),
 		Items:      items,
 		Confidence: 1.0,
 		CreatedAt:  now,

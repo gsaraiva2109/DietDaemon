@@ -22,7 +22,7 @@ func TestCreateStructuredMeal(t *testing.T) {
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 	meal := decodeJSON[types.Meal](t, rec)
-	if meal.RawText != "structured entry" || meal.Confidence != 1 || len(meal.Items) != 1 {
+	if meal.RawText != "Egg" || meal.Confidence != 1 || len(meal.Items) != 1 {
 		t.Fatalf("unexpected meal: %+v", meal)
 	}
 	if meal.Items[0].Macros.Calories != 310 || logger.lastMeal.ID != meal.ID {
