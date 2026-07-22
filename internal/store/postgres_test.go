@@ -58,7 +58,7 @@ func TestPostgresUserRoundTrip(t *testing.T) {
 		CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
 	}
 
-	if _, err := s.GetUser(ctx(), "user-pg-1"); err != types.ErrNotFound {
+	if _, err := s.GetUser(ctx(), "user-pg-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 

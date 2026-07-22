@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useCreateCustomFood, useUpdateCustomFood } from '@/lib/queries'
@@ -46,11 +46,11 @@ function valuesFor(food?: FoodDetail): FormValues {
   }
 }
 
-export function CustomFoodModal({ food, onClose, onSaved }: {
+export function CustomFoodModal({ food, onClose, onSaved }: Readonly<{
   food?: FoodDetail
   onClose: () => void
   onSaved: (food: FoodDetail) => void
-}) {
+}>) {
   const { t } = useTranslation()
   const [values, setValues] = useState(() => valuesFor(food))
   const [lowConfidence, setLowConfidence] = useState<Set<keyof FormValues>>(new Set())
@@ -86,7 +86,7 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
     )
   }
 
-  function submit(e: React.FormEvent) {
+  function submit(e: SyntheticEvent) {
     e.preventDefault()
     const input = {
       name: values.name.trim(),
@@ -109,102 +109,203 @@ export function CustomFoodModal({ food, onClose, onSaved }: {
     .filter(([key]) => key !== 'name')
     .every(([, value]) => value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0) && Number(values.basis_grams) > 0
 
-  return (
-    <motion.div
-      className="fixed inset-0 grid place-items-center p-4"
-      style={{ zIndex: 1600 }}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      <button
-        type="button"
-        aria-label={t('customFood.close')}
-        onClick={onClose}
-        className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
-      />
-      <motion.form
-        aria-label={t(food ? 'customFood.editAriaLabel' : 'customFood.createAriaLabel')}
-        onSubmit={submit}
-        initial={{ opacity: 0, scale: 0.96, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="relative w-full max-w-lg rounded-xl border border-line bg-surface p-6 shadow-lift"
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t('customFood.close')}
-          className="absolute right-4 top-4 text-muted hover:text-ink"
+  if (!food) {
+    return (
+        <motion.div
+            className="fixed inset-0 grid place-items-center p-4"
+            style={{zIndex: 1600}}
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
         >
-          <CloseIcon />
-        </button>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-          {t('customFood.eyebrow')}
-        </p>
-        <h2 className="mt-1 pr-8 text-xl font-bold text-ink">
-          {t(food ? 'customFood.editTitle' : 'customFood.createTitle')}
-        </h2>
-        <p className="mt-1 text-sm text-muted">{t('customFood.labelHint')}</p>
-
-        {!food && (
-          <div className="mt-4">
-            <OcrLabelUpload onExtracted={onExtracted} />
-            {unreadable && <FormError>{t('customFood.scanUnreadable')}</FormError>}
-          </div>
-        )}
-
-        <div className="mt-5">
-          <Field
-            label={t('customFood.nameLabel')}
-            value={values.name}
-            onChange={(e) => set('name', e.target.value)}
-            placeholder={t('customFood.namePlaceholder')}
-            inputClassName={lowConfidence.has('name') ? LOW_CONFIDENCE_CLASS : undefined}
-            hint={lowConfidence.has('name') ? t('customFood.lowConfidenceHint') : undefined}
-            autoFocus
+          <button
+              type="button"
+              aria-label={t('customFood.close')}
+              onClick={onClose}
+              className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           />
-        </div>
+          <motion.form
+              aria-label={t(food ? 'customFood.editAriaLabel' : 'customFood.createAriaLabel')}
+              onSubmit={submit}
+              initial={{opacity: 0, scale: 0.96, y: 8}}
+              animate={{opacity: 1, scale: 1, y: 0}}
+              className="relative w-full max-w-lg rounded-xl border border-line bg-surface p-6 shadow-lift"
+          >
+            <button
+                type="button"
+                onClick={onClose}
+                aria-label={t('customFood.close')}
+                className="absolute right-4 top-4 text-muted hover:text-ink"
+            >
+              <CloseIcon/>
+            </button>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+              {t('customFood.eyebrow')}
+            </p>
+            <h2 className="mt-1 pr-8 text-xl font-bold text-ink">
+              {t(food ? 'customFood.editTitle' : 'customFood.createTitle')}
+            </h2>
+            <p className="mt-1 text-sm text-muted">{t('customFood.labelHint')}</p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <Field
-            label={t('customFood.basisLabel')}
-            type="number"
-            inputMode="decimal"
-            min="0.01"
-            step="any"
-            value={values.basis_grams}
-            onChange={(e) => set('basis_grams', e.target.value)}
-            inputClassName={lowConfidence.has('basis_grams') ? LOW_CONFIDENCE_CLASS : undefined}
-            hint={lowConfidence.has('basis_grams') ? t('customFood.lowConfidenceHint') : t('customFood.basisHint')}
+            {!food && (
+                <div className="mt-4">
+                  <OcrLabelUpload onExtracted={onExtracted}/>
+                  {unreadable && <FormError>{t('customFood.scanUnreadable')}</FormError>}
+                </div>
+            )}
+
+            <div className="mt-5">
+              <Field
+                  label={t('customFood.nameLabel')}
+                  value={values.name}
+                  onChange={(e) => set('name', e.target.value)}
+                  placeholder={t('customFood.namePlaceholder')}
+                  inputClassName={lowConfidence.has('name') ? LOW_CONFIDENCE_CLASS : undefined}
+                  hint={lowConfidence.has('name') ? t('customFood.lowConfidenceHint') : undefined}
+                  autoFocus
+              />
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Field
+                  label={t('customFood.basisLabel')}
+                  type="number"
+                  inputMode="decimal"
+                  min="0.01"
+                  step="any"
+                  value={values.basis_grams}
+                  onChange={(e) => set('basis_grams', e.target.value)}
+                  inputClassName={lowConfidence.has('basis_grams') ? LOW_CONFIDENCE_CLASS : undefined}
+                  hint={lowConfidence.has('basis_grams') ? t('customFood.lowConfidenceHint') : t('customFood.basisHint')}
+              />
+              <p className="self-end pb-3 text-sm text-muted">{t('customFood.nutrientHint')}</p>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {nutrientFields.map(({key, labelKey, unit}) => (
+                  <Field
+                      key={key}
+                      label={`${t(labelKey)} (${unit})`}
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={values[key]}
+                      onChange={(e) => set(key, e.target.value)}
+                      inputClassName={lowConfidence.has(key) ? LOW_CONFIDENCE_CLASS : undefined}
+                      hint={lowConfidence.has(key) ? t('customFood.lowConfidenceHint') : undefined}
+                  />
+              ))}
+            </div>
+
+            {error && <p className="mt-4 text-sm text-accent">{error.message}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={onClose}>{t('customFood.cancel')}</Button>
+              <Button type="submit" disabled={!isComplete || saving}>
+                {saving ? t('customFood.saving') : t('customFood.save')}
+              </Button>
+            </div>
+          </motion.form>
+        </motion.div>
+    )
+  } else {
+    return (
+        <motion.div
+            className="fixed inset-0 grid place-items-center p-4"
+            style={{zIndex: 1600}}
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
+        >
+          <button
+              type="button"
+              aria-label={t('customFood.close')}
+              onClick={onClose}
+              className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           />
-          <p className="self-end pb-3 text-sm text-muted">{t('customFood.nutrientHint')}</p>
-        </div>
+          <motion.form
+              aria-label={t(food ? 'customFood.editAriaLabel' : 'customFood.createAriaLabel')}
+              onSubmit={submit}
+              initial={{opacity: 0, scale: 0.96, y: 8}}
+              animate={{opacity: 1, scale: 1, y: 0}}
+              className="relative w-full max-w-lg rounded-xl border border-line bg-surface p-6 shadow-lift"
+          >
+            <button
+                type="button"
+                onClick={onClose}
+                aria-label={t('customFood.close')}
+                className="absolute right-4 top-4 text-muted hover:text-ink"
+            >
+              <CloseIcon/>
+            </button>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+              {t('customFood.eyebrow')}
+            </p>
+            <h2 className="mt-1 pr-8 text-xl font-bold text-ink">
+              {t(food ? 'customFood.editTitle' : 'customFood.createTitle')}
+            </h2>
+            <p className="mt-1 text-sm text-muted">{t('customFood.labelHint')}</p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {nutrientFields.map(({ key, labelKey, unit }) => (
-            <Field
-              key={key}
-              label={`${t(labelKey)} (${unit})`}
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              value={values[key]}
-              onChange={(e) => set(key, e.target.value)}
-              inputClassName={lowConfidence.has(key) ? LOW_CONFIDENCE_CLASS : undefined}
-              hint={lowConfidence.has(key) ? t('customFood.lowConfidenceHint') : undefined}
-            />
-          ))}
-        </div>
+            {!food && (
+                <div className="mt-4">
+                  <OcrLabelUpload onExtracted={onExtracted}/>
+                  {unreadable && <FormError>{t('customFood.scanUnreadable')}</FormError>}
+                </div>
+            )}
 
-        {error && <p className="mt-4 text-sm text-accent">{error.message}</p>}
-        <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>{t('customFood.cancel')}</Button>
-          <Button type="submit" disabled={!isComplete || saving}>
-            {saving ? t('customFood.saving') : t(food ? 'customFood.saveChanges' : 'customFood.save')}
-          </Button>
-        </div>
-      </motion.form>
-    </motion.div>
-  )
+            <div className="mt-5">
+              <Field
+                  label={t('customFood.nameLabel')}
+                  value={values.name}
+                  onChange={(e) => set('name', e.target.value)}
+                  placeholder={t('customFood.namePlaceholder')}
+                  inputClassName={lowConfidence.has('name') ? LOW_CONFIDENCE_CLASS : undefined}
+                  hint={lowConfidence.has('name') ? t('customFood.lowConfidenceHint') : undefined}
+                  autoFocus
+              />
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Field
+                  label={t('customFood.basisLabel')}
+                  type="number"
+                  inputMode="decimal"
+                  min="0.01"
+                  step="any"
+                  value={values.basis_grams}
+                  onChange={(e) => set('basis_grams', e.target.value)}
+                  inputClassName={lowConfidence.has('basis_grams') ? LOW_CONFIDENCE_CLASS : undefined}
+                  hint={lowConfidence.has('basis_grams') ? t('customFood.lowConfidenceHint') : t('customFood.basisHint')}
+              />
+              <p className="self-end pb-3 text-sm text-muted">{t('customFood.nutrientHint')}</p>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {nutrientFields.map(({key, labelKey, unit}) => (
+                  <Field
+                      key={key}
+                      label={`${t(labelKey)} (${unit})`}
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={values[key]}
+                      onChange={(e) => set(key, e.target.value)}
+                      inputClassName={lowConfidence.has(key) ? LOW_CONFIDENCE_CLASS : undefined}
+                      hint={lowConfidence.has(key) ? t('customFood.lowConfidenceHint') : undefined}
+                  />
+              ))}
+            </div>
+
+            {error && <p className="mt-4 text-sm text-accent">{error.message}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={onClose}>{t('customFood.cancel')}</Button>
+              <Button type="submit" disabled={!isComplete || saving}>
+                {saving ? t('customFood.saving') : t('customFood.saveChanges')}
+              </Button>
+            </div>
+          </motion.form>
+        </motion.div>
+    )
+  }
 }

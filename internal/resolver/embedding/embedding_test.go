@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -150,7 +151,7 @@ func TestMatchBelowThreshold(t *testing.T) {
 	m := New(model, idx, st, 0.80)
 
 	_, err := m.Match(context.Background(), "u1", "pizza")
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch for unrelated phrase, got %v", err)
 	}
 }
@@ -165,7 +166,7 @@ func TestMatchEmptyIndex(t *testing.T) {
 	m := New(model, idx, st, 0.80)
 
 	_, err := m.Match(context.Background(), "u1", "frango")
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch when index is empty, got %v", err)
 	}
 }
@@ -229,7 +230,7 @@ func TestTier2CrossLanguageEmbedding(t *testing.T) {
 	}
 
 	// Unrelated phrase must stay below threshold — no silent weak match.
-	if _, err := m.Match(context.Background(), "u1", "pizza"); err != types.ErrNoMatch {
+	if _, err := m.Match(context.Background(), "u1", "pizza"); !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("Match(pizza) = %v, want ErrNoMatch", err)
 	}
 }

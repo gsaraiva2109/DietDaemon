@@ -99,7 +99,7 @@ type WebAuthnStore interface {
 	RenameWebAuthnCredential(ctx context.Context, userID, id, label string) error
 	DeleteWebAuthnCredential(ctx context.Context, userID, id string) error
 
-	// Ceremony sessions.
+	// CreateWebAuthnSession Ceremony sessions.
 	CreateWebAuthnSession(ctx context.Context, id, userID, sessionDataJSON, expiresAt string) error
 	ConsumeWebAuthnSession(ctx context.Context, id string) (userID, sessionDataJSON string, err error)
 }
@@ -140,7 +140,7 @@ type AuthConfig struct {
 
 // MealStore is the subset of the store the API needs.
 type MealStore interface {
-	// Meals & rollups.
+	// GetMeal Meals & rollups.
 	GetMeal(ctx context.Context, mealID string) (types.Meal, error)
 	RecentMeals(ctx context.Context, userID string, limit int) ([]types.Meal, error)
 	GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error)
@@ -152,35 +152,35 @@ type MealStore interface {
 	SaveMeal(ctx context.Context, m types.Meal) error
 	LatestMealTime(ctx context.Context, userID string) (string, error)
 
-	// Targets.
+	// GetTargets Targets.
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	UpdateRollupTargets(ctx context.Context, userID, localDate string, t types.Macros) error
 
-	// Nudge rule config (per-user overrides of scheduler rules).
+	// GetNudgeRuleConfig Nudge rule config (per-user overrides of scheduler rules).
 	GetNudgeRuleConfig(ctx context.Context, userID string) ([]types.NudgeRuleConfig, error)
 	SetNudgeRuleConfig(ctx context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error
 	DeleteNudgeRuleConfig(ctx context.Context, userID, ruleID string) error
 
-	// Scheduled backup settings.
+	// GetBackupConfig Scheduled backup settings.
 	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
 	SetBackupConfig(ctx context.Context, cfg types.BackupConfig) error
 
-	// Per-user AI API keys (BYOK).
+	// GetUserAIKey Per-user AI API keys (BYOK).
 	GetUserAIKey(ctx context.Context, userID string) (provider string, encKey string, found bool, err error)
 	SetUserAIKey(ctx context.Context, userID, provider, encKey string) error
 	DeleteUserAIKey(ctx context.Context, userID string) error
 
-	// Per-user Hevy API keys (workout import).
+	// GetUserHevyKey Per-user Hevy API keys (workout import).
 	GetUserHevyKey(ctx context.Context, userID string) (encKey string, found bool, err error)
 	SetUserHevyKey(ctx context.Context, userID, encKey string) error
 	DeleteUserHevyKey(ctx context.Context, userID string) error
 
-	// Users.
+	// GetUser Users.
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	UpsertUser(ctx context.Context, u types.User) error
 
-	// Food discovery.
+	// ListFoods Food discovery.
 	ListFoods(ctx context.Context, userID, source string, limit, offset int) ([]types.FoodDetail, error)
 	SearchFoods(ctx context.Context, userID, query string) ([]types.FoodDetail, error)
 	FrequentFoods(ctx context.Context, userID string, limit int) ([]types.FoodDetail, error)
@@ -198,26 +198,26 @@ type MealStore interface {
 	CreateFoodServingUnit(ctx context.Context, userID, foodID, label string, grams float64) (types.FoodServingUnit, error)
 	DeleteFoodServingUnit(ctx context.Context, userID, unitID string) error
 
-	// Pending aliases (embedding near-misses awaiting confirmation).
+	// ListPendingAliases Pending aliases (embedding near-misses awaiting confirmation).
 	ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error)
 	ConfirmPendingAlias(ctx context.Context, userID, id string) error
 	RejectPendingAlias(ctx context.Context, userID, id string) error
 
-	// Per-user nutrition source precedence.
+	// GetSourcePrecedence Per-user nutrition source precedence.
 	GetSourcePrecedence(ctx context.Context, userID string) ([]string, error)
 	SetSourcePrecedence(ctx context.Context, userID string, order []string) error
 
-	// Bulk food-import status, keyed by source.
+	// GetFoodImportStatuses Bulk food-import status, keyed by source.
 	GetFoodImportStatuses(ctx context.Context) ([]types.FoodImportStatus, error)
 
-	// Meal templates.
+	// SaveTemplate Meal templates.
 	SaveTemplate(ctx context.Context, t types.MealTemplate) error
 	GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error)
 	GetTemplate(ctx context.Context, templateID string) (types.MealTemplate, error)
 	DeleteTemplate(ctx context.Context, userID, templateID string) error
 	LogTemplateUse(ctx context.Context, tl types.TemplateLog) error
 
-	// Body tracking — weight. LogWeight upserts by (user_id, date) — logging
+	// ListWeight Body tracking — weight. LogWeight upserts by (user_id, date) — logging
 	// twice in the same day overwrites the earlier entry — and returns the
 	// persisted row's ID, which may differ from w.ID when an existing entry
 	// was updated instead of a new one inserted.
@@ -226,49 +226,49 @@ type MealStore interface {
 	DeleteWeight(ctx context.Context, userID, entryID string) error
 	WeightTrend(ctx context.Context, userID string, days int) ([]types.WeightTrend, error)
 
-	// Fasting.
+	// StartFast Fasting.
 	StartFast(ctx context.Context, f types.Fast) error
 	GetActiveFast(ctx context.Context, userID string) (types.Fast, error)
 	EndFast(ctx context.Context, userID, fastID string, endAt time.Time, completed bool) (types.Fast, error)
 	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
 
-	// Body tracking — measurements. LogMeasurement upserts by (user_id, date)
+	// ListMeasurements Body tracking — measurements. LogMeasurement upserts by (user_id, date)
 	// — same one-entry-per-day rule as LogWeight — and returns the persisted
 	// row's ID.
 	ListMeasurements(ctx context.Context, userID string, days int) ([]types.MeasurementEntry, error)
 	LogMeasurement(ctx context.Context, m types.MeasurementEntry) (string, error)
 	DeleteMeasurement(ctx context.Context, userID, entryID string) error
 
-	// Body tracking — photos.
+	// ListPhotoMetadata Body tracking — photos.
 	ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error)
 	GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error)
 	UploadPhoto(ctx context.Context, p types.ProgressPhoto) error
 	DeletePhoto(ctx context.Context, userID, photoID string) error
 
-	// Profile & goals.
+	// GetProfile Profile & goals.
 	GetProfile(ctx context.Context, userID string) (types.UserProfile, error)
 	UpsertProfile(ctx context.Context, p types.UserProfile) error
 
-	// Linking codes for bot account linking.
+	// CreateLinkingCode Linking codes for bot account linking.
 	CreateLinkingCode(ctx context.Context, userID, platform, code string) error
 	LookupLinkingCode(ctx context.Context, code string) (types.LinkingCode, error)
 	LookupLinkingCodeAny(ctx context.Context, code string) (types.LinkingCode, error)
 	ConsumeLinkingCode(ctx context.Context, code string) error
 
-	// Water tracking.
+	// LogWater Water tracking.
 	LogWater(ctx context.Context, w types.WaterLog) error
 	GetWaterToday(ctx context.Context, userID, localDate string) ([]types.WaterLog, int, error)
 	DeleteWater(ctx context.Context, userID, id string) error
 	GetWaterDailyTotals(ctx context.Context, userID, startDate, endDate string) ([]types.WaterDayTotal, error)
 
-	// Workout tracking.
+	// LogWorkout Workout tracking.
 	LogWorkout(ctx context.Context, w types.Workout) error
 	ImportWorkout(ctx context.Context, w types.Workout) error
 	GetWorkout(ctx context.Context, id string) (types.Workout, error)
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]types.Workout, error)
 	DeleteWorkout(ctx context.Context, userID, id string) error
 
-	// Sleep tracking.
+	// LogSleep Sleep tracking.
 	LogSleep(ctx context.Context, sl types.SleepLog) error
 	GetActiveSleep(ctx context.Context, userID string) (*types.SleepLog, error)
 	EndSleep(ctx context.Context, userID, id, wakeAt, quality string) error

@@ -81,7 +81,7 @@ type openaiStreamRequest struct {
 	Stream    bool             `json:"stream"`
 }
 
-// openaiStreamRequest marshals system as a separate message because OpenAI puts
+// MarshalJSON openaiStreamRequest marshals system as a separate message because OpenAI puts
 // it in the messages array, not as a top-level "system" field.
 func (r openaiStreamRequest) MarshalJSON() ([]byte, error) {
 	msgs := make([]openaiMessage, 0, len(r.Messages)+1)

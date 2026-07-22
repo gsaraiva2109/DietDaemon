@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -114,7 +115,7 @@ func (c *CorrectCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 
 	feedback, err := c.store.CorrectMealItemWithFeedback(ctx, msg.UserID, meal.ID, itemIndex, item)
 	if err != nil {
-		if err == types.ErrNotFound {
+		if errors.Is(err, types.ErrNotFound) {
 			return types.Reply{
 				Text:        "Could not find that item on your most recent meal.",
 				ChannelMeta: msg.ChannelMeta,
@@ -149,7 +150,7 @@ func (c *CorrectCommand) handleAlias(ctx context.Context, msg types.InboundMessa
 	default:
 		return types.Reply{Text: "Use /correct alias accept <id> or /correct alias reject <id>.", ChannelMeta: msg.ChannelMeta}, nil
 	}
-	if err == types.ErrNotFound {
+	if errors.Is(err, types.ErrNotFound) {
 		return types.Reply{Text: "That alias confirmation was not found.", ChannelMeta: msg.ChannelMeta}, nil
 	}
 	if err != nil {

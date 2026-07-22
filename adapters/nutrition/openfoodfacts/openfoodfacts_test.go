@@ -96,7 +96,7 @@ func TestResolveNoResults(t *testing.T) {
 	s.baseURL = srv.URL
 
 	_, err := s.Resolve(context.Background(), types.ParsedItem{RawPhrase: "nonexistent"})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch, got %v", err)
 	}
 }
@@ -128,7 +128,7 @@ func TestResolveProductWithoutEnergy(t *testing.T) {
 
 	// Product has zero energy → skipped, ErrNoMatch.
 	_, err := s.Resolve(context.Background(), types.ParsedItem{RawPhrase: "empty"})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch for zero-energy product, got %v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestName(t *testing.T) {
 func TestEmptyPhrase(t *testing.T) {
 	s := New()
 	_, err := s.Resolve(context.Background(), types.ParsedItem{RawPhrase: ""})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch for empty, got %v", err)
 	}
 }

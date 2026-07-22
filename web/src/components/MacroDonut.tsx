@@ -2,12 +2,23 @@
 // fat, 4/4/9 kcal per gram). Center shows total kcal. Legend pairs color with
 // label + percent (never color alone).
 
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts'
+import type { ComponentProps } from 'react'
+import { Pie, PieChart, ResponsiveContainer, Sector } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import type { Macros } from '@/lib/types'
 import { cssVar } from '@/lib/format'
 
-export function MacroDonut({ consumed }: { consumed: Macros }) {
+const fallbackSliceColor = cssVar('--color-line')
+
+type MacroSliceShapeProps = ComponentProps<typeof Sector> & {
+  payload?: { color?: string }
+}
+
+function MacroSliceShape(props: Readonly<MacroSliceShapeProps>) {
+  return <Sector {...props} fill={props.payload?.color ?? fallbackSliceColor} stroke="none" />
+}
+
+export function MacroDonut({ consumed }: Readonly<{ consumed: Macros }>) {
   const { t } = useTranslation()
   const slices = [
     { key: 'Protein', kcal: consumed.Protein * 4, color: cssVar('--color-protein') },
@@ -22,11 +33,15 @@ export function MacroDonut({ consumed }: { consumed: Macros }) {
       <div className="relative size-32 shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="kcal" innerRadius={42} outerRadius={62} paddingAngle={total > 0 ? 3 : 0} stroke="none">
-              {data.map((d) => (
-                <Cell key={d.key} fill={d.color} />
-              ))}
-            </Pie>
+            <Pie
+              data={data}
+              dataKey="kcal"
+              innerRadius={42}
+              outerRadius={62}
+              paddingAngle={total > 0 ? 3 : 0}
+              stroke="none"
+              shape={MacroSliceShape}
+            />
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 grid place-items-center text-center">
@@ -39,7 +54,7 @@ export function MacroDonut({ consumed }: { consumed: Macros }) {
       <ul className="flex flex-col gap-2">
         {slices.map((s) => (
           <li key={s.key} className="flex items-center gap-2 text-sm">
-            <span className="size-2.5 rounded-full" style={{ background: s.color }} />
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: s.color }} />
             <span className="font-medium text-ink">{t(`macroDonut.macro.${s.key}`)}</span>
             <span className="text-muted tnum">{total > 0 ? Math.round((s.kcal / total) * 100) : 0}%</span>
           </li>

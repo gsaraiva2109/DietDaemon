@@ -164,7 +164,6 @@ func groupIntoMeals(userID string, rows []mfp.Row, loc *time.Location) ([]types.
 			items = append(items, mfp.ToItem(row))
 		}
 
-		extID := "mfp:" + k.date + ":" + strings.ToLower(strings.TrimSpace(k.slot))
 		meals = append(meals, types.Meal{
 			ID:         newImportID(),
 			UserID:     userID,
@@ -174,7 +173,7 @@ func groupIntoMeals(userID string, rows []mfp.Row, loc *time.Location) ([]types.
 			Confidence: 1,
 			ParserTier: types.TierDeterministic,
 			CreatedAt:  now,
-			ExternalID: &extID,
+			ExternalID: new("mfp:" + k.date + ":" + strings.ToLower(strings.TrimSpace(k.slot))),
 		})
 	}
 	return meals, nil

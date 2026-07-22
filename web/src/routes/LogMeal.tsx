@@ -1,7 +1,7 @@
 // Log a meal as natural text. POST is async (202); we show an accepted state
 // and let the dashboard/history pick up the result on the next poll.
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type SyntheticEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -41,7 +41,7 @@ export function LogMeal() {
   const { demo } = useDemo()
   const [duplicating, setDuplicating] = useState(false)
 
-  function onSubmit(e: FormEvent) {
+  function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!text.trim()) return
     log.mutate(text.trim(), { onSuccess: () => setText('') })
@@ -225,7 +225,7 @@ function FoodPicker() {
     )
   }
 
-  function onSubmit(e: FormEvent) {
+  function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!selected.length) return
     logStructured.mutate(
@@ -367,13 +367,13 @@ function SelectedFoodRow({
   onUnitChange,
   onUnitCreated,
   onRemove,
-}: {
+}: Readonly<{
   selected: SelectedFood
   onQuantityChange: (quantity: number) => void
   onUnitChange: (unitID: string) => void
   onUnitCreated: (unit: FoodServingUnit) => void
   onRemove: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   const { demo } = useDemo()
   const [addingUnit, setAddingUnit] = useState(false)
@@ -384,7 +384,7 @@ function SelectedFoodRow({
 
   function submitUnit() {
     const grams = Number(unitGrams)
-    if (!unitLabel.trim() || !(grams > 0) || demo) return
+    if (!unitLabel.trim() || grams <= 0 || demo) return
     addServingUnit.mutate(
       { label: unitLabel.trim(), grams },
       {
@@ -473,7 +473,7 @@ function SelectedFoodRow({
           <button
             type="button"
             onClick={submitUnit}
-            disabled={addServingUnit.isPending || !unitLabel.trim() || !(Number(unitGrams) > 0)}
+            disabled={addServingUnit.isPending || !unitLabel.trim() || Number(unitGrams) <= 0}
             className="rounded-lg bg-primary px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
           >
             {t('logMeal.addUnitSave')}

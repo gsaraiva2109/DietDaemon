@@ -97,15 +97,15 @@ type Notifier interface {
 // to keep multi-user a later flag rather than a rewrite. Lookups that find no
 // row return types.ErrNotFound (or types.ErrNoMatch for food lookups).
 type Store interface {
-	// Users.
+	// UpsertUser Users.
 	UpsertUser(ctx context.Context, u types.User) error
 	GetUser(ctx context.Context, userID string) (types.User, error)
 
-	// Meals.
+	// SaveMeal Meals.
 	SaveMeal(ctx context.Context, m types.Meal) error
 	RecentMeals(ctx context.Context, userID string, limit int) ([]types.Meal, error)
 
-	// Personal food library: the local-first cache for Stage B.
+	// LookupFood Personal food library: the local-first cache for Stage B.
 	// LookupFood matches phrase against the user's known foods and aliases,
 	// returning types.ErrNoMatch on a miss. UpsertFood stores a resolved food
 	// plus the alias phrases it should match. RecordFoodQuery bumps the food's
@@ -114,7 +114,7 @@ type Store interface {
 	UpsertFood(ctx context.Context, userID string, match types.FoodMatch, aliases []string) error
 	RecordFoodQuery(ctx context.Context, userID, foodID string) error
 
-	// Targets and materialized daily rollups (localDate is "YYYY-MM-DD" in the
+	// GetTargets Targets and materialized daily rollups (localDate is "YYYY-MM-DD" in the
 	// user's timezone).
 	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error

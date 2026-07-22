@@ -56,7 +56,7 @@ func TestResolve(t *testing.T) {
 func TestResolveEmptyPhrase(t *testing.T) {
 	s := &Source{client: &http.Client{}, baseURL: DefaultBaseURL, apiKey: "k"}
 	_, err := s.Resolve(t.Context(), types.ParsedItem{RawPhrase: ""})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch, got %v", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestResolveNoResults(t *testing.T) {
 
 	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
 	_, err := s.Resolve(t.Context(), types.ParsedItem{RawPhrase: "nonexistent"})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch, got %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -77,7 +78,7 @@ func TestVerifyMalformedPHC(t *testing.T) {
 func TestHashLengthGuards(t *testing.T) {
 	t.Run("too short", func(t *testing.T) {
 		_, err := Hash("short")
-		if err != ErrPasswordTooShort {
+		if !errors.Is(err, ErrPasswordTooShort) {
 			t.Errorf("expected ErrPasswordTooShort, got %v", err)
 		}
 	})
@@ -95,7 +96,7 @@ func TestHashLengthGuards(t *testing.T) {
 			long[i] = 'a'
 		}
 		_, err := Hash(string(long))
-		if err != ErrPasswordTooLong {
+		if !errors.Is(err, ErrPasswordTooLong) {
 			t.Errorf("expected ErrPasswordTooLong, got %v", err)
 		}
 	})

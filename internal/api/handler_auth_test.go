@@ -333,8 +333,7 @@ func TestHandleLogoutInvalidatesSession(t *testing.T) {
 func TestHandleSessionResponse(t *testing.T) {
 	store := newAuthHandlerTestStore()
 	h, meals := newAuthHandlerForTest(store, testAuthConfig())
-	verifiedAt := time.Now().UTC()
-	meals.user.EmailVerifiedAt = &verifiedAt
+	meals.user.EmailVerifiedAt = new(time.Now().UTC())
 
 	rec := doRequest(h, http.MethodGet, "/api/v1/auth/session", nil, nil)
 	if rec.Code != http.StatusOK {

@@ -18,9 +18,9 @@ func TestToWorkout(t *testing.T) {
 				Title:              "Squat",
 				ExerciseTemplateID: "tmpl-1",
 				Sets: []HevySet{
-					{Index: 0, Type: "warmup", WeightKg: floatPtr(40), Reps: intPtr(10)},
-					{Index: 1, Type: "normal", WeightKg: floatPtr(80), Reps: intPtr(8)},
-					{Index: 2, Type: "normal", WeightKg: floatPtr(90), Reps: intPtr(5)},
+					{Index: 0, Type: "warmup", WeightKg: new(float64(40)), Reps: new(10)},
+					{Index: 1, Type: "normal", WeightKg: new(float64(80)), Reps: new(8)},
+					{Index: 2, Type: "normal", WeightKg: new(float64(90)), Reps: new(5)},
 				},
 			},
 		},

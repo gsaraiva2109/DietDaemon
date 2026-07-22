@@ -2,7 +2,7 @@
 // always generic (never reveal which field). A "View demo" button drops into
 // demo mode (no backend). Honors ?next= to return where the guard sent us.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
@@ -38,7 +38,7 @@ export function Login() {
   const [magicEmail, setMagicEmail] = useState<string | null>(null)
   const magicRequest = useMagicRequest()
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!email.trim() || !password) return
     setBusy(true)
@@ -220,11 +220,11 @@ export function MfaChallenge({
   challengeToken,
   onVerified,
   onBack,
-}: {
+}: Readonly<{
   challengeToken: string
   onVerified: () => void
   onBack: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   const { verifyTotp, verifyMfaPasskey, verifyMfaEmail } = useAuth()
   const [code, setCode] = useState('')
@@ -234,7 +234,7 @@ export function MfaChallenge({
   // Email-OTP state: null = not requested yet, 'sent' = code on the way, 'entering' = user is typing code.
   const [emailOtp, setEmailOtp] = useState<null | 'sent' | 'entering'>(null)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!code.trim()) return
     setBusy(true)

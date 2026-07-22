@@ -125,9 +125,8 @@ func buildBackupFiles() map[string][]byte {
 	files["measurements.csv"] = measurementsBuf.Bytes()
 
 	var sleepBuf bytes.Buffer
-	wakeAt := "2026-01-01T07:00:00Z"
 	_ = exportfmt.WriteSleepCSV(&sleepBuf, []types.SleepLog{
-		{ID: "s1", SleepAt: "2026-01-01T00:00:00Z", WakeAt: &wakeAt, Quality: "good"},
+		{ID: "s1", SleepAt: "2026-01-01T00:00:00Z", WakeAt: new("2026-01-01T07:00:00Z"), Quality: "good"},
 	})
 	files["sleep.csv"] = sleepBuf.Bytes()
 
