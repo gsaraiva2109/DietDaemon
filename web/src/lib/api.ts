@@ -23,6 +23,7 @@ import type {
   Fast,
   FoodDetail,
   FoodImportStatus,
+  FoodServingUnit,
   CustomFoodInput,
   GoalSuggestion,
   HevyImportResult,
@@ -216,7 +217,8 @@ export const api = {
     }),
 
   // 201 Created; synchronous — response contains the fully-created Meal.
-  logMealStructured: (items: { food_id: string; grams: number }[]) =>
+  // unit/quantity are display-only; grams is what's actually logged.
+  logMealStructured: (items: { food_id: string; grams: number; unit?: string; quantity?: number }[]) =>
     request<Meal>('/meals', {
       method: 'POST',
       body: JSON.stringify({ items }),
@@ -443,6 +445,16 @@ export const api = {
       }),
     deleteCustom: (foodID: string) =>
       request<void>(`/foods/${encodeURIComponent(foodID)}/custom`, { method: 'DELETE' }),
+    addServingUnit: (foodID: string, label: string, grams: number) =>
+      request<FoodServingUnit>(`/foods/${encodeURIComponent(foodID)}/units`, {
+        method: 'POST',
+        body: JSON.stringify({ label, grams }),
+      }),
+    deleteServingUnit: (foodID: string, unitID: string) =>
+      request<void>(
+        `/foods/${encodeURIComponent(foodID)}/units/${encodeURIComponent(unitID)}`,
+        { method: 'DELETE' },
+      ),
     // Multipart upload, the request() helper is JSON-only, so go direct.
     ocrScan: (file: File) => {
       const fd = new FormData()

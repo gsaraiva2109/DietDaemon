@@ -52,6 +52,7 @@ const SAVED_FOOD: FoodDetail = {
   query_count: 0,
   last_used: '',
   in_library: true,
+  volume_units_eligible: false,
 }
 
 function renderModal() {

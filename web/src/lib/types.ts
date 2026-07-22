@@ -140,6 +140,16 @@ export interface PendingAlias {
   created_at: string
 }
 
+// FoodServingUnit is a named way to log a food beyond grams, e.g. "1 large
+// egg" = 50g. custom=false is a system-provided unit (from import data);
+// custom=true is a user-defined one, editable only by its owner.
+export interface FoodServingUnit {
+  id: string
+  label: string
+  grams: number
+  custom: boolean
+}
+
 export interface FoodDetail {
   food_id: string
   name: string
@@ -155,6 +165,8 @@ export interface FoodDetail {
   last_used: string
   aliases?: FoodAlias[]
   in_library: boolean
+  serving_units?: FoodServingUnit[]
+  volume_units_eligible: boolean
 }
 
 // A complete nutrition label entered per the selected serving basis. The API
