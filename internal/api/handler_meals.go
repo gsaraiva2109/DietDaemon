@@ -409,8 +409,10 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Request, userID string) {
 	var body struct {
 		Items []struct {
-			FoodID string  `json:"food_id"`
-			Grams  float64 `json:"grams"`
+			FoodID   string  `json:"food_id"`
+			Grams    float64 `json:"grams"`
+			Unit     string  `json:"unit,omitempty"`     // display-only (#134); grams is still authoritative
+			Quantity float64 `json:"quantity,omitempty"` // display-only (#134); grams is still authoritative
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -437,7 +439,7 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		items = append(items, types.ResolvedItem{
-			Parsed: types.ParsedItem{RawPhrase: food.Name, NormalizedGrams: it.Grams},
+			Parsed: types.ParsedItem{RawPhrase: food.Name, NormalizedGrams: it.Grams, Unit: it.Unit, Quantity: it.Quantity},
 			Match:  food,
 			Macros: food.Per100g.Scale(it.Grams / 100.0),
 		})
