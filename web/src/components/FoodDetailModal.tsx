@@ -124,7 +124,9 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: {
               <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
                 {f.serving_size > 0 && (
                   <span>
-                    {t('foodDetailModal.serving')}{' '}
+                    {/* OFF's "quantity" field is package net weight, not a serving (#134) — never
+                        offered as a loggable unit; labeled accordingly so it doesn't read as one. */}
+                    {t(f.source === 'openfoodfacts' ? 'foodDetailModal.packageSize' : 'foodDetailModal.serving')}{' '}
                     <span className="text-ink">
                       {round(f.serving_size)}
                       {f.serving_unit}
