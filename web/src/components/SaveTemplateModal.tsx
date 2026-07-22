@@ -8,7 +8,7 @@ import type { ResolvedItem } from '@/lib/types'
 import { useCreateTemplate } from '@/lib/queries'
 import { Button } from './ui'
 import { CloseIcon } from './icons'
-import { formatGrams } from '@/lib/format'
+import { formatGrams, formatNumber, sumMacros } from '@/lib/format'
 import { scaleIn } from '@/lib/motion'
 
 interface Props {
@@ -22,6 +22,7 @@ export function SaveTemplateModal({ items, onClose }: Props) {
   const [name, setName] = useState('')
   const error = create.error
   const disabled = !name.trim() || !items.length || create.isPending
+  const total = sumMacros(items.map((it) => it.Macros))
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -106,6 +107,16 @@ export function SaveTemplateModal({ items, onClose }: Props) {
               <li className="px-3 py-4 text-center text-sm text-muted">{t('saveTemplateModal.emptyItems')}</li>
             )}
           </ul>
+
+          {items.length > 0 && (
+            <div className="mb-2 flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm">
+              <span className="font-medium text-ink">{t('saveTemplateModal.total')}</span>
+              <span className="tnum text-muted">
+                {formatNumber(total.Calories)} kcal · {formatNumber(total.Protein)}P ·{' '}
+                {formatNumber(total.Carbs)}C · {formatNumber(total.Fat)}F
+              </span>
+            </div>
+          )}
 
           {error && (
             <p className="mt-3 text-sm font-medium text-accent" role="alert">

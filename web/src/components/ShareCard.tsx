@@ -5,8 +5,8 @@
 //
 // html-to-image does not reliably resolve CSS custom properties expressed in
 // oklch(). To keep the captured node faithful we resolve every macro color via
-// cssVar() into explicit inline style strings and pass an explicit
-// backgroundColor to toPng().
+// cssVar() into explicit inline style strings, including the node's own
+// background gradient — so the capture needs no separate backgroundColor.
 
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -74,7 +74,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
   async function render(): Promise<Blob> {
     const node = captureRef.current
     if (!node) throw new Error(t('shareCard.nothingToCapture'))
-    const dataUrl = await toPng(node, { pixelRatio: 2, backgroundColor: surface })
+    const dataUrl = await toPng(node, { pixelRatio: 2 })
     return dataUrlToBlob(dataUrl)
   }
 

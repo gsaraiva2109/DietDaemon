@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -152,7 +151,7 @@ func (h *Handler) handleLogTemplate(w http.ResponseWriter, r *http.Request, user
 		ID:         newHandlerID(),
 		UserID:     userID,
 		At:         now,
-		RawText:    fmt.Sprintf("template: %s", t.Name),
+		RawText:    t.Name,
 		Items:      t.Items,
 		Confidence: 1.0,
 		CreatedAt:  now,
@@ -196,7 +195,7 @@ func (h *Handler) handleDuplicateMeal(w http.ResponseWriter, r *http.Request, us
 		ID:         newHandlerID(),
 		UserID:     userID,
 		At:         now,
-		RawText:    fmt.Sprintf("duplicated: %s", original.RawText),
+		RawText:    original.RawText,
 		Items:      original.Items,
 		Confidence: 1.0,
 		CreatedAt:  now,

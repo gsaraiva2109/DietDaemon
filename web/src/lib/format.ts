@@ -12,6 +12,32 @@ export function macroValue(m: Macros, key: MacroKey): number {
   return m[key] ?? 0
 }
 
+/** Scale per-100g macros to a given gram amount. */
+export function scaleMacros(per100g: Macros, grams: number): Macros {
+  const f = grams / 100
+  return {
+    Calories: per100g.Calories * f,
+    Protein: per100g.Protein * f,
+    Carbs: per100g.Carbs * f,
+    Fat: per100g.Fat * f,
+    Fiber: per100g.Fiber * f,
+  }
+}
+
+/** Sum a list of macro sets into a running total. */
+export function sumMacros(list: Macros[]): Macros {
+  return list.reduce(
+    (sum, m) => ({
+      Calories: sum.Calories + m.Calories,
+      Protein: sum.Protein + m.Protein,
+      Carbs: sum.Carbs + m.Carbs,
+      Fat: sum.Fat + m.Fat,
+      Fiber: sum.Fiber + m.Fiber,
+    }),
+    { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 },
+  )
+}
+
 /** Remaining-to-target, clamped at 0 (the hero number). */
 export function remaining(consumed: number, target: number): number {
   return Math.max(0, target - consumed)

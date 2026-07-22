@@ -25,6 +25,7 @@ import type { MealTemplate, FoodDetail, FoodServingUnit } from '@/lib/types'
 import { GRAMS_UNIT_ID, GENERIC_VOLUME_UNITS, unitOptionsFor, gramsFor, type SelectedFood } from '@/lib/servingUnits'
 import { TemplateIcon, CopyIcon, SearchIcon, FoodsIcon, TrashIcon } from '@/components/icons'
 import { fadeUp, stagger } from '@/lib/motion'
+import { formatNumber, scaleMacros, sumMacros } from '@/lib/format'
 
 const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
 
@@ -190,6 +191,7 @@ function FoodPicker() {
   }, [tab, catalog.data, searching, search.data, browse.data])
 
   const selectedIds = useMemo(() => new Set(selected.map((s) => s.food.food_id)), [selected])
+  const total = sumMacros(selected.map((s) => scaleMacros(s.food.per_100g, gramsFor(s))))
 
   function addFood(food: FoodDetail) {
     if (selectedIds.has(food.food_id)) return
@@ -318,6 +320,16 @@ function FoodPicker() {
           <p className="text-sm text-muted">{t('logMeal.emptySelection')}</p>
         )}
 
+        {selected.length > 0 && (
+          <div className="mt-3 flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm">
+            <span className="font-medium text-ink">{t('logMeal.total')}</span>
+            <span className="tnum text-muted">
+              {formatNumber(total.Calories)} kcal · {formatNumber(total.Protein)}P ·{' '}
+              {formatNumber(total.Carbs)}C · {formatNumber(total.Fat)}F
+            </span>
+          </div>
+        )}
+
         <div className="mt-4 flex items-center justify-between gap-3">
           {logStructured.isSuccess && (
             <p className="text-sm font-medium text-primary">{t('logMeal.pickerLoggedSuccess')}</p>
@@ -386,10 +398,15 @@ function SelectedFoodRow({
     )
   }
 
+  const itemMacros = scaleMacros(s.food.per_100g, gramsFor(s))
+
   return (
     <li className="flex flex-col gap-2 border-b border-line pb-2 last:border-0">
       <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 truncate font-medium text-ink">{s.food.name}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-ink">{s.food.name}</p>
+          <p className="tnum text-xs text-muted">{formatNumber(itemMacros.Calories)} kcal</p>
+        </div>
         <input
           type="number"
           inputMode="decimal"
