@@ -115,7 +115,10 @@ export function MealDetail() {
               <div className="min-w-0">
                 <p className="font-semibold text-ink">{it.Match.Name || it.Parsed.RawPhrase}</p>
                 <p className="mt-0.5 text-sm text-muted">
-                  {formatGrams(it.Parsed.NormalizedGrams)} · {it.Match.Source}
+                  {formatGrams(it.Parsed.NormalizedGrams)}
+                  {it.Parsed.Unit && it.Parsed.Unit !== 'g' && ` (${it.Parsed.Quantity} ${it.Parsed.Unit})`}
+                  {' · '}
+                  {it.Match.Source}
                 </p>
               </div>
               {!demo && (
