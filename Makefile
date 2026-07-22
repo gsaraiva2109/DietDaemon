@@ -12,7 +12,7 @@ GIT_SHA     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 DOCKER_IMAGE ?= ghcr.io/gsaraiva2109/dietdaemon
 
-.PHONY: all build build-go build-web test test-web lint lint-go lint-web \
+.PHONY: all build build-go build-web test test-coverage test-web lint lint-go lint-web \
         vet fmt staticcheck govulncheck dev-web ai-setup docker-build docker-run docker-stop clean
 
 all: build
@@ -54,6 +54,10 @@ dev-web:
 test:
 	@echo ">> running all Go tests..."
 	$(GO) test $(GO_PACKAGES) -count=1 -timeout 120s
+
+test-coverage:
+	@echo ">> running all Go tests with coverage..."
+	$(GO) test $(GO_PACKAGES) -count=1 -timeout 120s -coverprofile=coverage.out -covermode=atomic
 
 test-web:
 	@echo ">> running frontend tests..."
@@ -156,5 +160,5 @@ docker-stop:
 
 clean:
 	@echo ">> cleaning..."
-	rm -rf $(GOBIN) web/dist internal/web/dist/assets
+	rm -rf $(GOBIN) web/dist internal/web/dist/assets coverage.out
 	$(GO) clean -cache -testcache

@@ -51,9 +51,13 @@ testdata/*.csv
 # Frontend
 web/node_modules/
 web/dist/
+web/coverage/
 web/shots/
 web/dev-mock-api.mjs
 web/shoot*.mjs
+
+# Coverage output (Go)
+coverage.out
 # Embedded dashboard build output. internal/web/dist/index.html is a committed
 # placeholder; the real build overwrites it and adds assets/ — don't commit those.
 internal/web/dist/assets/
