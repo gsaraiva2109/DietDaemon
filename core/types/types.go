@@ -167,6 +167,11 @@ type FoodMatch struct {
 	ImageURL    string
 	ServingSize float64
 	ServingUnit string
+	// ServingUnits carries system-provided named portions discovered at
+	// import time (e.g. USDA foodPortions, "1 large egg" = 50g). Only
+	// populated by bulk-import sources that support it; empty on the live
+	// Resolve() path.
+	ServingUnits []FoodServingUnit
 }
 
 // ResolvedItem couples an extracted item with the food it resolved to and the

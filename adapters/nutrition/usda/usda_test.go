@@ -368,6 +368,65 @@ func TestFoodCategoryUnmarshalStringShape(t *testing.T) {
 	}
 }
 
+// TestFoodPortionsToServingUnits covers foodPortions → FoodServingUnit
+// mapping (#134/B3): PortionDescription preferred as label, "undetermined"
+// and non-positive gramWeight entries skipped, amount+modifier fallback used
+// when there's no description.
+func TestFoodPortionsToServingUnits(t *testing.T) {
+	raw := `{
+		"fdcId": 1,
+		"description": "Egg, whole, raw",
+		"foodNutrients": [{"nutrientId": 1008, "amount": 143}],
+		"foodPortions": [
+			{"amount": 1, "modifier": "large", "portionDescription": "1 large", "gramWeight": 50},
+			{"amount": 1, "modifier": "", "portionDescription": "undetermined", "gramWeight": 44},
+			{"amount": 0, "modifier": "", "portionDescription": "", "gramWeight": 0},
+			{"amount": 2, "modifier": "small eggs", "portionDescription": "", "gramWeight": 72}
+		]
+	}`
+	var f food
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fm, ok := foodToMatch(f)
+	if !ok {
+		t.Fatal("foodToMatch: ok = false, want true")
+	}
+	want := []types.FoodServingUnit{
+		{Label: "1 large", Grams: 50},
+		{Label: "1", Grams: 44},
+		{Label: "2 small eggs", Grams: 72},
+	}
+	if len(fm.ServingUnits) != len(want) {
+		t.Fatalf("ServingUnits = %+v, want %+v", fm.ServingUnits, want)
+	}
+	for i, u := range fm.ServingUnits {
+		if u != want[i] {
+			t.Errorf("ServingUnits[%d] = %+v, want %+v", i, u, want[i])
+		}
+	}
+}
+
+// TestResolveRequestsFullFormat confirms Resolve asks USDA for format=full so
+// foodPortions is present in the response (#134/B3) — without it USDA omits
+// household-measure data entirely.
+func TestResolveRequestsFullFormat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("format"); got != "full" {
+			t.Errorf("format = %q, want %q", got, "full")
+		}
+		_ = json.NewEncoder(w).Encode(searchResponse{Foods: []food{{
+			FdcID: 1, Description: "x", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 1}},
+		}}})
+	}))
+	defer srv.Close()
+
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
+	if _, err := s.Resolve(t.Context(), types.ParsedItem{RawPhrase: "x"}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+}
+
 func TestFetchBulkFileEmitError(t *testing.T) {
 	path := writeBulkFile(t, []food{
 		{FdcID: 1, Description: "Apple", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 52}}},
