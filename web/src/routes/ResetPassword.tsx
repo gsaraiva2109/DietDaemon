@@ -1,7 +1,7 @@
 // /reset-password?token=…, set a new password from the emailed link. On
 // success, send the user to /login to sign in with the new password.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
@@ -21,7 +21,7 @@ export function ResetPassword() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     setError(null)
     if (!token) {

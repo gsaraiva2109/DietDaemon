@@ -2,7 +2,7 @@
 // (never reveals whether an account exists), so we show the same confirmation
 // regardless of outcome.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useForgotPassword } from '@/lib/queries'
@@ -16,7 +16,7 @@ export function ForgotPassword() {
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!email.trim()) return
     setBusy(true)

@@ -111,13 +111,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 		}
 	}
 
-	sets, reps := 3, 10
-	weightKg := 40.0
 	workouts := []types.Workout{
 		{
 			ID: "workout-1", UserID: userID, Name: "Leg day", DurationMin: 60, Intensity: "high", Note: "n",
 			LoggedAt:  "2024-01-10T18:00:00Z",
-			Exercises: []types.WorkoutExercise{{Name: "Squat", Sets: &sets, Reps: &reps, WeightKg: &weightKg}},
+			Exercises: []types.WorkoutExercise{{Name: "Squat", Sets: new(3), Reps: new(10), WeightKg: new(40.0)}},
 		},
 		{ID: "workout-2", UserID: userID, Name: "Run", DurationMin: 30, Intensity: "medium", LoggedAt: "2024-01-11T07:00:00Z"},
 	}

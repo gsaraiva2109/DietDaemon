@@ -1,7 +1,7 @@
 // Inline quick-log so the primary action is one keystroke away on the
 // dashboard, no need to navigate to the Log tab.
 
-import { useState, type FormEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useLogMeal } from '@/lib/queries'
@@ -15,7 +15,7 @@ export function QuickLogCard() {
   const log = useLogMeal()
   const { demo } = useDemo()
 
-  function onSubmit(e: FormEvent) {
+  function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!text.trim() || demo) return
     log.mutate(text.trim(), { onSuccess: () => setText('') })

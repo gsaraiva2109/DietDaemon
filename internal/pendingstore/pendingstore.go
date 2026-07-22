@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,7 +74,7 @@ func (s *Store) Get(ctx context.Context, userID string) (types.PendingMeal, erro
 	var createdUnix int64
 	var raw []byte
 	err := row.Scan(&createdUnix, &raw)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return types.PendingMeal{}, types.ErrNotFound
 	}
 	if err != nil {

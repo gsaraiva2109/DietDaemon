@@ -42,7 +42,7 @@ type MealStore interface {
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	UpsertRollup(ctx context.Context, r types.DailyRollup) error
-	// Channel mapping (multi-user).
+	// GetUserIDByChannel Channel mapping (multi-user).
 	GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error)
 	MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error
 	// UpsertChatRoute records where to reach this user proactively (e.g. for

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func TestOIDCStateCreateConsume(t *testing.T) {
 
 	// Second consume → ErrNotFound (single-use).
 	_, _, _, _, err = s.ConsumeOIDCState(ctx(), id)
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on second consume, got %v", err)
 	}
 }
@@ -115,7 +116,7 @@ func TestOIDCStateExpired(t *testing.T) {
 	}
 
 	_, _, _, _, err := s.ConsumeOIDCState(ctx(), id)
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for expired state, got %v", err)
 	}
 }
@@ -146,7 +147,7 @@ func TestLinkOIDCIdentityUniqueness(t *testing.T) {
 
 	// Same provider+subject again → ErrIdentityLinked.
 	err := s.LinkOIDCIdentity(ctx(), "id-2", "user-1", "google", "sub-1", "a@b.com")
-	if err != types.ErrIdentityLinked {
+	if !errors.Is(err, types.ErrIdentityLinked) {
 		t.Fatalf("expected ErrIdentityLinked, got %v", err)
 	}
 
@@ -161,7 +162,7 @@ func TestLinkOIDCIdentityUniqueness(t *testing.T) {
 	}
 	mustUser(t, s, u2)
 	err = s.LinkOIDCIdentity(ctx(), "id-3", "user-2", "google", "sub-1", "b@c.com")
-	if err != types.ErrIdentityLinked {
+	if !errors.Is(err, types.ErrIdentityLinked) {
 		t.Fatalf("expected ErrIdentityLinked for different user, got %v", err)
 	}
 }
@@ -176,7 +177,7 @@ func TestGetUserByOIDCIdentity(t *testing.T) {
 
 	// Not found when no identity exists.
 	_, err := s.GetUserByOIDCIdentity(ctx(), "google", "sub-nonexistent")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
@@ -260,13 +261,13 @@ func TestListDeleteOIDCIdentities(t *testing.T) {
 
 	// Delete scoped to wrong user → ErrNotFound.
 	err = s.DeleteOIDCIdentity(ctx(), "wrong-user", "li-2")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for wrong user, got %v", err)
 	}
 
 	// Delete nonexistent → ErrNotFound.
 	err = s.DeleteOIDCIdentity(ctx(), "ud-1", "nonexistent")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for nonexistent, got %v", err)
 	}
 }
@@ -348,7 +349,7 @@ func TestMagicCodeNotFound(t *testing.T) {
 	defer cleanup()
 
 	_, _, _, err := s.GetMagicCode(ctx(), "nonexistent")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -399,7 +400,7 @@ func TestMagicCodeDelete(t *testing.T) {
 	}
 
 	_, _, _, err = s.GetMagicCode(ctx(), u.ID)
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete, got %v", err)
 	}
 }

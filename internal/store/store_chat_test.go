@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func TestSoftDeleteChatSessionAlreadyDeleted(t *testing.T) {
 	}
 
 	// Second delete on same session: already deleted, should return ErrNotFound.
-	if err := s.SoftDeleteChatSession(ctx(), "u-sd-twice", "sess-twice"); err != types.ErrNotFound {
+	if err := s.SoftDeleteChatSession(ctx(), "u-sd-twice", "sess-twice"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("second SoftDeleteChatSession: got %v, want ErrNotFound", err)
 	}
 }
@@ -103,7 +104,7 @@ func TestSoftDeleteChatSessionForeignUser(t *testing.T) {
 
 	// Foreign user tries to delete owner's session.
 	err := s.SoftDeleteChatSession(ctx(), "u-foreign", "sess-f")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("SoftDeleteChatSession by foreign user: got %v, want ErrNotFound", err)
 	}
 
@@ -168,7 +169,7 @@ func TestRestoreChatSessionNotDeleted(t *testing.T) {
 	}
 
 	err := s.RestoreChatSession(ctx(), "u-nd", "sess-nd")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("RestoreChatSession on non-deleted session: got %v, want ErrNotFound", err)
 	}
 }

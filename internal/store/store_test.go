@@ -58,7 +58,7 @@ func TestFoodServingUnitsOwnership(t *testing.T) {
 	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", egg.FoodID, "bad", -1); err == nil {
 		t.Fatal("non-positive grams unexpectedly succeeded")
 	}
-	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", "no-such-food", "unit", 50); err != types.ErrNoMatch {
+	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", "no-such-food", "unit", 50); !errors.Is(err, types.ErrNoMatch) {
 		t.Fatalf("unit for invisible food error = %v, want ErrNoMatch", err)
 	}
 
@@ -84,13 +84,13 @@ func TestFoodServingUnitsOwnership(t *testing.T) {
 	// Neither the creator's own but-wrong-call nor another user can delete
 	// someone else's unit; a global (user_id NULL) unit is never deletable
 	// by any user.
-	if err := s.DeleteFoodServingUnit(ctx(), "unit-other", unit.ID); err != types.ErrNotFound {
+	if err := s.DeleteFoodServingUnit(ctx(), "unit-other", unit.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("other user delete error = %v, want ErrNotFound", err)
 	}
 	if err := s.DeleteFoodServingUnit(ctx(), "unit-owner", unit.ID); err != nil {
 		t.Fatalf("DeleteFoodServingUnit: %v", err)
 	}
-	if err := s.DeleteFoodServingUnit(ctx(), "unit-owner", unit.ID); err != types.ErrNotFound {
+	if err := s.DeleteFoodServingUnit(ctx(), "unit-owner", unit.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("delete already-deleted unit error = %v, want ErrNotFound", err)
 	}
 }
@@ -124,10 +124,10 @@ func TestCustomFoodLifecycle(t *testing.T) {
 	if _, err := s.LookupFood(ctx(), "custom-owner", "homemade oat bar"); err != nil {
 		t.Fatalf("canonical alias lookup: %v", err)
 	}
-	if _, err := s.GetFoodForUser(ctx(), "custom-other", food.FoodID); err != types.ErrNoMatch {
+	if _, err := s.GetFoodForUser(ctx(), "custom-other", food.FoodID); !errors.Is(err, types.ErrNoMatch) {
 		t.Fatalf("other user GetFoodForUser error = %v, want ErrNoMatch", err)
 	}
-	if _, err := s.GetFoodDetail(ctx(), "custom-other", food.FoodID); err != types.ErrNotFound {
+	if _, err := s.GetFoodDetail(ctx(), "custom-other", food.FoodID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("other user GetFoodDetail error = %v, want ErrNotFound", err)
 	}
 	otherCatalog, err := s.SearchCatalog(ctx(), "custom-other", "homemade oat", "", 20, 0)
@@ -143,7 +143,7 @@ func TestCustomFoodLifecycle(t *testing.T) {
 		}
 	}
 
-	if _, err := s.CreateCustomFood(ctx(), "custom-owner", input); err != types.ErrConflict {
+	if _, err := s.CreateCustomFood(ctx(), "custom-owner", input); !errors.Is(err, types.ErrConflict) {
 		t.Fatalf("duplicate canonical alias error = %v, want ErrConflict", err)
 	}
 	if _, err := s.CreateCustomFood(ctx(), "custom-owner", types.CustomFoodInput{Name: "bad", BasisGrams: 100, Macros: types.Macros{Calories: -1}}); err == nil {
@@ -161,16 +161,16 @@ func TestCustomFoodLifecycle(t *testing.T) {
 	if updated.ServingSize != 50 || updated.Per100g != (types.Macros{Calories: 100, Protein: 10, Carbs: 20, Fat: 4, Fiber: 2}) {
 		t.Fatalf("updated food = %+v", updated)
 	}
-	if _, err := s.UpdateCustomFood(ctx(), "custom-other", food.FoodID, input); err != types.ErrNotFound {
+	if _, err := s.UpdateCustomFood(ctx(), "custom-other", food.FoodID, input); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("other user UpdateCustomFood error = %v, want ErrNotFound", err)
 	}
-	if err := s.DeleteCustomFood(ctx(), "custom-other", food.FoodID); err != types.ErrNotFound {
+	if err := s.DeleteCustomFood(ctx(), "custom-other", food.FoodID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("other user DeleteCustomFood error = %v, want ErrNotFound", err)
 	}
 	if err := s.DeleteCustomFood(ctx(), "custom-owner", food.FoodID); err != nil {
 		t.Fatalf("DeleteCustomFood: %v", err)
 	}
-	if _, err := s.GetFoodDetail(ctx(), "custom-owner", food.FoodID); err != types.ErrNotFound {
+	if _, err := s.GetFoodDetail(ctx(), "custom-owner", food.FoodID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("deleted food detail error = %v, want ErrNotFound", err)
 	}
 	var remaining int
@@ -216,7 +216,7 @@ func TestUserUpsertGet(t *testing.T) {
 
 	// Get before insert → ErrNotFound.
 	_, err := s.GetUser(ctx(), "user-1")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
@@ -401,7 +401,7 @@ func TestCorrectMealItemOwnership(t *testing.T) {
 
 	// userB attempts to correct userA's meal.
 	err := s.CorrectMealItem(ctx(), "userB", meal.ID, 0, corrected)
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for cross-user correction, got %v", err)
 	}
 
@@ -417,7 +417,7 @@ func TestCorrectMealItemOwnership(t *testing.T) {
 	// Rollup must be unchanged (no row should exist, since SaveMeal doesn't
 	// write rollups directly and CorrectMealItem must not have run).
 	localDate := now.Format("2006-01-02")
-	if _, err := s.GetRollup(ctx(), "userA", localDate); err != types.ErrNotFound {
+	if _, err := s.GetRollup(ctx(), "userA", localDate); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected no rollup row for userA (CorrectMealItem must not have touched it), got err=%v", err)
 	}
 }
@@ -469,7 +469,7 @@ func TestFoodLibraryRoundTrip(t *testing.T) {
 
 	// Lookup non-existent → ErrNoMatch.
 	_, err = s.LookupFood(ctx(), "u1", "pizza")
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Fatalf("expected ErrNoMatch, got %v", err)
 	}
 
@@ -638,7 +638,7 @@ func TestTargetsSetGet(t *testing.T) {
 
 	// Get on missing → ErrNotFound.
 	_, err := s.GetTargets(ctx(), "u1")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
@@ -716,7 +716,7 @@ func TestRollupUpsertGet(t *testing.T) {
 
 	// Get on missing → ErrNotFound.
 	_, err := s.GetRollup(ctx(), "u1", "2026-06-17")
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
@@ -764,13 +764,13 @@ func TestErrNotFoundPaths(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
-	if _, err := s.GetUser(ctx(), "no-one"); err != types.ErrNotFound {
+	if _, err := s.GetUser(ctx(), "no-one"); !errors.Is(err, types.ErrNotFound) {
 		t.Errorf("GetUser: expected ErrNotFound, got %v", err)
 	}
-	if _, err := s.GetTargets(ctx(), "no-one"); err != types.ErrNotFound {
+	if _, err := s.GetTargets(ctx(), "no-one"); !errors.Is(err, types.ErrNotFound) {
 		t.Errorf("GetTargets: expected ErrNotFound, got %v", err)
 	}
-	if _, err := s.GetRollup(ctx(), "no-one", "2020-01-01"); err != types.ErrNotFound {
+	if _, err := s.GetRollup(ctx(), "no-one", "2020-01-01"); !errors.Is(err, types.ErrNotFound) {
 		t.Errorf("GetRollup: expected ErrNotFound, got %v", err)
 	}
 }
@@ -786,7 +786,7 @@ func TestErrNoMatchPath(t *testing.T) {
 	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
 
 	_, err := s.LookupFood(ctx(), "u1", "nonexistent")
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("LookupFood: expected ErrNoMatch, got %v", err)
 	}
 }

@@ -65,9 +65,7 @@ func doOCRUpload(h *Handler, fileContent []byte, fileName string) *httptest.Resp
 
 func TestHandleOCRExtractCustomFood(t *testing.T) {
 	store := &fakeMealStore{}
-	name := "Whole Milk"
-	calories := 61.0
-	adapter := &fakeVisionAdapter{draft: types.NutritionLabelDraft{Name: &name, Calories: &calories}}
+	adapter := &fakeVisionAdapter{draft: types.NutritionLabelDraft{Name: new("Whole Milk"), Calories: new(61.0)}}
 	h := newHandler(store, &fakeMealLogger{})
 	h.visionAdapter = adapter
 

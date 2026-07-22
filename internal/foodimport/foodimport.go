@@ -266,7 +266,7 @@ func localFingerprint(path string, filter ports.BulkFilter) (string, error) {
 		Size       int64
 		ModifiedNS int64
 		Filter     ports.BulkFilter
-	}{abs, uint64(stat.Dev), stat.Ino, info.Size(), info.ModTime().UnixNano(), filter})
+	}{abs, stat.Dev, stat.Ino, info.Size(), info.ModTime().UnixNano(), filter})
 	if err != nil {
 		return "", fmt.Errorf("encode fingerprint: %w", err)
 	}

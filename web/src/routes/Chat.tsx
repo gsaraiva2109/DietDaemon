@@ -131,7 +131,7 @@ export function Chat() {
 // Catching it here, below Chat()'s own render, keeps that resuspend from ever
 // reaching the app-level route-transition AnimatePresence in App.tsx, whose
 // interrupted opacity animation was otherwise getting stuck at 0.
-function ChatApp({ railOpen, onCloseRail }: { railOpen: boolean; onCloseRail: () => void }) {
+function ChatApp({ railOpen, onCloseRail }: Readonly<{ railOpen: boolean; onCloseRail: () => void }>) {
   const { t } = useTranslation()
   const runtime = useRemoteThreadListRuntime({
     runtimeHook: useChatThreadRuntime,
@@ -187,7 +187,7 @@ function useChatThreadRuntime() {
 
 // --- Session rail: desktop-persistent, mobile-overlay --------------------
 
-function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) {
+function SessionRail({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
   const { t } = useTranslation()
   const isLoading = useAuiState((s) => s.threads.isLoading)
   const count = useAuiState((s) => s.threads.threadIds.length)
@@ -237,7 +237,7 @@ function SessionRail({ open, onClose }: { open: boolean; onClose: () => void }) 
   )
 }
 
-function SessionRow({ onSelect }: { onSelect: () => void }) {
+function SessionRow({ onSelect }: Readonly<{ onSelect: () => void }>) {
   const { t } = useTranslation()
   const aui = useAui()
   const [confirming, setConfirming] = useState(false)

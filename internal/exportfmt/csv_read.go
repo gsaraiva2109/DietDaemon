@@ -144,8 +144,7 @@ func ReadSleepCSV(r io.Reader) ([]types.SleepLog, error) {
 		}
 		var wakeAt *string
 		if rec[2] != "" {
-			v := rec[2]
-			wakeAt = &v
+			wakeAt = new(rec[2])
 		}
 		out = append(out, types.SleepLog{ID: rec[0], SleepAt: rec[1], WakeAt: wakeAt, Quality: rec[3], Note: rec[4]})
 	}
@@ -234,8 +233,7 @@ func ReadWorkoutsCSV(r io.Reader) ([]types.Workout, error) {
 		}
 		var externalID *string
 		if rec[7] != "" {
-			v := rec[7]
-			externalID = &v
+			externalID = new(rec[7])
 		}
 		wk := types.Workout{
 			ID: rec[0], Name: rec[1], DurationMin: durationMin, Intensity: rec[3],

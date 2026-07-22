@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -30,7 +31,7 @@ func TestPublishConsume(t *testing.T) {
 func TestPublishAfterCloseFails(t *testing.T) {
 	q := NewMemory[string](1)
 	_ = q.Close()
-	if err := q.Publish(context.Background(), "x"); err != ErrClosed {
+	if err := q.Publish(context.Background(), "x"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Publish after Close = %v, want ErrClosed", err)
 	}
 }
@@ -44,7 +45,7 @@ func TestPublishRespectsContext(t *testing.T) {
 
 	cctx, cancel := context.WithCancel(ctx)
 	cancel() // cancel before the blocked publish
-	if err := q.Publish(cctx, 2); err != context.Canceled {
+	if err := q.Publish(cctx, 2); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Publish on full buffer with cancelled ctx = %v, want context.Canceled", err)
 	}
 }

@@ -2,7 +2,7 @@
 // base32 secret for manual entry), confirm a 6-digit code, then reveal recovery
 // codes once. Lives inside the Security "Two-factor" section.
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type SyntheticEvent } from 'react'
 import QRCode from 'qrcode'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
@@ -11,7 +11,7 @@ import { Button, Field, FormError, Spinner } from './ui'
 import { RecoveryCodes } from './RecoveryCodes'
 import { fadeUp } from '@/lib/motion'
 
-export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; onCancel: () => void }) {
+export function TotpEnroll({ onComplete, onCancel }: Readonly<{ onComplete: () => void; onCancel: () => void }>) {
   const { t } = useTranslation()
   const enroll = useTotpEnroll()
   const verify = useTotpVerify()
@@ -42,7 +42,7 @@ export function TotpEnroll({ onComplete, onCancel }: { onComplete: () => void; o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function onVerify(e: FormEvent) {
+  async function onVerify(e: SyntheticEvent) {
     e.preventDefault()
     if (code.trim().length < 6) return
     setError(null)

@@ -55,13 +55,13 @@ func testResolve(t *testing.T, src *Source) {
 
 	// Miss.
 	_, err = src.Resolve(ctx, types.ParsedItem{RawPhrase: "pizza"})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch, got %v", err)
 	}
 
 	// Empty phrase.
 	_, err = src.Resolve(ctx, types.ParsedItem{RawPhrase: ""})
-	if err != types.ErrNoMatch {
+	if !errors.Is(err, types.ErrNoMatch) {
 		t.Errorf("expected ErrNoMatch for empty, got %v", err)
 	}
 }

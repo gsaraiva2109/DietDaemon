@@ -4,7 +4,7 @@
 // enabled, the verify step returns an MFA challenge instead of a session; we
 // hand off to <MfaChallenge> which issues the session on success.
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type SyntheticEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useMagicRequest, useMagicVerifyCode } from '@/lib/queries'
@@ -18,11 +18,11 @@ export function MagicCodeEntry({
   email,
   onVerified,
   onBack,
-}: {
+}: Readonly<{
   email: string
   onVerified: () => void
   onBack: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   const { refresh } = useAuth()
   const verify = useMagicVerifyCode()
@@ -38,7 +38,7 @@ export function MagicCodeEntry({
     return () => clearTimeout(t)
   }, [cooldown])
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmit(e: SyntheticEvent) {
     e.preventDefault()
     if (!code.trim()) return
     setError(null)

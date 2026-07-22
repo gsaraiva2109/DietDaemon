@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -17,7 +18,7 @@ func TestBackupConfigCountsRoundTrip(t *testing.T) {
 
 	// No config yet — GetBackupConfig returns ErrNotFound.
 	_, err := s.GetBackupConfig(ctx(), uid)
-	if err != types.ErrNotFound {
+	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound before insert, got %v", err)
 	}
 

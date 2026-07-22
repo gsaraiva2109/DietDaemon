@@ -20,12 +20,12 @@ func ToWorkout(userID string, hw HevyWorkout) (types.Workout, error) {
 		for _, s := range he.Sets {
 			if s.Reps != nil {
 				if maxReps == nil || *s.Reps > *maxReps {
-					maxReps = intPtr(*s.Reps)
+					maxReps = new(*s.Reps)
 				}
 			}
 			if s.WeightKg != nil {
 				if maxWeight == nil || *s.WeightKg > *maxWeight {
-					maxWeight = floatPtr(*s.WeightKg)
+					maxWeight = new(*s.WeightKg)
 				}
 			}
 		}
@@ -35,10 +35,9 @@ func ToWorkout(userID string, hw HevyWorkout) (types.Workout, error) {
 			return types.Workout{}, fmt.Errorf("hevy: marshal sets for exercise %q: %w", he.Title, err)
 		}
 
-		setsVal := setsCount
 		exercises = append(exercises, types.WorkoutExercise{
 			Name:     he.Title,
-			Sets:     &setsVal,
+			Sets:     new(setsCount),
 			Reps:     maxReps,
 			WeightKg: maxWeight,
 			Note:     string(rawSets),
@@ -50,17 +49,13 @@ func ToWorkout(userID string, hw HevyWorkout) (types.Workout, error) {
 		durationMin = 0
 	}
 
-	extID := hw.ID
 	return types.Workout{
 		UserID:      userID,
 		Name:        hw.Title,
 		DurationMin: durationMin,
 		Intensity:   "moderate",
 		LoggedAt:    hw.StartTime.UTC().Format("2006-01-02T15:04:05Z"),
-		ExternalID:  &extID,
+		ExternalID:  new(hw.ID),
 		Exercises:   exercises,
 	}, nil
 }
-
-func intPtr(v int) *int           { return &v }
-func floatPtr(v float64) *float64 { return &v }
