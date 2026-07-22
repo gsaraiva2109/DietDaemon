@@ -106,3 +106,37 @@ func IsUnit(token string) bool {
 	_, ok := unitAliases[accentRepl.Replace(strings.ToLower(strings.TrimSpace(token)))]
 	return ok
 }
+
+// volumeUnitKeywords is a cheap PT/EN heuristic for pourable/liquid-ish
+// foods; false positives/negatives are acceptable.
+var volumeUnitKeywords = []string{
+	"milk", "leite",
+	"oil", "óleo", "oleo",
+	"juice", "suco",
+	"soup", "sopa",
+	"sauce", "molho",
+	"beverage", "bebida",
+	"dairy", "laticínio", "laticinio",
+	"cream", "creme",
+	"yogurt", "iogurte",
+	"honey", "mel",
+	"syrup", "xarope", "calda",
+	"broth", "caldo",
+	"vinegar", "vinagre",
+	"wine", "vinho",
+	"beer", "cerveja",
+}
+
+// VolumeUnitsEligible reports whether generic approximate volume units
+// (tbsp/tsp/cup/oz/...) should be offered for a food, based on a keyword
+// allowlist matched against category+name combined (TACO never populates
+// Category, so name alone must still work).
+func VolumeUnitsEligible(category, name string) bool {
+	haystack := strings.ToLower(category + " " + name)
+	for _, kw := range volumeUnitKeywords {
+		if strings.Contains(haystack, kw) {
+			return true
+		}
+	}
+	return false
+}
