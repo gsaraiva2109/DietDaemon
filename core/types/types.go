@@ -277,21 +277,34 @@ type SuggestedItem struct {
 
 // FoodDetail is a full food library entry with metadata and aliases.
 type FoodDetail struct {
-	FoodID      string      `json:"food_id"`
-	UserID      string      `json:"-"`
-	Name        string      `json:"name"`
-	Source      string      `json:"source"`
-	Per100g     Macros      `json:"per_100g"`
-	Category    string      `json:"category"`
-	Brand       string      `json:"brand"`
-	Barcode     string      `json:"barcode"`
-	ImageURL    string      `json:"image_url"`
-	ServingSize float64     `json:"serving_size"`
-	ServingUnit string      `json:"serving_unit"`
-	QueryCount  int         `json:"query_count"`
-	LastUsed    string      `json:"last_used"`
-	InLibrary   bool        `json:"in_library"`
-	Aliases     []FoodAlias `json:"aliases,omitempty"`
+	FoodID              string            `json:"food_id"`
+	UserID              string            `json:"-"`
+	Name                string            `json:"name"`
+	Source              string            `json:"source"`
+	Per100g             Macros            `json:"per_100g"`
+	Category            string            `json:"category"`
+	Brand               string            `json:"brand"`
+	Barcode             string            `json:"barcode"`
+	ImageURL            string            `json:"image_url"`
+	ServingSize         float64           `json:"serving_size"`
+	ServingUnit         string            `json:"serving_unit"`
+	QueryCount          int               `json:"query_count"`
+	LastUsed            string            `json:"last_used"`
+	InLibrary           bool              `json:"in_library"`
+	Aliases             []FoodAlias       `json:"aliases,omitempty"`
+	ServingUnits        []FoodServingUnit `json:"serving_units,omitempty"`
+	VolumeUnitsEligible bool              `json:"volume_units_eligible"`
+}
+
+// FoodServingUnit is a named way to log a food beyond grams, e.g. "1 large
+// egg" = 50g. System-provided units (from a bulk import's portion data) have
+// Custom = false; a user's own unit has Custom = true and is only visible to
+// its owner.
+type FoodServingUnit struct {
+	ID     string  `json:"id"`
+	Label  string  `json:"label"`
+	Grams  float64 `json:"grams"`
+	Custom bool    `json:"custom"`
 }
 
 // CustomFoodInput is a complete nutrition label entered by a user. Macros are

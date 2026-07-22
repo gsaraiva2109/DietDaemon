@@ -31,6 +31,70 @@ func tempDB(t *testing.T) (*Store, func()) {
 	}
 }
 
+func TestFoodServingUnitsOwnership(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "unit-owner", CreatedAt: time.Now().UTC()})
+	mustUser(t, s, types.User{ID: "unit-other", CreatedAt: time.Now().UTC()})
+
+	egg := types.FoodMatch{FoodID: "usda-egg", Name: "Egg, whole, raw", Source: "usda", Per100g: types.Macros{Calories: 143, Protein: 13, Carbs: 1, Fat: 10}}
+	if err := s.UpsertFood(ctx(), "unit-owner", egg, nil); err != nil {
+		t.Fatalf("seed egg: %v", err)
+	}
+
+	// A user-defined custom unit is visible only to its creator.
+	unit, err := s.CreateFoodServingUnit(ctx(), "unit-owner", egg.FoodID, "1 large egg", 50)
+	if err != nil {
+		t.Fatalf("CreateFoodServingUnit: %v", err)
+	}
+	if !unit.Custom || unit.Grams != 50 || unit.Label != "1 large egg" {
+		t.Fatalf("created unit = %+v", unit)
+	}
+
+	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", egg.FoodID, "", 50); err == nil {
+		t.Fatal("empty label unexpectedly succeeded")
+	}
+	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", egg.FoodID, "bad", -1); err == nil {
+		t.Fatal("non-positive grams unexpectedly succeeded")
+	}
+	if _, err := s.CreateFoodServingUnit(ctx(), "unit-owner", "no-such-food", "unit", 50); err != types.ErrNoMatch {
+		t.Fatalf("unit for invisible food error = %v, want ErrNoMatch", err)
+	}
+
+	ownerDetail, err := s.GetFoodDetail(ctx(), "unit-owner", egg.FoodID)
+	if err != nil {
+		t.Fatalf("GetFoodDetail(owner): %v", err)
+	}
+	if len(ownerDetail.ServingUnits) != 1 || ownerDetail.ServingUnits[0].ID != unit.ID {
+		t.Fatalf("owner serving units = %+v", ownerDetail.ServingUnits)
+	}
+
+	if err := s.AddToLibrary(ctx(), "unit-other", egg.FoodID); err != nil {
+		t.Fatalf("AddToLibrary(other): %v", err)
+	}
+	otherDetail, err := s.GetFoodDetail(ctx(), "unit-other", egg.FoodID)
+	if err != nil {
+		t.Fatalf("GetFoodDetail(other): %v", err)
+	}
+	if len(otherDetail.ServingUnits) != 0 {
+		t.Fatalf("other user sees owner's private unit: %+v", otherDetail.ServingUnits)
+	}
+
+	// Neither the creator's own but-wrong-call nor another user can delete
+	// someone else's unit; a global (user_id NULL) unit is never deletable
+	// by any user.
+	if err := s.DeleteFoodServingUnit(ctx(), "unit-other", unit.ID); err != types.ErrNotFound {
+		t.Fatalf("other user delete error = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteFoodServingUnit(ctx(), "unit-owner", unit.ID); err != nil {
+		t.Fatalf("DeleteFoodServingUnit: %v", err)
+	}
+	if err := s.DeleteFoodServingUnit(ctx(), "unit-owner", unit.ID); err != types.ErrNotFound {
+		t.Fatalf("delete already-deleted unit error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCustomFoodLifecycle(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
