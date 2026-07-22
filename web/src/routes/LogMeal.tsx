@@ -13,6 +13,7 @@ import {
   useFoods,
   useSearchFoods,
   useCatalogSearch,
+  useAddServingUnit,
 } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
 import { PageHeader } from '@/components/PageHeader'
@@ -20,13 +21,12 @@ import { Button, Card, EmptyState, Spinner } from '@/components/ui'
 import { DuplicateMealModal } from '@/components/DuplicateMealModal'
 import { FoodCard } from '@/components/FoodCard'
 import { CustomFoodModal } from '@/components/CustomFoodModal'
-import type { MealTemplate, FoodDetail } from '@/lib/types'
+import type { MealTemplate, FoodDetail, FoodServingUnit } from '@/lib/types'
+import { GRAMS_UNIT_ID, GENERIC_VOLUME_UNITS, unitOptionsFor, gramsFor, type SelectedFood } from '@/lib/servingUnits'
 import { TemplateIcon, CopyIcon, SearchIcon, FoodsIcon, TrashIcon } from '@/components/icons'
 import { fadeUp, stagger } from '@/lib/motion'
 
 const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
-
-type SelectedFood = { food: FoodDetail; grams: number }
 
 export function LogMeal() {
   const { t } = useTranslation()
@@ -193,22 +193,49 @@ function FoodPicker() {
 
   function addFood(food: FoodDetail) {
     if (selectedIds.has(food.food_id)) return
-    setSelected((cur) => [...cur, { food, grams: food.serving_size || 100 }])
+    // OFF's serving_size is package weight, not a serving (#134) — never
+    // used as a default log amount, unlike other sources' real servings.
+    const defaultGrams = food.source !== 'openfoodfacts' && food.serving_size > 0 ? food.serving_size : 100
+    setSelected((cur) => [...cur, { food, unitID: GRAMS_UNIT_ID, quantity: defaultGrams }])
   }
 
   function removeFood(foodID: string) {
     setSelected((cur) => cur.filter((s) => s.food.food_id !== foodID))
   }
 
-  function setGrams(foodID: string, grams: number) {
-    setSelected((cur) => cur.map((s) => (s.food.food_id === foodID ? { ...s, grams } : s)))
+  function setQuantity(foodID: string, quantity: number) {
+    setSelected((cur) => cur.map((s) => (s.food.food_id === foodID ? { ...s, quantity } : s)))
+  }
+
+  function setUnit(foodID: string, unitID: string) {
+    setSelected((cur) => cur.map((s) => (s.food.food_id === foodID ? { ...s, unitID } : s)))
+  }
+
+  // A serving unit just created for foodID rides straight into that item's
+  // options (and gets selected) without waiting on the food list to refetch.
+  function onUnitCreated(foodID: string, unit: { id: string; label: string; grams: number; custom: boolean }) {
+    setSelected((cur) =>
+      cur.map((s) =>
+        s.food.food_id === foodID
+          ? { ...s, unitID: unit.id, food: { ...s.food, serving_units: [...(s.food.serving_units ?? []), unit] } }
+          : s,
+      ),
+    )
   }
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!selected.length) return
     logStructured.mutate(
-      selected.map((s) => ({ food_id: s.food.food_id, grams: s.grams })),
+      selected.map((s) => {
+        const unit = unitOptionsFor(s.food).find((u) => u.id === s.unitID)
+        return {
+          food_id: s.food.food_id,
+          grams: gramsFor(s),
+          unit: unit && unit.id !== GRAMS_UNIT_ID ? unit.label : undefined,
+          quantity: unit && unit.id !== GRAMS_UNIT_ID ? s.quantity : undefined,
+        }
+      }),
       { onSuccess: () => setSelected([]) },
     )
   }
@@ -277,28 +304,14 @@ function FoodPicker() {
         {selected.length ? (
           <ul className="flex flex-col gap-2">
             {selected.map((s) => (
-              <li key={s.food.food_id} className="flex items-center gap-3 border-b border-line pb-2 last:border-0">
-                <p className="min-w-0 flex-1 truncate font-medium text-ink">{s.food.name}</p>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="1"
-                  step="any"
-                  value={s.grams}
-                  onChange={(e) => setGrams(s.food.food_id, Number(e.target.value))}
-                  aria-label={t('logMeal.gramsAria', { name: s.food.name })}
-                  className="w-20 rounded-lg border border-line bg-bg px-2 py-1 text-right text-ink tnum outline-none focus:border-primary"
-                />
-                <span className="text-xs text-muted">g</span>
-                <button
-                  type="button"
-                  onClick={() => removeFood(s.food.food_id)}
-                  aria-label={t('mealDetail.removeItem', { name: s.food.name })}
-                  className="text-muted transition hover:text-accent"
-                >
-                  <TrashIcon width={16} height={16} />
-                </button>
-              </li>
+              <SelectedFoodRow
+                key={s.food.food_id}
+                selected={s}
+                onQuantityChange={(q) => setQuantity(s.food.food_id, q)}
+                onUnitChange={(u) => setUnit(s.food.food_id, u)}
+                onUnitCreated={(unit) => onUnitCreated(s.food.food_id, unit)}
+                onRemove={() => removeFood(s.food.food_id)}
+              />
             ))}
           </ul>
         ) : (
@@ -330,5 +343,133 @@ function FoodPicker() {
         />
       )}
     </Card>
+  )
+}
+
+// One row in the "selected foods" list: name, unit select, quantity input,
+// a computed-grams readout when the unit isn't grams, an inline "add unit"
+// form (the TACO/no-portion-data escape hatch, #134), and remove.
+function SelectedFoodRow({
+  selected: s,
+  onQuantityChange,
+  onUnitChange,
+  onUnitCreated,
+  onRemove,
+}: {
+  selected: SelectedFood
+  onQuantityChange: (quantity: number) => void
+  onUnitChange: (unitID: string) => void
+  onUnitCreated: (unit: FoodServingUnit) => void
+  onRemove: () => void
+}) {
+  const { t } = useTranslation()
+  const { demo } = useDemo()
+  const [addingUnit, setAddingUnit] = useState(false)
+  const [unitLabel, setUnitLabel] = useState('')
+  const [unitGrams, setUnitGrams] = useState('')
+  const addServingUnit = useAddServingUnit(s.food.food_id)
+  const options = unitOptionsFor(s.food)
+
+  function submitUnit() {
+    const grams = Number(unitGrams)
+    if (!unitLabel.trim() || !(grams > 0) || demo) return
+    addServingUnit.mutate(
+      { label: unitLabel.trim(), grams },
+      {
+        onSuccess: (unit) => {
+          onUnitCreated(unit)
+          setAddingUnit(false)
+          setUnitLabel('')
+          setUnitGrams('')
+        },
+      },
+    )
+  }
+
+  return (
+    <li className="flex flex-col gap-2 border-b border-line pb-2 last:border-0">
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate font-medium text-ink">{s.food.name}</p>
+        <input
+          type="number"
+          inputMode="decimal"
+          min="0"
+          step="any"
+          value={s.quantity}
+          onChange={(e) => onQuantityChange(Number(e.target.value))}
+          aria-label={t('logMeal.quantityAria', { name: s.food.name })}
+          className="w-16 rounded-lg border border-line bg-bg px-2 py-1 text-right text-ink tnum outline-none focus:border-primary"
+        />
+        <select
+          value={s.unitID}
+          onChange={(e) => onUnitChange(e.target.value)}
+          aria-label={t('logMeal.unitAria', { name: s.food.name })}
+          className="rounded-lg border border-line bg-bg px-2 py-1 text-sm text-ink outline-none focus:border-primary"
+        >
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.id === GRAMS_UNIT_ID || GENERIC_VOLUME_UNITS.some((g) => g.id === o.id)
+                ? t(`logMeal.unit.${o.id}`)
+                : o.label}
+            </option>
+          ))}
+        </select>
+        {s.unitID !== GRAMS_UNIT_ID && (
+          <span className="whitespace-nowrap text-xs text-muted tnum">≈ {Math.round(gramsFor(s))}g</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setAddingUnit((v) => !v)}
+          disabled={demo}
+          aria-label={t('logMeal.addUnit')}
+          className="text-lg leading-none text-muted transition hover:text-primary disabled:opacity-50"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={t('mealDetail.removeItem', { name: s.food.name })}
+          className="text-muted transition hover:text-accent"
+        >
+          <TrashIcon width={16} height={16} />
+        </button>
+      </div>
+      {addingUnit && (
+        <div className="flex items-center gap-2 pl-1">
+          <input
+            value={unitLabel}
+            onChange={(e) => setUnitLabel(e.target.value)}
+            placeholder={t('logMeal.addUnitLabelPlaceholder')}
+            className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-2 py-1 text-sm text-ink outline-none focus:border-primary"
+          />
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="any"
+            value={unitGrams}
+            onChange={(e) => setUnitGrams(e.target.value)}
+            placeholder={t('logMeal.addUnitGramsPlaceholder')}
+            className="w-24 rounded-lg border border-line bg-bg px-2 py-1 text-sm text-ink outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            onClick={submitUnit}
+            disabled={addServingUnit.isPending || !unitLabel.trim() || !(Number(unitGrams) > 0)}
+            className="rounded-lg bg-primary px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {t('logMeal.addUnitSave')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddingUnit(false)}
+            className="text-xs font-medium text-muted hover:text-ink"
+          >
+            {t('logMeal.addUnitCancel')}
+          </button>
+        </div>
+      )}
+    </li>
   )
 }

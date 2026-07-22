@@ -295,6 +295,37 @@ func (h *Handler) handleDeleteAlias(w http.ResponseWriter, r *http.Request, user
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleCreateFoodServingUnit adds a personal named serving unit (e.g. "1
+// unidade" = 100g) for a food visible to the user — the escape hatch for
+// sources with no system-provided portion data (#134).
+func (h *Handler) handleCreateFoodServingUnit(w http.ResponseWriter, r *http.Request, userID string) {
+	foodID := r.PathValue("foodID")
+	var body struct {
+		Label string  `json:"label"`
+		Grams float64 `json:"grams"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Label) == "" || body.Grams <= 0 || !finite(body.Grams) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "label and positive grams are required"})
+		return
+	}
+	unit, err := h.store.CreateFoodServingUnit(r.Context(), userID, foodID, body.Label, body.Grams)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(unit)
+}
+
+func (h *Handler) handleDeleteFoodServingUnit(w http.ResponseWriter, r *http.Request, userID string) {
+	if err := h.store.DeleteFoodServingUnit(r.Context(), userID, r.PathValue("unitID")); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // pendingAliasView adds the matched food's display name to a pending alias so
 // the UI can render "phrase -> food name" without a second round-trip per row.
 type pendingAliasView struct {

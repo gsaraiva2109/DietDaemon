@@ -11,6 +11,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/normalize"
+	unitnormalize "github.com/gsaraiva2109/dietdaemon/internal/parser/normalize"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -614,7 +615,82 @@ func (s *Store) GetFoodDetail(ctx context.Context, userID, foodID string) (types
 	for _, a := range aliases {
 		fd.Aliases = append(fd.Aliases, types.FoodAlias{FoodID: a.FoodID, Normalized: a.Normalized})
 	}
+
+	units, err := s.listFoodServingUnits(ctx, userID, foodID)
+	if err != nil {
+		return types.FoodDetail{}, err
+	}
+	fd.ServingUnits = units
+	fd.VolumeUnitsEligible = unitnormalize.VolumeUnitsEligible(fd.Category, fd.Name)
+
 	return fd, nil
+}
+
+// ---------------------------------------------------------------------------
+// Food serving units — named ways to log a food beyond grams (#134). Global
+// rows (user_id NULL, e.g. USDA foodPortions written at import time) are
+// visible to everyone; a user's own rows are visible only to them.
+// ---------------------------------------------------------------------------
+
+// listFoodServingUnits returns the global serving units for foodID plus
+// userID's own, global first then by label.
+func (s *Store) listFoodServingUnits(ctx context.Context, userID, foodID string) ([]types.FoodServingUnit, error) {
+	const q = `
+		SELECT id, label, grams, (user_id IS NOT NULL) AS custom
+		FROM food_serving_units
+		WHERE food_id = ? AND (user_id IS NULL OR user_id = ?)
+		ORDER BY custom ASC, label ASC
+	`
+	type row struct {
+		ID     string  `db:"id"`
+		Label  string  `db:"label"`
+		Grams  float64 `db:"grams"`
+		Custom bool    `db:"custom"`
+	}
+	var rows []row
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), foodID, userID); err != nil {
+		return nil, fmt.Errorf("store: list food serving units: %w", err)
+	}
+	out := make([]types.FoodServingUnit, len(rows))
+	for i, r := range rows {
+		out[i] = types.FoodServingUnit{ID: r.ID, Label: r.Label, Grams: r.Grams, Custom: r.Custom}
+	}
+	return out, nil
+}
+
+// CreateFoodServingUnit adds a personal serving unit for a food visible to
+// userID (global catalog food or their own custom food). Returns
+// types.ErrNotFound if the food isn't visible to userID.
+func (s *Store) CreateFoodServingUnit(ctx context.Context, userID, foodID, label string, grams float64) (types.FoodServingUnit, error) {
+	label = strings.TrimSpace(label)
+	if label == "" || grams <= 0 || math.IsNaN(grams) || math.IsInf(grams, 0) {
+		return types.FoodServingUnit{}, fmt.Errorf("store: invalid serving unit")
+	}
+	if _, err := s.GetFoodForUser(ctx, userID, foodID); err != nil {
+		return types.FoodServingUnit{}, err
+	}
+	id := newID()
+	const q = `INSERT INTO food_serving_units (id, user_id, food_id, label, grams, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	if _, err := s.db.ExecContext(ctx, s.rewrite(q), id, userID, foodID, label, grams, utcNow()); err != nil {
+		return types.FoodServingUnit{}, fmt.Errorf("store: create food serving unit: %w", err)
+	}
+	return types.FoodServingUnit{ID: id, Label: label, Grams: grams, Custom: true}, nil
+}
+
+// DeleteFoodServingUnit removes a serving unit owned by userID. A user can
+// never delete a global (user_id IS NULL) or another user's unit. Returns
+// types.ErrNotFound if no matching row was deleted.
+func (s *Store) DeleteFoodServingUnit(ctx context.Context, userID, unitID string) error {
+	const q = `DELETE FROM food_serving_units WHERE id = ? AND user_id = ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), unitID, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete food serving unit: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
 }
 
 // AddFoodAlias inserts a normalized alias for a food.

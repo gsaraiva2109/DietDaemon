@@ -55,6 +55,8 @@ type fakeMealStore struct {
 	createCustomFoodErr  error
 	updateCustomFoodErr  error
 	deleteCustomFoodErr  error
+	createServingUnitErr error
+	deleteServingUnitErr error
 	createCustomFoodUser string
 	updateCustomFoodUser string
 	deleteCustomFoodUser string
@@ -304,6 +306,12 @@ func (s *fakeMealStore) UpdateCustomFood(_ context.Context, userID, foodID strin
 func (s *fakeMealStore) DeleteCustomFood(_ context.Context, userID, _ string) error {
 	s.deleteCustomFoodUser = userID
 	return s.deleteCustomFoodErr
+}
+func (s *fakeMealStore) CreateFoodServingUnit(_ context.Context, _, _, label string, grams float64) (types.FoodServingUnit, error) {
+	return types.FoodServingUnit{ID: "unit-1", Label: label, Grams: grams, Custom: true}, s.createServingUnitErr
+}
+func (s *fakeMealStore) DeleteFoodServingUnit(_ context.Context, _, _ string) error {
+	return s.deleteServingUnitErr
 }
 
 // Pending aliases.

@@ -195,6 +195,8 @@ type MealStore interface {
 	CreateCustomFood(ctx context.Context, userID string, input types.CustomFoodInput) (types.FoodDetail, error)
 	UpdateCustomFood(ctx context.Context, userID, foodID string, input types.CustomFoodInput) (types.FoodDetail, error)
 	DeleteCustomFood(ctx context.Context, userID, foodID string) error
+	CreateFoodServingUnit(ctx context.Context, userID, foodID, label string, grams float64) (types.FoodServingUnit, error)
+	DeleteFoodServingUnit(ctx context.Context, userID, unitID string) error
 
 	// Pending aliases (embedding near-misses awaiting confirmation).
 	ListPendingAliases(ctx context.Context, userID string) ([]types.PendingAlias, error)
@@ -607,6 +609,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/foods/{foodID}", h.wrap(h.handleGetFood))
 	mux.HandleFunc("PUT /api/v1/foods/{foodID}/custom", h.wrap(h.handleUpdateCustomFood))
 	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/custom", h.wrap(h.handleDeleteCustomFood))
+	mux.HandleFunc("POST /api/v1/foods/{foodID}/units", h.wrap(h.handleCreateFoodServingUnit))
+	mux.HandleFunc("DELETE /api/v1/foods/{foodID}/units/{unitID}", h.wrap(h.handleDeleteFoodServingUnit))
 	mux.HandleFunc("GET /api/v1/suggest", h.wrap(h.handleSuggest))
 	mux.HandleFunc("POST /api/v1/suggest/ingredients", h.wrap(h.handleSuggestFromIngredients))
 	mux.HandleFunc("POST /api/v1/foods/{foodID}/aliases", h.wrap(h.handleAddAlias))

@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -134,6 +135,55 @@ func TestUpsertFoodRejectsImplausibleMacros(t *testing.T) {
 	}
 }
 
+// TestBulkUpsertFoodsWritesServingUnits covers the USDA foodPortions → global
+// food_serving_units path (#134/B3): units land with user_id NULL, and a
+// re-import replaces the prior set instead of duplicating it (USDA's
+// portions for a food can change between runs).
+func TestBulkUpsertFoodsWritesServingUnits(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "unit-user", CreatedAt: time.Now().UTC()})
+
+	egg := types.FoodMatch{
+		FoodID: "usda-egg", Name: "Egg, whole, raw", Source: "usda",
+		Per100g:      types.Macros{Calories: 143, Protein: 13, Carbs: 1, Fat: 10},
+		ServingUnits: []types.FoodServingUnit{{Label: "1 large", Grams: 50}, {Label: "1 small", Grams: 38}},
+	}
+	if err := s.BulkUpsertFoods(ctx(), []types.FoodMatch{egg}); err != nil {
+		t.Fatalf("BulkUpsertFoods: %v", err)
+	}
+
+	if err := s.AddToLibrary(ctx(), "unit-user", egg.FoodID); err != nil {
+		t.Fatalf("AddToLibrary: %v", err)
+	}
+	detail, err := s.GetFoodDetail(ctx(), "unit-user", egg.FoodID)
+	if err != nil {
+		t.Fatalf("GetFoodDetail: %v", err)
+	}
+	if len(detail.ServingUnits) != 2 {
+		t.Fatalf("ServingUnits = %+v, want 2 system units", detail.ServingUnits)
+	}
+	for _, u := range detail.ServingUnits {
+		if u.Custom {
+			t.Fatalf("bulk-imported unit marked Custom: %+v", u)
+		}
+	}
+
+	// Re-import with a changed portion set — must replace, not accumulate.
+	egg.ServingUnits = []types.FoodServingUnit{{Label: "1 jumbo", Grams: 63}}
+	if err := s.BulkUpsertFoods(ctx(), []types.FoodMatch{egg}); err != nil {
+		t.Fatalf("BulkUpsertFoods (re-import): %v", err)
+	}
+	detail, err = s.GetFoodDetail(ctx(), "unit-user", egg.FoodID)
+	if err != nil {
+		t.Fatalf("GetFoodDetail after re-import: %v", err)
+	}
+	if len(detail.ServingUnits) != 1 || detail.ServingUnits[0].Label != "1 jumbo" {
+		t.Fatalf("ServingUnits after re-import = %+v, want only {1 jumbo, 63}", detail.ServingUnits)
+	}
+}
+
 func TestRepairFoodMacros(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
@@ -149,7 +199,11 @@ func TestRepairFoodMacros(t *testing.T) {
 	}
 
 	fresh := []types.FoodMatch{
-		{FoodID: "TACO558", Name: "Amendoim", Source: "taco", Per100g: types.Macros{Calories: 606, Protein: 22.5, Carbs: 18.7, Fat: 54, Fiber: 7.8}},
+		{
+			FoodID: "TACO558", Name: "Amendoim", Source: "taco",
+			Per100g:      types.Macros{Calories: 606, Protein: 22.5, Carbs: 18.7, Fat: 54, Fiber: 7.8},
+			ServingUnits: []types.FoodServingUnit{{Label: "1 punhado", Grams: 30}},
+		},
 		{FoodID: "no-match", Name: "Nothing Stored", Source: "taco", Per100g: types.Macros{Calories: 1}},
 	}
 	fixed, err := s.RepairFoodMacros(ctx(), fresh)
@@ -166,6 +220,21 @@ func TestRepairFoodMacros(t *testing.T) {
 	}
 	if got.Per100g.Calories != 606 || got.Per100g.Protein != 22.5 || got.Per100g.Carbs != 18.7 || got.Per100g.Fat != 54 || got.Per100g.Fiber != 7.8 {
 		t.Fatalf("unexpected repaired macros: %+v", got.Per100g)
+	}
+
+	// Serving units land on the stale row's actual food_id ("558"), not the
+	// freshly-fetched batch's FoodID ("TACO558") — the whole point of
+	// matching by (source, name) instead of food_id.
+	mustUser(t, s, types.User{ID: "repair-user", CreatedAt: time.Now().UTC()})
+	if err := s.AddToLibrary(ctx(), "repair-user", "558"); err != nil {
+		t.Fatalf("AddToLibrary: %v", err)
+	}
+	detail, err := s.GetFoodDetail(ctx(), "repair-user", "558")
+	if err != nil {
+		t.Fatalf("GetFoodDetail: %v", err)
+	}
+	if len(detail.ServingUnits) != 1 || detail.ServingUnits[0].Label != "1 punhado" || detail.ServingUnits[0].Grams != 30 {
+		t.Fatalf("ServingUnits = %+v, want [{1 punhado 30}]", detail.ServingUnits)
 	}
 }
 

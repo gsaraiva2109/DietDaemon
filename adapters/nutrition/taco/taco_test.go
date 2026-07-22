@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -359,7 +360,7 @@ func TestIndependentLoads(t *testing.T) {
 	ctx := context.Background()
 	fm1, _ := s1.Resolve(ctx, types.ParsedItem{RawPhrase: "arroz branco cozido"})
 	fm2, _ := s2.Resolve(ctx, types.ParsedItem{RawPhrase: "arroz branco cozido"})
-	if fm1 != fm2 {
+	if !reflect.DeepEqual(fm1, fm2) {
 		t.Error("two loads should return same data")
 	}
 }

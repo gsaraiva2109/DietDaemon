@@ -332,6 +332,23 @@ export function useDeleteCustomFood(foodID: string) {
   })
 }
 
+export function useAddServingUnit(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ label, grams }: { label: string; grams: number }) =>
+      api.foods.addServingUnit(foodID, label, grams),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
+export function useDeleteServingUnit(foodID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (unitID: string) => api.foods.deleteServingUnit(foodID, unitID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['foods'] }),
+  })
+}
+
 // Extracts a nutrition-label draft from a photo, for the caller to prefill a
 // form for review. Nothing is persisted server-side, so no cache to invalidate.
 export function useOcrExtractCustomFood() {
@@ -453,7 +470,8 @@ export function useLogTemplate() {
 export function useLogStructuredMeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (items: { food_id: string; grams: number }[]) => api.logMealStructured(items),
+    mutationFn: (items: { food_id: string; grams: number; unit?: string; quantity?: number }[]) =>
+      api.logMealStructured(items),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['rollup'] })
       qc.invalidateQueries({ queryKey: ['meals'] })

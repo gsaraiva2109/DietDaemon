@@ -99,6 +99,28 @@ func TestNormalizeUnitAccented(t *testing.T) {
 	}
 }
 
+func TestVolumeUnitsEligible(t *testing.T) {
+	tests := []struct {
+		name     string
+		category string
+		food     string
+		want     bool
+	}{
+		{"TACO milk, name only, empty category", "", "Leite, vaca, integral", true},
+		{"non-liquid food, no match", "", "Grilled chicken breast", false},
+		{"category-only match", "Dairy", "Whole Product X", true},
+		{"case-insensitive", "", "WHOLE MILK", true},
+		{"accented Portuguese oil", "", "Óleo, soja", true},
+	}
+	for _, tc := range tests {
+		got := VolumeUnitsEligible(tc.category, tc.food)
+		if got != tc.want {
+			t.Errorf("%s: VolumeUnitsEligible(%q, %q) = %v, want %v",
+				tc.name, tc.category, tc.food, got, tc.want)
+		}
+	}
+}
+
 // TestParityWithTier0 verifies that NormalizeUnit produces the same grams as
 // the Tier-0 parser's consumeUnit for a set of common inputs.
 func TestParityWithTier0(t *testing.T) {

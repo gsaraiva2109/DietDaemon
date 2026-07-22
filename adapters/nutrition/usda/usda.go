@@ -86,6 +86,16 @@ type food struct {
 	BrandOwner          string         `json:"brandOwner"` // Branded dataType only; empty for Foundation/SR Legacy
 	GtinUpc             string         `json:"gtinUpc"`    // Branded dataType only (barcode); empty for Foundation/SR Legacy
 	FoodNutrients       []foodNutrient `json:"foodNutrients"`
+	FoodPortions        []foodPortion  `json:"foodPortions"` // household-measure data; only present with format=full
+}
+
+// foodPortion is one household-measure entry from USDA's foodPortions array,
+// e.g. {"amount":1,"modifier":"large","portionDescription":"1 large","gramWeight":50}.
+type foodPortion struct {
+	Amount             float64 `json:"amount"`
+	Modifier           string  `json:"modifier"`
+	PortionDescription string  `json:"portionDescription"`
+	GramWeight         float64 `json:"gramWeight"`
 }
 
 // foodCategory absorbs USDA's inconsistent foodCategory shape across
@@ -139,6 +149,7 @@ func (s *Source) Resolve(ctx context.Context, item types.ParsedItem) (types.Food
 	q.Set("query", phrase)
 	q.Set("dataType", "Foundation,SR Legacy,Survey (FNDDS)")
 	q.Set("pageSize", "5")
+	q.Set("format", "full") // include foodPortions (household-measure data, #134)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		s.baseURL+"/foods/search?"+q.Encode(), nil)
@@ -192,16 +203,40 @@ func foodToMatch(f food) (types.FoodMatch, bool) {
 		category = f.BrandedFoodCategory // Branded dataType uses this field instead
 	}
 	return types.FoodMatch{
-		FoodID:      fmt.Sprintf("%d", f.FdcID),
-		Name:        f.Description,
-		Source:      "usda",
-		Per100g:     macros,
-		Category:    category,
-		Brand:       f.BrandOwner,
-		Barcode:     f.GtinUpc,
-		ServingSize: f.ServingSize,
-		ServingUnit: f.ServingSizeUnit,
+		FoodID:       fmt.Sprintf("%d", f.FdcID),
+		Name:         f.Description,
+		Source:       "usda",
+		Per100g:      macros,
+		Category:     category,
+		Brand:        f.BrandOwner,
+		Barcode:      f.GtinUpc,
+		ServingSize:  f.ServingSize,
+		ServingUnit:  f.ServingSizeUnit,
+		ServingUnits: portionsToServingUnits(f.FoodPortions),
 	}, true
+}
+
+// portionsToServingUnits converts USDA's foodPortions household-measure
+// entries (e.g. {"amount":1,"modifier":"large","gramWeight":50}) into
+// system-provided serving units. Entries with no usable gram weight are
+// skipped; PortionDescription is preferred as the label when present since
+// it's already human-readable ("1 large"), falling back to "Amount Modifier".
+func portionsToServingUnits(portions []foodPortion) []types.FoodServingUnit {
+	var out []types.FoodServingUnit
+	for _, p := range portions {
+		if p.GramWeight <= 0 {
+			continue
+		}
+		label := strings.TrimSpace(p.PortionDescription)
+		if label == "" || label == "undetermined" {
+			label = strings.TrimSpace(fmt.Sprintf("%s %s", strconv.FormatFloat(p.Amount, 'g', -1, 64), p.Modifier))
+		}
+		if label == "" {
+			continue
+		}
+		out = append(out, types.FoodServingUnit{Label: label, Grams: p.GramWeight})
+	}
+	return out
 }
 
 // extractMacros pulls per-100g macros from the USDA nutrient list. USDA returns
@@ -265,6 +300,7 @@ func (s *Source) fetchBulkAPI(ctx context.Context, filter ports.BulkFilter, emit
 		q.Set("dataType", dataTypes)
 		q.Set("pageSize", strconv.Itoa(bulkAPIPageSize))
 		q.Set("pageNumber", strconv.Itoa(page))
+		q.Set("format", "full") // include foodPortions (household-measure data, #134)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 			s.baseURL+"/foods/search?"+q.Encode(), nil)
