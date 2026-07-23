@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -17,6 +18,7 @@ type magicTestAuthStore struct {
 	*emailTestAuthStore
 	magicCodes          map[string]magicCode // userID -> code
 	deleteEmailTokensCb func(userID, purpose string)
+	totpConfirmed       bool
 }
 
 type magicCode struct {
@@ -81,7 +83,7 @@ func (s *magicTestAuthStore) DeleteEmailTokensByUserAndPurpose(_ context.Context
 }
 
 func (s *magicTestAuthStore) HasConfirmedTOTP(_ context.Context, userID string) (bool, error) {
-	return false, nil
+	return s.totpConfirmed, nil
 }
 
 func buildMagicHandler(authStore *magicTestAuthStore, m mailer.Mailer) *Handler {
@@ -345,6 +347,44 @@ func TestMagicVerifyCodeReuse(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("reuse expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMagicVerifyCodeTOTPStepUpIssuesChallenge(t *testing.T) {
+	authStore := newMagicTestAuthStore()
+	authStore.totpConfirmed = true
+	fm := &fakeMailer{}
+	h := buildMagicHandler(authStore, fm)
+
+	code := "123456"
+	codeHash := auth.HashToken(code)
+	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+
+	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
+		"email": "test@example.com",
+		"code":  code,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if mfaRequired, _ := body["mfa_required"].(bool); !mfaRequired {
+		t.Errorf("expected mfa_required=true, got %#v", body)
+	}
+	if tok, _ := body["challenge_token"].(string); tok == "" {
+		t.Error("expected a non-empty challenge_token")
+	}
+
+	// No session cookie should be issued — the caller must complete the
+	// TOTP challenge before a session exists.
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "dd_session" && c.Value != "" {
+			t.Error("dd_session cookie should not be set until the TOTP challenge is completed")
+		}
 	}
 }
 

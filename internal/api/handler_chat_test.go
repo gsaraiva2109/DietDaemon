@@ -267,6 +267,135 @@ func TestHandleChatMessageToolCallEvent(t *testing.T) {
 	}
 }
 
+// TestHandleChatMessageLazySessionAutoCreate covers the auto-create branch:
+// when the first AppendChatMessage fails with ErrNotFound (session doesn't
+// exist yet — a client-generated session ID), the handler creates the
+// session and retries the append instead of failing the request.
+func TestHandleChatMessageLazySessionAutoCreate(t *testing.T) {
+	store := &fakeChatStore{appendErr: types.ErrNotFound}
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "hi"},
+		{Kind: "done"},
+	}, nil)
+	h.chatStore = store
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/new-sess/messages", strings.NewReader(`{"text":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleChatMessage(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !store.createSessionCalled {
+		t.Error("expected CreateChatSession to be called for lazy session creation")
+	}
+	// appended[0] is the retried user message (the first attempt failed with
+	// ErrNotFound and isn't recorded); appended[1] is the assistant reply
+	// persisted on "done". Both prove the retry succeeded after auto-create.
+	if len(store.appended) != 2 {
+		t.Fatalf("expected 2 successfully persisted messages (retried user + assistant), got %d: %+v", len(store.appended), store.appended)
+	}
+	if store.appended[0].role != "user" || store.appended[0].content != "hello" {
+		t.Errorf("expected the retried append to be the user message, got %+v", store.appended[0])
+	}
+	if store.appended[1].role != "assistant" {
+		t.Errorf("expected the second persisted message to be the assistant reply, got %+v", store.appended[1])
+	}
+}
+
+// TestHandleChatMessageMaxToolRoundsFriendlyError covers the
+// assistant.ErrMaxToolRounds branch: the raw error must be replaced with a
+// friendlier, food-logging-specific message before it reaches the client.
+func TestHandleChatMessageMaxToolRoundsFriendlyError(t *testing.T) {
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "error", Err: assistant.ErrMaxToolRounds},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleChatMessage(rec, req, "test-user")
+
+	events := parseSSE(rec.Body.String())
+	if len(events) == 0 || events[len(events)-1].Event != "error" {
+		t.Fatalf("expected an error event, got %+v", events)
+	}
+	var data map[string]string
+	if err := json.Unmarshal([]byte(events[len(events)-1].Data), &data); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if !strings.Contains(data["message"], "naming the food more simply") {
+		t.Errorf("expected the friendlier max-tool-rounds message, got %q", data["message"])
+	}
+}
+
+// TestHandleChatMessagePersistsCleanedSuggestionsText covers the done-branch
+// suggestions extraction: the trailing fenced ```suggestions block must be
+// stripped from the persisted assistant text (only the raw stream sent to
+// the client keeps it), and a "suggestions" SSE event must reach the client.
+func TestHandleChatMessagePersistsCleanedSuggestionsText(t *testing.T) {
+	rawText := "Sure thing.\n\n```suggestions\n[\"Yes\", \"No\"]\n```"
+	store := &fakeChatStore{}
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: rawText},
+		{Kind: "done"},
+	}, nil)
+	h.chatStore = store
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"what next"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleChatMessage(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(store.appended) == 0 {
+		t.Fatal("expected the assistant message to be persisted")
+	}
+	persisted := store.appended[len(store.appended)-1]
+	if persisted.role != "assistant" {
+		t.Fatalf("expected the last persisted message to be the assistant turn, got role %q", persisted.role)
+	}
+	if strings.Contains(persisted.content, "```suggestions") {
+		t.Errorf("persisted assistant text still contains the fenced block: %q", persisted.content)
+	}
+	if !strings.Contains(persisted.content, "Sure thing.") {
+		t.Errorf("persisted assistant text lost its original content: %q", persisted.content)
+	}
+}
+
+// TestHandleChatMessageStopsOnContextCancellation covers the mid-stream
+// select on r.Context().Done(): with the request context already cancelled,
+// both the assistant router's own cancellation check and the handler's
+// mirror it — the loop must bail out and never reach (or persist) the "done"
+// event, regardless of how many raw events made it through beforehand.
+func TestHandleChatMessageStopsOnContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the handler starts draining events
+
+	h := newChatHandler([]ports.ChatEvent{
+		{Kind: "text-delta", Text: "first"},
+		{Kind: "text-delta", Text: "second"},
+		{Kind: "done"},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/sessions/test/messages", strings.NewReader(`{"text":"hello"}`))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleChatMessage(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK (headers already sent before the loop starts), got %d", rec.Code)
+	}
+	for _, e := range parseSSE(rec.Body.String()) {
+		if e.Event == "done" {
+			t.Error("done event must not be reached once the request context is cancelled")
+		}
+	}
+}
+
 // sseEvent is a parsed SSE event from the response body.
 type sseEvent struct {
 	Event string
@@ -287,15 +416,35 @@ type fakeChatStore struct {
 	softDeleteErr   error
 	restoreErr      error
 	listDeletedErr  error
+
+	// appendErr is returned on the first AppendChatMessage call only (then
+	// cleared), so tests can exercise the lazy session auto-create path where
+	// the first append fails with ErrNotFound.
+	appendErr           error
+	appendCallCount     int
+	createSessionCalled bool
+	appended            []appendedChatMessage
+}
+
+// appendedChatMessage records one successful AppendChatMessage call so tests
+// can inspect exactly what was persisted (e.g. the cleaned assistant text).
+type appendedChatMessage struct {
+	userID, sessionID, role, content, toolName string
 }
 
 func (f *fakeChatStore) CreateChatSession(ctx context.Context, id, userID, title string) error {
+	f.createSessionCalled = true
 	return nil
 }
 func (f *fakeChatStore) ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
 	return f.sessions, nil
 }
 func (f *fakeChatStore) AppendChatMessage(ctx context.Context, id, userID, sessionID, role, content, toolName string) error {
+	f.appendCallCount++
+	if f.appendCallCount == 1 && f.appendErr != nil {
+		return f.appendErr
+	}
+	f.appended = append(f.appended, appendedChatMessage{userID, sessionID, role, content, toolName})
 	return nil
 }
 func (f *fakeChatStore) GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error) {
