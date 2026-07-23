@@ -68,6 +68,26 @@ func assertNoMessage(t *testing.T, ch <-chan types.InboundMessage, d time.Durati
 	}
 }
 
+// runSyncLoopUntilRequests starts syncLoop against a, polls reqCount until it
+// reaches wantCount (or a 2s deadline passes), then cancels the loop's
+// context and asserts no message arrives afterward. Shared setup for the
+// since-progression tests, which only differ in the request count they wait
+// for and the assertions they make on the server-observed `since` values.
+func runSyncLoopUntilRequests(t *testing.T, a *Adapter, reqCount *int32, wantCount int32) {
+	t.Helper()
+	ch := make(chan types.InboundMessage)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.syncLoop(ctx, ch)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(reqCount) < wantCount && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	assertNoMessage(t, ch, 200*time.Millisecond)
+}
+
 // TestSyncLoop_SinceProgression covers branch 1: the first /sync request
 // carries no "since", and the second request carries the since value returned
 // by the first response's next_batch.
@@ -99,17 +119,7 @@ func TestSyncLoop_SinceProgression(t *testing.T) {
 	defer srv.Close()
 
 	a := newTestAdapter(srv.URL, "@bot:example.com")
-	ch := make(chan types.InboundMessage)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go a.syncLoop(ctx, ch)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&reqCount) < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	cancel()
-	assertNoMessage(t, ch, 200*time.Millisecond)
+	runSyncLoopUntilRequests(t, a, &reqCount, 2)
 
 	if sinceOnSecondReq != "batch1" {
 		t.Errorf("second request: got since=%q, want %q", sinceOnSecondReq, "batch1")
@@ -150,17 +160,7 @@ func TestSyncLoop_MalformedBodyDoesNotAdvanceSince(t *testing.T) {
 	defer srv.Close()
 
 	a := newTestAdapter(srv.URL, "@bot:example.com")
-	ch := make(chan types.InboundMessage)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go a.syncLoop(ctx, ch)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&reqCount) < 3 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	cancel()
-	assertNoMessage(t, ch, 200*time.Millisecond)
+	runSyncLoopUntilRequests(t, a, &reqCount, 3)
 
 	if sinceOnThirdReq != "batch1" {
 		t.Errorf("third request: got since=%q, want %q (unchanged from before the malformed response)", sinceOnThirdReq, "batch1")

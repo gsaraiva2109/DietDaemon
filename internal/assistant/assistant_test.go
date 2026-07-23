@@ -105,6 +105,39 @@ func collectEvents(ch <-chan ports.ChatEvent) []ports.ChatEvent {
 	return out
 }
 
+// assertToolCallEvent verifies e is a "tool-call" event for wantID.
+func assertToolCallEvent(t *testing.T, e ports.ChatEvent, wantID string) {
+	t.Helper()
+	if e.Kind != "tool-call" || e.ToolCall == nil || e.ToolCall.ID != wantID {
+		t.Errorf("event = %+v, want tool-call %s", e, wantID)
+	}
+}
+
+// assertToolResultEvent verifies e is a "tool-result" event answering wantID
+// with wantArgs as the result payload (carried in ToolCall.Args).
+func assertToolResultEvent(t *testing.T, e ports.ChatEvent, wantID, wantArgs string) {
+	t.Helper()
+	if e.Kind != "tool-result" || e.ToolCall == nil || e.ToolCall.ID != wantID || e.ToolCall.Args != wantArgs {
+		t.Errorf("event = %+v, want tool-result %s %q", e, wantID, wantArgs)
+	}
+}
+
+// assertTextDeltaEvent verifies e is a "text-delta" event with wantText.
+func assertTextDeltaEvent(t *testing.T, e ports.ChatEvent, wantText string) {
+	t.Helper()
+	if e.Kind != "text-delta" || e.Text != wantText {
+		t.Errorf("event = %+v, want text-delta %q", e, wantText)
+	}
+}
+
+// assertDoneEvent verifies e is a "done" event.
+func assertDoneEvent(t *testing.T, e ports.ChatEvent) {
+	t.Helper()
+	if e.Kind != "done" {
+		t.Errorf("event.Kind = %q, want done", e.Kind)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -297,27 +330,15 @@ func TestRouterMultipleToolCallsInSingleRound(t *testing.T) {
 		t.Fatalf("got %d events, want 6: %+v", len(events), events)
 	}
 
-	if events[0].Kind != "tool-call" || events[0].ToolCall.ID != "c1" {
-		t.Errorf("events[0] = %+v, want tool-call c1", events[0])
-	}
-	if events[1].Kind != "tool-call" || events[1].ToolCall.ID != "c2" {
-		t.Errorf("events[1] = %+v, want tool-call c2", events[1])
-	}
+	assertToolCallEvent(t, events[0], "c1")
+	assertToolCallEvent(t, events[1], "c2")
 
 	// Both tool-results must appear, in the same order as the tool-calls.
-	if events[2].Kind != "tool-result" || events[2].ToolCall.ID != "c1" || events[2].ToolCall.Args != "found it" {
-		t.Errorf("events[2] = %+v, want tool-result c1 'found it'", events[2])
-	}
-	if events[3].Kind != "tool-result" || events[3].ToolCall.ID != "c2" || events[3].ToolCall.Args != "logged it" {
-		t.Errorf("events[3] = %+v, want tool-result c2 'logged it'", events[3])
-	}
+	assertToolResultEvent(t, events[2], "c1", "found it")
+	assertToolResultEvent(t, events[3], "c2", "logged it")
 
-	if events[4].Kind != "text-delta" || events[4].Text != "done with both" {
-		t.Errorf("events[4] = %+v, want text-delta 'done with both'", events[4])
-	}
-	if events[5].Kind != "done" {
-		t.Errorf("events[5].Kind = %q, want done", events[5].Kind)
-	}
+	assertTextDeltaEvent(t, events[4], "done with both")
+	assertDoneEvent(t, events[5])
 
 	// The second round's request must carry both tool results in history, in
 	// call order.
@@ -360,12 +381,8 @@ func TestRouterToolCallMaxRounds(t *testing.T) {
 
 	// First 12 events alternate tool-call / tool-result.
 	for i := 0; i < 12; i += 2 {
-		if events[i].Kind != "tool-call" {
-			t.Errorf("events[%d].Kind = %q, want tool-call", i, events[i].Kind)
-		}
-		if events[i+1].Kind != "tool-result" {
-			t.Errorf("events[%d].Kind = %q, want tool-result", i+1, events[i+1].Kind)
-		}
+		assertToolCallEvent(t, events[i], "c")
+		assertToolResultEvent(t, events[i+1], "c", "ok")
 	}
 
 	// Last event is the "over max rounds" error.

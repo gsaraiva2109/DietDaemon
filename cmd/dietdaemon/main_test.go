@@ -21,6 +21,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/usda"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
+	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
 )
 
 func TestRequiredOllamaModels(t *testing.T) {
@@ -208,66 +209,78 @@ func TestBuildNotifier(t *testing.T) {
 	}
 }
 
-func TestBuildSources(t *testing.T) {
-	t.Run("single openfoodfacts", func(t *testing.T) {
-		got, err := buildSources(&config.Config{NutritionSources: []string{"openfoodfacts"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(got) != 1 {
-			t.Fatalf("len = %d, want 1", len(got))
-		}
-		if _, ok := got[0].(*openfoodfacts.Source); !ok {
-			t.Fatalf("got[0] = %T, want *openfoodfacts.Source", got[0])
-		}
-	})
-
-	t.Run("taco default data path", func(t *testing.T) {
-		got, err := buildSources(&config.Config{NutritionSources: []string{"taco"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(got) != 1 {
-			t.Fatalf("len = %d, want 1", len(got))
-		}
-		if _, ok := got[0].(*taco.Source); !ok {
-			t.Fatalf("got[0] = %T, want *taco.Source", got[0])
-		}
-	})
-
-	t.Run("multiple sources all accumulate, not just the last", func(t *testing.T) {
-		got, err := buildSources(&config.Config{NutritionSources: []string{"openfoodfacts", "usda", "taco"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3", len(got))
-		}
-		if _, ok := got[0].(*openfoodfacts.Source); !ok {
-			t.Fatalf("got[0] = %T, want *openfoodfacts.Source", got[0])
-		}
-		if _, ok := got[1].(*usda.Source); !ok {
-			t.Fatalf("got[1] = %T, want *usda.Source", got[1])
-		}
-		if _, ok := got[2].(*taco.Source); !ok {
-			t.Fatalf("got[2] = %T, want *taco.Source", got[2])
-		}
-	})
-
-	t.Run("taco missing bulk file errors", func(t *testing.T) {
-		missing := filepath.Join(t.TempDir(), "does-not-exist.csv")
-		got, err := buildSources(&config.Config{NutritionSources: []string{"taco"}, TacoDataPath: missing})
+// checkBuildSources asserts one buildSources() call: wantTypes nil means an
+// error is expected (checked against wantErrSubstr when non-empty);
+// otherwise got must match wantTypes element-for-element.
+func checkBuildSources(t *testing.T, got []resolver.Source, err error, wantTypes []reflect.Type, wantErrSubstr string) {
+	t.Helper()
+	if wantTypes == nil {
 		if got != nil || err == nil {
 			t.Fatalf("got %v, %v, want nil, non-nil error", got, err)
 		}
-	})
-
-	t.Run("unsupported source errors", func(t *testing.T) {
-		got, err := buildSources(&config.Config{NutritionSources: []string{"bogus"}})
-		if got != nil || err == nil || !strings.Contains(err.Error(), `unsupported NUTRITION_SOURCE "bogus"`) {
-			t.Fatalf("got %v, %v", got, err)
+		if wantErrSubstr != "" && !strings.Contains(err.Error(), wantErrSubstr) {
+			t.Fatalf("got %v, %v, want error containing %q", got, err, wantErrSubstr)
 		}
-	})
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != len(wantTypes) {
+		t.Fatalf("len = %d, want %d", len(got), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if reflect.TypeOf(got[i]) != want {
+			t.Fatalf("got[%d] = %T, want %v", i, got[i], want)
+		}
+	}
+}
+
+func TestBuildSources(t *testing.T) {
+	missingTacoPath := filepath.Join(t.TempDir(), "does-not-exist.csv")
+
+	cases := []struct {
+		name          string
+		cfg           *config.Config
+		wantTypes     []reflect.Type
+		wantErrSubstr string
+	}{
+		{
+			name:      "single openfoodfacts",
+			cfg:       &config.Config{NutritionSources: []string{"openfoodfacts"}},
+			wantTypes: []reflect.Type{reflect.TypeOf(&openfoodfacts.Source{})},
+		},
+		{
+			name:      "taco default data path",
+			cfg:       &config.Config{NutritionSources: []string{"taco"}},
+			wantTypes: []reflect.Type{reflect.TypeOf(&taco.Source{})},
+		},
+		{
+			name: "multiple sources all accumulate, not just the last",
+			cfg:  &config.Config{NutritionSources: []string{"openfoodfacts", "usda", "taco"}},
+			wantTypes: []reflect.Type{
+				reflect.TypeOf(&openfoodfacts.Source{}),
+				reflect.TypeOf(&usda.Source{}),
+				reflect.TypeOf(&taco.Source{}),
+			},
+		},
+		{
+			name: "taco missing bulk file errors",
+			cfg:  &config.Config{NutritionSources: []string{"taco"}, TacoDataPath: missingTacoPath},
+		},
+		{
+			name:          "unsupported source errors",
+			cfg:           &config.Config{NutritionSources: []string{"bogus"}},
+			wantErrSubstr: `unsupported NUTRITION_SOURCE "bogus"`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildSources(tt.cfg)
+			checkBuildSources(t, got, err, tt.wantTypes, tt.wantErrSubstr)
+		})
+	}
 }
 
 func TestWriteHealthy(t *testing.T) {
