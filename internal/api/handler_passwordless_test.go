@@ -275,6 +275,22 @@ func TestMagicVerifyCodeWrongCode(t *testing.T) {
 	}
 }
 
+func TestMagicVerifyCodeUnknownEmail(t *testing.T) {
+	authStore := newMagicTestAuthStore()
+	h := buildMagicHandler(authStore, &fakeMailer{})
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/magic/verify", map[string]string{
+		"email": "noone@example.com",
+		"code":  "123456",
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unknown email, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(authStore.loginAttempts) != 0 {
+		t.Errorf("unknown email should not record a login attempt: %#v", authStore.loginAttempts)
+	}
+}
+
 func TestMagicVerifyCodeExpired(t *testing.T) {
 	authStore := newMagicTestAuthStore()
 	fm := &fakeMailer{}
