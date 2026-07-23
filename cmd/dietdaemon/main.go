@@ -76,6 +76,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	return runWithConfig(cfg)
+}
+
+func runWithConfig(cfg *config.Config) error {
 	setupLogging(cfg.LogLevel)
 	slog.Info("starting dietdaemon",
 		"messaging", cfg.MessagingAdapter,
@@ -90,183 +94,15 @@ func run() error {
 	// explicit cancellation needed.
 	go touchHealthy(cfg.HealthCheckPath)
 
-	dialect, err := store.NewDialect(cfg.DBDriver)
-	if err != nil {
-		return fmt.Errorf("store: %w", err)
-	}
-	dsn := cfg.DBPath
-	if cfg.DBDriver == "postgres" {
-		dsn = cfg.DatabaseURL
-	}
-	st, err := store.New(cfg.DBDriver, dsn, dialect, cfg.Location)
+	st, err := openStore(cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	msg, err := buildMessaging(cfg)
+	runtime, err := buildRuntime(cfg, st)
 	if err != nil {
 		return err
-	}
-	sources, err := buildSources(cfg)
-	if err != nil {
-		return err
-	}
-
-	// Completion adapter is built unconditionally (not just for PARSER_TIER>0):
-	// Tier-2 parsing uses it for text splitting, and /suggest uses it for
-	// meal ranking regardless of parser tier. Construction never dials out, so
-	// this stays safe with COMPLETION_ADAPTER left at its "ollama" default and
-	// no OLLAMA_URL set (zero-keys boot).
-	completionModel, err := buildCompletionAdapter(cfg)
-	if err != nil {
-		return err
-	}
-	slog.Info("completion adapter ready", "adapter", cfg.CompletionAdapter)
-
-	chatModel, err := buildChatAdapter(cfg)
-	if err != nil {
-		return err
-	}
-	slog.Info("chat adapter ready", "adapter", cfg.CompletionAdapter)
-
-	visionModel, err := buildOCRAdapter(cfg)
-	if err != nil {
-		return err
-	}
-	if visionModel != nil {
-		slog.Info("OCR adapter ready", "adapter", cfg.OCRAdapter)
-	}
-
-	var (
-		parser  ports.Parser
-		matcher resolver.Matcher  = nil
-		embed   resolver.Embedder = nil
-	)
-
-	switch {
-	case cfg.ParserTier >= types.TierLLM:
-		// Tier 2: LLM splitter (completion adapter) + embedding matcher (embed adapter).
-		embedModel, err := buildEmbedAdapter(cfg)
-		if err != nil {
-			return err
-		}
-		idx := index.New(st.DB())
-		parser = llm.New(completionModel, deterministic.New())
-		emb := embedding.New(embedModel, idx, st, cfg.EmbedMatchThreshold)
-		matcher = emb
-		embed = emb
-		slog.Info("parser tier 2 (LLM + embedding)", "embed_adapter", cfg.EmbedAdapter, "completion_adapter", cfg.CompletionAdapter)
-
-	case cfg.ParserTier >= types.TierEmbedding:
-		// Tier 1: deterministic splitter + embedding matcher (embed adapter).
-		embedModel, err := buildEmbedAdapter(cfg)
-		if err != nil {
-			return err
-		}
-		idx := index.New(st.DB())
-		parser = deterministic.New()
-		emb := embedding.New(embedModel, idx, st, cfg.EmbedMatchThreshold)
-		matcher = emb
-		embed = emb
-		slog.Info("parser tier 1 (deterministic + embedding)", "embed_adapter", cfg.EmbedAdapter)
-
-	default:
-		// Tier 0: deterministic splitter, exact-alias match.
-		parser = deterministic.New()
-		slog.Info("parser tier 0 (deterministic, no model)")
-	}
-
-	res := resolver.New(st, matcher, embed, cfg.AliasWriteBackThreshold, st, sources...)
-	pend := pendingstore.New(st.DB(), cfg.PendingTTL)
-
-	var transcriber pipeline.Transcriber
-	if cfg.EnableSTT {
-		transcriber = whisper.New(cfg.WhisperURL)
-		slog.Info("STT enabled", "whisper_url", cfg.WhisperURL)
-	}
-
-	// Set up i18n bundle.
-	i18nBundle := i18n.NewBundle()
-	if err := i18nBundle.LoadEmbedded(locales.FS); err != nil {
-		return fmt.Errorf("i18n: load embedded locales: %w", err)
-	}
-	slog.Info("i18n loaded", "locales", "en,pt-BR")
-
-	// Set up command registry with all bot commands.
-	cmdRegistry := commands.NewRegistry()
-	if err := cmdRegistry.Register(commands.NewTargetCommand(st)); err != nil {
-		return fmt.Errorf("register target command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewCancelCommand(pend)); err != nil {
-		return fmt.Errorf("register cancel command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewTimezoneCommand(st)); err != nil {
-		return fmt.Errorf("register timezone command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry, i18nBundle)); err != nil {
-		return fmt.Errorf("register help command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewStartCommand(st)); err != nil {
-		return fmt.Errorf("register start command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewLinkCommand(st, st, cfg.MessagingAdapter)); err != nil {
-		return fmt.Errorf("register link command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewStatusCommand(st, cfg.Location)); err != nil {
-		return fmt.Errorf("register status command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewWeightCommand(st)); err != nil {
-		return fmt.Errorf("register weight command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewProfileCommand(st)); err != nil {
-		return fmt.Errorf("register profile command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewFoodCommand(st)); err != nil {
-		return fmt.Errorf("register food command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewWaterCommand(st)); err != nil {
-		return fmt.Errorf("register water command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewWorkoutCommand(st)); err != nil {
-		return fmt.Errorf("register workout command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewSleepCommand(st)); err != nil {
-		return fmt.Errorf("register sleep command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewFastCommand(st)); err != nil {
-		return fmt.Errorf("register fast command: %w", err)
-	}
-	if err := cmdRegistry.Register(commands.NewNudgeCommand(st)); err != nil {
-		return fmt.Errorf("register nudge command: %w", err)
-	}
-
-	suggestEngine := suggest.New(st, completionModel, cfg.Location)
-	if err := cmdRegistry.Register(commands.NewSuggestCommand(suggestEngine, st)); err != nil {
-		return fmt.Errorf("register suggest command: %w", err)
-	}
-
-	engine := pipeline.New(parser, res, st, pend, msg, cfg.Location, cfg.ConfidenceThreshold, cfg.MessagingAdapter, transcriber, cmdRegistry, i18nBundle)
-
-	if err := cmdRegistry.Register(commands.NewTemplateCommand(st, engine, engine)); err != nil {
-		return fmt.Errorf("register template command: %w", err)
-	}
-
-	if err := cmdRegistry.Register(commands.NewLogMealCommand(engine)); err != nil {
-		return fmt.Errorf("register logmeal command: %w", err)
-	}
-
-	if err := cmdRegistry.Register(commands.NewCorrectCommand(st, res)); err != nil {
-		return fmt.Errorf("register correct command: %w", err)
-	}
-
-	var notifier ports.Notifier
-	if cfg.EnableNotifications {
-		notifier, err = buildNotifier(cfg)
-		if err != nil {
-			return err
-		}
-		slog.Info("notifier ready", "notifier", notifier.Name())
 	}
 
 	// Graceful shutdown on SIGINT/SIGTERM.
@@ -276,32 +112,175 @@ func run() error {
 		return err
 	}
 
-	// Nudge scheduler: delivers through chat (Telegram/Discord/Matrix) whenever
-	// a route is known for the user, falling back to the notifier (ntfy/gotify)
-	// when it isn't or when EnableNotifications is false, notifier is nil and
-	// deliver() surfaces the "no delivery channel" error instead of nudging.
-	sched := scheduler.New(st, st, notifier, scheduler.DefaultRules(), cfg.Location, cfg.NudgeInterval,
-		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()),
-		scheduler.WithRuleConfig(st),
-		scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
-		scheduler.WithChatSender(st, msg),
-		scheduler.WithSentNudges(st),
-		scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()),
-		scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
+	backupRunner, err := startBackgroundServices(ctx, cfg, st, runtime)
+	if err != nil {
+		return err
+	}
+	if err := startDashboard(ctx, cfg, st, runtime, backupRunner); err != nil {
+		return err
+	}
+	return runMessageLoop(ctx, cfg, runtime.message, runtime.engine)
+}
+
+type appRuntime struct {
+	message  ports.MessagingAdapter
+	engine   *pipeline.Engine
+	notifier ports.Notifier
+	embedder resolver.Embedder
+	chat     ports.ChatAdapter
+	vision   ports.VisionAdapter
+	registry *commands.Registry
+	i18n     *i18n.Bundle
+	suggest  *suggest.Engine
+}
+
+func openStore(cfg *config.Config) (*store.Store, error) {
+	dialect, err := store.NewDialect(cfg.DBDriver)
+	if err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	dsn := cfg.DBPath
+	if cfg.DBDriver == "postgres" {
+		dsn = cfg.DatabaseURL
+	}
+	return store.New(cfg.DBDriver, dsn, dialect, cfg.Location)
+}
+
+func buildRuntime(cfg *config.Config, st *store.Store) (*appRuntime, error) {
+	message, err := buildMessaging(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := buildSources(cfg)
+	if err != nil {
+		return nil, err
+	}
+	completion, err := buildCompletionAdapter(cfg)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("completion adapter ready", "adapter", cfg.CompletionAdapter)
+	chat, err := buildChatAdapter(cfg)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("chat adapter ready", "adapter", cfg.CompletionAdapter)
+	vision, err := buildOCRAdapter(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if vision != nil {
+		slog.Info("OCR adapter ready", "adapter", cfg.OCRAdapter)
+	}
+	parser, matcher, embedder, err := buildParser(cfg, st, completion)
+	if err != nil {
+		return nil, err
+	}
+	res := resolver.New(st, matcher, embedder, cfg.AliasWriteBackThreshold, st, sources...)
+	pend := pendingstore.New(st.DB(), cfg.PendingTTL)
+	transcriber := newTranscriber(cfg)
+	i18nBundle, err := loadI18nBundle()
+	if err != nil {
+		return nil, err
+	}
+	registry := commands.NewRegistry()
+	if err := registerCoreCommands(registry, st, pend, cfg, i18nBundle); err != nil {
+		return nil, err
+	}
+	suggestEngine := suggest.New(st, completion, cfg.Location)
+	engine := pipeline.New(parser, res, st, pend, message, cfg.Location, cfg.ConfidenceThreshold, cfg.MessagingAdapter, transcriber, registry, i18nBundle)
+	if err := registerPipelineCommands(registry, st, engine, res, suggestEngine); err != nil {
+		return nil, err
+	}
+	notifier, err := newNotifier(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &appRuntime{message: message, engine: engine, notifier: notifier, embedder: embedder, chat: chat, vision: vision, registry: registry, i18n: i18nBundle, suggest: suggestEngine}, nil
+}
+
+func newTranscriber(cfg *config.Config) pipeline.Transcriber {
+	if !cfg.EnableSTT {
+		return nil
+	}
+	slog.Info("STT enabled", "whisper_url", cfg.WhisperURL)
+	return whisper.New(cfg.WhisperURL)
+}
+
+func loadI18nBundle() (*i18n.Bundle, error) {
+	bundle := i18n.NewBundle()
+	if err := bundle.LoadEmbedded(locales.FS); err != nil {
+		return nil, fmt.Errorf("i18n: load embedded locales: %w", err)
+	}
+	slog.Info("i18n loaded", "locales", "en,pt-BR")
+	return bundle, nil
+}
+
+func registerCoreCommands(registry *commands.Registry, st *store.Store, pend *pendingstore.Store, cfg *config.Config, bundle *i18n.Bundle) error {
+	commandsToRegister := []ports.Command{
+		commands.NewTargetCommand(st), commands.NewCancelCommand(pend), commands.NewTimezoneCommand(st), commands.NewHelpCommand(registry, bundle), commands.NewStartCommand(st),
+		commands.NewLinkCommand(st, st, cfg.MessagingAdapter), commands.NewStatusCommand(st, cfg.Location), commands.NewWeightCommand(st), commands.NewProfileCommand(st), commands.NewFoodCommand(st),
+		commands.NewWaterCommand(st), commands.NewWorkoutCommand(st), commands.NewSleepCommand(st), commands.NewFastCommand(st), commands.NewNudgeCommand(st),
+	}
+	for _, command := range commandsToRegister {
+		if err := registry.Register(command); err != nil {
+			return fmt.Errorf("register %s command: %w", command.Name()[1:], err)
+		}
+	}
+	return nil
+}
+
+func registerPipelineCommands(registry *commands.Registry, st *store.Store, engine *pipeline.Engine, res *resolver.Resolver, suggestEngine *suggest.Engine) error {
+	commandsToRegister := []ports.Command{commands.NewSuggestCommand(suggestEngine, st), commands.NewTemplateCommand(st, engine, engine), commands.NewLogMealCommand(engine), commands.NewCorrectCommand(st, res)}
+	for _, command := range commandsToRegister {
+		if err := registry.Register(command); err != nil {
+			return fmt.Errorf("register %s command: %w", command.Name()[1:], err)
+		}
+	}
+	return nil
+}
+
+func newNotifier(cfg *config.Config) (ports.Notifier, error) {
+	if !cfg.EnableNotifications {
+		return nil, nil
+	}
+	notifier, err := buildNotifier(cfg)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("notifier ready", "notifier", notifier.Name())
+	return notifier, nil
+}
+
+func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime) (*backup.Runner, error) {
+	sched := scheduler.New(st, st, runtime.notifier, scheduler.DefaultRules(), cfg.Location, cfg.NudgeInterval,
+		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()), scheduler.WithRuleConfig(st), scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
+		scheduler.WithChatSender(st, runtime.message), scheduler.WithSentNudges(st), scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()), scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
 	)
 	go sched.Run(ctx)
 	slog.Info("scheduler running", "interval", cfg.NudgeInterval.String())
 
-	// Scheduled backup/export: an independent background loop (separate from
-	// the nudge scheduler above). The "local" destination only exists when an
-	// operator sets BACKUP_LOCAL_DIR; "s3" uses the ambient AWS credential
-	// chain and per-user bucket/prefix/region/endpoint, so it's always wired
-	// up (whether any user actually picks it is a per-user setting).
+	backupRunner, err := newBackupRunner(ctx, cfg, st)
+	if err != nil {
+		return nil, err
+	}
+	go backupRunner.Run(ctx)
+	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
+
+	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
+	slog.Info("chat session purge runner running", "retention", "30d")
+	if err := startFoodImportRunner(ctx, cfg, st, runtime.embedder); err != nil {
+		return nil, err
+	}
+	return backupRunner, nil
+}
+
+func newBackupRunner(ctx context.Context, cfg *config.Config, st *store.Store) (*backup.Runner, error) {
 	var localDst backup.Destination
 	if cfg.BackupLocalDir != "" {
 		ld, err := localdisk.New(cfg.BackupLocalDir)
 		if err != nil {
-			return fmt.Errorf("backup: local destination: %w", err)
+			return nil, fmt.Errorf("backup: local destination: %w", err)
 		}
 		localDst = ld
 	}
@@ -311,191 +290,174 @@ func run() error {
 	} else {
 		s3Dst = sd
 	}
-	backupRunner := backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval)
-	go backupRunner.Run(ctx)
-	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
+	return backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval), nil
+}
 
-	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
-	slog.Info("chat session purge runner running", "retention", "30d")
-
-	// Scheduled bulk food import: opt-in, disabled by default so there's no
-	// surprise startup traffic against USDA/OpenFoodFacts.
-	if cfg.FoodImportEnabled && len(cfg.FoodImportSources) > 0 {
-		var srcs []ports.BulkSource
-		filters := map[string]ports.BulkFilter{}
-		localPaths := foodimport.LocalPaths(cfg)
-		refresh := map[string]foodimport.SourceFactory{}
-		for _, name := range cfg.FoodImportSources {
-			src, filter, err := foodimport.BuildSource(name, cfg)
-			if err != nil {
-				return fmt.Errorf("food import: %w", err)
-			}
-			srcs = append(srcs, src)
-			filters[src.Name()] = filter
-			if localPaths[src.Name()] != "" {
-				sourceName := name
-				refresh[src.Name()] = func() (ports.BulkSource, error) {
-					source, _, err := foodimport.BuildSource(sourceName, cfg)
-					return source, err
-				}
-			}
-		}
-		importRunner := foodimport.NewWithLocalPaths(st, srcs, filters, cfg.FoodImportInterval, slog.Default(), localPaths, refresh)
-		if embedder, ok := embed.(foodimport.Embedder); ok {
-			importRunner = importRunner.WithEmbedder(embedder)
-		}
-		go importRunner.Run(ctx)
-		slog.Info("food import runner running", "sources", cfg.FoodImportSources, "interval", cfg.FoodImportInterval.String())
+func startFoodImportRunner(ctx context.Context, cfg *config.Config, st *store.Store, embedder resolver.Embedder) error {
+	if !cfg.FoodImportEnabled || len(cfg.FoodImportSources) == 0 {
+		return nil
 	}
-
-	// --- Dashboard API server ---
-	if cfg.EnableDashboard {
-		authCfg := api.AuthConfig{
-			SessionCfg: auth.SessionConfig{
-				IdleTTL:     cfg.SessionIdleTTL,
-				AbsoluteTTL: cfg.SessionAbsoluteTTL,
-				RememberTTL: cfg.SessionRememberTTL,
-			},
-			LockoutCfg:       auth.DefaultLockoutConfig(),
-			RegistrationMode: types.RegistrationMode(cfg.RegistrationMode),
-			CookieSecure:     cfg.CookieSecure,
-			CookieDomain:     cfg.CookieDomain,
-			MultiUser:        cfg.MultiUser,
-		}
-		oidcConfigs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
-		for i, c := range cfg.OIDCProviders {
-			oidcConfigs[i] = oidc.ProviderConfig{
-				ID: c.ID, Name: c.Name, Issuer: c.Issuer,
-				ClientID: c.ClientID, ClientSecret: c.ClientSecret,
-				RedirectURL: c.RedirectURL, Scopes: c.Scopes,
-				TrustEmail: c.TrustEmail,
-			}
-		}
-		oidcRegistry := oidc.BuildRegistry(oidcConfigs)
-
-		mailCfg := mailer.Config{
-			Provider:      cfg.EmailProvider,
-			From:          cfg.EmailFrom,
-			ResendAPIKey:  cfg.ResendAPIKey,
-			SESRegion:     cfg.SESRegion,
-			SMTPHost:      cfg.SMTPHost,
-			SMTPPort:      cfg.SMTPPort,
-			SMTPUsername:  cfg.SMTPUsername,
-			SMTPPassword:  cfg.SMTPPassword,
-			SMTPTLS:       cfg.SMTPTLS,
-			PublicBaseURL: cfg.PublicBaseURL,
-		}
-		m, err := mailer.New(mailCfg)
+	var srcs []ports.BulkSource
+	filters := map[string]ports.BulkFilter{}
+	localPaths := foodimport.LocalPaths(cfg)
+	refresh := map[string]foodimport.SourceFactory{}
+	for _, name := range cfg.FoodImportSources {
+		src, filter, err := foodimport.BuildSource(name, cfg)
 		if err != nil {
-			return fmt.Errorf("mailer: %w", err)
+			return fmt.Errorf("food import: %w", err)
 		}
-
-		wa, waErr := auth.NewWebAuthn(cfg.WebAuthnConfig())
-		if waErr != nil {
-			return fmt.Errorf("webauthn: %w", waErr)
-		}
-
-		// Build assistant router (tool-calling loop) for the chat endpoint.
-		// nil when chatModel is nil (unsupported adapter).
-		var assistantRouter *assistant.Router
-		var toolDescs map[string]string
-		if chatModel != nil {
-			cmds := cmdRegistry.List()
-			toolDescs = make(map[string]string, len(cmds))
-			for _, c := range cmds {
-				desc := i18nBundle.T("en", c.Help(), nil)
-				if desc == "" {
-					desc = c.Name()
-				}
-				toolDescs[c.Name()] = desc
+		srcs = append(srcs, src)
+		filters[src.Name()] = filter
+		if localPaths[src.Name()] != "" {
+			sourceName := name
+			refresh[src.Name()] = func() (ports.BulkSource, error) {
+				source, _, err := foodimport.BuildSource(sourceName, cfg)
+				return source, err
 			}
-			assistantRouter = assistant.New(chatModel, cmds, toolDescs)
 		}
-
-		// Admin food-import/repair/backfill trigger (issue #136). Built
-		// unconditionally — not gated on FOOD_IMPORT_ENABLED — so an operator
-		// can trigger a one-off import/repair/backfill even when scheduled
-		// auto-sync is off. Actual access is gated by wrapAdmin's
-		// API_AUTH_TOKEN check.
-		foodAdmin := &foodImportAdmin{store: st, cfg: cfg}
-
-		apiHandler := api.New(st, engine, cfg.Location, suggestEngine, cfg,
-			api.WithAuth(st, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg),
-			api.WithOIDC(oidcRegistry),
-			api.WithMailer(m, cfg.EmailProvider),
-			api.WithPublicBaseURL(cfg.PublicBaseURL),
-			api.WithWebAuthn(wa),
-			api.WithBackupRunner(backupRunner),
-			api.WithFoodImportRunner(foodAdmin),
-			api.WithChat(chatModel, assistantRouter, cmdRegistry.List(), toolDescs, st),
-			api.WithI18n(i18nBundle),
-			api.WithOCR(visionModel),
-		)
-		apiHandler.StartRateLimiterCleanup(ctx)
-		mux := http.NewServeMux()
-		apiHandler.RegisterRoutes(mux)
-
-		// Serve the embedded dashboard SPA on all non-API routes. ServeMux
-		// matches the more specific /api/v1/* patterns first, so this only
-		// catches asset and client-route requests.
-		if spa, spaErr := web.Handler(); spaErr != nil {
-			slog.Error("dashboard assets", "err", spaErr)
-		} else {
-			mux.Handle("/", spa)
-		}
-
-		srv := newHTTPServer(":"+cfg.Port, newHTTPHandler(mux, cfg))
-
-		go func() {
-			slog.Info("dashboard listening", "port", cfg.Port)
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("dashboard server", "err", err)
-			}
-		}()
-
-		// Shutdown on context cancellation.
-		go func() {
-			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = srv.Shutdown(shutdownCtx)
-		}()
 	}
+	runner := foodimport.NewWithLocalPaths(st, srcs, filters, cfg.FoodImportInterval, slog.Default(), localPaths, refresh)
+	if embedder, ok := embedder.(foodimport.Embedder); ok {
+		runner = runner.WithEmbedder(embedder)
+	}
+	go runner.Run(ctx)
+	slog.Info("food import runner running", "sources", cfg.FoodImportSources, "interval", cfg.FoodImportInterval.String())
+	return nil
+}
 
+func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime, backupRunner *backup.Runner) error {
+	if !cfg.EnableDashboard {
+		return nil
+	}
+	authCfg := api.AuthConfig{
+		SessionCfg: auth.SessionConfig{IdleTTL: cfg.SessionIdleTTL, AbsoluteTTL: cfg.SessionAbsoluteTTL, RememberTTL: cfg.SessionRememberTTL},
+		LockoutCfg: auth.DefaultLockoutConfig(), RegistrationMode: types.RegistrationMode(cfg.RegistrationMode), CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, MultiUser: cfg.MultiUser,
+	}
+	oidcRegistry := oidc.BuildRegistry(oidcProviderConfigs(cfg))
+	m, err := mailer.New(mailer.Config{Provider: cfg.EmailProvider, From: cfg.EmailFrom, ResendAPIKey: cfg.ResendAPIKey, SESRegion: cfg.SESRegion, SMTPHost: cfg.SMTPHost, SMTPPort: cfg.SMTPPort, SMTPUsername: cfg.SMTPUsername, SMTPPassword: cfg.SMTPPassword, SMTPTLS: cfg.SMTPTLS, PublicBaseURL: cfg.PublicBaseURL})
+	if err != nil {
+		return fmt.Errorf("mailer: %w", err)
+	}
+	wa, err := auth.NewWebAuthn(cfg.WebAuthnConfig())
+	if err != nil {
+		return fmt.Errorf("webauthn: %w", err)
+	}
+	assistantRouter, toolDescs := newAssistantRouter(runtime.chat, runtime.registry, runtime.i18n)
+	handler := api.New(st, runtime.engine, cfg.Location, runtime.suggest, cfg,
+		api.WithAuth(st, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg), api.WithOIDC(oidcRegistry), api.WithMailer(m, cfg.EmailProvider), api.WithPublicBaseURL(cfg.PublicBaseURL),
+		api.WithWebAuthn(wa), api.WithBackupRunner(backupRunner), api.WithFoodImportRunner(&foodImportAdmin{store: st, cfg: cfg}), api.WithChat(runtime.chat, assistantRouter, runtime.registry.List(), toolDescs, st), api.WithI18n(runtime.i18n), api.WithOCR(runtime.vision),
+	)
+	handler.StartRateLimiterCleanup(ctx)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	if spa, err := web.Handler(); err != nil {
+		slog.Error("dashboard assets", "err", err)
+	} else {
+		mux.Handle("/", spa)
+	}
+	startHTTPServer(ctx, cfg, mux)
+	return nil
+}
+
+func oidcProviderConfigs(cfg *config.Config) []oidc.ProviderConfig {
+	configs := make([]oidc.ProviderConfig, len(cfg.OIDCProviders))
+	for i, provider := range cfg.OIDCProviders {
+		configs[i] = oidc.ProviderConfig{ID: provider.ID, Name: provider.Name, Issuer: provider.Issuer, ClientID: provider.ClientID, ClientSecret: provider.ClientSecret, RedirectURL: provider.RedirectURL, Scopes: provider.Scopes, TrustEmail: provider.TrustEmail}
+	}
+	return configs
+}
+
+func newAssistantRouter(chat ports.ChatAdapter, registry *commands.Registry, bundle *i18n.Bundle) (*assistant.Router, map[string]string) {
+	if chat == nil {
+		return nil, nil
+	}
+	cmds := registry.List()
+	descriptions := make(map[string]string, len(cmds))
+	for _, command := range cmds {
+		description := bundle.T("en", command.Help(), nil)
+		if description == "" {
+			description = command.Name()
+		}
+		descriptions[command.Name()] = description
+	}
+	return assistant.New(chat, cmds, descriptions), descriptions
+}
+
+func startHTTPServer(ctx context.Context, cfg *config.Config, mux *http.ServeMux) {
+	srv := newHTTPServer(":"+cfg.Port, newHTTPHandler(mux, cfg))
+	go func() {
+		slog.Info("dashboard listening", "port", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("dashboard server", "err", err)
+		}
+	}()
+	// #nosec G118 -- graceful server shutdown needs its own timeout after ctx is cancelled.
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+}
+
+func runMessageLoop(ctx context.Context, cfg *config.Config, message ports.MessagingAdapter, engine *pipeline.Engine) error {
 	q := queue.NewMemory[types.InboundMessage](64)
 	defer func() { _ = q.Close() }()
-
-	// Producer: messaging adapter → queue.
-	in, err := msg.Receive(ctx)
+	in, err := message.Receive(ctx)
 	if err != nil {
 		return fmt.Errorf("messaging receive: %w", err)
 	}
-	go func() {
-		defer func() { _ = q.Close() }()
-		for m := range in {
-			if perr := q.Publish(ctx, m); perr != nil {
-				return // queue closed or context cancelled
-			}
-		}
-	}()
-
-	// Consumer: queue → pipeline. Runs until the queue drains after shutdown.
+	go publishMessages(ctx, q, in)
 	slog.Info("listening for messages")
 	var wg sync.WaitGroup
 	wg.Add(cfg.MessageWorkers)
 	for range cfg.MessageWorkers {
-		go func() {
-			defer wg.Done()
-			for m := range q.Consume() {
-				if herr := engine.Handle(ctx, m); herr != nil {
-					slog.Error("handle message", "user", m.UserID, "err", herr)
-				}
-			}
-		}()
+		go consumeMessages(ctx, &wg, q, engine)
 	}
 	wg.Wait()
 	slog.Info("shutdown complete")
 	return nil
+}
+
+func publishMessages(ctx context.Context, q *queue.Memory[types.InboundMessage], in <-chan types.InboundMessage) {
+	defer func() { _ = q.Close() }()
+	for message := range in {
+		if err := q.Publish(ctx, message); err != nil {
+			return
+		}
+	}
+}
+
+func consumeMessages(ctx context.Context, wg *sync.WaitGroup, q *queue.Memory[types.InboundMessage], engine *pipeline.Engine) {
+	defer wg.Done()
+	for message := range q.Consume() {
+		if err := engine.Handle(ctx, message); err != nil {
+			slog.Error("handle message", "user", message.UserID, "err", err)
+		}
+	}
+}
+
+func buildParser(cfg *config.Config, st *store.Store, completion ports.ModelAdapter) (ports.Parser, resolver.Matcher, resolver.Embedder, error) {
+	if cfg.ParserTier >= types.TierLLM {
+		model, err := buildEmbedAdapter(cfg)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		emb := embedding.New(model, index.New(st.DB()), st, cfg.EmbedMatchThreshold)
+		slog.Info("parser tier 2 (LLM + embedding)", "embed_adapter", cfg.EmbedAdapter, "completion_adapter", cfg.CompletionAdapter)
+		return llm.New(completion, deterministic.New()), emb, emb, nil
+	}
+	if cfg.ParserTier >= types.TierEmbedding {
+		model, err := buildEmbedAdapter(cfg)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		emb := embedding.New(model, index.New(st.DB()), st, cfg.EmbedMatchThreshold)
+		slog.Info("parser tier 1 (deterministic + embedding)", "embed_adapter", cfg.EmbedAdapter)
+		return deterministic.New(), emb, emb, nil
+	}
+	slog.Info("parser tier 0 (deterministic, no model)")
+	return deterministic.New(), nil, nil, nil
 }
 
 // buildEmbedAdapter creates the adapter used for food-matching embeddings

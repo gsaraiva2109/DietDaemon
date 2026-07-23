@@ -200,83 +200,98 @@ func (a *Adapter) syncLoop(ctx context.Context, ch chan<- types.InboundMessage) 
 	since := ""
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		u := baseURL + "?timeout=30000"
-		if since != "" {
-			u += "&since=" + since
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		if err != nil {
+		sr, retry, ok := a.pollSync(ctx, baseURL, since)
+		if !ok {
 			return
 		}
-		req.Header.Set("Authorization", "Bearer "+a.token)
-
-		resp, err := a.client.Do(req)
-		if err != nil {
-			// Back off briefly, then retry.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(2 * time.Second):
-			}
+		if retry {
 			continue
 		}
-
-		var sr syncResponse
-		if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
-			_ = resp.Body.Close()
-			continue
-		}
-		_ = resp.Body.Close()
 
 		since = sr.NextBatch
+		if !a.emitEvents(ctx, ch, sr.Rooms.Join) {
+			return
+		}
+	}
+}
 
-		for roomID, room := range sr.Rooms.Join {
-			for _, ev := range room.Timeline.Events {
-				if ev.Type != "m.room.message" {
-					continue
-				}
-				if ev.Sender == a.userID {
-					continue // skip own messages
-				}
-				if ev.Content.MsgType != "m.text" {
-					continue
-				}
+// pollSync returns retry when the current token remains valid and the next
+// request should reuse it. ok is false when the loop must stop.
+func (a *Adapter) pollSync(ctx context.Context, baseURL, since string) (sr syncResponse, retry, ok bool) {
+	select {
+	case <-ctx.Done():
+		return syncResponse{}, false, false
+	default:
+	}
 
-				text := ev.Content.Body
+	u := baseURL + "?timeout=30000"
+	if since != "" {
+		u += "&since=" + since
+	}
 
-				// Check for numbered reply that maps to a pending inline keyboard.
-				if markup, ok := a.pendingMarkups.get(roomID); ok {
-					trimmed := strings.TrimSpace(text)
-					if num, err := strconv.Atoi(trimmed); err == nil {
-						if cb, found := callbackDataByIndex(markup, num-1); found {
-							log.Printf("matrix: resolved number %d to callback data %q in room %s", num, cb, roomID)
-							text = cb
-						}
-					}
-				}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return syncResponse{}, false, false
+	}
+	req.Header.Set("Authorization", "Bearer "+a.token)
 
-				select {
-				case ch <- types.InboundMessage{
-					UserID: ev.Sender,
-					At:     time.Now().UTC(),
-					Kind:   types.MessageText,
-					Text:   text,
-					ChannelMeta: map[string]string{
-						"room_id":  roomID,
-						"event_id": ev.EventID,
-					},
-				}:
-				case <-ctx.Done():
-					return
-				}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		select {
+		case <-ctx.Done():
+			return syncResponse{}, false, false
+		case <-time.After(2 * time.Second):
+			return syncResponse{}, true, true
+		}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return syncResponse{}, true, true
+	}
+	return sr, false, true
+}
+
+func (a *Adapter) emitEvents(ctx context.Context, ch chan<- types.InboundMessage, rooms map[string]joinedRoom) bool {
+	for roomID, room := range rooms {
+		for _, ev := range room.Timeline.Events {
+			msg, ok := a.messageFromEvent(roomID, ev)
+			if !ok {
+				continue
+			}
+			select {
+			case ch <- msg:
+			case <-ctx.Done():
+				return false
 			}
 		}
 	}
+	return true
+}
+
+func (a *Adapter) messageFromEvent(roomID string, ev timelineEvent) (types.InboundMessage, bool) {
+	if ev.Type != "m.room.message" || ev.Sender == a.userID || ev.Content.MsgType != "m.text" {
+		return types.InboundMessage{}, false
+	}
+
+	text := ev.Content.Body
+	if markup, ok := a.pendingMarkups.get(roomID); ok {
+		if num, err := strconv.Atoi(strings.TrimSpace(text)); err == nil {
+			if callback, found := callbackDataByIndex(markup, num-1); found {
+				log.Printf("matrix: resolved number %d to callback data %q in room %s", num, callback, roomID)
+				text = callback
+			}
+		}
+	}
+
+	return types.InboundMessage{
+		UserID: ev.Sender,
+		At:     time.Now().UTC(),
+		Kind:   types.MessageText,
+		Text:   text,
+		ChannelMeta: map[string]string{
+			"room_id":  roomID,
+			"event_id": ev.EventID,
+		},
+	}, true
 }
