@@ -266,6 +266,79 @@ func TestRouterToolCallSingle(t *testing.T) {
 	}
 }
 
+// TestRouterMultipleToolCallsInSingleRound covers a single StreamChat
+// response that requests more than one tool call in the same round: both
+// must be forwarded and both executed (in request order), each producing its
+// own tool-result, before the round continues.
+func TestRouterMultipleToolCallsInSingleRound(t *testing.T) {
+	adapter := &fakeChatAdapter{
+		rounds: [][]ports.ChatEvent{
+			{
+				{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c1", Name: "search", Args: "diet"}},
+				{Kind: "tool-call", ToolCall: &ports.ToolCallEvent{ID: "c2", Name: "log", Args: "eggs"}},
+				{Kind: "done"},
+			},
+			{
+				{Kind: "text-delta", Text: "done with both"},
+				{Kind: "done"},
+			},
+		},
+	}
+	cmds := []ports.Command{
+		&fakeCommand{name: "/search", result: "found it"},
+		&fakeCommand{name: "/log", result: "logged it"},
+	}
+	r := New(adapter, cmds, map[string]string{"/search": "Search", "/log": "Log"})
+	ch := r.Run(context.Background(), "u1", "system", nil, "do two things")
+
+	events := collectEvents(ch)
+	// tool-call, tool-call, tool-result, tool-result, text-delta, done.
+	if len(events) != 6 {
+		t.Fatalf("got %d events, want 6: %+v", len(events), events)
+	}
+
+	if events[0].Kind != "tool-call" || events[0].ToolCall.ID != "c1" {
+		t.Errorf("events[0] = %+v, want tool-call c1", events[0])
+	}
+	if events[1].Kind != "tool-call" || events[1].ToolCall.ID != "c2" {
+		t.Errorf("events[1] = %+v, want tool-call c2", events[1])
+	}
+
+	// Both tool-results must appear, in the same order as the tool-calls.
+	if events[2].Kind != "tool-result" || events[2].ToolCall.ID != "c1" || events[2].ToolCall.Args != "found it" {
+		t.Errorf("events[2] = %+v, want tool-result c1 'found it'", events[2])
+	}
+	if events[3].Kind != "tool-result" || events[3].ToolCall.ID != "c2" || events[3].ToolCall.Args != "logged it" {
+		t.Errorf("events[3] = %+v, want tool-result c2 'logged it'", events[3])
+	}
+
+	if events[4].Kind != "text-delta" || events[4].Text != "done with both" {
+		t.Errorf("events[4] = %+v, want text-delta 'done with both'", events[4])
+	}
+	if events[5].Kind != "done" {
+		t.Errorf("events[5].Kind = %q, want done", events[5].Kind)
+	}
+
+	// The second round's request must carry both tool results in history, in
+	// call order.
+	if len(adapter.reqs) != 2 {
+		t.Fatalf("got %d adapter calls, want 2", len(adapter.reqs))
+	}
+	msgs := adapter.reqs[1].Messages
+	var toolMsgs []ports.ChatMessage
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			toolMsgs = append(toolMsgs, m)
+		}
+	}
+	if len(toolMsgs) != 2 {
+		t.Fatalf("got %d tool messages in round-2 history, want 2: %+v", len(toolMsgs), msgs)
+	}
+	if toolMsgs[0].ToolCallID != "c1" || toolMsgs[1].ToolCallID != "c2" {
+		t.Errorf("tool messages out of order: %+v", toolMsgs)
+	}
+}
+
 func TestRouterToolCallMaxRounds(t *testing.T) {
 	rounds := make([][]ports.ChatEvent, 6)
 	for i := range rounds {

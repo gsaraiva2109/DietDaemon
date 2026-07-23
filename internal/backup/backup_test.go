@@ -3,11 +3,14 @@ package backup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
 )
 
 type fakeStore struct {
@@ -266,6 +269,84 @@ func TestRunFor_ExportsAllEntities(t *testing.T) {
 	// fasts, photos) + 1 photo blob = 10.
 	if dst.writes != 10 {
 		t.Fatalf("expected 10 writes (9 CSVs + 1 photo blob), got %d", dst.writes)
+	}
+}
+
+// weightErrFakeStore fails ListWeight after meals/rollups have already
+// loaded and written successfully, to exercise the abort-on-error path.
+type weightErrFakeStore struct {
+	*allEntitiesFakeStore
+}
+
+func (f *weightErrFakeStore) ListWeight(context.Context, string, int) ([]types.WeightEntry, error) {
+	return nil, errors.New("db down")
+}
+
+// TestRunFor_LoadErrorAbortsRemainingEntities pins the asymmetry with
+// restore.RunOnce: a load-or-write error on one entity aborts the rest of
+// runFor immediately instead of collecting the error and continuing.
+func TestRunFor_LoadErrorAbortsRemainingEntities(t *testing.T) {
+	store := &weightErrFakeStore{&allEntitiesFakeStore{newFakeStore()}}
+	store.configs["u1"] = types.BackupConfig{UserID: "u1", Enabled: true, Destination: "local"}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	err := r.RunOnce(context.Background(), "u1")
+	if err == nil {
+		t.Fatal("expected error from weight load failure")
+	}
+	if !strings.Contains(err.Error(), "load weight") {
+		t.Fatalf("expected error to mention 'load weight', got %v", err)
+	}
+	// Only meals.csv and rollups.csv should have been written before the
+	// weight load failure aborted the run; measurements/sleep/etc never run.
+	if dst.writes != 2 {
+		t.Fatalf("expected exactly 2 writes (meals, rollups) before abort, got %d", dst.writes)
+	}
+	if !store.lastRuns["u1"].IsZero() {
+		t.Fatalf("expected last_run_at NOT updated when the run aborts early")
+	}
+}
+
+// orderedFakeDest records the filenames written, in order, so ordering
+// guarantees between entities can be asserted.
+type orderedFakeDest struct {
+	filenames []string
+}
+
+func (d *orderedFakeDest) Write(_ context.Context, _ types.BackupConfig, filename string, _ []byte) error {
+	d.filenames = append(d.filenames, filename)
+	return nil
+}
+
+// TestRunFor_PhotoBlobWrittenBeforeIndex pins the ordering guarantee called
+// out in runFor's comment: every photo blob is written before photos.csv, so
+// a recovered index never references a missing blob.
+func TestRunFor_PhotoBlobWrittenBeforeIndex(t *testing.T) {
+	store := &allEntitiesFakeStore{newFakeStore()}
+	store.configs["u1"] = types.BackupConfig{UserID: "u1", Enabled: true, Destination: "local"}
+	dst := &orderedFakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	if err := r.RunOnce(context.Background(), "u1"); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	blobIdx, indexIdx := -1, -1
+	wantBlob := exportfmt.PhotoFilename("p1")
+	for i, f := range dst.filenames {
+		if f == wantBlob {
+			blobIdx = i
+		}
+		if f == "photos.csv" {
+			indexIdx = i
+		}
+	}
+	if blobIdx == -1 || indexIdx == -1 {
+		t.Fatalf("expected both %q and photos.csv to be written, got %v", wantBlob, dst.filenames)
+	}
+	if blobIdx > indexIdx {
+		t.Fatalf("photo blob written after photos.csv index: %v", dst.filenames)
 	}
 }
 

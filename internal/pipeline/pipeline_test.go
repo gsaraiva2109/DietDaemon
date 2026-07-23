@@ -370,6 +370,95 @@ func TestRollupAccumulates(t *testing.T) {
 	}
 }
 
+func TestCommandDispatchPrecedesOverPendingClarification(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	pending := newFakePending()
+	reg := commands.NewRegistry()
+	if err := reg.Register(commands.NewTargetCommand(st)); err != nil {
+		t.Fatalf("Register error = %v", err)
+	}
+	e := New(fakeParser{}, fakeResolver{}, st, pending, rp, time.UTC, 0.6, "telegram", nil, reg, nil)
+
+	// Seed a pending clarification for the user — if the pending path ran
+	// first, "/target ..." would be misread as a clarification answer.
+	pm := types.PendingMeal{
+		UserID:      "u1",
+		RawText:     "2 eggs",
+		Pending:     []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")},
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := pending.Save(context.Background(), pm); err != nil {
+		t.Fatalf("Save error = %v", err)
+	}
+
+	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90", ChannelMeta: map[string]string{"chat_id": "42"}}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+
+	got := st.targets["u1"]
+	if got.Calories != 3000 {
+		t.Errorf("targets = %+v, want kcal 3000 — command dispatch must win over the pending clarification", got)
+	}
+	if len(st.meals) != 0 {
+		t.Errorf("no meal should be logged; the command must take precedence, got %d", len(st.meals))
+	}
+	if _, err := pending.Get(context.Background(), "u1"); err != nil {
+		t.Errorf("pending clarification should be untouched, got err %v", err)
+	}
+}
+
+func TestCallbackButtonPassthroughSkipsClarificationAndParsing(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
+	)
+
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Text:        "some callback data",
+		ChannelMeta: map[string]string{"chat_id": "42", "is_callback": "true"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 0 {
+		t.Errorf("callback passthrough must not log a meal, got %d", len(st.meals))
+	}
+	if len(rp.sent) != 0 {
+		t.Errorf("callback passthrough must not send a reply, got %+v", rp.sent)
+	}
+}
+
+func TestChannelAutoRegistersUserOnFirstMessage(t *testing.T) {
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
+	)
+
+	msg := types.InboundMessage{UserID: "channel-123", Text: "200g chicken", ChannelMeta: map[string]string{"chat_id": "42"}}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if got := st.channels["telegram:channel-123"]; got != "channel-123" {
+		t.Errorf("expected channel auto-registered to itself, got %q", got)
+	}
+	// A second message from the same channel ID reuses the existing mapping.
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 2 {
+		t.Fatalf("expected 2 meals logged across both messages, got %d", len(st.meals))
+	}
+}
+
 // --- STT (speech-to-text) tests ---
 
 type fakeTranscriber struct {
