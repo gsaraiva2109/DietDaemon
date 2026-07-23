@@ -2,6 +2,8 @@ package config
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,19 +16,25 @@ import (
 func setEnv(t *testing.T, kv map[string]string) {
 	t.Helper()
 	keys := []string{
-		"MESSAGING_ADAPTER", "TELEGRAM_BOT_TOKEN", "PARSER_TIER",
+		"MESSAGING_ADAPTER", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
+		"MATRIX_HOMESERVER_URL", "MATRIX_USER_ID", "MATRIX_TOKEN", "PARSER_TIER",
 		"NUTRITION_SOURCE", "USDA_FDC_API_KEY", "TACO_DATA_PATH", "EMBED_ADAPTER", "COMPLETION_ADAPTER", "OLLAMA_URL",
 		"FOOD_IMPORT_ENABLED", "FOOD_IMPORT_SOURCES", "FOOD_IMPORT_INTERVAL",
 		"USDA_BULK_FILE", "USDA_BULK_DATA_TYPES", "USDA_BULK_MAX_ROWS",
 		"OFF_BULK_FILE", "OFF_BULK_MIN_POPULARITY", "OFF_BULK_MAX_ROWS", "TACO_BULK_MAX_ROWS",
 		"EMBED_MODEL", "LLM_MODEL", "MODEL_TIMEOUT", "OLLAMA_AUTO_PULL", "EMBED_MATCH_THRESHOLD", "ALIAS_WRITE_BACK_THRESHOLD",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
-		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "DEFAULT_TIMEZONE", "DB_PATH",
-		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "HSTS_ENABLED", "CORS_ALLOWED_ORIGINS", "LOG_LEVEL",
+		"NOTIFIER", "NTFY_URL", "NTFY_TOPIC", "GOTIFY_URL", "GOTIFY_TOKEN", "DEFAULT_TIMEZONE", "DB_PATH",
+		"ENABLE_NOTIFICATIONS", "ENABLE_DASHBOARD", "ENABLE_STT", "WHISPER_URL", "HSTS_ENABLED", "CORS_ALLOWED_ORIGINS", "LOG_LEVEL",
 		"MULTI_USER", "API_AUTH_TOKEN",
 		"DB_DRIVER", "DATABASE_URL",
+		"AUTH_REGISTRATION_MODE", "SESSION_IDLE_TTL", "SESSION_ABSOLUTE_TTL", "SESSION_REMEMBER_TTL",
 		"TRUSTED_PROXIES",
 		"PUBLIC_RATE_LIMIT_PER_MINUTE", "AUTH_READ_RATE_LIMIT_PER_MINUTE", "AUTH_WRITE_RATE_LIMIT_PER_MINUTE", "AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE",
+		"PUBLIC_BASE_URL", "OIDC_PROVIDERS",
+		"WEBAUTHN_RP_ID", "WEBAUTHN_RP_ORIGINS", "WEBAUTHN_RP_DISPLAY_NAME",
+		"EMAIL_PROVIDER", "EMAIL_FROM", "RESEND_API_KEY", "SES_REGION",
+		"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_TLS",
 		"PORT", "HEALTH_CHECK_PATH", "CONFIDENCE_THRESHOLD", "NUDGE_INTERVAL", "PENDING_TTL", "MESSAGE_WORKERS",
 	}
 	for _, k := range keys {
@@ -480,5 +488,559 @@ func TestLoadMinimalPostgresWithDatabaseURL(t *testing.T) {
 	}
 	if c.DatabaseURL != "postgres://user:pass@host/db" {
 		t.Errorf("DatabaseURL = %q, want postgres://user:pass@host/db", c.DatabaseURL)
+	}
+}
+
+// --- Messaging adapters: discord, matrix (issue #158) ---
+
+func TestMessagingAdapterDiscordRequiresToken(t *testing.T) {
+	env := validBase()
+	env["MESSAGING_ADAPTER"] = "discord"
+	env["TELEGRAM_BOT_TOKEN"] = ""
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DISCORD_BOT_TOKEN") {
+		t.Fatalf("expected DISCORD_BOT_TOKEN error, got %v", err)
+	}
+
+	env["DISCORD_BOT_TOKEN"] = "discord-token"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.MessagingAdapter != "discord" || c.DiscordBotToken != "discord-token" {
+		t.Errorf("MessagingAdapter/DiscordBotToken = %q/%q", c.MessagingAdapter, c.DiscordBotToken)
+	}
+}
+
+func TestMessagingAdapterMatrixRequiresFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		missing string
+		want    string
+	}{
+		{"missing homeserver url", "MATRIX_HOMESERVER_URL", "MATRIX_HOMESERVER_URL"},
+		{"missing user id", "MATRIX_USER_ID", "MATRIX_USER_ID"},
+		{"missing token", "MATRIX_TOKEN", "MATRIX_TOKEN"},
+	}
+	full := map[string]string{
+		"MATRIX_HOMESERVER_URL": "https://matrix.example.com",
+		"MATRIX_USER_ID":        "@bot:example.com",
+		"MATRIX_TOKEN":          "matrix-token",
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := validBase()
+			env["MESSAGING_ADAPTER"] = "matrix"
+			env["TELEGRAM_BOT_TOKEN"] = ""
+			for k, v := range full {
+				env[k] = v
+			}
+			env[tc.missing] = ""
+			setEnv(t, env)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %s error, got %v", tc.want, err)
+			}
+		})
+	}
+
+	env := validBase()
+	env["MESSAGING_ADAPTER"] = "matrix"
+	env["TELEGRAM_BOT_TOKEN"] = ""
+	for k, v := range full {
+		env[k] = v
+	}
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.MatrixHomeserverURL != full["MATRIX_HOMESERVER_URL"] || c.MatrixUserID != full["MATRIX_USER_ID"] || c.MatrixToken != full["MATRIX_TOKEN"] {
+		t.Errorf("matrix fields = %+v", c)
+	}
+}
+
+// --- STT (ENABLE_STT / WHISPER_URL) ---
+
+// WHISPER_URL defaults to a non-empty value ("http://whisper:8080"), and
+// getStr() falls back to the default whenever the env var is unset OR blank
+// — there is no way to make WhisperURL == "" via env vars alone. That means
+// the "WHISPER_URL is required when ENABLE_STT=true" branch is unreachable
+// through Load(); these tests pin down the reachable behavior instead.
+func TestEnableSTTWithDefaultWhisperURLPasses(t *testing.T) {
+	env := validBase()
+	env["ENABLE_STT"] = "true"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !c.EnableSTT || c.WhisperURL != "http://whisper:8080" {
+		t.Errorf("EnableSTT/WhisperURL = %v/%q, want true/http://whisper:8080", c.EnableSTT, c.WhisperURL)
+	}
+}
+
+func TestEnableSTTWithCustomWhisperURLPasses(t *testing.T) {
+	env := validBase()
+	env["ENABLE_STT"] = "true"
+	env["WHISPER_URL"] = "http://custom-whisper:9000"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.WhisperURL != "http://custom-whisper:9000" {
+		t.Errorf("WhisperURL = %q, want http://custom-whisper:9000", c.WhisperURL)
+	}
+}
+
+// --- Nutrition sources / TACO_DATA_PATH ---
+
+// NUTRITION_SOURCE also defaults to a non-empty value ("openfoodfacts"), so
+// forcing an empty NutritionSources slice requires a value that survives
+// getStr's blank check but splits down to nothing, e.g. a bare comma.
+func TestNutritionSourceEmptyListFails(t *testing.T) {
+	env := validBase()
+	env["NUTRITION_SOURCE"] = ","
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "NUTRITION_SOURCE must list at least one source") {
+		t.Fatalf("expected NUTRITION_SOURCE empty-list error, got %v", err)
+	}
+}
+
+func TestNutritionSourceUSDARequiresAPIKey(t *testing.T) {
+	env := validBase()
+	env["NUTRITION_SOURCE"] = "usda"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE") {
+		t.Fatalf("expected USDA_FDC_API_KEY error, got %v", err)
+	}
+
+	env["USDA_FDC_API_KEY"] = "usda-key"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.USDAFDCAPIKey != "usda-key" {
+		t.Errorf("USDAFDCAPIKey = %q, want usda-key", c.USDAFDCAPIKey)
+	}
+}
+
+func TestTacoDataPathNotFoundFails(t *testing.T) {
+	env := validBase()
+	env["NUTRITION_SOURCE"] = "taco"
+	env["TACO_DATA_PATH"] = filepath.Join(t.TempDir(), "missing.csv")
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TACO_DATA_PATH") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected TACO_DATA_PATH not-found error, got %v", err)
+	}
+}
+
+func TestTacoDataPathFoundPasses(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "taco.csv")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	env := validBase()
+	env["NUTRITION_SOURCE"] = "taco"
+	env["TACO_DATA_PATH"] = path
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.TacoDataPath != path {
+		t.Errorf("TacoDataPath = %q, want %q", c.TacoDataPath, path)
+	}
+}
+
+// --- Food import (bulk sources / API keys / bulk files) ---
+
+func TestFoodImportEnabledRequiresSources(t *testing.T) {
+	env := validBase()
+	env["FOOD_IMPORT_ENABLED"] = "true"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "FOOD_IMPORT_SOURCES must list at least one source") {
+		t.Fatalf("expected FOOD_IMPORT_SOURCES error, got %v", err)
+	}
+}
+
+func TestFoodImportUSDASourceRequiresAPIKey(t *testing.T) {
+	env := validBase()
+	env["FOOD_IMPORT_ENABLED"] = "true"
+	env["FOOD_IMPORT_SOURCES"] = "usda"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "USDA_FDC_API_KEY is required when 'usda' is in FOOD_IMPORT_SOURCES") {
+		t.Fatalf("expected USDA_FDC_API_KEY error, got %v", err)
+	}
+
+	env["USDA_FDC_API_KEY"] = "usda-key"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(c.FoodImportSources) != 1 || c.FoodImportSources[0] != "usda" {
+		t.Errorf("FoodImportSources = %v, want [usda]", c.FoodImportSources)
+	}
+}
+
+func TestFoodImportUSDABulkFileMustExist(t *testing.T) {
+	env := validBase()
+	env["FOOD_IMPORT_ENABLED"] = "true"
+	env["FOOD_IMPORT_SOURCES"] = "openfoodfacts"
+	env["USDA_BULK_FILE"] = filepath.Join(t.TempDir(), "missing.csv")
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "USDA_BULK_FILE") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected USDA_BULK_FILE not-found error, got %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "usda-bulk.csv")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	env["USDA_BULK_FILE"] = path
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.USDABulkFile != path {
+		t.Errorf("USDABulkFile = %q, want %q", c.USDABulkFile, path)
+	}
+}
+
+func TestFoodImportOFFBulkFileMustExist(t *testing.T) {
+	env := validBase()
+	env["FOOD_IMPORT_ENABLED"] = "true"
+	env["FOOD_IMPORT_SOURCES"] = "openfoodfacts"
+	env["OFF_BULK_FILE"] = filepath.Join(t.TempDir(), "missing.csv")
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "OFF_BULK_FILE") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected OFF_BULK_FILE not-found error, got %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "off-bulk.csv")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	env["OFF_BULK_FILE"] = path
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.OFFBulkFile != path {
+		t.Errorf("OFFBulkFile = %q, want %q", c.OFFBulkFile, path)
+	}
+}
+
+// --- Notifier=gotify ---
+
+func TestNotifierGotifyRequiresURLAndToken(t *testing.T) {
+	env := validBase()
+	env["NOTIFIER"] = "gotify"
+	env["NTFY_URL"] = ""
+	env["NTFY_TOPIC"] = ""
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "GOTIFY_URL is required when NOTIFIER=gotify") {
+		t.Fatalf("expected GOTIFY_URL error, got %v", err)
+	}
+
+	env["GOTIFY_URL"] = "https://gotify.example.com"
+	setEnv(t, env)
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "GOTIFY_TOKEN is required when NOTIFIER=gotify") {
+		t.Fatalf("expected GOTIFY_TOKEN error, got %v", err)
+	}
+
+	env["GOTIFY_TOKEN"] = "gotify-token"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.GotifyURL != "https://gotify.example.com" || c.GotifyToken != "gotify-token" {
+		t.Errorf("Gotify fields = %q/%q", c.GotifyURL, c.GotifyToken)
+	}
+}
+
+// --- OIDC providers ---
+
+func oidcValidBase() map[string]string {
+	env := validBase()
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	env["OIDC_PROVIDERS"] = "google"
+	env["OIDC_GOOGLE_ISSUER"] = "https://accounts.google.com"
+	env["OIDC_GOOGLE_CLIENT_ID"] = "client-id"
+	env["OIDC_GOOGLE_CLIENT_SECRET"] = "client-secret"
+	return env
+}
+
+func TestOIDCProviderValid(t *testing.T) {
+	env := oidcValidBase()
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(c.OIDCProviders) != 1 {
+		t.Fatalf("OIDCProviders = %v, want 1 entry", c.OIDCProviders)
+	}
+	p := c.OIDCProviders[0]
+	if p.ID != "google" || p.Name != "Google" || p.Issuer != "https://accounts.google.com" ||
+		p.ClientID != "client-id" || p.ClientSecret != "client-secret" {
+		t.Errorf("OIDCProviders[0] = %+v", p)
+	}
+	if p.RedirectURL != "https://app.example.com/api/v1/auth/oidc/google/callback" {
+		t.Errorf("RedirectURL = %q", p.RedirectURL)
+	}
+}
+
+func TestOIDCProvidersRequiresPublicBaseURL(t *testing.T) {
+	env := oidcValidBase()
+	env["PUBLIC_BASE_URL"] = ""
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set") {
+		t.Fatalf("expected PUBLIC_BASE_URL error, got %v", err)
+	}
+}
+
+func TestOIDCProviderRequiresIssuerClientIDAndSecret(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{"missing issuer", "OIDC_GOOGLE_ISSUER", "OIDC_GOOGLE_ISSUER is required"},
+		{"missing client id", "OIDC_GOOGLE_CLIENT_ID", "OIDC_GOOGLE_CLIENT_ID is required"},
+		{"missing client secret", "OIDC_GOOGLE_CLIENT_SECRET", "OIDC_GOOGLE_CLIENT_SECRET is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := oidcValidBase()
+			env[tc.key] = ""
+			setEnv(t, env)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q error, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestOIDCOnlyRegistrationModeRequiresProvider(t *testing.T) {
+	env := validBase()
+	env["AUTH_REGISTRATION_MODE"] = "oidc-only"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured") {
+		t.Fatalf("expected oidc-only error, got %v", err)
+	}
+
+	env = oidcValidBase()
+	env["AUTH_REGISTRATION_MODE"] = "oidc-only"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.RegistrationMode != "oidc-only" {
+		t.Errorf("RegistrationMode = %q, want oidc-only", c.RegistrationMode)
+	}
+}
+
+// --- WebAuthn / passkeys ---
+
+// WEBAUTHN_RP_DISPLAY_NAME defaults to a non-empty value ("DietDaemon") via
+// getStr, which falls back to the default whenever the env var is unset or
+// blank — so "WEBAUTHN_RP_DISPLAY_NAME is required when WEBAUTHN_RP_ID is
+// set" is unreachable through Load(); only the origins requirement is.
+func TestWebAuthnRPIDRequiresOrigins(t *testing.T) {
+	env := validBase()
+	env["WEBAUTHN_RP_ID"] = "example.com"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "WEBAUTHN_RP_ORIGINS is required when WEBAUTHN_RP_ID is set") {
+		t.Fatalf("expected WEBAUTHN_RP_ORIGINS error, got %v", err)
+	}
+}
+
+func TestWebAuthnRPOriginsMustBeValidURLs(t *testing.T) {
+	env := validBase()
+	env["WEBAUTHN_RP_ID"] = "example.com"
+	env["WEBAUTHN_RP_ORIGINS"] = "not a url"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "WEBAUTHN_RP_ORIGINS entry \"not a url\" is not a valid URL") {
+		t.Fatalf("expected WEBAUTHN_RP_ORIGINS URL error, got %v", err)
+	}
+}
+
+func TestWebAuthnRPIDValid(t *testing.T) {
+	env := validBase()
+	env["WEBAUTHN_RP_ID"] = "example.com"
+	env["WEBAUTHN_RP_ORIGINS"] = "https://example.com"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.WebAuthnRPID != "example.com" || len(c.WebAuthnRPOrigins) != 1 || c.WebAuthnRPOrigins[0] != "https://example.com" {
+		t.Errorf("WebAuthn fields = %q/%v", c.WebAuthnRPID, c.WebAuthnRPOrigins)
+	}
+	if c.WebAuthnRPDisplayName != "DietDaemon" {
+		t.Errorf("WebAuthnRPDisplayName = %q, want default DietDaemon", c.WebAuthnRPDisplayName)
+	}
+}
+
+// --- Mailer / email provider ---
+
+func TestEmailProviderInvalidValueFails(t *testing.T) {
+	env := validBase()
+	env["EMAIL_PROVIDER"] = "sendgrid"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got \"sendgrid\"") {
+		t.Fatalf("expected EMAIL_PROVIDER error, got %v", err)
+	}
+}
+
+func TestEmailProviderNoneRequiresNothing(t *testing.T) {
+	setEnv(t, validBase())
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.EmailProvider != "none" {
+		t.Errorf("EmailProvider = %q, want none", c.EmailProvider)
+	}
+}
+
+func TestEmailProviderRequiresFromAndPublicBaseURL(t *testing.T) {
+	for _, provider := range []string{"resend", "ses", "smtp"} {
+		t.Run(provider, func(t *testing.T) {
+			env := validBase()
+			env["EMAIL_PROVIDER"] = provider
+			env["RESEND_API_KEY"] = "resend-key"
+			env["SMTP_HOST"] = "smtp.example.com"
+			setEnv(t, env)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"") {
+				t.Fatalf("expected EMAIL_FROM error, got %v", err)
+			}
+
+			env["EMAIL_FROM"] = "noreply@example.com"
+			setEnv(t, env)
+			_, err = Load()
+			if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\"") {
+				t.Fatalf("expected PUBLIC_BASE_URL error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestEmailProviderResendRequiresAPIKey(t *testing.T) {
+	env := validBase()
+	env["EMAIL_PROVIDER"] = "resend"
+	env["EMAIL_FROM"] = "noreply@example.com"
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "RESEND_API_KEY is required when EMAIL_PROVIDER=resend") {
+		t.Fatalf("expected RESEND_API_KEY error, got %v", err)
+	}
+
+	env["RESEND_API_KEY"] = "resend-key"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.ResendAPIKey != "resend-key" {
+		t.Errorf("ResendAPIKey = %q, want resend-key", c.ResendAPIKey)
+	}
+}
+
+func TestEmailProviderSESPassesWithoutRegion(t *testing.T) {
+	env := validBase()
+	env["EMAIL_PROVIDER"] = "ses"
+	env["EMAIL_FROM"] = "noreply@example.com"
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.EmailProvider != "ses" || c.SESRegion != "" {
+		t.Errorf("EmailProvider/SESRegion = %q/%q, want ses/\"\" (SES_REGION is not validated)", c.EmailProvider, c.SESRegion)
+	}
+}
+
+func TestEmailProviderSMTPRequiresHostAndValidPort(t *testing.T) {
+	env := validBase()
+	env["EMAIL_PROVIDER"] = "smtp"
+	env["EMAIL_FROM"] = "noreply@example.com"
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "SMTP_HOST is required when EMAIL_PROVIDER=smtp") {
+		t.Fatalf("expected SMTP_HOST error, got %v", err)
+	}
+
+	env["SMTP_HOST"] = "smtp.example.com"
+	env["SMTP_PORT"] = "0"
+	setEnv(t, env)
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "SMTP_PORT must be between 1 and 65535, got 0") {
+		t.Fatalf("expected SMTP_PORT (too low) error, got %v", err)
+	}
+
+	env["SMTP_PORT"] = "70000"
+	setEnv(t, env)
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "SMTP_PORT must be between 1 and 65535, got 70000") {
+		t.Fatalf("expected SMTP_PORT (too high) error, got %v", err)
+	}
+
+	env["SMTP_PORT"] = "2525"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.SMTPHost != "smtp.example.com" || c.SMTPPort != 2525 {
+		t.Errorf("SMTPHost/SMTPPort = %q/%d", c.SMTPHost, c.SMTPPort)
+	}
+}
+
+func TestEmailProviderSMTPDefaultPort(t *testing.T) {
+	env := validBase()
+	env["EMAIL_PROVIDER"] = "smtp"
+	env["EMAIL_FROM"] = "noreply@example.com"
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	env["SMTP_HOST"] = "smtp.example.com"
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.SMTPPort != 587 {
+		t.Errorf("SMTPPort = %d, want default 587", c.SMTPPort)
 	}
 }
