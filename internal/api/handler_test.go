@@ -130,6 +130,39 @@ type fakeMealStore struct {
 	// Water — daily aggregates (export).
 	waterDailyTotals    []types.WaterDayTotal
 	waterDailyTotalsErr error
+
+	// Water tracking.
+	waterLogs        []types.WaterLog
+	waterTotal       int
+	logWaterErr      error
+	getWaterTodayErr error
+	deleteWaterErr   error
+
+	// Workout tracking.
+	workouts         []types.Workout
+	workoutsByID     map[string]types.Workout
+	logWorkoutErr    error
+	listWorkoutsErr  error
+	deleteWorkoutErr error
+
+	// Sleep tracking.
+	sleepLogs         []types.SleepLog
+	activeSleep       *types.SleepLog
+	logSleepErr       error
+	getActiveSleepErr error
+	endSleepErr       error
+	listSleepErr      error
+	deleteSleepErr    error
+
+	// BYOK AI keys — write path error injection.
+	setAIKeyErr    error
+	deleteAIKeyErr error
+
+	// Linking codes.
+	linkingCode           types.LinkingCode
+	linkingCodeErr        error
+	createLinkingCodeErr  error
+	consumeLinkingCodeErr error
 }
 
 func newFakeMealStore() *fakeMealStore {
@@ -446,10 +479,10 @@ func (s *fakeMealStore) GetUserAIKey(_ context.Context, _ string) (string, strin
 	return s.aiKeyProvider, s.aiKeyEncrypted, s.aiKeyFound, s.aiKeyErr
 }
 func (s *fakeMealStore) SetUserAIKey(_ context.Context, _, _, _ string) error {
-	return nil
+	return s.setAIKeyErr
 }
 func (s *fakeMealStore) DeleteUserAIKey(_ context.Context, _ string) error {
-	return nil
+	return s.deleteAIKeyErr
 }
 
 func (s *fakeMealStore) GetUserHevyKey(_ context.Context, _ string) (string, bool, error) {
@@ -472,59 +505,87 @@ func (s *fakeMealStore) UpsertProfile(_ context.Context, _ types.UserProfile) er
 
 // Linking codes.
 func (s *fakeMealStore) CreateLinkingCode(_ context.Context, _, _, _ string) error {
-	return nil
+	return s.createLinkingCodeErr
 }
 func (s *fakeMealStore) LookupLinkingCode(_ context.Context, _ string) (types.LinkingCode, error) {
-	return types.LinkingCode{}, s.rollupErr
+	return s.linkingCode, s.linkingCodeErr
 }
 func (s *fakeMealStore) LookupLinkingCodeAny(_ context.Context, _ string) (types.LinkingCode, error) {
-	return types.LinkingCode{}, s.rollupErr
+	return s.linkingCode, s.linkingCodeErr
 }
 func (s *fakeMealStore) ConsumeLinkingCode(_ context.Context, _ string) error {
-	return nil
+	return s.consumeLinkingCodeErr
 }
 
-func (s *fakeMealStore) LogWater(_ context.Context, _ types.WaterLog) error {
+func (s *fakeMealStore) LogWater(_ context.Context, wl types.WaterLog) error {
+	if s.logWaterErr != nil {
+		return s.logWaterErr
+	}
+	s.waterLogs = append(s.waterLogs, wl)
 	return nil
 }
 func (s *fakeMealStore) GetWaterToday(_ context.Context, _, _ string) ([]types.WaterLog, int, error) {
-	return nil, 0, nil
+	if s.getWaterTodayErr != nil {
+		return nil, 0, s.getWaterTodayErr
+	}
+	return s.waterLogs, s.waterTotal, nil
 }
 func (s *fakeMealStore) DeleteWater(_ context.Context, _, _ string) error {
-	return nil
+	return s.deleteWaterErr
 }
 func (s *fakeMealStore) GetWaterDailyTotals(_ context.Context, _, _, _ string) ([]types.WaterDayTotal, error) {
 	return s.waterDailyTotals, s.waterDailyTotalsErr
 }
-func (s *fakeMealStore) LogWorkout(_ context.Context, _ types.Workout) error {
+func (s *fakeMealStore) LogWorkout(_ context.Context, w types.Workout) error {
+	if s.logWorkoutErr != nil {
+		return s.logWorkoutErr
+	}
+	s.workouts = append(s.workouts, w)
+	if s.workoutsByID == nil {
+		s.workoutsByID = map[string]types.Workout{}
+	}
+	s.workoutsByID[w.ID] = w
 	return nil
 }
 func (s *fakeMealStore) ImportWorkout(_ context.Context, _ types.Workout) error {
 	return nil
 }
-func (s *fakeMealStore) GetWorkout(_ context.Context, _ string) (types.Workout, error) {
+func (s *fakeMealStore) GetWorkout(_ context.Context, id string) (types.Workout, error) {
+	if w, ok := s.workoutsByID[id]; ok {
+		return w, nil
+	}
 	return types.Workout{}, types.ErrNotFound
 }
 func (s *fakeMealStore) ListWorkouts(_ context.Context, _ string, _ int) ([]types.Workout, error) {
-	return nil, nil
+	return s.workouts, s.listWorkoutsErr
 }
 func (s *fakeMealStore) DeleteWorkout(_ context.Context, _, _ string) error {
-	return nil
+	return s.deleteWorkoutErr
 }
-func (s *fakeMealStore) LogSleep(_ context.Context, _ types.SleepLog) error {
+func (s *fakeMealStore) LogSleep(_ context.Context, sl types.SleepLog) error {
+	if s.logSleepErr != nil {
+		return s.logSleepErr
+	}
+	s.sleepLogs = append(s.sleepLogs, sl)
 	return nil
 }
 func (s *fakeMealStore) GetActiveSleep(_ context.Context, _ string) (*types.SleepLog, error) {
-	return nil, types.ErrNotFound
+	if s.getActiveSleepErr != nil {
+		return nil, s.getActiveSleepErr
+	}
+	if s.activeSleep == nil {
+		return nil, types.ErrNotFound
+	}
+	return s.activeSleep, nil
 }
 func (s *fakeMealStore) EndSleep(_ context.Context, _, _, _, _ string) error {
-	return nil
+	return s.endSleepErr
 }
 func (s *fakeMealStore) ListSleep(_ context.Context, _ string, _ int) ([]types.SleepLog, error) {
-	return nil, nil
+	return s.sleepLogs, s.listSleepErr
 }
 func (s *fakeMealStore) DeleteSleep(_ context.Context, _, _ string) error {
-	return nil
+	return s.deleteSleepErr
 }
 
 // fakeAuthStore implements AuthStore for tests.
