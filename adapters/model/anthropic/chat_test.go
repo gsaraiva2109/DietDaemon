@@ -1,15 +1,26 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/ssetest"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
+
+// drainReadStream feeds sse into readStream on a real channel and collects
+// every event until the channel closes.
+func drainReadStream(ctx context.Context, sse string) []ports.ChatEvent {
+	c := &ChatAdapter{}
+	return ssetest.Drain(ctx, io.NopCloser(strings.NewReader(sse)), c.readStream)
+}
 
 // TestExtractArgsEmptyValue guards the bug where a legitimately empty args
 // value (no-arg commands like /help emit {"args":""}) was misread as a parse
@@ -99,5 +110,170 @@ func TestToWireMessagesToolRoundTrip(t *testing.T) {
 	}
 	if toolResultMsg.Content[0].Content != "eat oatmeal" {
 		t.Errorf("tool_result.content = %q, want %q", toolResultMsg.Content[0].Content, "eat oatmeal")
+	}
+}
+
+// TestReadStreamTextDeltaSingle covers the happy path: one text_delta then
+// message_stop.
+func TestReadStreamTextDeltaSingle(t *testing.T) {
+	sse := `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+data: {"type":"message_stop"}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "Hello"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamTextDeltaMultiple covers several text_delta chunks arriving
+// in sequence before message_stop.
+func TestReadStreamTextDeltaMultiple(t *testing.T) {
+	sse := `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello "}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}
+data: {"type":"message_stop"}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "Hello "},
+		{Kind: "text-delta", Text: "world"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamToolCallRoundTrip covers content_block_start(tool_use) ->
+// accumulating input_json_delta chunks -> content_block_stop, verifying the
+// emitted tool-call event has args parsed via extractArgs.
+func TestReadStreamToolCallRoundTrip(t *testing.T) {
+	sse := `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"suggest_meal"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"args\":\""}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"grilled chicken\"}"}}
+data: {"type":"content_block_stop","index":0}
+data: {"type":"message_stop"}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (tool-call, done): %+v", len(events), events)
+	}
+	tc := events[0]
+	if tc.Kind != "tool-call" {
+		t.Fatalf("event[0].Kind = %q, want tool-call", tc.Kind)
+	}
+	if tc.ToolCall == nil {
+		t.Fatal("event[0].ToolCall = nil")
+	}
+	want := ports.ToolCallEvent{ID: "toolu_1", Name: "suggest_meal", Args: "grilled chicken"}
+	if *tc.ToolCall != want {
+		t.Errorf("ToolCall = %+v, want %+v", *tc.ToolCall, want)
+	}
+	if events[1].Kind != "done" {
+		t.Errorf("event[1].Kind = %q, want done", events[1].Kind)
+	}
+}
+
+// TestReadStreamErrorEvent covers an "error" SSE event: it emits a formatted
+// error event and returns without processing anything after it.
+func TestReadStreamErrorEvent(t *testing.T) {
+	sse := `data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"should not appear"}}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (error only, stream must stop): %+v", len(events), events)
+	}
+	if events[0].Kind != "error" {
+		t.Fatalf("event.Kind = %q, want error", events[0].Kind)
+	}
+	if events[0].Err == nil || events[0].Err.Error() != "anthropic: overloaded_error: Overloaded" {
+		t.Errorf("event.Err = %v, want %q", events[0].Err, "anthropic: overloaded_error: Overloaded")
+	}
+}
+
+// TestReadStreamMalformedJSONSkipped covers a malformed data line being
+// silently skipped, with subsequent valid lines still processed.
+func TestReadStreamMalformedJSONSkipped(t *testing.T) {
+	sse := `data: {not valid json
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}
+data: {"type":"message_stop"}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "ok"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamNonDataLinesSkipped covers SSE "event: ..." lines and blank
+// lines being skipped since they don't have the "data: " prefix.
+func TestReadStreamNonDataLinesSkipped(t *testing.T) {
+	sse := "event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n" +
+		"\n" +
+		`data: {"type":"message_stop"}` + "\n"
+
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "hi"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamScannerReadError covers the scanner erroring mid-read: it
+// must emit a single error event carrying the underlying error.
+func TestReadStreamScannerReadError(t *testing.T) {
+	c := &ChatAdapter{}
+	events := ssetest.Drain(t.Context(), &ssetest.ErrReader{Err: errors.New("boom")}, c.readStream)
+
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 error event: %+v", len(events), events)
+	}
+	if events[0].Kind != "error" {
+		t.Fatalf("event.Kind = %q, want error", events[0].Kind)
+	}
+	if events[0].Err == nil || !strings.Contains(events[0].Err.Error(), "boom") {
+		t.Errorf("event.Err = %v, want it to include the underlying read error", events[0].Err)
+	}
+}
+
+// TestReadStreamContextCancelledMidStream covers sendEvent's non-blocking
+// path: a full buffered channel plus an already-cancelled context must make
+// readStream return cleanly instead of hanging or panicking.
+func TestReadStreamContextCancelledMidStream(t *testing.T) {
+	ch := make(chan ports.ChatEvent, 1)
+	ch <- ports.ChatEvent{Kind: "filler"} // fills the buffer so sendEvent can't send immediately
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	sse := `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}
+data: {"type":"message_stop"}
+`
+	c := &ChatAdapter{}
+	body := io.NopCloser(strings.NewReader(sse))
+
+	done := make(chan struct{})
+	go func() {
+		c.readStream(ctx, body, ch)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("readStream did not return after context cancellation; sendEvent may be blocking")
+	}
+
+	first := <-ch
+	if first.Kind != "filler" {
+		t.Fatalf("first buffered event = %+v, want filler", first)
+	}
+	if _, open := <-ch; open {
+		t.Fatal("expected channel closed with no further events after cancelled sendEvent")
 	}
 }

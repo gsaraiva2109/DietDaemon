@@ -44,9 +44,15 @@ func (f *fakeNudges) MarkNudged(_ context.Context, u, d, r string) error {
 	return nil
 }
 
-type fakeNotifier struct{ sent []types.Notification }
+type fakeNotifier struct {
+	sent []types.Notification
+	err  error // when set, Notify returns it instead of recording
+}
 
 func (f *fakeNotifier) Notify(_ context.Context, n types.Notification) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.sent = append(f.sent, n)
 	return nil
 }
@@ -250,6 +256,30 @@ func newHealthSched(st Store, hs HealthStore, nd NudgeStore, nt Notifier, health
 	return New(st, nd, nt, proteinRule(), time.UTC, time.Minute, WithHealthRules(hs, healthRules))
 }
 
+// assertNudgeBodySent fails the test unless some sent notification has the
+// given body.
+func assertNudgeBodySent(t *testing.T, nt *fakeNotifier, body, failMsg string) {
+	t.Helper()
+	for _, n := range nt.sent {
+		if n.Body == body {
+			return
+		}
+	}
+	t.Errorf("%s", failMsg)
+}
+
+// assertNudgeBodyNotSent fails the test for every sent notification that has
+// the given body (mirrors the original inline loops, which didn't break on
+// first match either).
+func assertNudgeBodyNotSent(t *testing.T, nt *fakeNotifier, body, failMsg string) {
+	t.Helper()
+	for _, n := range nt.sent {
+		if n.Body == body {
+			t.Errorf("%s", failMsg)
+		}
+	}
+}
+
 // --- Health water rule tests ---
 
 func TestWaterAfternoonNudgesWhenBelowThreshold(t *testing.T) {
@@ -264,16 +294,7 @@ func TestWaterAfternoonNudgesWhenBelowThreshold(t *testing.T) {
 	afternoon := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
 	s.tick(context.Background(), afternoon)
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[0].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("water-afternoon should nudge when totalML=200 < 500")
-	}
+	assertNudgeBodySent(t, nt, hr[0].Message, "water-afternoon should nudge when totalML=200 < 500")
 }
 
 func TestWaterAfternoonSkipsWhenAboveThreshold(t *testing.T) {
@@ -285,11 +306,7 @@ func TestWaterAfternoonSkipsWhenAboveThreshold(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC))
 
-	for _, n := range nt.sent {
-		if n.Body == hr[0].Message {
-			t.Errorf("water-afternoon should NOT nudge when totalML=600 >= 500")
-		}
-	}
+	assertNudgeBodyNotSent(t, nt, hr[0].Message, "water-afternoon should NOT nudge when totalML=600 >= 500")
 }
 
 func TestWaterEveningNudgesWhenBelowThreshold(t *testing.T) {
@@ -301,16 +318,7 @@ func TestWaterEveningNudgesWhenBelowThreshold(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 20, 0, 0, 0, time.UTC))
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[1].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("water-evening should nudge when totalML=1000 < 1600")
-	}
+	assertNudgeBodySent(t, nt, hr[1].Message, "water-evening should nudge when totalML=1000 < 1600")
 }
 
 func TestHealthRuleRespectsCheckHour(t *testing.T) {
@@ -342,16 +350,7 @@ func TestWorkoutReminderWhenNoWorkouts(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC))
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[2].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("workout-reminder should nudge when no workouts exist")
-	}
+	assertNudgeBodySent(t, nt, hr[2].Message, "workout-reminder should nudge when no workouts exist")
 }
 
 func TestWorkoutReminderWhenLastWorkoutOld(t *testing.T) {
@@ -364,16 +363,7 @@ func TestWorkoutReminderWhenLastWorkoutOld(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC))
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[2].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("workout-reminder should nudge when last workout >3 days ago")
-	}
+	assertNudgeBodySent(t, nt, hr[2].Message, "workout-reminder should nudge when last workout >3 days ago")
 }
 
 func TestWorkoutReminderSkipsWhenRecent(t *testing.T) {
@@ -386,11 +376,7 @@ func TestWorkoutReminderSkipsWhenRecent(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC))
 
-	for _, n := range nt.sent {
-		if n.Body == hr[2].Message {
-			t.Errorf("workout-reminder should NOT nudge when last workout was 1 day ago")
-		}
-	}
+	assertNudgeBodyNotSent(t, nt, hr[2].Message, "workout-reminder should NOT nudge when last workout was 1 day ago")
 }
 
 // --- Health sleep rule tests ---
@@ -404,16 +390,7 @@ func TestSleepReminderWhenNoActiveSleep(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 22, 30, 0, 0, time.UTC))
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[3].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("sleep-reminder should nudge when no active sleep at 22:30")
-	}
+	assertNudgeBodySent(t, nt, hr[3].Message, "sleep-reminder should nudge when no active sleep at 22:30")
 }
 
 func TestSleepReminderSkipsWhenActiveSleepExists(t *testing.T) {
@@ -425,11 +402,7 @@ func TestSleepReminderSkipsWhenActiveSleepExists(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), time.Date(2026, 6, 17, 22, 30, 0, 0, time.UTC))
 
-	for _, n := range nt.sent {
-		if n.Body == hr[3].Message {
-			t.Errorf("sleep-reminder should NOT nudge when active sleep exists")
-		}
-	}
+	assertNudgeBodyNotSent(t, nt, hr[3].Message, "sleep-reminder should NOT nudge when active sleep exists")
 }
 
 // --- Health fasting rule tests ---
@@ -458,16 +431,7 @@ func TestFastEndingNudgesWithinWindow(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), now)
 
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[4].Message {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("fast-ending should nudge within 30 min of target")
-	}
+	assertNudgeBodySent(t, nt, hr[4].Message, "fast-ending should nudge within 30 min of target")
 }
 
 func TestFastEndingSkipsWhenNotClose(t *testing.T) {
@@ -491,11 +455,7 @@ func TestFastEndingSkipsWhenNotClose(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), now)
 
-	for _, n := range nt.sent {
-		if n.Body == hr[4].Message {
-			t.Errorf("fast-ending should NOT nudge when remaining is 2h")
-		}
-	}
+	assertNudgeBodyNotSent(t, nt, hr[4].Message, "fast-ending should NOT nudge when remaining is 2h")
 }
 
 func TestFastEndingSkipsWhenNoActiveFast(t *testing.T) {
@@ -512,11 +472,7 @@ func TestFastEndingSkipsWhenNoActiveFast(t *testing.T) {
 	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
 	s.tick(context.Background(), now)
 
-	for _, n := range nt.sent {
-		if n.Body == hr[4].Message {
-			t.Errorf("fast-ending should NOT nudge when no active fast")
-		}
-	}
+	assertNudgeBodyNotSent(t, nt, hr[4].Message, "fast-ending should NOT nudge when no active fast")
 }
 
 // --- Health deduplication tests ---
@@ -852,16 +808,7 @@ func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
 	sched.tick(context.Background(), afternoon)
 
 	hr := DefaultHealthRules()
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[0].Message { // water-afternoon
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("health rules did not fire through the production scheduler.New(...) construction path")
-	}
+	assertNudgeBodySent(t, nt, hr[0].Message, "health rules did not fire through the production scheduler.New(...) construction path") // water-afternoon
 }
 
 // --- Quick-action buttons ---
@@ -989,14 +936,369 @@ func TestHealthRulesFireWithoutMacroTargets(t *testing.T) {
 	s.tick(context.Background(), afternoon)
 
 	// Should still get water nudge even though no macro targets
-	found := false
-	for _, n := range nt.sent {
-		if n.Body == hr[0].Message {
-			found = true
-			break
-		}
+	assertNudgeBodySent(t, nt, hr[0].Message, "health rules should fire even when no macro targets set")
+}
+
+// --- Weekly rolling budget tests ---
+//
+// CHARACTERIZATION tests for evalWeeklyBudgetRules: pin down current
+// behavior only, do not assert on anything the function doesn't already do.
+
+type fakeWeeklyBudgetStore struct {
+	rollups  []types.DailyRollup
+	err      error
+	calls    int
+	gotStart string
+	gotEnd   string
+}
+
+func (f *fakeWeeklyBudgetStore) GetRollups(_ context.Context, _, start, end string) ([]types.DailyRollup, error) {
+	f.calls++
+	f.gotStart, f.gotEnd = start, end
+	return f.rollups, f.err
+}
+
+// enabledWeeklyOverride builds a bare "Enabled:true, no Params" override row,
+// the common case for tests that don't need to tune clamp/override fields.
+func enabledWeeklyOverride(ruleID string) map[string][]types.NudgeRuleConfig {
+	return map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: ruleID, Enabled: true}},
 	}
-	if !found {
-		t.Errorf("health rules should fire even when no macro targets set")
+}
+
+// newWeeklyBudgetSched builds a Scheduler wired the same way every weekly
+// budget test does. A nil rcs omits WithRuleConfig entirely (rather than
+// passing a nil RuleConfigStore), matching TestWeeklyBudgetNoOverrideNeverFires's
+// scenario of no rule config source at all.
+func newWeeklyBudgetSched(st Store, wbs WeeklyBudgetStore, rcs RuleConfigStore, nd NudgeStore, nt Notifier) *Scheduler {
+	opts := []Option{WithWeeklyBudgetRules(wbs, DefaultWeeklyBudgetRules())}
+	if rcs != nil {
+		opts = append(opts, WithRuleConfig(rcs))
+	}
+	return New(st, nd, nt, nil, time.UTC, time.Minute, opts...)
+}
+
+// assertSingleNudgeBody fails unless exactly one notification was sent and
+// its body matches want.
+func assertSingleNudgeBody(t *testing.T, nt *fakeNotifier, want string) {
+	t.Helper()
+	if len(nt.sent) != 1 {
+		t.Fatalf("sent = %d, want 1", len(nt.sent))
+	}
+	if nt.sent[0].Body != want {
+		t.Errorf("body = %q, want %q", nt.sent[0].Body, want)
+	}
+}
+
+// (1) Absent override entry: the rule must never fire, even with a wired
+// WeeklyBudgetStore and a real deficit — the opposite default from
+// macro/health/digest rules (opt-in, not opt-out).
+func TestWeeklyBudgetNoOverrideNeverFires(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}, // real deficit vs 2000 target
+	}}
+	nt := &fakeNotifier{}
+	// No WithRuleConfig at all: overrides stays nil for every rule.
+	s := newWeeklyBudgetSched(st, wbs, nil, newFakeNudges(), nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Fatalf("no-override rule should never fire, sent %d", len(nt.sent))
+	}
+	if wbs.calls != 0 {
+		t.Errorf("GetRollups should not even be called without an override, calls=%d", wbs.calls)
+	}
+}
+
+// (2) Override present but Enabled:false → skip.
+func TestWeeklyBudgetOverrideDisabledSkips(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: "weekly-budget-calories", Enabled: false}},
+	}}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("Enabled:false override should skip the rule, sent %d", len(nt.sent))
+	}
+}
+
+// (3) Hour gate: CheckHour is 9 for the default rules.
+func TestWeeklyBudgetHourGate(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)) // 1h before CheckHour
+
+	if len(nt.sent) != 0 {
+		t.Errorf("should not fire before CheckHour, sent %d", len(nt.sent))
+	}
+	if wbs.calls != 0 {
+		t.Errorf("GetRollups should not be called before the hour gate, calls=%d", wbs.calls)
+	}
+}
+
+// (4) Dedupe via nudge_log (WasNudged) short-circuits before GetRollups.
+func TestWeeklyBudgetDedupeViaNudgeLog(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd := newFakeNudges()
+	nd.marked[key("u1", "2026-06-17", "weekly-budget-calories")] = true
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("already-nudged rule should dedupe, sent %d", len(nt.sent))
+	}
+	if wbs.calls != 0 {
+		t.Errorf("GetRollups should not run once dedupe short-circuits, calls=%d", wbs.calls)
+	}
+}
+
+// (5a) Calendar week bounds on a Monday: monday == today, 7 days remaining.
+func TestWeeklyBudgetWeekBoundsMonday(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2200}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{} // no rollups: consumedPriorDays=0
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd, nt := newFakeNudges(), &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	// 2026-06-15 is a Monday.
+	s.tick(context.Background(), time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC))
+
+	if wbs.gotStart != "2026-06-15" || wbs.gotEnd != "2026-06-21" {
+		t.Errorf("Monday week bounds = [%s, %s], want [2026-06-15, 2026-06-21]", wbs.gotStart, wbs.gotEnd)
+	}
+	// consumedPriorDays=0, daysRemaining=7 -> effective=plainDaily -> delta=0
+	// (negligible): still marks nudged, no delivery.
+	if len(nt.sent) != 0 {
+		t.Errorf("Monday with zero prior consumption is a negligible delta, sent %d", len(nt.sent))
+	}
+	if !nd.marked[key("u1", "2026-06-15", "weekly-budget-calories")] {
+		t.Error("negligible-delta branch should still mark nudged")
+	}
+}
+
+// (5b) Calendar week bounds on a Sunday: the daysFromMonday=6 special case
+// must resolve to the Monday of the SAME week, not one day in the future
+// (naive int(weekday)-int(Monday) would give -1 on Sunday).
+func TestWeeklyBudgetWeekBoundsSunday(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2200}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), &fakeNotifier{})
+
+	// 2026-06-21 is a Sunday.
+	s.tick(context.Background(), time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC))
+
+	if wbs.gotStart != "2026-06-15" || wbs.gotEnd != "2026-06-21" {
+		t.Errorf("Sunday week bounds = [%s, %s], want [2026-06-15, 2026-06-21]", wbs.gotStart, wbs.gotEnd)
+	}
+}
+
+// (6) GetRollups error: no panic, no delivery, no mark.
+func TestWeeklyBudgetGetRollupsErrorNoDelivery(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{err: errors.New("boom")}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd, nt := newFakeNudges(), &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)) // must not panic
+
+	if len(nt.sent) != 0 {
+		t.Errorf("GetRollups error should not deliver, sent %d", len(nt.sent))
+	}
+	if len(nd.marked) != 0 {
+		t.Errorf("GetRollups error should not mark nudged, marked=%v", nd.marked)
+	}
+}
+
+// (7) plainDaily <= 0 (no macro target set for this rule's macro) → skip.
+func TestWeeklyBudgetNoTargetSkips(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 150}}, // no Calories target
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("plainDaily<=0 should skip without delivering, sent %d", len(nt.sent))
+	}
+}
+
+// (8) WeeklyTargetOverride replaces the store's daily target in the formula.
+func TestWeeklyBudgetTargetOverrideChangesEffective(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}}, // ignored in favor of the override
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 1500}},
+		{Date: "2026-06-16", Consumed: types.Macros{Calories: 1500}},
+	}}
+	params, err := json.Marshal(types.WeeklyBudgetConfig{WeeklyTargetOverride: 3000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: "weekly-budget-calories", Enabled: true, Params: params}},
+	}}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	// Wednesday: consumedPriorDays=3000, daysRemaining=5. With the override,
+	// plainDaily becomes 3000 (not the store's 2000): weeklyTarget=21000,
+	// effective=(21000-3000)/5=3600, delta=+600. Without the override applied
+	// the delta would instead be +200 (using the store's 2000) — the distinct
+	// number proves the override actually took effect.
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	// (Proves WeeklyTargetOverride is applied: without it the delta would be +200.)
+	assertSingleNudgeBody(t, nt, "Catch up today, +600kcal")
+}
+
+// (9) Negligible delta (<3% of daily target): marks nudged so it doesn't
+// recompute every tick, but must NOT call deliver/notifier.
+func TestWeeklyBudgetNegligibleDeltaMarksNudgedWithoutDelivery(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 1925}},
+		{Date: "2026-06-16", Consumed: types.Macros{Calories: 1925}},
+	}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd := newFakeNudges()
+	nt := &fakeNotifier{} // asserting sent is empty proves deliver/notifier was never invoked
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	// Wednesday: consumedPriorDays=3850, daysRemaining=5. effective=2030,
+	// delta=+30, which is under 3% of 2000 (60) -> negligible.
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Fatalf("negligible delta must not deliver, sent %d", len(nt.sent))
+	}
+	if !nd.marked[key("u1", "2026-06-17", "weekly-budget-calories")] {
+		t.Error("negligible delta should still mark nudged so it doesn't recompute every tick")
+	}
+}
+
+// (10) Positive delta -> "catch up +Xkcal" message.
+func TestWeeklyBudgetPositiveDeltaCatchUpMessage(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2200}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 1500}}, // Mon, prior day
+		{Date: "2026-06-16", Consumed: types.Macros{Calories: 1500}}, // Tue, prior day
+		{Date: "2026-06-17", Consumed: types.Macros{Calories: 900}},  // Wed = today, must NOT count
+	}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	// Wednesday: consumedPriorDays=3000 (today's rollup excluded), daysRemaining=5.
+	// weeklyTarget=2200*7=15400. effective=(15400-3000)/5=2480. delta=+280.
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	assertSingleNudgeBody(t, nt, "Catch up today, +280kcal")
+}
+
+// (11) Negative delta -> "ease up -Xg" message (also covers the protein "g" unit).
+func TestWeeklyBudgetNegativeDeltaEaseUpMessageWithGramsUnit(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 150}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Protein: 175}}, // Mon
+		{Date: "2026-06-16", Consumed: types.Macros{Protein: 175}}, // Tue
+	}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-protein")}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	// Wednesday: consumedPriorDays=350, daysRemaining=5.
+	// weeklyTarget=150*7=1050. effective=(1050-350)/5=140. delta=-10 (g).
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	assertSingleNudgeBody(t, nt, "Ease up today, -10g")
+}
+
+// (12) deliver/notifier error -> NOT marked as nudged, so it retries next tick.
+func TestWeeklyBudgetDeliverErrorNotMarkedNudged(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2200}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 1500}},
+		{Date: "2026-06-16", Consumed: types.Macros{Calories: 1500}},
+	}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd := newFakeNudges()
+	nt := &fakeNotifier{err: errors.New("delivery boom")}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	// Same non-negligible +280 delta scenario as the catch-up test, but delivery fails.
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if nd.marked[key("u1", "2026-06-17", "weekly-budget-calories")] {
+		t.Error("delivery error must not mark nudged, so it retries next tick")
 	}
 }

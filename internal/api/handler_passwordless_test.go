@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ type magicTestAuthStore struct {
 	*emailTestAuthStore
 	magicCodes          map[string]magicCode // userID -> code
 	deleteEmailTokensCb func(userID, purpose string)
+	totpConfirmed       bool
 }
 
 type magicCode struct {
@@ -81,26 +84,29 @@ func (s *magicTestAuthStore) DeleteEmailTokensByUserAndPurpose(_ context.Context
 }
 
 func (s *magicTestAuthStore) HasConfirmedTOTP(_ context.Context, userID string) (bool, error) {
-	return false, nil
+	return s.totpConfirmed, nil
 }
 
 func buildMagicHandler(authStore *magicTestAuthStore, m mailer.Mailer) *Handler {
-	store := newFakeMealStore()
-	store.user = types.User{ID: "test-user", Email: "test@example.com", AccountID: "acct-1", Status: "active", CreatedAt: time.Now().UTC()}
-	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
-			SessionCfg: auth.SessionConfig{
-				IdleTTL:     1 * time.Hour,
-				AbsoluteTTL: 24 * time.Hour,
-				RememberTTL: 72 * time.Hour,
-			},
-			LockoutCfg:       auth.DefaultLockoutConfig(),
-			RegistrationMode: types.RegistrationOpen,
-			CookieSecure:     false,
-		}),
-		WithMailer(m, "none"),
-		WithPublicBaseURL("http://localhost:8080"),
-	)
+	user := types.User{ID: "test-user", Email: "test@example.com", AccountID: "acct-1", Status: "active", CreatedAt: time.Now().UTC()}
+	return buildAuthTestHandler(authStore, user, m)
+}
+
+// upsertTestMagicCode hashes code and stores it for "test-user" with the
+// given TTL, returning the hash for tests that need to inspect/override it.
+func upsertTestMagicCode(t *testing.T, authStore *magicTestAuthStore, code string, ttl time.Duration) string {
+	t.Helper()
+	codeHash := auth.HashToken(code)
+	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(ttl).Format(time.RFC3339))
+	return codeHash
+}
+
+// verifyMagicCode POSTs an email+code pair to the magic verify endpoint.
+func verifyMagicCode(h *Handler, code string) *httptest.ResponseRecorder {
+	return doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
+		"email": "test@example.com",
+		"code":  code,
+	}, nil)
 }
 
 // --- Magic request tests ---
@@ -221,13 +227,9 @@ func TestMagicVerifyCodeSuccess(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+	upsertTestMagicCode(t, authStore, code, magicTTL)
 
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec := verifyMagicCode(h, code)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -256,13 +258,9 @@ func TestMagicVerifyCodeWrongCode(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+	upsertTestMagicCode(t, authStore, code, magicTTL)
 
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  "999999",
-	}, nil)
+	rec := verifyMagicCode(h, "999999")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for wrong code, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -283,13 +281,9 @@ func TestMagicVerifyCodeExpired(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(-1*time.Minute).Format(time.RFC3339))
+	upsertTestMagicCode(t, authStore, code, -1*time.Minute)
 
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec := verifyMagicCode(h, code)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for expired code, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -301,15 +295,11 @@ func TestMagicVerifyCodeAttemptCap(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+	codeHash := upsertTestMagicCode(t, authStore, code, magicTTL)
 	// Pre-set attempts to 5 (cap).
 	authStore.magicCodes["test-user"] = magicCode{codeHash: codeHash, expiresAt: time.Now().UTC().Add(magicTTL).Format(time.RFC3339), attempts: 5}
 
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec := verifyMagicCode(h, code)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 at attempt cap, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -326,25 +316,52 @@ func TestMagicVerifyCodeReuse(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+	upsertTestMagicCode(t, authStore, code, magicTTL)
 
 	// First use succeeds.
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec := verifyMagicCode(h, code)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first use expected 200, got %d", rec.Code)
 	}
 
 	// Second use — code consumed, should 401.
-	rec = doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec = verifyMagicCode(h, code)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("reuse expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMagicVerifyCodeTOTPStepUpIssuesChallenge(t *testing.T) {
+	authStore := newMagicTestAuthStore()
+	authStore.totpConfirmed = true
+	fm := &fakeMailer{}
+	h := buildMagicHandler(authStore, fm)
+
+	code := "123456"
+	upsertTestMagicCode(t, authStore, code, magicTTL)
+
+	rec := verifyMagicCode(h, code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if mfaRequired, _ := body["mfa_required"].(bool); !mfaRequired {
+		t.Errorf("expected mfa_required=true, got %#v", body)
+	}
+	if tok, _ := body["challenge_token"].(string); tok == "" {
+		t.Error("expected a non-empty challenge_token")
+	}
+
+	// No session cookie should be issued — the caller must complete the
+	// TOTP challenge before a session exists.
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "dd_session" && c.Value != "" {
+			t.Error("dd_session cookie should not be set until the TOTP challenge is completed")
+		}
 	}
 }
 
@@ -411,8 +428,7 @@ func TestMagicVerifyCodeCleansUpSiblingToken(t *testing.T) {
 	h := buildMagicHandler(authStore, fm)
 
 	code := "123456"
-	codeHash := auth.HashToken(code)
-	_ = authStore.UpsertMagicCode(t.Context(), "test-user", codeHash, time.Now().UTC().Add(magicTTL).Format(time.RFC3339))
+	upsertTestMagicCode(t, authStore, code, magicTTL)
 
 	// Also create a sibling link token.
 	tok := auth.NewToken()
@@ -426,10 +442,7 @@ func TestMagicVerifyCodeCleansUpSiblingToken(t *testing.T) {
 		}
 	}
 
-	rec := doRequest(h, "POST", "/api/v1/auth/magic/verify", map[string]string{
-		"email": "test@example.com",
-		"code":  code,
-	}, nil)
+	rec := verifyMagicCode(h, code)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}

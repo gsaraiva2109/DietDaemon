@@ -1,14 +1,25 @@
 package openai
 
 import (
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/ssetest"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
+
+// drainReadStream feeds sse into readStream on a real channel and collects
+// every event until the channel closes.
+func drainReadStream(ctx context.Context, sse string) []ports.ChatEvent {
+	c := &ChatAdapter{}
+	return ssetest.Drain(ctx, io.NopCloser(strings.NewReader(sse)), c.readStream)
+}
 
 // TestExtractArgsEmptyValue guards the bug where a legitimately empty args
 // value (no-arg commands like /help emit {"args":""}) was misread as a parse
@@ -39,5 +50,148 @@ func TestStreamChatHTTPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "model does not support tools") {
 		t.Errorf("error = %q, want it to include the response body detail", err.Error())
+	}
+}
+
+// TestReadStreamTextDeltaAccumulation covers several content deltas arriving
+// in sequence, followed by the [DONE] sentinel.
+func TestReadStreamTextDeltaAccumulation(t *testing.T) {
+	sse := `data: {"choices":[{"index":0,"delta":{"content":"Hello "}}]}
+data: {"choices":[{"index":0,"delta":{"content":"world"}}]}
+data: [DONE]
+`
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "Hello "},
+		{Kind: "text-delta", Text: "world"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamToolCallMultiChunkAccumulation covers OpenAI's incremental
+// tool-call reconstruction: the first chunk carries id+name at an index,
+// later chunks carry only Function.Arguments fragments at that same index,
+// accumulated in the pending map until finish_reason flushes it.
+func TestReadStreamToolCallMultiChunkAccumulation(t *testing.T) {
+	sse := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"suggest_meal","arguments":""}}]}}]}
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"args\":\""}}]}}]}
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"grilled chicken\"}"}}]}}]}
+data: {"choices":[{"index":0,"finish_reason":"tool_calls"}]}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 tool-call event: %+v", len(events), events)
+	}
+	if events[0].Kind != "tool-call" || events[0].ToolCall == nil {
+		t.Fatalf("event[0] = %+v, want a tool-call event", events[0])
+	}
+	want := ports.ToolCallEvent{ID: "call_1", Name: "suggest_meal", Args: "grilled chicken"}
+	if *events[0].ToolCall != want {
+		t.Errorf("ToolCall = %+v, want %+v", *events[0].ToolCall, want)
+	}
+}
+
+// TestReadStreamDoneFlushesPendingToolCalls covers the [DONE] sentinel
+// flushing any still-pending tool call before emitting done.
+func TestReadStreamDoneFlushesPendingToolCalls(t *testing.T) {
+	sse := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_2","type":"function","function":{"name":"log_meal","arguments":"{\"args\":\"eggs\"}"}}]}}]}
+data: [DONE]
+`
+	events := drainReadStream(t.Context(), sse)
+
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (tool-call, done): %+v", len(events), events)
+	}
+	if events[0].Kind != "tool-call" || events[0].ToolCall == nil {
+		t.Fatalf("event[0] = %+v, want a tool-call event", events[0])
+	}
+	want := ports.ToolCallEvent{ID: "call_2", Name: "log_meal", Args: "eggs"}
+	if *events[0].ToolCall != want {
+		t.Errorf("ToolCall = %+v, want %+v", *events[0].ToolCall, want)
+	}
+	if events[1].Kind != "done" {
+		t.Errorf("event[1].Kind = %q, want done", events[1].Kind)
+	}
+}
+
+// TestReadStreamFinishReasonFlushesPending covers every terminal
+// finish_reason value triggering a flush of pending tool calls.
+func TestReadStreamFinishReasonFlushesPending(t *testing.T) {
+	for _, reason := range []string{"stop", "tool_calls", "length", "content_filter"} {
+		t.Run(reason, func(t *testing.T) {
+			sse := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"fn","arguments":"{\"args\":\"v\"}"}}]}}]}
+data: {"choices":[{"index":0,"finish_reason":"` + reason + `"}]}
+`
+			events := drainReadStream(t.Context(), sse)
+
+			if len(events) != 1 {
+				t.Fatalf("got %d events, want 1 flushed tool-call event: %+v", len(events), events)
+			}
+			want := ports.ToolCallEvent{ID: "call_x", Name: "fn", Args: "v"}
+			if events[0].Kind != "tool-call" || events[0].ToolCall == nil || *events[0].ToolCall != want {
+				t.Errorf("event[0] = %+v, want tool-call %+v", events[0], want)
+			}
+		})
+	}
+}
+
+// TestReadStreamFinishReasonResetsPendingBetweenRounds covers the pending
+// map being reset after a finish_reason flush, so a second round of tool
+// calls at the same index doesn't inherit the first round's accumulated args.
+func TestReadStreamFinishReasonResetsPendingBetweenRounds(t *testing.T) {
+	sse := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"a_fn","arguments":"{\"args\":\"A"}}]}}]}
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1\"}"}}]}}]}
+data: {"choices":[{"index":0,"finish_reason":"tool_calls"}]}
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_b","type":"function","function":{"name":"b_fn","arguments":"{\"args\":\"B1\"}"}}]}}]}
+data: {"choices":[{"index":0,"finish_reason":"stop"}]}
+`
+	events := drainReadStream(t.Context(), sse)
+
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 tool-call events: %+v", len(events), events)
+	}
+	wantA := ports.ToolCallEvent{ID: "call_a", Name: "a_fn", Args: "A1"}
+	wantB := ports.ToolCallEvent{ID: "call_b", Name: "b_fn", Args: "B1"}
+	if events[0].ToolCall == nil || *events[0].ToolCall != wantA {
+		t.Errorf("event[0].ToolCall = %+v, want %+v", events[0].ToolCall, wantA)
+	}
+	if events[1].ToolCall == nil || *events[1].ToolCall != wantB {
+		t.Errorf("event[1].ToolCall = %+v, want %+v (must not bleed round 1's args)", events[1].ToolCall, wantB)
+	}
+}
+
+// TestReadStreamMalformedAndEmptyChoicesSkipped covers malformed JSON and
+// empty-choices lines being skipped, with subsequent valid lines still
+// processed.
+func TestReadStreamMalformedAndEmptyChoicesSkipped(t *testing.T) {
+	sse := `data: not valid json at all
+data: {"choices":[]}
+data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}
+data: [DONE]
+`
+	events := drainReadStream(t.Context(), sse)
+
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
+		{Kind: "text-delta", Text: "ok"},
+		{Kind: "done"},
+	})
+}
+
+// TestReadStreamScannerReadError covers the scanner erroring mid-read: it
+// must emit a single error event carrying the underlying error.
+func TestReadStreamScannerReadError(t *testing.T) {
+	c := &ChatAdapter{}
+	events := ssetest.Drain(t.Context(), &ssetest.ErrReader{Err: errors.New("boom")}, c.readStream)
+
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 error event: %+v", len(events), events)
+	}
+	if events[0].Kind != "error" {
+		t.Fatalf("event.Kind = %q, want error", events[0].Kind)
+	}
+	if events[0].Err == nil || !strings.Contains(events[0].Err.Error(), "boom") {
+		t.Errorf("event.Err = %v, want it to include the underlying read error", events[0].Err)
 	}
 }

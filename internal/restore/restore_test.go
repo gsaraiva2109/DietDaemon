@@ -184,6 +184,16 @@ func TestRunOnce_FullRestore(t *testing.T) {
 	if store.meals[0].UserID != "u1" || store.photos[0].UserID != "u1" {
 		t.Fatalf("expected UserID stamped on restored rows")
 	}
+	// Every entity's UserID must be stamped to the restoring user, not just
+	// the two spot-checked above.
+	if store.rollups[0].UserID != "u1" || store.weight[0].UserID != "u1" ||
+		store.measurements[0].UserID != "u1" || store.sleep[0].UserID != "u1" ||
+		store.workouts[0].UserID != "u1" || store.water[0].UserID != "u1" ||
+		store.fasts[0].UserID != "u1" {
+		t.Fatalf("expected UserID stamped on every restored entity, got: rollups=%q weight=%q measurements=%q sleep=%q workouts=%q water=%q fasts=%q",
+			store.rollups[0].UserID, store.weight[0].UserID, store.measurements[0].UserID,
+			store.sleep[0].UserID, store.workouts[0].UserID, store.water[0].UserID, store.fasts[0].UserID)
+	}
 	if string(store.photos[0].Data) != "fake-jpeg-bytes" {
 		t.Fatalf("expected photo blob restored, got %q", store.photos[0].Data)
 	}
