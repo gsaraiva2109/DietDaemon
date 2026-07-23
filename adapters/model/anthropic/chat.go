@@ -233,6 +233,110 @@ func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEve
 	}
 }
 
+type streamState struct {
+	currentToolID   string
+	currentToolName string
+	toolArgs        strings.Builder
+	inToolUse       bool
+}
+
+func parseSSEEvent(line string) (sseEvent, []byte, bool) {
+	if !strings.HasPrefix(line, "data: ") {
+		return sseEvent{}, nil, false
+	}
+	data := []byte(strings.TrimPrefix(line, "data: "))
+	var evt sseEvent
+	if err := json.Unmarshal(data, &evt); err != nil {
+		return sseEvent{}, nil, false
+	}
+	return evt, data, true
+}
+
+func (s *streamState) startToolUse(data []byte) {
+	var cb contentBlockStartData
+	if err := json.Unmarshal(data, &cb); err != nil || cb.ContentBlock.Type != "tool_use" {
+		return
+	}
+	s.inToolUse = true
+	s.currentToolID = cb.ContentBlock.ID
+	s.currentToolName = cb.ContentBlock.Name
+	s.toolArgs.Reset()
+}
+
+func (s *streamState) appendToolArgs(delta json.RawMessage) {
+	var input inputJSONDelta
+	if err := json.Unmarshal(delta, &input); err == nil && input.Type == "input_json_delta" {
+		s.toolArgs.WriteString(input.PartialJSON)
+	}
+}
+
+func (s *streamState) sendTextDelta(ctx context.Context, ch chan<- ports.ChatEvent, delta json.RawMessage) bool {
+	var text textDelta
+	if err := json.Unmarshal(delta, &text); err != nil || text.Type != "text_delta" {
+		return true
+	}
+	return sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: text.Text})
+}
+
+func (s *streamState) handleDelta(ctx context.Context, ch chan<- ports.ChatEvent, data []byte) bool {
+	var delta contentBlockDeltaData
+	if err := json.Unmarshal(data, &delta); err != nil {
+		return true
+	}
+	if s.inToolUse {
+		s.appendToolArgs(delta.Delta)
+		return true
+	}
+	return s.sendTextDelta(ctx, ch, delta.Delta)
+}
+
+func (s *streamState) finishToolUse(ctx context.Context, ch chan<- ports.ChatEvent) bool {
+	if !s.inToolUse {
+		return true
+	}
+	if !sendEvent(ctx, ch, ports.ChatEvent{
+		Kind: "tool-call",
+		ToolCall: &ports.ToolCallEvent{
+			ID:   s.currentToolID,
+			Name: s.currentToolName,
+			Args: extractArgs(s.toolArgs.String()),
+		},
+	}) {
+		return false
+	}
+	s.inToolUse = false
+	return true
+}
+
+func sendProviderError(ctx context.Context, ch chan<- ports.ChatEvent, data []byte) bool {
+	var providerError errorData
+	if err := json.Unmarshal(data, &providerError); err != nil {
+		return true
+	}
+	sendEvent(ctx, ch, ports.ChatEvent{
+		Kind: "error",
+		Err:  fmt.Errorf("anthropic: %s: %s", providerError.Error.Type, providerError.Error.Message),
+	})
+	return false
+}
+
+func (s *streamState) handleEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt sseEvent, data []byte) bool {
+	switch evt.Type {
+	case "content_block_start":
+		s.startToolUse(data)
+	case "content_block_delta":
+		return s.handleDelta(ctx, ch, data)
+	case "content_block_stop":
+		return s.finishToolUse(ctx, ch)
+	case "message_stop":
+		sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		return false
+	case "error":
+		return sendProviderError(ctx, ch, data)
+	}
+	return true
+}
+
 func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer func() { _ = body.Close() }()
@@ -240,90 +344,14 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1 MB max token
 
-	var (
-		currentToolID   string
-		currentToolName string
-		toolArgs        strings.Builder
-		inToolUse       bool
-	)
+	var state streamState
 
 	for scanner.Scan() {
-		line := scanner.Text()
-
-		// SSE lines: "event: <type>" then "data: <json>"
-		if !strings.HasPrefix(line, "data: ") {
+		evt, data, ok := parseSSEEvent(scanner.Text())
+		if !ok {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
-
-		// Parse event type.
-		var evt sseEvent
-		if err := json.Unmarshal([]byte(data), &evt); err != nil {
-			continue
-		}
-
-		switch evt.Type {
-		case "content_block_start":
-			var cb contentBlockStartData
-			if err := json.Unmarshal([]byte(data), &cb); err != nil {
-				continue
-			}
-			if cb.ContentBlock.Type == "tool_use" {
-				inToolUse = true
-				currentToolID = cb.ContentBlock.ID
-				currentToolName = cb.ContentBlock.Name
-				toolArgs.Reset()
-			}
-
-		case "content_block_delta":
-			var delta contentBlockDeltaData
-			if err := json.Unmarshal([]byte(data), &delta); err != nil {
-				continue
-			}
-			if inToolUse {
-				var ijd inputJSONDelta
-				if err := json.Unmarshal(delta.Delta, &ijd); err == nil && ijd.Type == "input_json_delta" {
-					toolArgs.WriteString(ijd.PartialJSON)
-				}
-			} else {
-				var td textDelta
-				if err := json.Unmarshal(delta.Delta, &td); err == nil && td.Type == "text_delta" {
-					if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: td.Text}) {
-						return
-					}
-				}
-			}
-
-		case "content_block_stop":
-			if inToolUse {
-				// Extract "args" value from accumulated JSON.
-				argsStr := extractArgs(toolArgs.String())
-				if !sendEvent(ctx, ch, ports.ChatEvent{
-					Kind: "tool-call",
-					ToolCall: &ports.ToolCallEvent{
-						ID:   currentToolID,
-						Name: currentToolName,
-						Args: argsStr,
-					},
-				}) {
-					return
-				}
-				inToolUse = false
-			}
-
-		case "message_stop":
-			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
-			return
-
-		case "error":
-			var ed errorData
-			if err := json.Unmarshal([]byte(data), &ed); err != nil {
-				continue
-			}
-			sendEvent(ctx, ch, ports.ChatEvent{
-				Kind: "error",
-				Err:  fmt.Errorf("anthropic: %s: %s", ed.Error.Type, ed.Error.Message),
-			})
+		if !state.handleEvent(ctx, ch, evt, data) {
 			return
 		}
 	}
