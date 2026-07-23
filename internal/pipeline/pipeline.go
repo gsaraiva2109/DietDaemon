@@ -172,88 +172,25 @@ func (e *Engine) persistMeal(ctx context.Context, meal types.Meal) error {
 // problems are reported back to the user rather than returned as errors;
 // non-nil errors indicate infrastructure failures (store, transport).
 func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
-	// STT: transcribe audio before parsing. When audio arrives but STT is not
-	// configured, reply with a prompt and return.
-	if msg.Kind == types.MessageAudio {
-		if e.transcriber == nil {
-			return e.reply(ctx, msg, "Audio messages are not supported (STT is disabled). Send your meal as text, e.g. \"200g chicken, 2 eggs\".")
-		}
-		transcript, locale, err := e.transcriber.Transcribe(ctx, msg.Audio)
-		if err != nil {
-			return e.reply(ctx, msg, fmt.Sprintf("Couldn't transcribe audio: %v. Try sending your meal as text.", err))
-		}
-		if transcript == "" {
-			slog.Warn("stt: whisper returned empty transcript", "locale", locale)
-			return e.reply(ctx, msg, "Couldn't understand the audio. Try speaking clearly or send your meal as text, e.g. \"200g chicken, 2 eggs\".")
-		}
-		msg.Text = transcript
-		msg.Kind = types.MessageText
-		if locale != "" {
-			slog.Debug("stt: detected locale", "locale", locale)
-			if msg.Locale == "" {
-				msg.Locale = locale
-			}
-		}
+	var handled bool
+	var err error
+	msg, handled, err = e.transcribe(ctx, msg)
+	if handled {
+		return err
 	}
 
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		return e.reply(ctx, msg, "Send a meal as text, e.g. \"200g chicken, 2 eggs\".")
 	}
+	at := messageTime(msg, e.now)
 
-	at := msg.At
-	if at.IsZero() {
-		at = e.now()
-	}
-	at = at.UTC()
-
-	// Resolve the internal user ID through the channel mapping table.
-	// In single-user mode this auto-registers any new channel to "default".
-	userID := msg.UserID
-	if mapped, err := e.store.GetUserIDByChannel(ctx, e.channelName, msg.UserID); err == nil {
-		userID = mapped
-	} else {
-		// No mapping exists: auto-register this channel ID to the incoming userID.
-		_ = e.store.MapChannelUser(ctx, e.channelName, msg.UserID, userID)
-	}
-	msg.UserID = userID
-
-	// Refresh where this user can be reached proactively (e.g. scheduled
-	// nudges). Fire-and-forget, like other non-critical writes in this file —
-	// web-originated messages carry no ChannelMeta, so skip those.
-	if len(msg.ChannelMeta) > 0 {
-		_ = e.store.UpsertChatRoute(ctx, msg.UserID, e.channelName, msg.ChannelMeta)
+	if err := e.prepareUser(ctx, &msg); err != nil {
+		return err
 	}
 
-	// Ensure the user row exists (single-user today; keyed by user from day one).
-	if err := e.store.UpsertUser(ctx, types.User{ID: msg.UserID, Timezone: e.loc.String(), CreatedAt: e.now().UTC()}); err != nil {
-		return fmt.Errorf("pipeline: upsert user: %w", err)
-	}
-
-	// Commands take precedence over meal logging and the clarification loop.
-	if e.registry != nil {
-		// Resolve the user's locale: preference > channel hint > "en".
-		locale := e.resolveLocale(ctx, msg)
-
-		reply, matched, err := e.registry.Dispatch(ctx, msg, text)
-		if err != nil {
-			return fmt.Errorf("pipeline: command dispatch: %w", err)
-		}
-		if matched {
-			// Merge locale and channel metadata into the reply before sending.
-			if reply.Locale == "" {
-				reply.Locale = locale
-			}
-			if reply.ChannelMeta == nil {
-				reply.ChannelMeta = msg.ChannelMeta
-			}
-			reply.UserID = msg.UserID
-			// Skip reply for web-originated messages (no channel metadata).
-			if len(reply.ChannelMeta) == 0 {
-				return nil
-			}
-			return e.replier.Send(ctx, reply)
-		}
+	if handled, err := e.dispatchCommand(ctx, msg, text); handled {
+		return err
 	}
 
 	// Callback button presses that didn't match a command: skip clarification
@@ -261,6 +198,91 @@ func (e *Engine) Handle(ctx context.Context, msg types.InboundMessage) error {
 	if msg.ChannelMeta["is_callback"] == "true" {
 		return nil
 	}
+	return e.handleMeal(ctx, msg, text, at)
+}
+
+// transcribe converts audio messages to text. Its reply errors intentionally
+// flow through Handle unchanged, matching the text-message reply paths.
+func (e *Engine) transcribe(ctx context.Context, msg types.InboundMessage) (types.InboundMessage, bool, error) {
+	if msg.Kind != types.MessageAudio {
+		return msg, false, nil
+	}
+	if e.transcriber == nil {
+		return msg, true, e.reply(ctx, msg, "Audio messages are not supported (STT is disabled). Send your meal as text, e.g. \"200g chicken, 2 eggs\".")
+	}
+	transcript, locale, err := e.transcriber.Transcribe(ctx, msg.Audio)
+	if err != nil {
+		return msg, true, e.reply(ctx, msg, fmt.Sprintf("Couldn't transcribe audio: %v. Try sending your meal as text.", err))
+	}
+	if transcript == "" {
+		slog.Warn("stt: whisper returned empty transcript", "locale", locale)
+		return msg, true, e.reply(ctx, msg, "Couldn't understand the audio. Try speaking clearly or send your meal as text, e.g. \"200g chicken, 2 eggs\".")
+	}
+	msg.Text = transcript
+	msg.Kind = types.MessageText
+	if locale != "" {
+		slog.Debug("stt: detected locale", "locale", locale)
+		if msg.Locale == "" {
+			msg.Locale = locale
+		}
+	}
+	return msg, false, nil
+}
+
+func messageTime(msg types.InboundMessage, now func() time.Time) time.Time {
+	at := msg.At
+	if at.IsZero() {
+		at = now()
+	}
+	return at.UTC()
+}
+
+// prepareUser maps the channel identity, refreshes the optional reply route,
+// and makes sure the user exists before commands or meal handling run.
+func (e *Engine) prepareUser(ctx context.Context, msg *types.InboundMessage) error {
+	userID := msg.UserID
+	if mapped, err := e.store.GetUserIDByChannel(ctx, e.channelName, msg.UserID); err == nil {
+		userID = mapped
+	} else {
+		_ = e.store.MapChannelUser(ctx, e.channelName, msg.UserID, userID)
+	}
+	msg.UserID = userID
+	if len(msg.ChannelMeta) > 0 {
+		_ = e.store.UpsertChatRoute(ctx, msg.UserID, e.channelName, msg.ChannelMeta)
+	}
+	if err := e.store.UpsertUser(ctx, types.User{ID: msg.UserID, Timezone: e.loc.String(), CreatedAt: e.now().UTC()}); err != nil {
+		return fmt.Errorf("pipeline: upsert user: %w", err)
+	}
+	return nil
+}
+
+// dispatchCommand reports whether the message matched a registered command.
+func (e *Engine) dispatchCommand(ctx context.Context, msg types.InboundMessage, text string) (bool, error) {
+	if e.registry == nil {
+		return false, nil
+	}
+	locale := e.resolveLocale(ctx, msg)
+	reply, matched, err := e.registry.Dispatch(ctx, msg, text)
+	if err != nil {
+		return true, fmt.Errorf("pipeline: command dispatch: %w", err)
+	}
+	if !matched {
+		return false, nil
+	}
+	if reply.Locale == "" {
+		reply.Locale = locale
+	}
+	if reply.ChannelMeta == nil {
+		reply.ChannelMeta = msg.ChannelMeta
+	}
+	reply.UserID = msg.UserID
+	if len(reply.ChannelMeta) == 0 {
+		return true, nil
+	}
+	return true, e.replier.Send(ctx, reply)
+}
+
+func (e *Engine) handleMeal(ctx context.Context, msg types.InboundMessage, text string, at time.Time) error {
 
 	// A live pending meal turns the next message into a clarification answer.
 	if pm, err := e.pending.Get(ctx, msg.UserID); err == nil {
