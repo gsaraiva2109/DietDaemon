@@ -189,6 +189,24 @@ func locationParams(t *testing.T, rec *httptest.ResponseRecorder) url.Values {
 	return u.Query()
 }
 
+// oidcHandler wires a Handler to authStore with provider registered under
+// "known" — the common setup shared by every handleOIDCCallback
+// characterization test below.
+func oidcHandler(authStore *fakeAuthStore, provider *oidc.Provider) *Handler {
+	h := buildAuthSecurityHandler(authStore)
+	h.providers["known"] = provider
+	return h
+}
+
+// doOIDCCallback sends the fixed matching-state callback request to h and
+// returns the recorder for the caller to assert on.
+func doOIDCCallback(h *Handler) *httptest.ResponseRecorder {
+	req := oidcCallbackRequest("known", "matching-state")
+	rec := httptest.NewRecorder()
+	h.handleOIDCCallback(rec, req)
+	return rec
+}
+
 // --- CSRF / state handling ---
 
 func TestHandleOIDCCallbackCSRFMismatch(t *testing.T) {
@@ -210,12 +228,8 @@ func TestHandleOIDCCallbackCSRFMismatch(t *testing.T) {
 func TestHandleOIDCCallbackConsumeStateFails(t *testing.T) {
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = errors.New("state expired")
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = &oidc.Provider{ID: "known"}
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, &oidc.Provider{ID: "known"})
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "invalid_state" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=invalid_state", rec.Code, rec.Header().Get("Location"))
@@ -231,12 +245,8 @@ func TestHandleOIDCCallbackExchangeFailure(t *testing.T) {
 
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "provider_error" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=provider_error", rec.Code, rec.Header().Get("Location"))
@@ -249,12 +259,8 @@ func TestHandleOIDCCallbackMissingIDToken(t *testing.T) {
 
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "provider_error" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=provider_error", rec.Code, rec.Header().Get("Location"))
@@ -272,12 +278,8 @@ func TestHandleOIDCCallbackUserInfoBackfill(t *testing.T) {
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "" {
 		t.Fatalf("status/location = %d/%q, want success redirect", rec.Code, rec.Header().Get("Location"))
@@ -299,12 +301,8 @@ func TestHandleOIDCCallbackTrustEmailOverride(t *testing.T) {
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(true) // TrustEmail
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(true)) // TrustEmail
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "" {
 		t.Fatalf("status/location = %d/%q, want success redirect (TrustEmail should allow an unverified email)", rec.Code, rec.Header().Get("Location"))
@@ -324,13 +322,9 @@ func TestHandleOIDCCallbackLinkSuccess(t *testing.T) {
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
 	authStore.oidcStateLinkUserID = "linked-user-id"
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
+	h := oidcHandler(authStore, idp.provider(false))
 	h.store.(*fakeMealStore).user = types.User{ID: "linked-user-id", AccountID: "acct-1"}
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
@@ -352,12 +346,8 @@ func TestHandleOIDCCallbackLinkIdentityConflict(t *testing.T) {
 	authStore.oidcStateNonce = "test-nonce"
 	authStore.oidcStateLinkUserID = "linked-user-id"
 	authStore.linkOIDCIdentityErr = types.ErrIdentityLinked
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "already_linked" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=already_linked", rec.Code, rec.Header().Get("Location"))
@@ -373,12 +363,8 @@ func TestHandleOIDCCallbackLinkInternalError(t *testing.T) {
 	authStore.oidcStateNonce = "test-nonce"
 	authStore.oidcStateLinkUserID = "linked-user-id"
 	authStore.linkOIDCIdentityErr = errors.New("db unavailable")
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "internal_error" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=internal_error", rec.Code, rec.Header().Get("Location"))
@@ -397,12 +383,8 @@ func TestHandleOIDCCallbackSignInExistingIdentityMatch(t *testing.T) {
 	authStore.oidcIdentities = map[string]types.User{
 		"known|existing-sub": {ID: "existing-user-id", AccountID: "acct-2", Email: "existing@example.com"},
 	}
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
@@ -423,12 +405,8 @@ func TestHandleOIDCCallbackSignInAutoLinkByVerifiedEmail(t *testing.T) {
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
 	authStore.userByEmail["autolink@example.com"] = types.User{ID: "user-x", AccountID: "acct-3", Email: "autolink@example.com"}
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "" {
 		t.Fatalf("status/location = %d/%q, want success redirect", rec.Code, rec.Header().Get("Location"))
@@ -448,13 +426,8 @@ func TestHandleOIDCCallbackSignInNewUserRegistrationOpen(t *testing.T) {
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
-	h := buildAuthSecurityHandler(authStore) // userCount=0, single-user, RegistrationOpen => allowed
-
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false)) // userCount=0, single-user, RegistrationOpen => allowed
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "" {
 		t.Fatalf("status/location = %d/%q, want success redirect", rec.Code, rec.Header().Get("Location"))
@@ -472,12 +445,8 @@ func TestHandleOIDCCallbackSignInRejectedRegistrationClosed(t *testing.T) {
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
 	authStore.userCount = 1 // single-user mode already has a user => registration closed
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "registration_closed" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=registration_closed", rec.Code, rec.Header().Get("Location"))
@@ -491,12 +460,8 @@ func TestHandleOIDCCallbackSignInRejectedEmailUnverified(t *testing.T) {
 	authStore := newFakeAuthStore()
 	authStore.consumeOIDCStateErr = nil
 	authStore.oidcStateNonce = "test-nonce"
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false) // no TrustEmail
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false)) // no TrustEmail
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "email_unverified" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=email_unverified", rec.Code, rec.Header().Get("Location"))
@@ -516,12 +481,8 @@ func TestHandleOIDCCallbackSessionCreationFailure(t *testing.T) {
 		"known|existing-sub": {ID: "existing-user-id", AccountID: "acct-2", Email: "existing@example.com"},
 	}
 	authStore.createSessionErr = errors.New("db write failed")
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "internal_error" {
 		t.Fatalf("status/location = %d/%q, want 302 with error=internal_error", rec.Code, rec.Header().Get("Location"))
@@ -539,12 +500,8 @@ func TestHandleOIDCCallbackNextRedirectPassthrough(t *testing.T) {
 	authStore.oidcIdentities = map[string]types.User{
 		"known|existing-sub": {ID: "existing-user-id", AccountID: "acct-2", Email: "existing@example.com"},
 	}
-	h := buildAuthSecurityHandler(authStore)
-	h.providers["known"] = idp.provider(false)
-
-	req := oidcCallbackRequest("known", "matching-state")
-	rec := httptest.NewRecorder()
-	h.handleOIDCCallback(rec, req)
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)

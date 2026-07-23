@@ -121,9 +121,22 @@ func (s *emailTestAuthStore) DeleteEmailTokensByUserAndPurpose(_ context.Context
 	return nil
 }
 
-func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler {
+// authTestStore is the interface both emailTestAuthStore and magicTestAuthStore
+// satisfy: AuthStore plus everything else WithAuth needs from a single value.
+type authTestStore interface {
+	AuthStore
+	auth.SessionRepo
+	auth.LoginAttemptRepo
+	auth.TOTPRepo
+	auth.MFAChallengeRepo
+	auth.RecoveryCodeRepo
+}
+
+// buildAuthTestHandler wires up a Handler against a test auth store with the
+// shared config used by both the email and magic-link/passwordless tests.
+func buildAuthTestHandler(authStore authTestStore, user types.User, m mailer.Mailer) *Handler {
 	store := newFakeMealStore()
-	store.user = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
+	store.user = user
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
 		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
@@ -138,6 +151,11 @@ func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler 
 		WithMailer(m, "none"),
 		WithPublicBaseURL("http://localhost:8080"),
 	)
+}
+
+func buildEmailHandler(authStore *emailTestAuthStore, m mailer.Mailer) *Handler {
+	user := types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
+	return buildAuthTestHandler(authStore, user, m)
 }
 
 func TestEmailVerifySuccess(t *testing.T) {

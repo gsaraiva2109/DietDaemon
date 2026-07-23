@@ -2264,13 +2264,20 @@ func TestGoalSuggestionsNoProfile(t *testing.T) {
 // Data export
 // ---------------------------------------------------------------------------
 
-func TestExportMealsJSON(t *testing.T) {
+// newExportMealsFixture builds a fakeMealStore seeded with one meal in range,
+// wired into a Handler — the fixture shared by the export/meals JSON and CSV
+// characterization tests below.
+func newExportMealsFixture() *Handler {
 	store := newFakeMealStore()
 	store.mealsInRange = []types.Meal{
 		{ID: "m1", UserID: "test-user", RawText: "200g chicken",
 			Items: []types.ResolvedItem{{Macros: types.Macros{Calories: 330, Protein: 62}}}},
 	}
-	h := newHandler(store, &fakeMealLogger{})
+	return newHandler(store, &fakeMealLogger{})
+}
+
+func TestExportMealsJSON(t *testing.T) {
+	h := newExportMealsFixture()
 
 	rec := doRequest(h, "GET", "/api/v1/export/meals?start=2026-06-01&end=2026-06-17", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -2279,12 +2286,7 @@ func TestExportMealsJSON(t *testing.T) {
 }
 
 func TestExportMealsCSV(t *testing.T) {
-	store := newFakeMealStore()
-	store.mealsInRange = []types.Meal{
-		{ID: "m1", UserID: "test-user", RawText: "200g chicken",
-			Items: []types.ResolvedItem{{Macros: types.Macros{Calories: 330, Protein: 62}}}},
-	}
-	h := newHandler(store, &fakeMealLogger{})
+	h := newExportMealsFixture()
 
 	rec := doRequest(h, "GET", "/api/v1/export/meals?start=2026-06-01&end=2026-06-17&format=csv", nil, nil)
 	if rec.Code != http.StatusOK {
