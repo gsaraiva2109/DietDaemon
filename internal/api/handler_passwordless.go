@@ -117,102 +117,14 @@ func (h *Handler) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
+		writeMagicVerifyUnauthorized(w)
 		return
 	}
 
 	ctx := r.Context()
-
-	var userID string
-	var u types.User
-	var loadErr error
-
-	if body.Token != "" {
-		// Token path — consume the link token.
-		hashed := auth.HashToken(body.Token)
-		userID, loadErr = h.authStore.ConsumeEmailToken(ctx, hashed, "magic_link")
-		if loadErr != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-		u, loadErr = h.store.GetUser(ctx, userID)
-		if loadErr != nil {
-			h.writeErr(w, loadErr)
-			return
-		}
-		// Consume sibling code on success.
-		_ = h.authStore.DeleteMagicCode(ctx, userID)
-	} else {
-		// Code path.
-		email := strings.ToLower(strings.TrimSpace(body.Email))
-		if email == "" || body.Code == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-
-		// Per-email lockout for verify attempts.
-		key := "magicverify:" + email
-		locked, retryAfter, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, h.lockoutCfg)
-		if lockErr == nil && locked {
-			_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
-			return
-		}
-
-		u, loadErr = h.authStore.GetUserByEmail(ctx, email)
-		if loadErr != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-		userID = u.ID
-
-		codeHash, expiresAt, attempts, err := h.authStore.GetMagicCode(ctx, userID)
-		if err != nil {
-			_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-
-		// Check expiry.
-		exp, parseErr := time.Parse(time.RFC3339, expiresAt)
-		if parseErr != nil || time.Now().UTC().After(exp) {
-			_ = h.authStore.DeleteMagicCode(ctx, userID)
-			_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-
-		// Check attempt cap (5 max).
-		if attempts >= 5 {
-			_ = h.authStore.DeleteMagicCode(ctx, userID)
-			_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-
-		// Constant-time compare.
-		gotHash := auth.HashToken(body.Code)
-		if subtle.ConstantTimeCompare([]byte(gotHash), []byte(codeHash)) != 1 {
-			_ = h.authStore.IncrementMagicCodeAttempts(ctx, userID)
-			_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
-			return
-		}
-
-		// Consume code + sibling link tokens on success.
-		_ = h.authStore.DeleteMagicCode(ctx, userID)
-		// Delete any pending magic_link tokens for this user.
-		_ = h.authStore.DeleteEmailTokensByUserAndPurpose(ctx, userID, "magic_link")
+	u, userID, ok := h.verifyMagicCredentials(w, r, body.Email, body.Code, body.Token)
+	if !ok {
+		return
 	}
 
 	ua := r.UserAgent()
@@ -247,6 +159,85 @@ func (h *Handler) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 	h.writeAudit(ctx, u.AccountID, userID, "user.magic_login", ip, ua, "")
 
 	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
+}
+
+func (h *Handler) verifyMagicCredentials(w http.ResponseWriter, r *http.Request, email, code, token string) (types.User, string, bool) {
+	if token != "" {
+		return h.verifyMagicToken(w, r, token)
+	}
+	return h.verifyMagicCode(w, r, email, code)
+}
+
+func (h *Handler) verifyMagicToken(w http.ResponseWriter, r *http.Request, token string) (types.User, string, bool) {
+	ctx := r.Context()
+	userID, err := h.authStore.ConsumeEmailToken(ctx, auth.HashToken(token), "magic_link")
+	if err != nil {
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+	u, err := h.store.GetUser(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return types.User{}, "", false
+	}
+	_ = h.authStore.DeleteMagicCode(ctx, userID)
+	return u, userID, true
+}
+
+func (h *Handler) verifyMagicCode(w http.ResponseWriter, r *http.Request, email, code string) (types.User, string, bool) {
+	ctx := r.Context()
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || code == "" {
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+
+	key := "magicverify:" + email
+	locked, retryAfter, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, h.lockoutCfg)
+	if lockErr == nil && locked {
+		_ = h.authStore.RecordLoginAttempt(ctx, key, false)
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+		return types.User{}, "", false
+	}
+
+	u, err := h.authStore.GetUserByEmail(ctx, email)
+	if err != nil {
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+
+	codeHash, expiresAt, attempts, err := h.authStore.GetMagicCode(ctx, u.ID)
+	if err != nil {
+		_ = h.authStore.RecordLoginAttempt(ctx, key, false)
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+
+	expires, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil || time.Now().UTC().After(expires) || attempts >= 5 {
+		_ = h.authStore.DeleteMagicCode(ctx, u.ID)
+		_ = h.authStore.RecordLoginAttempt(ctx, key, false)
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+
+	if subtle.ConstantTimeCompare([]byte(auth.HashToken(code)), []byte(codeHash)) != 1 {
+		_ = h.authStore.IncrementMagicCodeAttempts(ctx, u.ID)
+		_ = h.authStore.RecordLoginAttempt(ctx, key, false)
+		writeMagicVerifyUnauthorized(w)
+		return types.User{}, "", false
+	}
+
+	_ = h.authStore.DeleteMagicCode(ctx, u.ID)
+	_ = h.authStore.DeleteEmailTokensByUserAndPurpose(ctx, u.ID, "magic_link")
+	return u, u.ID, true
+}
+
+func writeMagicVerifyUnauthorized(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
 }
 
 // generateMagicCode returns a 6-digit code using crypto/rand.
