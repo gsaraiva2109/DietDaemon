@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0-alpha.4](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.3...v0.2.0-alpha.4) (2026-07-23)
+
+
+### Features
+
+* **api:** add admin endpoints to trigger food-import/repair/backfill ([#148](https://github.com/gsaraiva2109/DietDaemon/issues/148)) ([b8111c5](https://github.com/gsaraiva2109/DietDaemon/commit/b8111c5651aef6a96244db7dd4ab098dd3e94378))
+* **config:** add LoadMinimal for CLI tools that don't need daemon validation ([#147](https://github.com/gsaraiva2109/DietDaemon/issues/147)) ([8209e8a](https://github.com/gsaraiva2109/DietDaemon/commit/8209e8a3d4bb4da0190fe267665c19909c9ca926))
+* **config:** move operational constants into config system ([#145](https://github.com/gsaraiva2109/DietDaemon/issues/145)) ([01fcd9c](https://github.com/gsaraiva2109/DietDaemon/commit/01fcd9c694449507f3242a0fd62a18f0110e2f6b))
+* **targets:** add configurable water_goal_ml to daily targets ([#146](https://github.com/gsaraiva2109/DietDaemon/issues/146)) ([8ec2c1f](https://github.com/gsaraiva2109/DietDaemon/commit/8ec2c1f1ba4714c32d925bfd25bfaefd185b0145))
+
+
+### Fixes
+
+* **http:** harden API and dashboard boundaries ([#141](https://github.com/gsaraiva2109/DietDaemon/issues/141)) ([ea78fe7](https://github.com/gsaraiva2109/DietDaemon/commit/ea78fe779af0c3b0612d8bd995f1068c86ac93eb))
+* **meals:** resolve template prefix leak, missing macro totals, share PNG corners ([#153](https://github.com/gsaraiva2109/DietDaemon/issues/153)) ([67b0b2b](https://github.com/gsaraiva2109/DietDaemon/commit/67b0b2b010e934be086215bd45dca66d7da903db)), closes [#137](https://github.com/gsaraiva2109/DietDaemon/issues/137)
+* **sonarqube:** match projectKey to renamed SonarQube project key ([#157](https://github.com/gsaraiva2109/DietDaemon/issues/157)) ([ea4ba7d](https://github.com/gsaraiva2109/DietDaemon/commit/ea4ba7d55f0bc3258b31a0d4b58061c60abdb745))
+* **store:** compute meal and water rollup dates in user's local timezone ([#151](https://github.com/gsaraiva2109/DietDaemon/issues/151)) ([6fed99a](https://github.com/gsaraiva2109/DietDaemon/commit/6fed99a42f295e9c78ef6fdbf0cc135dcf81f924)), closes [#143](https://github.com/gsaraiva2109/DietDaemon/issues/143)
+
+
+### Security
+
+* **http:** harden server and auth failures ([#139](https://github.com/gsaraiva2109/DietDaemon/issues/139)) ([b3f5fbf](https://github.com/gsaraiva2109/DietDaemon/commit/b3f5fbfb16dd2c1c1a1d682076c29fd96b839166))
+
 ## [0.2.0-alpha.3](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.2...v0.2.0-alpha.3) (2026-07-18)
 
 
