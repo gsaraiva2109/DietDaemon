@@ -239,95 +239,11 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	// OpenAI streams tool calls incrementally: first chunk carries id+name,
-	// subsequent chunks carry arguments fragments. Accumulate per-index.
-	type pendingTool struct {
-		id   string
-		name string
-		args strings.Builder
-	}
 	pending := make(map[int]*pendingTool)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-
-		// Terminal sentinel.
-		if data == "[DONE]" {
-			// Flush any incomplete tool calls.
-			for _, pt := range pending {
-				if !sendEvent(ctx, ch, ports.ChatEvent{
-					Kind: "tool-call",
-					ToolCall: &ports.ToolCallEvent{
-						ID:   pt.id,
-						Name: pt.name,
-						Args: extractArgs(pt.args.String()),
-					},
-				}) {
-					return
-				}
-			}
-			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		if !handleStreamLine(ctx, ch, scanner.Text(), &pending) {
 			return
-		}
-
-		var sr openaiStreamResponse
-		if err := json.Unmarshal([]byte(data), &sr); err != nil {
-			continue
-		}
-		if len(sr.Choices) == 0 {
-			continue
-		}
-
-		choice := sr.Choices[0]
-		delta := choice.Delta
-
-		// Text delta.
-		if delta.Content != "" {
-			if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: delta.Content}) {
-				return
-			}
-		}
-
-		// Tool call deltas (incremental).
-		for _, tc := range delta.ToolCalls {
-			pt := pending[tc.Index]
-			if pt == nil {
-				pt = &pendingTool{id: tc.ID, name: tc.Function.Name}
-				pending[tc.Index] = pt
-			}
-			// Update id/name if present (first chunk for this tool call).
-			if tc.ID != "" {
-				pt.id = tc.ID
-			}
-			if tc.Function.Name != "" {
-				pt.name = tc.Function.Name
-			}
-			pt.args.WriteString(tc.Function.Arguments)
-		}
-
-		// Finish reason: "stop" (normal), "tool_calls" (tools requested),
-		// "length", "content_filter". Flush pending tool calls on any
-		// terminal finish.
-		if choice.FinishReason != "" {
-			for _, pt := range pending {
-				if !sendEvent(ctx, ch, ports.ChatEvent{
-					Kind: "tool-call",
-					ToolCall: &ports.ToolCallEvent{
-						ID:   pt.id,
-						Name: pt.name,
-						Args: extractArgs(pt.args.String()),
-					},
-				}) {
-					return
-				}
-			}
-			pending = make(map[int]*pendingTool)
 		}
 	}
 
@@ -337,6 +253,81 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 			Err:  fmt.Errorf("openai chat: read stream: %w", err),
 		})
 	}
+}
+
+// pendingTool accumulates OpenAI's incremental tool-call data by stream index.
+type pendingTool struct {
+	id   string
+	name string
+	args strings.Builder
+}
+
+func handleStreamLine(ctx context.Context, ch chan<- ports.ChatEvent, line string, pending *map[int]*pendingTool) bool {
+	if !strings.HasPrefix(line, "data: ") {
+		return true
+	}
+	data := strings.TrimPrefix(line, "data: ")
+	if data == "[DONE]" {
+		if !flushPendingTools(ctx, ch, *pending) {
+			return false
+		}
+		sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		return false
+	}
+
+	var sr openaiStreamResponse
+	if err := json.Unmarshal([]byte(data), &sr); err != nil || len(sr.Choices) == 0 {
+		return true
+	}
+	return handleStreamChoice(ctx, ch, sr.Choices[0], pending)
+}
+
+func handleStreamChoice(ctx context.Context, ch chan<- ports.ChatEvent, choice openaiStreamChoice, pending *map[int]*pendingTool) bool {
+	if choice.Delta.Content != "" && !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: choice.Delta.Content}) {
+		return false
+	}
+	appendToolCallDeltas(*pending, choice.Delta.ToolCalls)
+	if choice.FinishReason == "" {
+		return true
+	}
+	if !flushPendingTools(ctx, ch, *pending) {
+		return false
+	}
+	*pending = make(map[int]*pendingTool)
+	return true
+}
+
+func appendToolCallDeltas(pending map[int]*pendingTool, calls []openaiToolCallDelta) {
+	for _, call := range calls {
+		tool := pending[call.Index]
+		if tool == nil {
+			tool = &pendingTool{}
+			pending[call.Index] = tool
+		}
+		if call.ID != "" {
+			tool.id = call.ID
+		}
+		if call.Function.Name != "" {
+			tool.name = call.Function.Name
+		}
+		tool.args.WriteString(call.Function.Arguments)
+	}
+}
+
+func flushPendingTools(ctx context.Context, ch chan<- ports.ChatEvent, pending map[int]*pendingTool) bool {
+	for _, tool := range pending {
+		if !sendEvent(ctx, ch, ports.ChatEvent{
+			Kind: "tool-call",
+			ToolCall: &ports.ToolCallEvent{
+				ID:   tool.id,
+				Name: tool.name,
+				Args: extractArgs(tool.args.String()),
+			},
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 // extractArgs tries to parse {"args": "..."} from accumulated tool-call arguments.
