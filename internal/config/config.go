@@ -471,177 +471,238 @@ func (c *Config) validateMinimal() error {
 // so the operator can fix them in a single pass.
 func (c *Config) validate(tierErr error) error {
 	var problems []string
-	add := func(format string, args ...any) {
-		problems = append(problems, fmt.Sprintf(format, args...))
-	}
 
 	if tierErr != nil {
-		add("PARSER_TIER: %v", tierErr)
+		addProblem(&problems, "PARSER_TIER: %v", tierErr)
 	}
 
+	c.validateMessaging(&problems)
+	c.validateNutrition(&problems)
+	c.validateFoodImport(&problems)
+	c.validateAdapters(&problems)
+	c.validateNotifications(&problems)
+	c.validateThresholds(&problems)
+	c.validateDatabase(&problems)
+	c.validateAuth(&problems)
+	c.validateOIDC(&problems)
+	c.validateWebAuthn(&problems)
+	c.validateEmail(&problems)
+	c.validateOperational(&problems)
+
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+	return nil
+}
+
+func addProblem(problems *[]string, format string, args ...any) {
+	*problems = append(*problems, fmt.Sprintf(format, args...))
+}
+
+func (c *Config) validateMessaging(problems *[]string) {
 	if c.MessagingAdapter == "" {
-		add("MESSAGING_ADAPTER is required")
+		addProblem(problems, "MESSAGING_ADAPTER is required")
 	}
 	if c.MessagingAdapter == "telegram" && c.TelegramBotToken == "" {
-		add("TELEGRAM_BOT_TOKEN is required when MESSAGING_ADAPTER=telegram")
+		addProblem(problems, "TELEGRAM_BOT_TOKEN is required when MESSAGING_ADAPTER=telegram")
 	}
 	if c.MessagingAdapter == "discord" && c.DiscordBotToken == "" {
-		add("DISCORD_BOT_TOKEN is required when MESSAGING_ADAPTER=discord")
+		addProblem(problems, "DISCORD_BOT_TOKEN is required when MESSAGING_ADAPTER=discord")
 	}
 	if c.MessagingAdapter == "matrix" {
 		if c.MatrixHomeserverURL == "" {
-			add("MATRIX_HOMESERVER_URL is required when MESSAGING_ADAPTER=matrix")
+			addProblem(problems, "MATRIX_HOMESERVER_URL is required when MESSAGING_ADAPTER=matrix")
 		}
 		if c.MatrixUserID == "" {
-			add("MATRIX_USER_ID is required when MESSAGING_ADAPTER=matrix")
+			addProblem(problems, "MATRIX_USER_ID is required when MESSAGING_ADAPTER=matrix")
 		}
 		if c.MatrixToken == "" {
-			add("MATRIX_TOKEN is required when MESSAGING_ADAPTER=matrix")
+			addProblem(problems, "MATRIX_TOKEN is required when MESSAGING_ADAPTER=matrix")
 		}
 	}
-
 	if c.EnableSTT && c.WhisperURL == "" {
-		add("WHISPER_URL is required when ENABLE_STT=true")
+		addProblem(problems, "WHISPER_URL is required when ENABLE_STT=true")
 	}
+}
 
+func (c *Config) validateNutrition(problems *[]string) {
 	if len(c.NutritionSources) == 0 {
-		add("NUTRITION_SOURCE must list at least one source")
+		addProblem(problems, "NUTRITION_SOURCE must list at least one source")
 	}
 	if contains(c.NutritionSources, "usda") && c.USDAFDCAPIKey == "" {
-		add("USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE")
+		addProblem(problems, "USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE")
 	}
 	if contains(c.NutritionSources, "taco") && c.TacoDataPath != "" {
 		if _, err := os.Stat(c.TacoDataPath); err != nil {
-			add("TACO_DATA_PATH %q not found: %v", c.TacoDataPath, err)
+			addProblem(problems, "TACO_DATA_PATH %q not found: %v", c.TacoDataPath, err)
 		}
 	}
+}
 
-	if c.FoodImportEnabled {
-		if len(c.FoodImportSources) == 0 {
-			add("FOOD_IMPORT_SOURCES must list at least one source when FOOD_IMPORT_ENABLED=true")
-		}
-		if contains(c.FoodImportSources, "usda") && c.USDAFDCAPIKey == "" {
-			add("USDA_FDC_API_KEY is required when 'usda' is in FOOD_IMPORT_SOURCES")
-		}
-		if c.USDABulkFile != "" {
-			if _, err := os.Stat(c.USDABulkFile); err != nil {
-				add("USDA_BULK_FILE %q not found: %v", c.USDABulkFile, err)
-			}
-		}
-		if c.OFFBulkFile != "" {
-			if _, err := os.Stat(c.OFFBulkFile); err != nil {
-				add("OFF_BULK_FILE %q not found: %v", c.OFFBulkFile, err)
-			}
-		}
+func (c *Config) validateFoodImport(problems *[]string) {
+	if !c.FoodImportEnabled {
+		return
 	}
+	if len(c.FoodImportSources) == 0 {
+		addProblem(problems, "FOOD_IMPORT_SOURCES must list at least one source when FOOD_IMPORT_ENABLED=true")
+	}
+	if contains(c.FoodImportSources, "usda") && c.USDAFDCAPIKey == "" {
+		addProblem(problems, "USDA_FDC_API_KEY is required when 'usda' is in FOOD_IMPORT_SOURCES")
+	}
+	validateBulkFile(problems, "USDA_BULK_FILE", c.USDABulkFile)
+	validateBulkFile(problems, "OFF_BULK_FILE", c.OFFBulkFile)
+}
 
-	if c.EmbedAdapter == "" {
-		add("EMBED_ADAPTER is required")
-	} else if c.EmbedAdapter != "ollama" {
-		add("EMBED_ADAPTER must be \"ollama\" (no other adapter offers embeddings), got %q", c.EmbedAdapter)
+func validateBulkFile(problems *[]string, key, path string) {
+	if path == "" {
+		return
 	}
+	if _, err := os.Stat(path); err != nil {
+		addProblem(problems, "%s %q not found: %v", key, path, err)
+	}
+}
+
+func (c *Config) validateAdapters(problems *[]string) {
+	c.validateEmbedAdapter(problems)
 	validCompletion := map[string]bool{"ollama": true, "anthropic": true, "openai": true}
+	c.validateCompletionAdapter(problems, validCompletion)
+	c.validateOCRAdapter(problems, validCompletion)
+	if c.ParserTier > types.TierDeterministic && c.OllamaURL == "" {
+		addProblem(problems, "OLLAMA_URL is required when PARSER_TIER > 0")
+	}
+}
+
+func (c *Config) validateEmbedAdapter(problems *[]string) {
+	if c.EmbedAdapter == "" {
+		addProblem(problems, "EMBED_ADAPTER is required")
+	} else if c.EmbedAdapter != "ollama" {
+		addProblem(problems, "EMBED_ADAPTER must be \"ollama\" (no other adapter offers embeddings), got %q", c.EmbedAdapter)
+	}
+}
+
+func (c *Config) validateCompletionAdapter(problems *[]string, validCompletion map[string]bool) {
 	if c.CompletionAdapter == "" {
-		add("COMPLETION_ADAPTER is required")
+		addProblem(problems, "COMPLETION_ADAPTER is required")
 	} else if !validCompletion[c.CompletionAdapter] {
-		add("COMPLETION_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.CompletionAdapter)
+		addProblem(problems, "COMPLETION_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.CompletionAdapter)
 	}
 	if c.CompletionAdapter == "anthropic" && c.AnthropicAPIKey == "" {
-		add("ANTHROPIC_API_KEY is required when COMPLETION_ADAPTER=anthropic")
+		addProblem(problems, "ANTHROPIC_API_KEY is required when COMPLETION_ADAPTER=anthropic")
 	}
 	if c.CompletionAdapter == "openai" && c.OpenAIBaseURL == "" {
-		add("OPENAI_BASE_URL is required when COMPLETION_ADAPTER=openai")
+		addProblem(problems, "OPENAI_BASE_URL is required when COMPLETION_ADAPTER=openai")
 	}
+}
 
+func (c *Config) validateOCRAdapter(problems *[]string, validCompletion map[string]bool) {
 	// OCR_ADAPTER is opt-in: only validated when set, and left unset means
 	// the "Scan label" feature is disabled rather than an error.
 	if c.OCRAdapter != "" {
 		if !validCompletion[c.OCRAdapter] {
-			add("OCR_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.OCRAdapter)
+			addProblem(problems, "OCR_ADAPTER must be one of: ollama, anthropic, openai, got %q", c.OCRAdapter)
 		}
 		if c.OCRAdapter == "anthropic" && c.AnthropicAPIKey == "" {
-			add("ANTHROPIC_API_KEY is required when OCR_ADAPTER=anthropic")
+			addProblem(problems, "ANTHROPIC_API_KEY is required when OCR_ADAPTER=anthropic")
 		}
 		if c.OCRAdapter == "openai" && c.OpenAIBaseURL == "" {
-			add("OPENAI_BASE_URL is required when OCR_ADAPTER=openai")
+			addProblem(problems, "OPENAI_BASE_URL is required when OCR_ADAPTER=openai")
 		}
 		if c.OCRAdapter == "ollama" && c.OllamaURL == "" {
-			add("OLLAMA_URL is required when OCR_ADAPTER=ollama")
+			addProblem(problems, "OLLAMA_URL is required when OCR_ADAPTER=ollama")
 		}
 	}
+}
 
-	if c.ParserTier > types.TierDeterministic && c.OllamaURL == "" {
-		add("OLLAMA_URL is required when PARSER_TIER > 0")
+func (c *Config) validateNotifications(problems *[]string) {
+	if !c.EnableNotifications {
+		return
 	}
-
-	if c.EnableNotifications {
-		if c.Notifier == "" {
-			add("NOTIFIER is required when ENABLE_NOTIFICATIONS=true")
+	if c.Notifier == "" {
+		addProblem(problems, "NOTIFIER is required when ENABLE_NOTIFICATIONS=true")
+	}
+	if c.Notifier == "ntfy" {
+		if c.NtfyURL == "" {
+			addProblem(problems, "NTFY_URL is required when NOTIFIER=ntfy")
 		}
-		if c.Notifier == "ntfy" {
-			if c.NtfyURL == "" {
-				add("NTFY_URL is required when NOTIFIER=ntfy")
-			}
-			if c.NtfyTopic == "" {
-				add("NTFY_TOPIC is required when NOTIFIER=ntfy")
-			}
-		}
-		if c.Notifier == "gotify" {
-			if c.GotifyURL == "" {
-				add("GOTIFY_URL is required when NOTIFIER=gotify")
-			}
-			if c.GotifyToken == "" {
-				add("GOTIFY_TOKEN is required when NOTIFIER=gotify")
-			}
+		if c.NtfyTopic == "" {
+			addProblem(problems, "NTFY_TOPIC is required when NOTIFIER=ntfy")
 		}
 	}
+	if c.Notifier == "gotify" {
+		if c.GotifyURL == "" {
+			addProblem(problems, "GOTIFY_URL is required when NOTIFIER=gotify")
+		}
+		if c.GotifyToken == "" {
+			addProblem(problems, "GOTIFY_TOKEN is required when NOTIFIER=gotify")
+		}
+	}
+}
 
+func (c *Config) validateThresholds(problems *[]string) {
 	if c.EmbedMatchThreshold <= 0 || c.EmbedMatchThreshold > 1 {
-		add("EMBED_MATCH_THRESHOLD must be between 0 and 1")
+		addProblem(problems, "EMBED_MATCH_THRESHOLD must be between 0 and 1")
 	}
 	if c.AliasWriteBackThreshold <= 0 || c.AliasWriteBackThreshold > 1 {
-		add("ALIAS_WRITE_BACK_THRESHOLD must be between 0 and 1")
+		addProblem(problems, "ALIAS_WRITE_BACK_THRESHOLD must be between 0 and 1")
 	}
+}
 
+func (c *Config) validateDatabase(problems *[]string) {
 	if c.DBPath == "" {
-		add("DB_PATH is required")
+		addProblem(problems, "DB_PATH is required")
 	}
-
 	if loc, err := time.LoadLocation(c.DefaultTimezone); err != nil {
-		add("DEFAULT_TIMEZONE %q is not a valid IANA timezone: %v", c.DefaultTimezone, err)
+		addProblem(problems, "DEFAULT_TIMEZONE %q is not a valid IANA timezone: %v", c.DefaultTimezone, err)
 	} else {
 		c.Location = loc
 	}
+}
 
-	// Core auth settings.
+func (c *Config) validateAuth(problems *[]string) {
+	c.validateDBDriver(problems)
+	c.validateAuthSettings(problems)
+	c.validateTrustedProxies(problems)
+	c.validateRateLimits(problems)
+	c.validateCORSOrigins(problems)
+}
+
+func (c *Config) validateDBDriver(problems *[]string) {
 	switch c.DBDriver {
 	case "sqlite":
-		// DB_PATH already validated above.
 	case "postgres":
 		if c.DatabaseURL == "" {
-			add("DATABASE_URL is required when DB_DRIVER=postgres")
+			addProblem(problems, "DATABASE_URL is required when DB_DRIVER=postgres")
 		}
 	default:
-		add("DB_DRIVER must be \"sqlite\" or \"postgres\", got %q", c.DBDriver)
+		addProblem(problems, "DB_DRIVER must be \"sqlite\" or \"postgres\", got %q", c.DBDriver)
 	}
+}
+
+func (c *Config) validateAuthSettings(problems *[]string) {
 	validModes := map[string]bool{"invite": true, "open": true, "oidc-only": true}
 	if !validModes[c.RegistrationMode] {
-		add("AUTH_REGISTRATION_MODE must be one of: invite, open, oidc-only, got %q", c.RegistrationMode)
+		addProblem(problems, "AUTH_REGISTRATION_MODE must be one of: invite, open, oidc-only, got %q", c.RegistrationMode)
 	}
 	if c.SessionIdleTTL <= 0 {
-		add("SESSION_IDLE_TTL must be positive")
+		addProblem(problems, "SESSION_IDLE_TTL must be positive")
 	}
 	if c.SessionAbsoluteTTL <= 0 {
-		add("SESSION_ABSOLUTE_TTL must be positive")
+		addProblem(problems, "SESSION_ABSOLUTE_TTL must be positive")
 	}
 	if c.SessionRememberTTL <= 0 {
-		add("SESSION_REMEMBER_TTL must be positive")
+		addProblem(problems, "SESSION_REMEMBER_TTL must be positive")
 	}
+}
+
+func (c *Config) validateTrustedProxies(problems *[]string) {
 	for _, raw := range c.TrustedProxies {
 		if _, err := parseProxyEntry(raw); err != nil {
-			add("TRUSTED_PROXIES entry %q is not a valid IP or CIDR: %v", raw, err)
+			addProblem(problems, "TRUSTED_PROXIES entry %q is not a valid IP or CIDR: %v", raw, err)
 		}
 	}
+}
+
+func (c *Config) validateRateLimits(problems *[]string) {
 	for _, limit := range []struct {
 		name  string
 		value int
@@ -652,102 +713,105 @@ func (c *Config) validate(tierErr error) error {
 		{"AUTH_EXPENSIVE_RATE_LIMIT_PER_MINUTE", c.AuthenticatedExpensiveRateLimitPerMinute},
 	} {
 		if limit.value <= 0 {
-			add("%s must be positive", limit.name)
+			addProblem(problems, "%s must be positive", limit.name)
 		}
 	}
+}
+
+func (c *Config) validateCORSOrigins(problems *[]string) {
 	for _, raw := range c.CORSAllowedOrigins {
 		u, err := url.ParseRequestURI(raw)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.String() != raw {
-			add("CORS_ALLOWED_ORIGINS entry %q is not an exact http(s) origin", raw)
+			addProblem(problems, "CORS_ALLOWED_ORIGINS entry %q is not an exact http(s) origin", raw)
 		}
 	}
+}
 
-	// OIDC settings.
+func (c *Config) validateOIDC(problems *[]string) {
 	if len(c.OIDCProviders) > 0 && c.PublicBaseURL == "" {
-		add("PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set")
+		addProblem(problems, "PUBLIC_BASE_URL is required when OIDC_PROVIDERS is set")
 	}
 	for _, prov := range c.OIDCProviders {
 		canon := strings.ToUpper(prov.ID)
 		if prov.Issuer == "" {
-			add("OIDC_%s_ISSUER is required", canon)
+			addProblem(problems, "OIDC_%s_ISSUER is required", canon)
 		}
 		if prov.ClientID == "" {
-			add("OIDC_%s_CLIENT_ID is required", canon)
+			addProblem(problems, "OIDC_%s_CLIENT_ID is required", canon)
 		}
 		if prov.ClientSecret == "" {
-			add("OIDC_%s_CLIENT_SECRET is required", canon)
+			addProblem(problems, "OIDC_%s_CLIENT_SECRET is required", canon)
 		}
 	}
 	if c.RegistrationMode == "oidc-only" && len(c.OIDCProviders) == 0 {
-		add("AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
+		addProblem(problems, "AUTH_REGISTRATION_MODE is \"oidc-only\" but no OIDC_PROVIDERS configured")
 	}
+}
 
-	// WebAuthn / passkey settings.
-	if c.WebAuthnRPID != "" {
-		if len(c.WebAuthnRPOrigins) == 0 {
-			add("WEBAUTHN_RP_ORIGINS is required when WEBAUTHN_RP_ID is set")
-		}
-		for _, origin := range c.WebAuthnRPOrigins {
-			if u, err := url.Parse(origin); err != nil || u.Scheme == "" || u.Host == "" {
-				add("WEBAUTHN_RP_ORIGINS entry %q is not a valid URL", origin)
-			}
-		}
-		if c.WebAuthnRPDisplayName == "" {
-			add("WEBAUTHN_RP_DISPLAY_NAME is required when WEBAUTHN_RP_ID is set")
+func (c *Config) validateWebAuthn(problems *[]string) {
+	if c.WebAuthnRPID == "" {
+		return
+	}
+	if len(c.WebAuthnRPOrigins) == 0 {
+		addProblem(problems, "WEBAUTHN_RP_ORIGINS is required when WEBAUTHN_RP_ID is set")
+	}
+	for _, origin := range c.WebAuthnRPOrigins {
+		if u, err := url.Parse(origin); err != nil || u.Scheme == "" || u.Host == "" {
+			addProblem(problems, "WEBAUTHN_RP_ORIGINS entry %q is not a valid URL", origin)
 		}
 	}
+	if c.WebAuthnRPDisplayName == "" {
+		addProblem(problems, "WEBAUTHN_RP_DISPLAY_NAME is required when WEBAUTHN_RP_ID is set")
+	}
+}
 
-	// Mailer / email settings.
+func (c *Config) validateEmail(problems *[]string) {
 	validProviders := map[string]bool{"resend": true, "ses": true, "smtp": true, "none": true, "": true}
 	if !validProviders[c.EmailProvider] {
-		add("EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got %q", c.EmailProvider)
+		addProblem(problems, "EMAIL_PROVIDER must be one of: resend, ses, smtp, none, got %q", c.EmailProvider)
 	}
 	if c.EmailProvider != "none" && c.EmailProvider != "" {
 		if c.EmailFrom == "" {
-			add("EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"")
+			addProblem(problems, "EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"")
 		}
 		if c.PublicBaseURL == "" {
-			add("PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\" (to build verification/reset links)")
+			addProblem(problems, "PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\" (to build verification/reset links)")
 		}
 	}
 	if c.EmailProvider == "resend" && c.ResendAPIKey == "" {
-		add("RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
+		addProblem(problems, "RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
 	}
 	if c.EmailProvider == "smtp" {
 		if c.SMTPHost == "" {
-			add("SMTP_HOST is required when EMAIL_PROVIDER=smtp")
+			addProblem(problems, "SMTP_HOST is required when EMAIL_PROVIDER=smtp")
 		}
 		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
-			add("SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
+			addProblem(problems, "SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
 		}
 	}
+}
 
-	// Operational settings.
+func (c *Config) validateOperational(problems *[]string) {
 	if c.Port == "" {
-		add("PORT is required")
+		addProblem(problems, "PORT is required")
 	} else if port, err := strconv.Atoi(c.Port); err != nil || port < 1 || port > 65535 {
-		add("PORT must be an integer between 1 and 65535, got %q", c.Port)
+		addProblem(problems, "PORT must be an integer between 1 and 65535, got %q", c.Port)
 	}
 	if c.HealthCheckPath == "" {
-		add("HEALTH_CHECK_PATH is required")
+		addProblem(problems, "HEALTH_CHECK_PATH is required")
 	}
 	if c.ConfidenceThreshold <= 0 || c.ConfidenceThreshold > 1 {
-		add("CONFIDENCE_THRESHOLD must be between 0 and 1")
+		addProblem(problems, "CONFIDENCE_THRESHOLD must be between 0 and 1")
 	}
 	if c.NudgeInterval <= 0 {
-		add("NUDGE_INTERVAL must be positive")
+		addProblem(problems, "NUDGE_INTERVAL must be positive")
 	}
 	if c.PendingTTL <= 0 {
-		add("PENDING_TTL must be positive")
+		addProblem(problems, "PENDING_TTL must be positive")
 	}
 	if c.MessageWorkers < 1 {
-		add("MESSAGE_WORKERS must be at least 1")
+		addProblem(problems, "MESSAGE_WORKERS must be at least 1")
 	}
-
-	if len(problems) > 0 {
-		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
-	}
-	return nil
 }
 
 func parseTier(s string) (types.ParserTier, error) {
