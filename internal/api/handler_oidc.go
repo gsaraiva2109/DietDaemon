@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 	"golang.org/x/oauth2"
 )
 
@@ -93,28 +95,71 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider-reported error.
-	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		slog.Warn("oidc provider returned error", "provider", provID,
-			"error", errParam, "description", r.URL.Query().Get("error_description"))
+	if h.oidcProviderReportedError(w, r, provID) {
+		return
+	}
+
+	code, nonce, pkceVer, linkUserID, nxt, ok := h.oidcCallbackState(w, r)
+	if !ok {
+		return
+	}
+
+	callback := oidcCallbackContext{ctx: r.Context(), ip: h.clientIP(r), ua: r.UserAgent()}
+	identity, ok := h.oidcIdentity(callback.ctx, prov, provID, code, pkceVer, nonce)
+	if !ok {
 		h.redirectAuthCallback(w, r, "provider_error", "")
 		return
 	}
 
-	code := r.URL.Query().Get("code")
-	qsState := r.URL.Query().Get("state")
-	if code == "" || qsState == "" {
-		h.redirectAuthCallback(w, r, "invalid_state", "")
+	if linkUserID != "" {
+		h.linkOIDCIdentity(w, r, callback, linkUserID, provID, identity)
 		return
 	}
 
-	// Read state cookie.
-	ck, err := r.Cookie("dd_oidc_state")
-	if err != nil || ck.Value == "" {
-		h.redirectAuthCallback(w, r, "invalid_state", "")
+	u, errCode := h.oidcUser(callback.ctx, provID, identity, callback.ip, callback.ua)
+	if errCode != "" {
+		h.redirectAuthCallback(w, r, errCode, "")
 		return
 	}
-	cookieState := ck.Value
+	h.finishOIDCLogin(w, r, callback, u, provID, nxt)
+}
+
+type oidcCallbackContext struct {
+	ctx context.Context
+	ip  string
+	ua  string
+}
+
+type oidcIdentity struct {
+	subject       string
+	email         string
+	emailVerified bool
+	displayName   string
+}
+
+func (h *Handler) oidcProviderReportedError(w http.ResponseWriter, r *http.Request, provID string) bool {
+	errParam := r.URL.Query().Get("error")
+	if errParam == "" {
+		return false
+	}
+	slog.Warn("oidc provider returned error", "provider", provID,
+		"error", errParam, "description", r.URL.Query().Get("error_description"))
+	h.redirectAuthCallback(w, r, "provider_error", "")
+	return true
+}
+
+func (h *Handler) oidcCallbackState(w http.ResponseWriter, r *http.Request) (code, nonce, pkceVer, linkUserID, nxt string, ok bool) {
+	code, queryState := r.URL.Query().Get("code"), r.URL.Query().Get("state")
+	if code == "" || queryState == "" {
+		h.redirectAuthCallback(w, r, "invalid_state", "")
+		return "", "", "", "", "", false
+	}
+
+	cookie, err := r.Cookie("dd_oidc_state")
+	if err != nil || cookie.Value == "" {
+		h.redirectAuthCallback(w, r, "invalid_state", "")
+		return "", "", "", "", "", false
+	}
 
 	// Clear the state cookie immediately.
 	// #nosec G124 — Secure is config-driven.
@@ -122,163 +167,151 @@ func (h *Handler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Name: "dd_oidc_state", Path: "/api/v1/auth/oidc/", MaxAge: -1,
 		Secure: h.cookieSecure, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
-
-	// Constant-time comparison of query state vs cookie state (CSRF token).
-	if subtle.ConstantTimeCompare([]byte(qsState), []byte(cookieState)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(queryState), []byte(cookie.Value)) != 1 {
 		h.redirectAuthCallback(w, r, "invalid_state", "")
-		return
+		return "", "", "", "", "", false
 	}
 
-	stateID := auth.HashToken(cookieState)
-	ctx := r.Context()
-
-	nonce, pkceVer, linkUserID, nxt, err := h.authStore.ConsumeOIDCState(ctx, stateID)
+	nonce, pkceVer, linkUserID, nxt, err = h.authStore.ConsumeOIDCState(r.Context(), auth.HashToken(cookie.Value))
 	if err != nil {
 		h.redirectAuthCallback(w, r, "invalid_state", "")
-		return
+		return "", "", "", "", "", false
 	}
+	return code, nonce, pkceVer, linkUserID, nxt, true
+}
 
-	// Exchange authorization code.
+func (h *Handler) oidcIdentity(ctx context.Context, prov *oidc.Provider, provID, code, pkceVer, nonce string) (oidcIdentity, bool) {
 	tok, err := prov.Exchange(ctx, code, pkceVer)
 	if err != nil {
 		slog.Warn("oidc code exchange failed", "provider", provID, "err", err)
-		h.redirectAuthCallback(w, r, "provider_error", "")
-		return
+		return oidcIdentity{}, false
 	}
 
-	// Verify ID token.
 	rawIDToken, ok := tok.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
 		slog.Warn("oidc token missing id_token", "provider", provID)
-		h.redirectAuthCallback(w, r, "provider_error", "")
-		return
+		return oidcIdentity{}, false
 	}
 
 	claims, err := prov.VerifyIDToken(ctx, rawIDToken, nonce)
 	if err != nil {
 		slog.Warn("oidc id_token verify failed", "provider", provID, "err", err)
-		h.redirectAuthCallback(w, r, "provider_error", "")
-		return
+		return oidcIdentity{}, false
 	}
-
-	// Some providers (e.g. Authentik) return email/profile only from the
-	// UserInfo endpoint, not in the ID token. Backfill when the ID token lacks a
-	// verified email so account creation / email auto-link still works.
 	if claims.Email == "" || !claims.EmailVerified || claims.Name == "" {
-		if ui, uiErr := prov.UserInfo(ctx, tok); uiErr == nil {
-			if claims.Email == "" {
-				claims.Email = ui.Email
-			}
-			if !claims.EmailVerified {
-				claims.EmailVerified = ui.EmailVerified
-			}
-			if claims.Name == "" {
-				claims.Name = ui.Name
-			}
-		} else {
-			slog.Warn("oidc userinfo backfill failed", "provider", provID, "err", uiErr)
-		}
+		h.backfillOIDCClaims(ctx, prov, provID, tok, &claims)
 	}
 
-	subject := claims.Subject
-	email := strings.ToLower(strings.TrimSpace(claims.Email))
-	emailVerified := claims.EmailVerified
-	displayName := strings.TrimSpace(claims.Name)
-
-	// Operator opted to trust this provider's email (OIDC_<id>_TRUST_EMAIL):
-	// a non-empty address counts as verified even when the IdP omits the
-	// email_verified claim. Appropriate for self-hosted IdPs the operator owns.
-	if !emailVerified && email != "" && prov.TrustEmail {
-		emailVerified = true
+	identity := oidcIdentity{
+		subject:       claims.Subject,
+		email:         strings.ToLower(strings.TrimSpace(claims.Email)),
+		emailVerified: claims.EmailVerified,
+		displayName:   strings.TrimSpace(claims.Name),
 	}
+	if !identity.emailVerified && identity.email != "" && prov.TrustEmail {
+		identity.emailVerified = true
+	}
+	return identity, true
+}
 
-	ip := h.clientIP(r)
-	ua := r.UserAgent()
-
-	// --- Link flow ---
-	if linkUserID != "" {
-		identityID := newHandlerID()
-		err := h.authStore.LinkOIDCIdentity(ctx, identityID, linkUserID, provID, subject, email)
-		if errors.Is(err, types.ErrIdentityLinked) {
-			h.redirectAuthCallback(w, r, "already_linked", "")
-			return
-		}
-		if err != nil {
-			h.redirectAuthCallback(w, r, "internal_error", "")
-			return
-		}
-
-		u, _ := h.store.GetUser(ctx, linkUserID)
-		h.writeAudit(ctx, u.AccountID, linkUserID, "oidc.linked", ip, ua, provID+":"+subject)
-		h.redirectAuthCallback(w, r, "", "link=1")
+func (h *Handler) backfillOIDCClaims(ctx context.Context, prov *oidc.Provider, provID string, tok *oauth2.Token, claims *oidc.IDTokenClaims) {
+	ui, err := prov.UserInfo(ctx, tok)
+	if err != nil {
+		slog.Warn("oidc userinfo backfill failed", "provider", provID, "err", err)
 		return
 	}
+	if claims.Email == "" {
+		claims.Email = ui.Email
+	}
+	if !claims.EmailVerified {
+		claims.EmailVerified = ui.EmailVerified
+	}
+	if claims.Name == "" {
+		claims.Name = ui.Name
+	}
+}
 
-	// --- Sign-in flow ---
-	var u types.User
-
-	// 1. Match existing identity, then try auto-link by verified email.
-	u, err = h.authStore.GetUserByOIDCIdentity(ctx, provID, subject)
-	if err != nil && !errors.Is(err, types.ErrNotFound) {
-		h.redirectAuthCallback(w, r, "internal_error", "")
+func (h *Handler) linkOIDCIdentity(w http.ResponseWriter, r *http.Request, callback oidcCallbackContext, userID, provID string, identity oidcIdentity) {
+	err := h.authStore.LinkOIDCIdentity(callback.ctx, newHandlerID(), userID, provID, identity.subject, identity.email)
+	if errors.Is(err, types.ErrIdentityLinked) {
+		h.redirectAuthCallback(w, r, "already_linked", "")
 		return
 	}
 	if err != nil {
-		// Identity not found — try auto-link by verified email.
-		if emailVerified && email != "" {
-			u, err = h.authStore.GetUserByEmail(ctx, email)
-			if err == nil {
-				identityID := newHandlerID()
-				if linkErr := h.authStore.LinkOIDCIdentity(ctx, identityID, u.ID, provID, subject, email); linkErr != nil && !errors.Is(linkErr, types.ErrIdentityLinked) {
-					h.redirectAuthCallback(w, r, "internal_error", "")
-					return
-				}
-				h.writeAudit(ctx, u.AccountID, u.ID, "oidc.linked", ip, ua, provID+":"+subject)
-			}
-		}
-	}
-
-	if u.ID == "" {
-		// No existing user — registration/multi-user gate.
-		allowed, err := h.registrationAllowed(ctx, true)
-		if err != nil || !allowed {
-			h.redirectAuthCallback(w, r, "registration_closed", "")
-			return
-		}
-
-		if !emailVerified || email == "" {
-			slog.Warn("oidc account creation blocked: email unverified/missing",
-				"provider", provID, "has_email", email != "", "email_verified", emailVerified)
-			h.redirectAuthCallback(w, r, "email_unverified", "")
-			return
-		}
-
-		accountID := newHandlerID()
-		userID := newHandlerID()
-		identityID := newHandlerID()
-		if displayName == "" {
-			displayName = email
-		}
-
-		u, err = h.authStore.CreateUserWithOIDC(ctx, accountID, userID, email, displayName, identityID, provID, subject)
-		if err != nil {
-			h.redirectAuthCallback(w, r, "internal_error", "")
-			return
-		}
-		h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, "oidc:"+provID)
-	}
-
-	// Create session + set cookies.
-	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, false, ip, ua, h.sessionCfg)
-	h.setSessionCookies(w, cookieTok, csrfTok, false)
-	if err := h.sessions.CreateSession(ctx, sess); err != nil {
 		h.redirectAuthCallback(w, r, "internal_error", "")
 		return
 	}
 
-	h.writeAudit(ctx, u.AccountID, u.ID, "oidc.login", ip, ua, provID)
+	u, _ := h.store.GetUser(callback.ctx, userID)
+	h.writeAudit(callback.ctx, u.AccountID, userID, "oidc.linked", callback.ip, callback.ua, provID+":"+identity.subject)
+	h.redirectAuthCallback(w, r, "", "link=1")
+}
 
-	// Build redirect to frontend /auth/callback.
+func (h *Handler) oidcUser(ctx context.Context, provID string, identity oidcIdentity, ip, ua string) (types.User, string) {
+	u, err := h.authStore.GetUserByOIDCIdentity(ctx, provID, identity.subject)
+	if err == nil {
+		return u, ""
+	}
+	if !errors.Is(err, types.ErrNotFound) {
+		return types.User{}, "internal_error"
+	}
+
+	u, errCode := h.autoLinkOIDCIdentity(ctx, u, provID, identity, ip, ua)
+	if errCode != "" || u.ID != "" {
+		return u, errCode
+	}
+	return h.registerOIDCUser(ctx, provID, identity, ip, ua)
+}
+
+func (h *Handler) autoLinkOIDCIdentity(ctx context.Context, current types.User, provID string, identity oidcIdentity, ip, ua string) (types.User, string) {
+	if !identity.emailVerified || identity.email == "" {
+		return current, ""
+	}
+
+	u, err := h.authStore.GetUserByEmail(ctx, identity.email)
+	if err != nil {
+		return current, ""
+	}
+	if err := h.authStore.LinkOIDCIdentity(ctx, newHandlerID(), u.ID, provID, identity.subject, identity.email); err != nil && !errors.Is(err, types.ErrIdentityLinked) {
+		return types.User{}, "internal_error"
+	}
+	h.writeAudit(ctx, u.AccountID, u.ID, "oidc.linked", ip, ua, provID+":"+identity.subject)
+	return u, ""
+}
+
+func (h *Handler) registerOIDCUser(ctx context.Context, provID string, identity oidcIdentity, ip, ua string) (types.User, string) {
+	allowed, err := h.registrationAllowed(ctx, true)
+	if err != nil || !allowed {
+		return types.User{}, "registration_closed"
+	}
+	if !identity.emailVerified || identity.email == "" {
+		slog.Warn("oidc account creation blocked: email unverified/missing",
+			"provider", provID, "has_email", identity.email != "", "email_verified", identity.emailVerified)
+		return types.User{}, "email_unverified"
+	}
+
+	displayName := identity.displayName
+	if displayName == "" {
+		displayName = identity.email
+	}
+	accountID := newHandlerID()
+	u, err := h.authStore.CreateUserWithOIDC(ctx, accountID, newHandlerID(), identity.email, displayName, newHandlerID(), provID, identity.subject)
+	if err != nil {
+		return types.User{}, "internal_error"
+	}
+	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, "oidc:"+provID)
+	return u, ""
+}
+
+func (h *Handler) finishOIDCLogin(w http.ResponseWriter, r *http.Request, callback oidcCallbackContext, u types.User, provID, nxt string) {
+	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, false, callback.ip, callback.ua, h.sessionCfg)
+	h.setSessionCookies(w, cookieTok, csrfTok, false)
+	if err := h.sessions.CreateSession(callback.ctx, sess); err != nil {
+		h.redirectAuthCallback(w, r, "internal_error", "")
+		return
+	}
+	h.writeAudit(callback.ctx, u.AccountID, u.ID, "oidc.login", callback.ip, callback.ua, provID)
+
 	params := url.Values{}
 	if nxt != "" {
 		params.Set("next", nxt)
