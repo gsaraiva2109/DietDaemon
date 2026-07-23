@@ -94,113 +94,82 @@ func (r *Router) loop(ctx context.Context, out chan<- ports.ChatEvent, userID, s
 	messages = append(messages, ports.ChatMessage{Role: "user", Content: userMessage})
 
 	for range maxToolRounds {
-		req := ports.ChatRequest{
-			System:   systemPrompt,
-			Messages: messages,
-			Tools:    r.tools,
-		}
-
-		events, err := r.adapter.StreamChat(ctx, req)
-		if err != nil {
-			sendOut(ctx, out, ports.ChatEvent{Kind: "error", Err: fmt.Errorf("assistant: stream: %w", err)})
+		if !r.runRound(ctx, out, userID, systemPrompt, &messages) {
 			return
 		}
-
-		var (
-			textBuf   strings.Builder
-			toolCalls []ports.ToolCallEvent
-		)
-
-		for evt := range events {
-			switch evt.Kind {
-			case "text-delta":
-				textBuf.WriteString(evt.Text)
-				if !sendOut(ctx, out, evt) { // forward in real-time
-					return
-				}
-
-			case "tool-call":
-				toolCalls = append(toolCalls, *evt.ToolCall)
-				if !sendOut(ctx, out, evt) { // forward to client
-					return
-				}
-
-			case "done":
-				// Append accumulated assistant turn (text and/or tool_use
-				// blocks) to history. ToolCalls must be preserved even when
-				// there's no text — providers require the tool_use block
-				// that a tool_result answers to still be present in history.
-				if textBuf.Len() > 0 || len(toolCalls) > 0 {
-					messages = append(messages, ports.ChatMessage{
-						Role:      "assistant",
-						Content:   textBuf.String(),
-						ToolCalls: toolCalls,
-					})
-				}
-
-				// Execute any tool calls from this round.
-				if len(toolCalls) > 0 {
-					for _, tc := range toolCalls {
-						reply := r.executeCommand(ctx, userID, tc)
-						if !sendOut(ctx, out, ports.ChatEvent{
-							Kind: "tool-result",
-							ToolCall: &ports.ToolCallEvent{
-								ID:   tc.ID,
-								Name: tc.Name,
-								Args: reply,
-							},
-						}) {
-							return
-						}
-						messages = append(messages, ports.ChatMessage{
-							Role:       "tool",
-							Content:    reply,
-							ToolCallID: tc.ID,
-							ToolName:   tc.Name,
-						})
-					}
-					// Continue to next round (tool results may prompt more text).
-					goto nextRound
-				}
-
-				// No tools — conversation complete.
-				// Extract model-native suggestions before forwarding the done
-				// event, so the frontend receives them before "done".
-				if cleaned, suggestions := ExtractSuggestions(textBuf.String()); len(suggestions) > 0 {
-					if !sendOut(ctx, out, ports.ChatEvent{Kind: "suggestions", Suggestions: suggestions}) {
-						return
-					}
-					// Persist cleaned text (without the fenced block) so the
-					// wire-protocol artifact doesn't reappear in history replays.
-					// The text-delta events already streamed the raw block to the
-					// client mid-turn; the frontend strips it visually, and the
-					// handler persists the cleaned version below via the done event.
-					_ = cleaned
-				}
-				sendOut(ctx, out, evt) // forward done event
-				return
-
-			case "error":
-				sendOut(ctx, out, evt)
-				return
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-		}
-
-		// If we reached here, the event channel closed without a done event.
-		// Exit the loop.
-		return
-
-	nextRound:
 	}
 
 	// Exceeded max tool rounds.
 	sendOut(ctx, out, ports.ChatEvent{Kind: "error", Err: ErrMaxToolRounds})
+}
+
+// runRound streams one model response. It returns true only when tool results
+// were produced and another model round is needed.
+func (r *Router) runRound(ctx context.Context, out chan<- ports.ChatEvent, userID, systemPrompt string, messages *[]ports.ChatMessage) bool {
+	req := ports.ChatRequest{System: systemPrompt, Messages: *messages, Tools: r.tools}
+	events, err := r.adapter.StreamChat(ctx, req)
+	if err != nil {
+		sendOut(ctx, out, ports.ChatEvent{Kind: "error", Err: fmt.Errorf("assistant: stream: %w", err)})
+		return false
+	}
+
+	var textBuf strings.Builder
+	var toolCalls []ports.ToolCallEvent
+	for evt := range events {
+		switch evt.Kind {
+		case "text-delta":
+			textBuf.WriteString(evt.Text)
+			if !sendOut(ctx, out, evt) {
+				return false
+			}
+		case "tool-call":
+			toolCalls = append(toolCalls, *evt.ToolCall)
+			if !sendOut(ctx, out, evt) {
+				return false
+			}
+		case "done":
+			return r.finishRound(ctx, out, userID, messages, textBuf.String(), toolCalls, evt)
+		case "error":
+			sendOut(ctx, out, evt)
+			return false
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+	}
+	return false
+}
+
+func (r *Router) finishRound(ctx context.Context, out chan<- ports.ChatEvent, userID string, messages *[]ports.ChatMessage, text string, toolCalls []ports.ToolCallEvent, done ports.ChatEvent) bool {
+	if text != "" || len(toolCalls) > 0 {
+		*messages = append(*messages, ports.ChatMessage{Role: "assistant", Content: text, ToolCalls: toolCalls})
+	}
+	if len(toolCalls) > 0 {
+		return r.sendToolResults(ctx, out, userID, messages, toolCalls)
+	}
+	if !sendSuggestions(ctx, out, text) {
+		return false
+	}
+	sendOut(ctx, out, done)
+	return false
+}
+
+func (r *Router) sendToolResults(ctx context.Context, out chan<- ports.ChatEvent, userID string, messages *[]ports.ChatMessage, toolCalls []ports.ToolCallEvent) bool {
+	for _, tc := range toolCalls {
+		reply := r.executeCommand(ctx, userID, tc)
+		if !sendOut(ctx, out, ports.ChatEvent{Kind: "tool-result", ToolCall: &ports.ToolCallEvent{ID: tc.ID, Name: tc.Name, Args: reply}}) {
+			return false
+		}
+		*messages = append(*messages, ports.ChatMessage{Role: "tool", Content: reply, ToolCallID: tc.ID, ToolName: tc.Name})
+	}
+	return true
+}
+
+// sendSuggestions forwards model-native suggestions before the terminal done
+// event so the frontend can render them with the completed assistant turn.
+func sendSuggestions(ctx context.Context, out chan<- ports.ChatEvent, text string) bool {
+	_, suggestions := ExtractSuggestions(text)
+	return len(suggestions) == 0 || sendOut(ctx, out, ports.ChatEvent{Kind: "suggestions", Suggestions: suggestions})
 }
 
 // executeCommand looks up a command by name and calls its Handle method.
