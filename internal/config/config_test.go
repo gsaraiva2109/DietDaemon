@@ -60,6 +60,59 @@ func validBase() map[string]string {
 	}
 }
 
+// assertLoadErr sets env and asserts Load() fails with an error containing
+// wantSubstr. Shared by sibling validation-branch tests that otherwise repeat
+// the same setEnv/Load/Contains/Fatalf boilerplate for each case.
+func assertLoadErr(t *testing.T, env map[string]string, wantSubstr string) {
+	t.Helper()
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), wantSubstr) {
+		t.Fatalf("expected error containing %q, got %v", wantSubstr, err)
+	}
+}
+
+// assertLoadOK sets env and asserts Load() succeeds, returning the config.
+func assertLoadOK(t *testing.T, env map[string]string) *Config {
+	t.Helper()
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return c
+}
+
+// assertBulkFileMustExist asserts that pointing envKey at a nonexistent path
+// fails Load() with a "not found" error, and that pointing it at a real file
+// succeeds and populates the field read by getField. Shared by the USDA and
+// OFF bulk-file tests, which are otherwise identical apart from the env key,
+// file name, and field being checked.
+func assertBulkFileMustExist(t *testing.T, env map[string]string, envKey string, getField func(*Config) string) {
+	t.Helper()
+	env[envKey] = filepath.Join(t.TempDir(), "missing.csv")
+	setEnv(t, env)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), envKey) || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected %s not-found error, got %v", envKey, err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bulk.csv")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	env[envKey] = path
+	setEnv(t, env)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if getField(c) != path {
+		t.Errorf("%s = %q, want %q", envKey, getField(c), path)
+	}
+}
+
 func TestLoadValid(t *testing.T) {
 	setEnv(t, validBase())
 	c, err := Load()
@@ -698,54 +751,14 @@ func TestFoodImportUSDABulkFileMustExist(t *testing.T) {
 	env := validBase()
 	env["FOOD_IMPORT_ENABLED"] = "true"
 	env["FOOD_IMPORT_SOURCES"] = "openfoodfacts"
-	env["USDA_BULK_FILE"] = filepath.Join(t.TempDir(), "missing.csv")
-	setEnv(t, env)
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "USDA_BULK_FILE") || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("expected USDA_BULK_FILE not-found error, got %v", err)
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "usda-bulk.csv")
-	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	env["USDA_BULK_FILE"] = path
-	setEnv(t, env)
-	c, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if c.USDABulkFile != path {
-		t.Errorf("USDABulkFile = %q, want %q", c.USDABulkFile, path)
-	}
+	assertBulkFileMustExist(t, env, "USDA_BULK_FILE", func(c *Config) string { return c.USDABulkFile })
 }
 
 func TestFoodImportOFFBulkFileMustExist(t *testing.T) {
 	env := validBase()
 	env["FOOD_IMPORT_ENABLED"] = "true"
 	env["FOOD_IMPORT_SOURCES"] = "openfoodfacts"
-	env["OFF_BULK_FILE"] = filepath.Join(t.TempDir(), "missing.csv")
-	setEnv(t, env)
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "OFF_BULK_FILE") || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("expected OFF_BULK_FILE not-found error, got %v", err)
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "off-bulk.csv")
-	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	env["OFF_BULK_FILE"] = path
-	setEnv(t, env)
-	c, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if c.OFFBulkFile != path {
-		t.Errorf("OFFBulkFile = %q, want %q", c.OFFBulkFile, path)
-	}
+	assertBulkFileMustExist(t, env, "OFF_BULK_FILE", func(c *Config) string { return c.OFFBulkFile })
 }
 
 // --- Notifier=gotify ---
@@ -755,25 +768,13 @@ func TestNotifierGotifyRequiresURLAndToken(t *testing.T) {
 	env["NOTIFIER"] = "gotify"
 	env["NTFY_URL"] = ""
 	env["NTFY_TOPIC"] = ""
-	setEnv(t, env)
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "GOTIFY_URL is required when NOTIFIER=gotify") {
-		t.Fatalf("expected GOTIFY_URL error, got %v", err)
-	}
+	assertLoadErr(t, env, "GOTIFY_URL is required when NOTIFIER=gotify")
 
 	env["GOTIFY_URL"] = "https://gotify.example.com"
-	setEnv(t, env)
-	_, err = Load()
-	if err == nil || !strings.Contains(err.Error(), "GOTIFY_TOKEN is required when NOTIFIER=gotify") {
-		t.Fatalf("expected GOTIFY_TOKEN error, got %v", err)
-	}
+	assertLoadErr(t, env, "GOTIFY_TOKEN is required when NOTIFIER=gotify")
 
 	env["GOTIFY_TOKEN"] = "gotify-token"
-	setEnv(t, env)
-	c, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	c := assertLoadOK(t, env)
 	if c.GotifyURL != "https://gotify.example.com" || c.GotifyToken != "gotify-token" {
 		t.Errorf("Gotify fields = %q/%q", c.GotifyURL, c.GotifyToken)
 	}
@@ -939,18 +940,10 @@ func TestEmailProviderRequiresFromAndPublicBaseURL(t *testing.T) {
 			env["EMAIL_PROVIDER"] = provider
 			env["RESEND_API_KEY"] = "resend-key"
 			env["SMTP_HOST"] = "smtp.example.com"
-			setEnv(t, env)
-			_, err := Load()
-			if err == nil || !strings.Contains(err.Error(), "EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"") {
-				t.Fatalf("expected EMAIL_FROM error, got %v", err)
-			}
+			assertLoadErr(t, env, "EMAIL_FROM is required when EMAIL_PROVIDER is not \"none\"")
 
 			env["EMAIL_FROM"] = "noreply@example.com"
-			setEnv(t, env)
-			_, err = Load()
-			if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\"") {
-				t.Fatalf("expected PUBLIC_BASE_URL error, got %v", err)
-			}
+			assertLoadErr(t, env, "PUBLIC_BASE_URL is required when EMAIL_PROVIDER is not \"none\"")
 		})
 	}
 }
@@ -997,33 +990,17 @@ func TestEmailProviderSMTPRequiresHostAndValidPort(t *testing.T) {
 	env["EMAIL_PROVIDER"] = "smtp"
 	env["EMAIL_FROM"] = "noreply@example.com"
 	env["PUBLIC_BASE_URL"] = "https://app.example.com"
-	setEnv(t, env)
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "SMTP_HOST is required when EMAIL_PROVIDER=smtp") {
-		t.Fatalf("expected SMTP_HOST error, got %v", err)
-	}
+	assertLoadErr(t, env, "SMTP_HOST is required when EMAIL_PROVIDER=smtp")
 
 	env["SMTP_HOST"] = "smtp.example.com"
 	env["SMTP_PORT"] = "0"
-	setEnv(t, env)
-	_, err = Load()
-	if err == nil || !strings.Contains(err.Error(), "SMTP_PORT must be between 1 and 65535, got 0") {
-		t.Fatalf("expected SMTP_PORT (too low) error, got %v", err)
-	}
+	assertLoadErr(t, env, "SMTP_PORT must be between 1 and 65535, got 0")
 
 	env["SMTP_PORT"] = "70000"
-	setEnv(t, env)
-	_, err = Load()
-	if err == nil || !strings.Contains(err.Error(), "SMTP_PORT must be between 1 and 65535, got 70000") {
-		t.Fatalf("expected SMTP_PORT (too high) error, got %v", err)
-	}
+	assertLoadErr(t, env, "SMTP_PORT must be between 1 and 65535, got 70000")
 
 	env["SMTP_PORT"] = "2525"
-	setEnv(t, env)
-	c, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	c := assertLoadOK(t, env)
 	if c.SMTPHost != "smtp.example.com" || c.SMTPPort != 2525 {
 		t.Errorf("SMTPHost/SMTPPort = %q/%d", c.SMTPHost, c.SMTPPort)
 	}

@@ -238,7 +238,11 @@ func TestClarificationPortionCompletesMeal(t *testing.T) {
 	}
 }
 
-func TestClarificationEachMultipliesByQuantity(t *testing.T) {
+// newPendingEggsCase builds an engine primed to ask for an eggs portion
+// clarification, then sends the initial "2 eggs" message that parks it in
+// pending state. Callers continue with the clarification answer.
+func newPendingEggsCase(t *testing.T) (*Engine, *fakeStore, *fakeReplier, context.Context) {
+	t.Helper()
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	e := New(
@@ -248,6 +252,11 @@ func TestClarificationEachMultipliesByQuantity(t *testing.T) {
 	)
 	ctx := context.Background()
 	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}})
+	return e, st, rp, ctx
+}
+
+func TestClarificationEachMultipliesByQuantity(t *testing.T) {
+	e, st, _, ctx := newPendingEggsCase(t)
 	// "50g each" × 2 eggs = 100g → 155 kcal.
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "50g each", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
@@ -258,15 +267,7 @@ func TestClarificationEachMultipliesByQuantity(t *testing.T) {
 }
 
 func TestClarificationCancelDiscards(t *testing.T) {
-	st := newFakeStore()
-	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
-		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
-	ctx := context.Background()
-	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}})
+	e, st, rp, ctx := newPendingEggsCase(t)
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "cancel", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -471,22 +472,59 @@ func (f fakeTranscriber) Transcribe(context.Context, []byte) (string, string, er
 	return f.text, f.locale, f.err
 }
 
-func TestSTTNilTranscriberRejectsAudio(t *testing.T) {
+// sttFailureCase builds an engine with no parseable food and the given
+// transcriber (nil disables STT entirely), sends an audio message carrying
+// audio, and returns the store/replier for the caller to assert against.
+func sttFailureCase(t *testing.T, tc Transcriber, audio string) (*fakeStore, *fakeReplier) {
+	t.Helper()
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	e := New(
 		fakeParser{}, fakeResolver{},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil, // transcriber = nil
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
 	)
 	msg := types.InboundMessage{
 		UserID:      "u1",
 		Kind:        types.MessageAudio,
-		Audio:       []byte("fake-audio"),
+		Audio:       []byte(audio),
 		ChannelMeta: map[string]string{"chat_id": "42"},
 	}
 	if err := e.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
+	return st, rp
+}
+
+// sttSuccessCase builds an engine with a resolved food item and a successful
+// transcriber, sends an audio message timestamped at, and asserts exactly
+// one meal was saved.
+func sttSuccessCase(t *testing.T, parsed []types.ParsedItem, out []types.ResolvedItem, tc fakeTranscriber, at time.Time) (*fakeStore, *fakeReplier) {
+	t.Helper()
+	st := newFakeStore()
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: parsed, conf: 0.95},
+		fakeResolver{out: out},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	)
+	msg := types.InboundMessage{
+		UserID:      "u1",
+		Kind:        types.MessageAudio,
+		Audio:       []byte("fake-audio"),
+		At:          at,
+		ChannelMeta: map[string]string{"chat_id": "42"},
+	}
+	if err := e.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if len(st.meals) != 1 {
+		t.Fatalf("expected 1 meal saved, got %d", len(st.meals))
+	}
+	return st, rp
+}
+
+func TestSTTNilTranscriberRejectsAudio(t *testing.T) {
+	st, rp := sttFailureCase(t, nil, "fake-audio") // transcriber = nil
 	if len(rp.sent) != 1 {
 		t.Fatalf("expected 1 reply, got %d", len(rp.sent))
 	}
@@ -499,27 +537,12 @@ func TestSTTNilTranscriberRejectsAudio(t *testing.T) {
 }
 
 func TestSTTTranscribeSuccess(t *testing.T) {
-	st := newFakeStore()
-	rp := &fakeReplier{}
 	tc := fakeTranscriber{text: "200g chicken", locale: "en"}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	st, rp := sttSuccessCase(t,
+		[]types.ParsedItem{{RawPhrase: "chicken"}},
+		[]types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})},
+		tc, time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
 	)
-	msg := types.InboundMessage{
-		UserID:      "u1",
-		Kind:        types.MessageAudio,
-		Audio:       []byte("fake-audio"),
-		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
-		ChannelMeta: map[string]string{"chat_id": "42"},
-	}
-	if err := e.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("Handle error = %v", err)
-	}
-	if len(st.meals) != 1 {
-		t.Fatalf("expected 1 meal saved, got %d", len(st.meals))
-	}
 	if got := st.meals[0].Total().Calories; got != 330 {
 		t.Errorf("meal calories = %v, want 330", got)
 	}
@@ -529,22 +552,8 @@ func TestSTTTranscribeSuccess(t *testing.T) {
 }
 
 func TestSTTTranscribeEmptyReturnsSpecificMessage(t *testing.T) {
-	st := newFakeStore()
-	rp := &fakeReplier{}
 	tc := fakeTranscriber{text: "", locale: ""} // whisper returned empty, no error
-	e := New(
-		fakeParser{}, fakeResolver{},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
-	)
-	msg := types.InboundMessage{
-		UserID:      "u1",
-		Kind:        types.MessageAudio,
-		Audio:       []byte("fake-silent-audio"),
-		ChannelMeta: map[string]string{"chat_id": "42"},
-	}
-	if err := e.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("Handle error = %v", err)
-	}
+	st, rp := sttFailureCase(t, tc, "fake-silent-audio")
 	if len(rp.sent) != 1 {
 		t.Fatalf("expected 1 reply, got %d", len(rp.sent))
 	}
@@ -557,22 +566,8 @@ func TestSTTTranscribeEmptyReturnsSpecificMessage(t *testing.T) {
 }
 
 func TestSTTTranscribeError(t *testing.T) {
-	st := newFakeStore()
-	rp := &fakeReplier{}
 	tc := fakeTranscriber{err: fmt.Errorf("connection refused")}
-	e := New(
-		fakeParser{}, fakeResolver{},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
-	)
-	msg := types.InboundMessage{
-		UserID:      "u1",
-		Kind:        types.MessageAudio,
-		Audio:       []byte("fake-audio"),
-		ChannelMeta: map[string]string{"chat_id": "42"},
-	}
-	if err := e.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("Handle error = %v", err)
-	}
+	st, rp := sttFailureCase(t, tc, "fake-audio")
 	if !strings.Contains(rp.last(), "Couldn't transcribe audio") {
 		t.Errorf("expected transcribe error message, got %q", rp.last())
 	}
@@ -582,28 +577,13 @@ func TestSTTTranscribeError(t *testing.T) {
 }
 
 func TestSTTLocalePropagation(t *testing.T) {
-	st := newFakeStore()
-	rp := &fakeReplier{}
 	tc := fakeTranscriber{text: "200g frango", locale: "pt"}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "frango"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("frango", types.Macros{Calories: 200})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
+	// msg.Locale is empty — should be filled by whisper.
+	sttSuccessCase(t,
+		[]types.ParsedItem{{RawPhrase: "frango"}},
+		[]types.ResolvedItem{resolved("frango", types.Macros{Calories: 200})},
+		tc, time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
 	)
-	msg := types.InboundMessage{
-		UserID:      "u1",
-		Kind:        types.MessageAudio,
-		Audio:       []byte("fake-audio"),
-		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
-		ChannelMeta: map[string]string{"chat_id": "42"},
-		// msg.Locale is empty — should be filled by whisper.
-	}
-	if err := e.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("Handle error = %v", err)
-	}
-	if len(st.meals) != 1 {
-		t.Fatalf("expected 1 meal saved, got %d", len(st.meals))
-	}
 }
 
 func TestSTTLocalePreservesExisting(t *testing.T) {
