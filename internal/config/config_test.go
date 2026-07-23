@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -207,6 +208,30 @@ func TestMissingTelegramTokenFails(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "TELEGRAM_BOT_TOKEN") {
 		t.Fatalf("expected TELEGRAM_BOT_TOKEN error, got %v", err)
+	}
+}
+
+func TestValidateDirectlyCoversDefaultedGuards(t *testing.T) {
+	c := &Config{
+		EnableSTT:           true,
+		OCRAdapter:          "invalid",
+		EnableNotifications: true,
+		WebAuthnRPID:        "example.com",
+		EmailProvider:       "resend",
+	}
+	err := c.validate(fmt.Errorf("bad parser tier"))
+	if err == nil {
+		t.Fatal("validate() error = nil")
+	}
+	for _, want := range []string{
+		"PARSER_TIER", "MESSAGING_ADAPTER", "WHISPER_URL", "EMBED_ADAPTER", "COMPLETION_ADAPTER",
+		"OCR_ADAPTER", "NOTIFIER", "DB_PATH", "AUTH_REGISTRATION_MODE", "SESSION_IDLE_TTL",
+		"WEBAUTHN_RP_ORIGINS", "WEBAUTHN_RP_DISPLAY_NAME", "EMAIL_FROM", "RESEND_API_KEY",
+		"PORT", "HEALTH_CHECK_PATH",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validate() error missing %q: %v", want, err)
+		}
 	}
 }
 
