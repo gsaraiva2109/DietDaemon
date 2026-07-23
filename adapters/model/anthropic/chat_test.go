@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/ssetest"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
 
@@ -18,22 +19,8 @@ import (
 // every event until the channel closes.
 func drainReadStream(ctx context.Context, sse string) []ports.ChatEvent {
 	c := &ChatAdapter{}
-	ch := make(chan ports.ChatEvent, 20)
-	c.readStream(ctx, io.NopCloser(strings.NewReader(sse)), ch)
-
-	var events []ports.ChatEvent
-	for e := range ch {
-		events = append(events, e)
-	}
-	return events
+	return ssetest.Drain(ctx, io.NopCloser(strings.NewReader(sse)), c.readStream)
 }
-
-// errReader is an io.ReadCloser that always fails, for exercising the
-// scanner-error branch of readStream.
-type errReader struct{ err error }
-
-func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
-func (r *errReader) Close() error             { return nil }
 
 // TestExtractArgsEmptyValue guards the bug where a legitimately empty args
 // value (no-arg commands like /help emit {"args":""}) was misread as a parse
@@ -134,18 +121,10 @@ data: {"type":"message_stop"}
 `
 	events := drainReadStream(t.Context(), sse)
 
-	want := []ports.ChatEvent{
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
 		{Kind: "text-delta", Text: "Hello"},
 		{Kind: "done"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("got %d events, want %d: %+v", len(events), len(want), events)
-	}
-	for i, w := range want {
-		if events[i].Kind != w.Kind || events[i].Text != w.Text {
-			t.Errorf("event[%d] = %+v, want %+v", i, events[i], w)
-		}
-	}
+	})
 }
 
 // TestReadStreamTextDeltaMultiple covers several text_delta chunks arriving
@@ -157,19 +136,11 @@ data: {"type":"message_stop"}
 `
 	events := drainReadStream(t.Context(), sse)
 
-	want := []ports.ChatEvent{
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
 		{Kind: "text-delta", Text: "Hello "},
 		{Kind: "text-delta", Text: "world"},
 		{Kind: "done"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("got %d events, want %d: %+v", len(events), len(want), events)
-	}
-	for i, w := range want {
-		if events[i].Kind != w.Kind || events[i].Text != w.Text {
-			t.Errorf("event[%d] = %+v, want %+v", i, events[i], w)
-		}
-	}
+	})
 }
 
 // TestReadStreamToolCallRoundTrip covers content_block_start(tool_use) ->
@@ -231,18 +202,10 @@ data: {"type":"message_stop"}
 `
 	events := drainReadStream(t.Context(), sse)
 
-	want := []ports.ChatEvent{
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
 		{Kind: "text-delta", Text: "ok"},
 		{Kind: "done"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("got %d events, want %d: %+v", len(events), len(want), events)
-	}
-	for i, w := range want {
-		if events[i].Kind != w.Kind || events[i].Text != w.Text {
-			t.Errorf("event[%d] = %+v, want %+v", i, events[i], w)
-		}
-	}
+	})
 }
 
 // TestReadStreamNonDataLinesSkipped covers SSE "event: ..." lines and blank
@@ -255,31 +218,17 @@ func TestReadStreamNonDataLinesSkipped(t *testing.T) {
 
 	events := drainReadStream(t.Context(), sse)
 
-	want := []ports.ChatEvent{
+	ssetest.AssertEvents(t, events, []ports.ChatEvent{
 		{Kind: "text-delta", Text: "hi"},
 		{Kind: "done"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("got %d events, want %d: %+v", len(events), len(want), events)
-	}
-	for i, w := range want {
-		if events[i].Kind != w.Kind || events[i].Text != w.Text {
-			t.Errorf("event[%d] = %+v, want %+v", i, events[i], w)
-		}
-	}
+	})
 }
 
 // TestReadStreamScannerReadError covers the scanner erroring mid-read: it
 // must emit a single error event carrying the underlying error.
 func TestReadStreamScannerReadError(t *testing.T) {
 	c := &ChatAdapter{}
-	ch := make(chan ports.ChatEvent, 5)
-	c.readStream(t.Context(), &errReader{err: errors.New("boom")}, ch)
-
-	var events []ports.ChatEvent
-	for e := range ch {
-		events = append(events, e)
-	}
+	events := ssetest.Drain(t.Context(), &ssetest.ErrReader{Err: errors.New("boom")}, c.readStream)
 
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1 error event: %+v", len(events), events)
