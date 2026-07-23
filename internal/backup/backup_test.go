@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -107,6 +108,72 @@ func (d *fakeDest) Write(context.Context, types.BackupConfig, string, []byte) er
 	return nil
 }
 
+type failingDest struct{ err error }
+
+func (d failingDest) Write(context.Context, types.BackupConfig, string, []byte) error { return d.err }
+
+func TestWriteCSV_WrapsStageErrors(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tt := range []struct {
+		name  string
+		want  string
+		dst   Destination
+		load  func() ([]int, error)
+		write func(io.Writer, []int) error
+	}{
+		{"load", "backup: load test: boom", &fakeDest{}, func() ([]int, error) { return nil, boom }, func(io.Writer, []int) error { return nil }},
+		{"csv", "backup: write test csv: boom", &fakeDest{}, func() ([]int, error) { return []int{1}, nil }, func(io.Writer, []int) error { return boom }},
+		{"destination", "backup: write test: boom", failingDest{boom}, func() ([]int, error) { return []int{1}, nil }, func(io.Writer, []int) error { return nil }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := writeCSV(context.Background(), tt.dst, types.BackupConfig{}, "test", "test.csv", tt.load, tt.write)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("writeCSV() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+type photoMetadataErrFakeStore struct {
+	*fakeStore
+	err error
+}
+
+func (f *photoMetadataErrFakeStore) ListPhotoMetadata(context.Context, string) ([]types.ProgressPhoto, error) {
+	return nil, f.err
+}
+
+type photoDataErrFakeStore struct {
+	*allEntitiesFakeStore
+	err error
+}
+
+func (f *photoDataErrFakeStore) GetPhotoData(context.Context, string) (types.ProgressPhoto, error) {
+	return types.ProgressPhoto{}, f.err
+}
+
+func TestWritePhotos_WrapsStageErrors(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tt := range []struct {
+		name  string
+		want  string
+		store Store
+		dst   Destination
+	}{
+		{"metadata", "backup: load photos: boom", &photoMetadataErrFakeStore{fakeStore: newFakeStore(), err: boom}, &fakeDest{}},
+		{"blob", "backup: load photo data: boom", &photoDataErrFakeStore{allEntitiesFakeStore: &allEntitiesFakeStore{newFakeStore()}, err: boom}, &fakeDest{}},
+		{"write", "backup: write photo blob: boom", &allEntitiesFakeStore{newFakeStore()}, failingDest{boom}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New(tt.store, nil, nil, time.Hour)
+			err := r.writePhotos(context.Background(), tt.dst, types.BackupConfig{}, "u1")
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("writePhotos() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestTick_RunsWhenIntervalElapsed(t *testing.T) {
 	store := newFakeStore()
 	store.users = []types.User{{ID: "u1"}}
@@ -125,6 +192,22 @@ func TestTick_RunsWhenIntervalElapsed(t *testing.T) {
 	}
 	if store.lastRuns["u1"].IsZero() {
 		t.Fatalf("expected last_run_at to be updated")
+	}
+}
+
+func TestRun_ChecksImmediatelyBeforeCancelledContextReturns(t *testing.T) {
+	store := newFakeStore()
+	store.users = []types.User{{ID: "u1"}}
+	store.configs["u1"] = types.BackupConfig{UserID: "u1", Enabled: true, Destination: "local"}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r.Run(ctx)
+
+	if dst.writes != 9 {
+		t.Fatalf("expected immediate backup before cancellation returns, got %d writes", dst.writes)
 	}
 }
 

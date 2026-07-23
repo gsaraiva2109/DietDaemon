@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -172,132 +173,56 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 	if err != nil {
 		return fmt.Errorf("backup: load meals: %w", err)
 	}
-
-	// Warn on significant row-count drops vs previous run (log-only, no alerting infra).
-	if cfg.LastMealsCount > 0 && float64(len(meals)) < float64(cfg.LastMealsCount)*(1-backupCountDropThreshold) {
-		r.log.Warn("backup: row count dropped significantly", "user", userID, "entity", "meals",
-			"previous", cfg.LastMealsCount, "current", len(meals))
-	}
-
-	var mealsBuf bytes.Buffer
-	if err := exportfmt.WriteMealsCSV(&mealsBuf, meals); err != nil {
-		return fmt.Errorf("backup: write meals csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "meals.csv", mealsBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write meals: %w", err)
+	if err := r.writeMeals(ctx, dst, cfg, userID, meals); err != nil {
+		return err
 	}
 
 	rollups, err := r.store.GetRollups(ctx, userID, earliestDate, today)
 	if err != nil {
 		return fmt.Errorf("backup: load rollups: %w", err)
 	}
-
-	if cfg.LastRollupsCount > 0 && float64(len(rollups)) < float64(cfg.LastRollupsCount)*(1-backupCountDropThreshold) {
-		r.log.Warn("backup: row count dropped significantly", "user", userID, "entity", "rollups",
-			"previous", cfg.LastRollupsCount, "current", len(rollups))
+	if err := r.writeRollups(ctx, dst, cfg, userID, rollups); err != nil {
+		return err
 	}
 
-	var rollupsBuf bytes.Buffer
-	if err := exportfmt.WriteRollupsCSV(&rollupsBuf, rollups); err != nil {
-		return fmt.Errorf("backup: write rollups csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "rollups.csv", rollupsBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write rollups: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "weight", "weight.csv", func() ([]types.WeightEntry, error) {
+		return r.store.ListWeight(ctx, userID, largeDaysWindow)
+	}, exportfmt.WriteWeightCSV); err != nil {
+		return err
 	}
 
-	weight, err := r.store.ListWeight(ctx, userID, largeDaysWindow)
-	if err != nil {
-		return fmt.Errorf("backup: load weight: %w", err)
-	}
-	var weightBuf bytes.Buffer
-	if err := exportfmt.WriteWeightCSV(&weightBuf, weight); err != nil {
-		return fmt.Errorf("backup: write weight csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "weight.csv", weightBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write weight: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "measurements", "measurements.csv", func() ([]types.MeasurementEntry, error) {
+		return r.store.ListMeasurements(ctx, userID, largeDaysWindow)
+	}, exportfmt.WriteMeasurementsCSV); err != nil {
+		return err
 	}
 
-	measurements, err := r.store.ListMeasurements(ctx, userID, largeDaysWindow)
-	if err != nil {
-		return fmt.Errorf("backup: load measurements: %w", err)
-	}
-	var measurementsBuf bytes.Buffer
-	if err := exportfmt.WriteMeasurementsCSV(&measurementsBuf, measurements); err != nil {
-		return fmt.Errorf("backup: write measurements csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "measurements.csv", measurementsBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write measurements: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "sleep", "sleep.csv", func() ([]types.SleepLog, error) {
+		return r.store.ListSleep(ctx, userID, largeRowLimit)
+	}, exportfmt.WriteSleepCSV); err != nil {
+		return err
 	}
 
-	sleep, err := r.store.ListSleep(ctx, userID, largeRowLimit)
-	if err != nil {
-		return fmt.Errorf("backup: load sleep: %w", err)
-	}
-	var sleepBuf bytes.Buffer
-	if err := exportfmt.WriteSleepCSV(&sleepBuf, sleep); err != nil {
-		return fmt.Errorf("backup: write sleep csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "sleep.csv", sleepBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write sleep: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "workouts", "workouts.csv", func() ([]types.Workout, error) {
+		return r.store.GetWorkoutsInRangeWithExercises(ctx, userID, earliestDate, today)
+	}, exportfmt.WriteWorkoutsCSV); err != nil {
+		return err
 	}
 
-	workouts, err := r.store.GetWorkoutsInRangeWithExercises(ctx, userID, earliestDate, today)
-	if err != nil {
-		return fmt.Errorf("backup: load workouts: %w", err)
-	}
-	var workoutsBuf bytes.Buffer
-	if err := exportfmt.WriteWorkoutsCSV(&workoutsBuf, workouts); err != nil {
-		return fmt.Errorf("backup: write workouts csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "workouts.csv", workoutsBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write workouts: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "water", "water.csv", func() ([]types.WaterLog, error) {
+		return r.store.GetWaterInRange(ctx, userID, earliestDate, today)
+	}, exportfmt.WriteWaterCSV); err != nil {
+		return err
 	}
 
-	water, err := r.store.GetWaterInRange(ctx, userID, earliestDate, today)
-	if err != nil {
-		return fmt.Errorf("backup: load water: %w", err)
-	}
-	var waterBuf bytes.Buffer
-	if err := exportfmt.WriteWaterCSV(&waterBuf, water); err != nil {
-		return fmt.Errorf("backup: write water csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "water.csv", waterBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write water: %w", err)
+	if err := writeCSV(ctx, dst, cfg, "fasts", "fasts.csv", func() ([]types.Fast, error) {
+		return r.store.ListFasts(ctx, userID, largeRowLimit)
+	}, exportfmt.WriteFastsCSV); err != nil {
+		return err
 	}
 
-	fasts, err := r.store.ListFasts(ctx, userID, largeRowLimit)
-	if err != nil {
-		return fmt.Errorf("backup: load fasts: %w", err)
-	}
-	var fastsBuf bytes.Buffer
-	if err := exportfmt.WriteFastsCSV(&fastsBuf, fasts); err != nil {
-		return fmt.Errorf("backup: write fasts csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "fasts.csv", fastsBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write fasts: %w", err)
-	}
-
-	// Photos last: write every blob before the index, so a recovered
-	// photos.csv never references a blob that isn't actually there.
-	photos, err := r.store.ListPhotoMetadata(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("backup: load photos: %w", err)
-	}
-	for _, p := range photos {
-		full, err := r.store.GetPhotoData(ctx, p.ID)
-		if err != nil {
-			return fmt.Errorf("backup: load photo data: %w", err)
-		}
-		if err := dst.Write(ctx, cfg, exportfmt.PhotoFilename(p.ID), full.Data); err != nil {
-			return fmt.Errorf("backup: write photo blob: %w", err)
-		}
-	}
-	var photosBuf bytes.Buffer
-	if err := exportfmt.WritePhotosCSV(&photosBuf, photos); err != nil {
-		return fmt.Errorf("backup: write photos csv: %w", err)
-	}
-	if err := dst.Write(ctx, cfg, "photos.csv", photosBuf.Bytes()); err != nil {
-		return fmt.Errorf("backup: write photos: %w", err)
+	if err := r.writePhotos(ctx, dst, cfg, userID); err != nil {
+		return err
 	}
 
 	if err := r.store.SetBackupLastRun(ctx, userID, now); err != nil {
@@ -307,6 +232,56 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 		return fmt.Errorf("backup: set counts: %w", err)
 	}
 	return nil
+}
+
+func (r *Runner) writeMeals(ctx context.Context, dst Destination, cfg types.BackupConfig, userID string, meals []types.Meal) error {
+	r.warnCountDrop(userID, "meals", cfg.LastMealsCount, len(meals))
+	return writeCSV(ctx, dst, cfg, "meals", "meals.csv", func() ([]types.Meal, error) { return meals, nil }, exportfmt.WriteMealsCSV)
+}
+
+func (r *Runner) writeRollups(ctx context.Context, dst Destination, cfg types.BackupConfig, userID string, rollups []types.DailyRollup) error {
+	r.warnCountDrop(userID, "rollups", cfg.LastRollupsCount, len(rollups))
+	return writeCSV(ctx, dst, cfg, "rollups", "rollups.csv", func() ([]types.DailyRollup, error) { return rollups, nil }, exportfmt.WriteRollupsCSV)
+}
+
+func (r *Runner) warnCountDrop(userID, entity string, previous, current int) {
+	if previous > 0 && float64(current) < float64(previous)*(1-backupCountDropThreshold) {
+		r.log.Warn("backup: row count dropped significantly", "user", userID, "entity", entity, "previous", previous, "current", current)
+	}
+}
+
+func writeCSV[T any](ctx context.Context, dst Destination, cfg types.BackupConfig, entity, filename string, load func() ([]T, error), write func(io.Writer, []T) error) error {
+	values, err := load()
+	if err != nil {
+		return fmt.Errorf("backup: load %s: %w", entity, err)
+	}
+	var buf bytes.Buffer
+	if err := write(&buf, values); err != nil {
+		return fmt.Errorf("backup: write %s csv: %w", entity, err)
+	}
+	if err := dst.Write(ctx, cfg, filename, buf.Bytes()); err != nil {
+		return fmt.Errorf("backup: write %s: %w", entity, err)
+	}
+	return nil
+}
+
+func (r *Runner) writePhotos(ctx context.Context, dst Destination, cfg types.BackupConfig, userID string) error {
+	photos, err := r.store.ListPhotoMetadata(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("backup: load photos: %w", err)
+	}
+	// Photos last: write every blob before the index, so a recovered
+	// photos.csv never references a blob that isn't actually there.
+	for _, p := range photos {
+		full, err := r.store.GetPhotoData(ctx, p.ID)
+		if err != nil {
+			return fmt.Errorf("backup: load photo data: %w", err)
+		}
+		if err := dst.Write(ctx, cfg, exportfmt.PhotoFilename(p.ID), full.Data); err != nil {
+			return fmt.Errorf("backup: write photo blob: %w", err)
+		}
+	}
+	return writeCSV(ctx, dst, cfg, "photos", "photos.csv", func() ([]types.ProgressPhoto, error) { return photos, nil }, exportfmt.WritePhotosCSV)
 }
 
 func (r *Runner) destinationFor(cfg types.BackupConfig) (Destination, error) {
