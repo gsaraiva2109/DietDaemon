@@ -602,6 +602,19 @@ type fakeAuthStore struct {
 	recentFailedAttemptsErr error
 	deleteUserSessionsErr   error
 	auditEvents             []types.AuditEvent
+
+	// OIDC characterization-test knobs (handler_oidc_test.go).
+	oidcIdentities           map[string]types.User // key: provider+"|"+subject
+	getUserByOIDCIdentityErr error                 // overrides the default not-found lookup
+	linkOIDCIdentityErr      error
+	consumeOIDCStateErr      error
+	oidcStateNonce           string
+	oidcStatePKCEVerifier    string
+	oidcStateLinkUserID      string
+	oidcStateNext            string
+	createSessionErr         error
+	lastOIDCCreateEmail      string
+	lastOIDCCreateDisplay    string
 }
 
 type loginAttemptEntry struct {
@@ -623,6 +636,9 @@ func newFakeAuthStore() *fakeAuthStore {
 	// Pre-register a test user for existing test compatibility.
 	s.users["test-user"] = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
 	s.keyUserID["4c806362b613f7496abf284146efd31da90e4b16169fe001841ca17290f427c4"] = "test-user"
+	// Preserve the old hardcoded ConsumeOIDCState stub (always "no such state")
+	// as the default; tests that exercise the success path opt in explicitly.
+	s.consumeOIDCStateErr = types.ErrNotFound
 	return s
 }
 
@@ -732,7 +748,9 @@ func (s *fakeAuthStore) RecordLoginAttempt(_ context.Context, identifier string,
 
 // --- auth.SessionRepo ---
 
-func (s *fakeAuthStore) CreateSession(_ context.Context, sess auth.Session) error { return nil }
+func (s *fakeAuthStore) CreateSession(_ context.Context, sess auth.Session) error {
+	return s.createSessionErr
+}
 func (s *fakeAuthStore) GetSession(_ context.Context, id string) (auth.Session, error) {
 	return auth.Session{}, errors.New("not found")
 }
@@ -792,11 +810,30 @@ func (s *fakeAuthStore) ConsumeRecoveryCode(_ context.Context, userID, hash stri
 	return false, nil
 }
 
-// OIDC stubs.
+// OIDC stubs. Configurable via the knobs declared alongside fakeAuthStore's
+// fields so handler_oidc_test.go can drive every branch of
+// handleOIDCCallback without a second fake type.
 func (s *fakeAuthStore) GetUserByOIDCIdentity(_ context.Context, provider, subject string) (types.User, error) {
+	if s.getUserByOIDCIdentityErr != nil {
+		return types.User{}, s.getUserByOIDCIdentityErr
+	}
+	if u, ok := s.oidcIdentities[provider+"|"+subject]; ok {
+		return u, nil
+	}
 	return types.User{}, types.ErrNotFound
 }
-func (s *fakeAuthStore) LinkOIDCIdentity(_ context.Context, id, userID, provider, subject, email string) error {
+func (s *fakeAuthStore) LinkOIDCIdentity(_ context.Context, _ /* id */, userID, provider, subject, _ /* email */ string) error {
+	if s.linkOIDCIdentityErr != nil {
+		return s.linkOIDCIdentityErr
+	}
+	if s.oidcIdentities == nil {
+		s.oidcIdentities = map[string]types.User{}
+	}
+	u := s.users[userID]
+	if u.ID == "" {
+		u.ID = userID
+	}
+	s.oidcIdentities[provider+"|"+subject] = u
 	return nil
 }
 func (s *fakeAuthStore) ListOIDCIdentities(_ context.Context, userID string) ([]types.OIDCIdentity, error) {
@@ -806,14 +843,24 @@ func (s *fakeAuthStore) DeleteOIDCIdentity(_ context.Context, userID, id string)
 	return nil
 }
 func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error) {
+	s.lastOIDCCreateEmail, s.lastOIDCCreateDisplay = email, displayName
 	u := types.User{ID: userID, AccountID: accountID, Email: email, DisplayName: displayName, Status: "active", CreatedAt: time.Now().UTC()}
+	s.users[userID] = u
+	s.userByEmail[email] = u
+	if s.oidcIdentities == nil {
+		s.oidcIdentities = map[string]types.User{}
+	}
+	s.oidcIdentities[provider+"|"+subject] = u
 	return u, nil
 }
 func (s *fakeAuthStore) CreateOIDCState(_ context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error {
 	return nil
 }
 func (s *fakeAuthStore) ConsumeOIDCState(_ context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error) {
-	return "", "", "", "", types.ErrNotFound
+	if s.consumeOIDCStateErr != nil {
+		return "", "", "", "", s.consumeOIDCStateErr
+	}
+	return s.oidcStateNonce, s.oidcStatePKCEVerifier, s.oidcStateLinkUserID, s.oidcStateNext, nil
 }
 func (s *fakeAuthStore) DeleteOIDCState(_ context.Context, id string) error {
 	return nil
