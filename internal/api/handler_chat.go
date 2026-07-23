@@ -17,19 +17,8 @@ import (
 // handleChatMessage streams an AI chat response over SSE.
 // POST /api/v1/chat/sessions/{id}/messages
 func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, userID string) {
-	// Parse request body.
-	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
-	var req struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-		return
-	}
-	if req.Text == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "text is required"})
+	text, ok := decodeChatMessage(w, r)
+	if !ok {
 		return
 	}
 
@@ -54,133 +43,150 @@ func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, user
 
 	// Resolve localized system prompt.
 	systemPrompt := h.chatSystemPrompt(r.Context(), userID)
+	history := h.chatHistory(r.Context(), userID, sessionID)
+	if err := h.persistUserChatMessage(r.Context(), userID, sessionID, text); err != nil {
+		h.writeErr(w, err)
+		return
+	}
 
-	// Load prior turns of this session (before persisting the new message,
-	// so it isn't fetched back and double-counted). Tool-result rows are
-	// skipped: the DB only stores role/content/tool_name, not the tool_use_id
-	// pairing a provider needs to validate a tool_result against — replaying
-	// an orphaned tool message would trip the same round-trip error the
-	// Anthropic tool_use/tool_result fix addressed within a single request.
+	flusher, ok := startChatStream(w)
+	if !ok {
+		return
+	}
+	h.streamChatEvents(w, r.Context(), flusher, userID, sessionID, router.Run(ctx, userID, systemPrompt, history, text))
+}
+
+func decodeChatMessage(w http.ResponseWriter, r *http.Request) (string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return "", false
+	}
+	if req.Text == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "text is required"})
+		return "", false
+	}
+	return req.Text, true
+}
+
+// chatHistory loads replayable user and assistant turns before the new message.
+func (h *Handler) chatHistory(ctx context.Context, userID, sessionID string) []ports.ChatMessage {
+	if h.chatStore == nil {
+		return nil
+	}
+	prior, err := h.chatStore.GetChatMessages(ctx, userID, sessionID)
+	if err != nil {
+		return nil
+	}
 	var history []ports.ChatMessage
-	if h.chatStore != nil {
-		if prior, err := h.chatStore.GetChatMessages(r.Context(), userID, sessionID); err == nil {
-			for _, m := range prior {
-				if (m.Role != "user" && m.Role != "assistant") || m.Content == "" {
-					continue
-				}
-				history = append(history, ports.ChatMessage{Role: m.Role, Content: m.Content})
-			}
+	for _, m := range prior {
+		if (m.Role == "user" || m.Role == "assistant") && m.Content != "" {
+			history = append(history, ports.ChatMessage{Role: m.Role, Content: m.Content})
 		}
 	}
+	return history
+}
 
-	// Persist user message before streaming. If the session doesn't exist yet
-	// (client-generated UUID from chatThreadListAdapter), auto-create it now.
-	// This also doubles as the ownership check — a foreign/bogus session ID
-	// that doesn't belong to userID will still fail with ErrNotFound after the
-	// lazy-create path because CreateChatSession writes the caller's userID,
-	// so a retry on a stolen ID would hit the ownership guard.
-	if h.chatStore != nil {
-		msgID := newHandlerID()
-		if err := h.chatStore.AppendChatMessage(r.Context(), msgID, userID, sessionID, "user", req.Text, ""); err != nil {
-			if errors.Is(err, types.ErrNotFound) {
-				// Lazy-create session on first message.
-				if err := h.chatStore.CreateChatSession(r.Context(), sessionID, userID, deriveSessionTitle(req.Text)); err != nil {
-					h.writeErr(w, err)
-					return
-				}
-				// Retry append into the now-existing session.
-				if err := h.chatStore.AppendChatMessage(r.Context(), msgID, userID, sessionID, "user", req.Text, ""); err != nil {
-					h.writeErr(w, err)
-					return
-				}
-			} else {
-				h.writeErr(w, err)
-				return
-			}
-		}
+// persistUserChatMessage creates a client-generated session on its first message.
+func (h *Handler) persistUserChatMessage(ctx context.Context, userID, sessionID, text string) error {
+	if h.chatStore == nil {
+		return nil
 	}
+	msgID := newHandlerID()
+	err := h.chatStore.AppendChatMessage(ctx, msgID, userID, sessionID, "user", text, "")
+	if !errors.Is(err, types.ErrNotFound) {
+		return err
+	}
+	if err := h.chatStore.CreateChatSession(ctx, sessionID, userID, deriveSessionTitle(text)); err != nil {
+		return err
+	}
+	return h.chatStore.AppendChatMessage(ctx, msgID, userID, sessionID, "user", text, "")
+}
 
-	// Flusher check (must be done before writing headers).
+func startChatStream(w http.ResponseWriter) (http.Flusher, bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "streaming not supported"})
-		return
+		return nil, false
 	}
-
-	// SSE headers.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	return flusher, true
+}
 
-	// Accumulators for persistence on done.
-	var (
-		textBuf   strings.Builder
-		toolInfos []toolInfo // saved on done alongside assistant message
-	)
+type chatStreamState struct {
+	text  strings.Builder
+	tools []toolInfo
+}
 
-	events := router.Run(ctx, userID, systemPrompt, history, req.Text)
-
+func (h *Handler) streamChatEvents(w http.ResponseWriter, ctx context.Context, flusher http.Flusher, userID, sessionID string, events <-chan ports.ChatEvent) {
+	state := chatStreamState{}
 	for evt := range events {
-		switch evt.Kind {
-		case "text-delta":
-			textBuf.WriteString(evt.Text)
-			writeSSE(w, "delta", map[string]string{"text": evt.Text})
-		case "tool-call":
-			writeSSE(w, "tool-call", map[string]string{
-				"id":   evt.ToolCall.ID,
-				"name": evt.ToolCall.Name,
-				"args": evt.ToolCall.Args,
-			})
-		case "tool-result":
-			toolInfos = append(toolInfos, toolInfo{
-				ID:   evt.ToolCall.ID,
-				Name: evt.ToolCall.Name,
-				Text: evt.ToolCall.Args,
-			})
-			writeSSE(w, "tool-result", map[string]string{
-				"id":   evt.ToolCall.ID,
-				"name": evt.ToolCall.Name,
-				"text": evt.ToolCall.Args,
-			})
-		case "suggestions":
-			writeSSE(w, "suggestions", map[string]any{"options": evt.Suggestions})
-		case "done":
-			// Persist cleaned text (fenced ```suggestions block stripped)
-			// so the wire-protocol artifact doesn't reappear in history.
-			persistText := textBuf.String()
-			if cleaned, _ := assistant.ExtractSuggestions(persistText); cleaned != persistText {
-				persistText = cleaned
-			}
-			h.persistAssistantMessages(r.Context(), userID, sessionID, persistText, toolInfos)
-			writeSSE(w, "done", map[string]string{})
-			flusher.Flush()
-			return
-		case "error":
-			if evt.Err != nil {
-				slog.Error("chat stream error", "err", evt.Err)
-			}
-			// Save what we have so far before sending error.
-			if textBuf.Len() > 0 {
-				h.persistAssistantMessages(r.Context(), userID, sessionID, textBuf.String(), toolInfos)
-			}
-			msg := "Trouble reaching the AI provider. Please try again in a moment."
-			if errors.Is(evt.Err, assistant.ErrMaxToolRounds) {
-				msg = "I tried a few different ways but couldn't finish that — try naming the food more simply, or give the exact grams."
-			}
-			writeSSE(w, "error", map[string]string{"message": msg})
-			flusher.Flush()
+		if h.handleChatStreamEvent(w, ctx, flusher, userID, sessionID, &state, evt) {
 			return
 		}
-
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		default:
 		}
 	}
+}
+
+func (h *Handler) handleChatStreamEvent(w http.ResponseWriter, ctx context.Context, flusher http.Flusher, userID, sessionID string, state *chatStreamState, evt ports.ChatEvent) bool {
+	switch evt.Kind {
+	case "text-delta":
+		state.text.WriteString(evt.Text)
+		writeSSE(w, "delta", map[string]string{"text": evt.Text})
+	case "tool-call":
+		writeSSE(w, "tool-call", map[string]string{"id": evt.ToolCall.ID, "name": evt.ToolCall.Name, "args": evt.ToolCall.Args})
+	case "tool-result":
+		state.tools = append(state.tools, toolInfo{ID: evt.ToolCall.ID, Name: evt.ToolCall.Name, Text: evt.ToolCall.Args})
+		writeSSE(w, "tool-result", map[string]string{"id": evt.ToolCall.ID, "name": evt.ToolCall.Name, "text": evt.ToolCall.Args})
+	case "suggestions":
+		writeSSE(w, "suggestions", map[string]any{"options": evt.Suggestions})
+	case "done":
+		h.finishChatStream(w, ctx, flusher, userID, sessionID, state)
+		return true
+	case "error":
+		h.failChatStream(w, ctx, flusher, userID, sessionID, state, evt.Err)
+		return true
+	}
+	return false
+}
+
+func (h *Handler) finishChatStream(w http.ResponseWriter, ctx context.Context, flusher http.Flusher, userID, sessionID string, state *chatStreamState) {
+	persistText := state.text.String()
+	if cleaned, _ := assistant.ExtractSuggestions(persistText); cleaned != persistText {
+		persistText = cleaned
+	}
+	h.persistAssistantMessages(ctx, userID, sessionID, persistText, state.tools)
+	writeSSE(w, "done", map[string]string{})
+	flusher.Flush()
+}
+
+func (h *Handler) failChatStream(w http.ResponseWriter, ctx context.Context, flusher http.Flusher, userID, sessionID string, state *chatStreamState, err error) {
+	if err != nil {
+		slog.Error("chat stream error", "err", err)
+	}
+	if state.text.Len() > 0 {
+		h.persistAssistantMessages(ctx, userID, sessionID, state.text.String(), state.tools)
+	}
+	message := "Trouble reaching the AI provider. Please try again in a moment."
+	if errors.Is(err, assistant.ErrMaxToolRounds) {
+		message = "I tried a few different ways but couldn't finish that — try naming the food more simply, or give the exact grams."
+	}
+	writeSSE(w, "error", map[string]string{"message": message})
+	flusher.Flush()
 }
 
 // chatBasePrompt resolves the i18n base system prompt for the user's locale,

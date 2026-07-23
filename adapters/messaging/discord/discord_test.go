@@ -275,8 +275,16 @@ func genSelfSignedCert(t *testing.T) tls.Certificate {
 // an in-memory net.Pipe.
 func tlsPipe(t *testing.T) (client, server *tls.Conn) {
 	t.Helper()
+	client, server, _, _ = tlsPipeRaw(t)
+	return client, server
+}
+
+// tlsPipeRaw returns a handshaked TLS pair and its underlying pipes so a test
+// can interrupt a blocked gateway read without waiting for TLS close_notify.
+func tlsPipeRaw(t *testing.T) (client, server *tls.Conn, clientRaw, serverRaw net.Conn) {
+	t.Helper()
 	cert := genSelfSignedCert(t)
-	clientRaw, serverRaw := net.Pipe()
+	clientRaw, serverRaw = net.Pipe()
 
 	serverConn := tls.Server(serverRaw, &tls.Config{Certificates: []tls.Certificate{cert}})
 	clientConn := tls.Client(clientRaw, &tls.Config{InsecureSkipVerify: true}) // #nosec G402 -- test-only pipe, not network-facing
@@ -298,8 +306,123 @@ func tlsPipe(t *testing.T) (client, server *tls.Conn) {
 		_ = clientRaw.Close()
 		_ = serverRaw.Close()
 	})
-	return clientConn, serverConn
+	return clientConn, serverConn, clientRaw, serverRaw
 }
+
+func writeServerGatewayPayload(t *testing.T, conn net.Conn, payload gatewayPayload) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal gateway payload: %v", err)
+	}
+	if _, err := conn.Write(buildServerFrame(raw)); err != nil {
+		t.Fatalf("write server gateway payload: %v", err)
+	}
+}
+
+func readClientGatewayPayload(t *testing.T, conn net.Conn) gatewayPayload {
+	t.Helper()
+	var payload gatewayPayload
+	if err := json.Unmarshal(readRawMaskedFrame(t, conn), &payload); err != nil {
+		t.Fatalf("unmarshal client gateway payload: %v", err)
+	}
+	return payload
+}
+
+func TestGatewayLoopDispatchesAndFiltersEvents(t *testing.T) {
+	client, server, _, serverRaw := tlsPipeRaw(t)
+	a := New("tok123")
+	a.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"url":"wss://gateway.test"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	a.dialWebSocket = func(context.Context, string) (*tls.Conn, error) { return client, nil }
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ch, err := a.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: 10,
+		D:  json.RawMessage(`{"heartbeat_interval":60000}`),
+	})
+	identify := readClientGatewayPayload(t, server)
+	if identify.Op != gatewayOpIdentify {
+		t.Fatalf("identify opcode = %d, want %d", identify.Op, gatewayOpIdentify)
+	}
+
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: gatewayOpDispatch,
+		T:  "MESSAGE_CREATE",
+		D:  json.RawMessage(`{"id":"ignored","channel_id":"channel","author":{"id":"bot","bot":true},"content":"ignored"}`),
+	})
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: gatewayOpDispatch,
+		T:  "INTERACTION_CREATE",
+		D:  json.RawMessage(`{"id":"ignored","channel_id":"channel","data":{"custom_id":"ignored"},"member":{"user":{"id":"bot","bot":true}}}`),
+	})
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: gatewayOpDispatch,
+		T:  "INTERACTION_CREATE",
+		D:  json.RawMessage(`{"id":"ignored","channel_id":"channel","data":{},"member":{"user":{"id":"user"}}}`),
+	})
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: gatewayOpDispatch,
+		T:  "MESSAGE_CREATE",
+		S:  intPtr(7),
+		D:  json.RawMessage(`{"id":"message","channel_id":"channel","author":{"id":"user"},"content":"hello"}`),
+	})
+
+	select {
+	case message := <-ch:
+		if message.UserID != "user" || message.Text != "hello" || message.Kind != types.MessageText {
+			t.Fatalf("message = %+v, want user text message", message)
+		}
+		if got := message.ChannelMeta; got["channel_id"] != "channel" || got["message_id"] != "message" {
+			t.Fatalf("ChannelMeta = %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for message event")
+	}
+
+	writeServerGatewayPayload(t, server, gatewayPayload{
+		Op: gatewayOpDispatch,
+		T:  "INTERACTION_CREATE",
+		D:  json.RawMessage(`{"id":"interaction","channel_id":"channel","token":"token","data":{"custom_id":"action"},"member":{"user":{"id":"user"}}}`),
+	})
+	select {
+	case message := <-ch:
+		if message.UserID != "user" || message.Text != "action" || message.ChannelMeta["is_callback"] != "true" || message.ChannelMeta["interaction_id"] != "interaction" || message.ChannelMeta["interaction_token"] != "token" {
+			t.Fatalf("interaction = %+v", message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interaction event")
+	}
+
+	writeServerGatewayPayload(t, server, gatewayPayload{Op: gatewayOpHeartbeat})
+	heartbeat := readClientGatewayPayload(t, server)
+	if heartbeat.Op != gatewayOpHeartbeat || string(heartbeat.D) != "7" {
+		t.Fatalf("heartbeat = %+v, want opcode %d with sequence 7", heartbeat, gatewayOpHeartbeat)
+	}
+
+	_ = serverRaw.Close()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("channel remains open after the gateway connection closes")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for gateway loop to stop")
+	}
+}
+
+func intPtr(value int) *int { return &value }
 
 // readRawMaskedFrame parses a single client->server masked WS frame off r,
 // verifying the framing bits writeWSFrame is responsible for, and returns the

@@ -69,6 +69,45 @@ func TestRunStopsCleanlyWithCanceledContext(t *testing.T) {
 	}
 }
 
+func TestRunStartsDashboardWithCanceledContext(t *testing.T) {
+	cfg := &config.Config{
+		MessagingAdapter:    "telegram",
+		TelegramBotToken:    "test-token",
+		EmbedAdapter:        "ollama",
+		CompletionAdapter:   "ollama",
+		DBDriver:            "sqlite",
+		DBPath:              filepath.Join(t.TempDir(), "dietdaemon.db"),
+		HealthCheckPath:     filepath.Join(t.TempDir(), "healthy"),
+		Location:            time.UTC,
+		MessageWorkers:      1,
+		EnableDashboard:     true,
+		Port:                "0",
+		PublicBaseURL:       "http://localhost:8080",
+		WebAuthnRPID:        "localhost",
+		EnableSTT:           true,
+		EnableNotifications: true,
+		Notifier:            "ntfy",
+		ParserTier:          types.TierEmbedding,
+		FoodImportEnabled:   true,
+		FoodImportSources:   []string{"taco"},
+	}
+	previousLoadConfig := loadConfig
+	loadConfig = func() (*config.Config, error) { return cfg, nil }
+	t.Cleanup(func() { loadConfig = previousLoadConfig })
+
+	previousSignalContext := newSignalContext
+	newSignalContext = func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		cancel()
+		return ctx, func() {}
+	}
+	t.Cleanup(func() { newSignalContext = previousSignalContext })
+
+	if err := run(); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+}
+
 func TestRequiredOllamaModels(t *testing.T) {
 	tests := []struct {
 		name string
@@ -87,6 +126,39 @@ func TestRequiredOllamaModels(t *testing.T) {
 				t.Errorf("requiredOllamaModels() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildParserLLMTier(t *testing.T) {
+	st, err := openStore(&config.Config{
+		DBDriver: "sqlite",
+		DBPath:   filepath.Join(t.TempDir(), "dietdaemon.db"),
+		Location: time.UTC,
+	})
+	if err != nil {
+		t.Fatalf("openStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	completion, err := buildCompletionAdapter(&config.Config{CompletionAdapter: "ollama"})
+	if err != nil {
+		t.Fatalf("buildCompletionAdapter() error = %v", err)
+	}
+	parser, matcher, embedder, err := buildParser(&config.Config{ParserTier: types.TierLLM, EmbedAdapter: "ollama"}, st, completion)
+	if err != nil {
+		t.Fatalf("buildParser() error = %v", err)
+	}
+	if parser == nil || matcher == nil || embedder == nil {
+		t.Fatalf("buildParser() = (%v, %v, %v), want configured tier-2 components", parser, matcher, embedder)
+	}
+}
+
+func TestOIDCProviderConfigs(t *testing.T) {
+	configs := oidcProviderConfigs(&config.Config{OIDCProviders: []config.OIDCProviderConfig{{
+		ID: "google", Name: "Google", Issuer: "https://accounts.google.com", ClientID: "client", ClientSecret: "secret", RedirectURL: "https://example.com/callback", Scopes: []string{"openid"}, TrustEmail: true,
+	}}})
+	if len(configs) != 1 || configs[0].ID != "google" || configs[0].ClientSecret != "secret" || !configs[0].TrustEmail {
+		t.Fatalf("oidcProviderConfigs() = %+v, want copied provider", configs)
 	}
 }
 
