@@ -65,6 +65,16 @@ type Runner struct {
 	log   *slog.Logger
 }
 
+type restoreState struct {
+	ctx    context.Context
+	cfg    types.BackupConfig
+	src    Source
+	has    map[string]bool
+	userID string
+	sum    *Summary
+	errs   *[]error
+}
+
 // New builds a Runner.
 func New(store Store, src Source) *Runner {
 	return &Runner{store: store, src: src, log: slog.Default()}
@@ -87,62 +97,63 @@ func (r *Runner) RunOnce(ctx context.Context, userID string, cfg types.BackupCon
 	for _, f := range present {
 		has[f] = true
 	}
+	state := restoreState{ctx: ctx, cfg: cfg, src: r.src, has: has, userID: userID, sum: &sum, errs: &errs}
 
-	sum.Meals = restoreCSV(ctx, cfg, r.src, has, userID, "meals.csv", "save meal", exportfmt.ReadMealsCSV,
+	sum.Meals = restoreCSV(&state, "meals.csv", "save meal", exportfmt.ReadMealsCSV,
 		func(m types.Meal, userID string) types.Meal { m.UserID = userID; return m },
-		func(m types.Meal) string { return m.ID }, r.store.SaveMeal, &sum, &errs)
-	sum.Rollups = restoreCSV(ctx, cfg, r.src, has, userID, "rollups.csv", "upsert rollup", exportfmt.ReadRollupsCSV,
+		func(m types.Meal) string { return m.ID }, r.store.SaveMeal)
+	sum.Rollups = restoreCSV(&state, "rollups.csv", "upsert rollup", exportfmt.ReadRollupsCSV,
 		func(rr types.DailyRollup, userID string) types.DailyRollup { rr.UserID = userID; return rr },
-		func(rr types.DailyRollup) string { return rr.Date }, r.store.UpsertRollup, &sum, &errs)
-	sum.Weight = restoreCSV(ctx, cfg, r.src, has, userID, "weight.csv", "log weight", exportfmt.ReadWeightCSV,
+		func(rr types.DailyRollup) string { return rr.Date }, r.store.UpsertRollup)
+	sum.Weight = restoreCSV(&state, "weight.csv", "log weight", exportfmt.ReadWeightCSV,
 		func(w types.WeightEntry, userID string) types.WeightEntry { w.UserID = userID; return w },
 		func(w types.WeightEntry) string { return w.ID }, func(ctx context.Context, w types.WeightEntry) error {
 			_, err := r.store.LogWeight(ctx, w)
 			return err
-		}, &sum, &errs)
-	sum.Measurements = restoreCSV(ctx, cfg, r.src, has, userID, "measurements.csv", "log measurement", exportfmt.ReadMeasurementsCSV,
+		})
+	sum.Measurements = restoreCSV(&state, "measurements.csv", "log measurement", exportfmt.ReadMeasurementsCSV,
 		func(m types.MeasurementEntry, userID string) types.MeasurementEntry { m.UserID = userID; return m },
 		func(m types.MeasurementEntry) string { return m.ID }, func(ctx context.Context, m types.MeasurementEntry) error {
 			_, err := r.store.LogMeasurement(ctx, m)
 			return err
-		}, &sum, &errs)
-	sum.Sleep = restoreCSV(ctx, cfg, r.src, has, userID, "sleep.csv", "restore sleep", exportfmt.ReadSleepCSV,
+		})
+	sum.Sleep = restoreCSV(&state, "sleep.csv", "restore sleep", exportfmt.ReadSleepCSV,
 		func(s types.SleepLog, userID string) types.SleepLog { s.UserID = userID; return s },
-		func(s types.SleepLog) string { return s.ID }, r.store.RestoreSleep, &sum, &errs)
-	sum.Workouts = restoreCSV(ctx, cfg, r.src, has, userID, "workouts.csv", "import workout", exportfmt.ReadWorkoutsCSV,
+		func(s types.SleepLog) string { return s.ID }, r.store.RestoreSleep)
+	sum.Workouts = restoreCSV(&state, "workouts.csv", "import workout", exportfmt.ReadWorkoutsCSV,
 		func(w types.Workout, userID string) types.Workout { w.UserID = userID; return w },
-		func(w types.Workout) string { return w.ID }, r.store.ImportWorkout, &sum, &errs)
-	sum.Water = restoreCSV(ctx, cfg, r.src, has, userID, "water.csv", "restore water", exportfmt.ReadWaterCSV,
+		func(w types.Workout) string { return w.ID }, r.store.ImportWorkout)
+	sum.Water = restoreCSV(&state, "water.csv", "restore water", exportfmt.ReadWaterCSV,
 		func(w types.WaterLog, userID string) types.WaterLog { w.UserID = userID; return w },
-		func(w types.WaterLog) string { return w.ID }, r.store.RestoreWater, &sum, &errs)
-	sum.Fasts = restoreCSV(ctx, cfg, r.src, has, userID, "fasts.csv", "restore fast", exportfmt.ReadFastsCSV,
+		func(w types.WaterLog) string { return w.ID }, r.store.RestoreWater)
+	sum.Fasts = restoreCSV(&state, "fasts.csv", "restore fast", exportfmt.ReadFastsCSV,
 		func(f types.Fast, userID string) types.Fast { f.UserID = userID; return f },
-		func(f types.Fast) string { return f.ID }, r.store.RestoreFast, &sum, &errs)
-	sum.Photos = restorePhotos(ctx, cfg, r.src, r.store, has, userID, &sum, &errs)
+		func(f types.Fast) string { return f.ID }, r.store.RestoreFast)
+	sum.Photos = restorePhotos(&state, r.store)
 
 	return sum, errors.Join(errs...)
 }
 
-func restoreCSV[T any](ctx context.Context, cfg types.BackupConfig, src Source, has map[string]bool, userID, filename, action string, parse func(io.Reader) ([]T, error), setUser func(T, string) T, key func(T) string, save func(context.Context, T) error, sum *Summary, errs *[]error) int {
-	data, skipped, err := readBackupFile(ctx, cfg, src, has, filename)
+func restoreCSV[T any](state *restoreState, filename, action string, parse func(io.Reader) ([]T, error), setUser func(T, string) T, key func(T) string, save func(context.Context, T) error) int {
+	data, skipped, err := readBackupFile(state, filename)
 	if skipped {
-		sum.Skipped = append(sum.Skipped, filename)
+		state.sum.Skipped = append(state.sum.Skipped, filename)
 		return 0
 	}
 	if err != nil {
-		*errs = append(*errs, err)
+		*state.errs = append(*state.errs, err)
 		return 0
 	}
 	rows, err := parse(bytes.NewReader(data))
 	if err != nil {
-		*errs = append(*errs, fmt.Errorf("restore: parse %s: %w", filename, err))
+		*state.errs = append(*state.errs, fmt.Errorf("restore: parse %s: %w", filename, err))
 		return 0
 	}
 	count := 0
 	for _, row := range rows {
-		row = setUser(row, userID)
-		if err := save(ctx, row); err != nil {
-			*errs = append(*errs, fmt.Errorf("restore: %s %s: %w", action, key(row), err))
+		row = setUser(row, state.userID)
+		if err := save(state.ctx, row); err != nil {
+			*state.errs = append(*state.errs, fmt.Errorf("restore: %s %s: %w", action, key(row), err))
 			continue
 		}
 		count++
@@ -150,32 +161,32 @@ func restoreCSV[T any](ctx context.Context, cfg types.BackupConfig, src Source, 
 	return count
 }
 
-func restorePhotos(ctx context.Context, cfg types.BackupConfig, src Source, store Store, has map[string]bool, userID string, sum *Summary, errs *[]error) int {
-	data, skipped, err := readBackupFile(ctx, cfg, src, has, "photos.csv")
+func restorePhotos(state *restoreState, store Store) int {
+	data, skipped, err := readBackupFile(state, "photos.csv")
 	if skipped {
-		sum.Skipped = append(sum.Skipped, "photos.csv")
+		state.sum.Skipped = append(state.sum.Skipped, "photos.csv")
 		return 0
 	}
 	if err != nil {
-		*errs = append(*errs, err)
+		*state.errs = append(*state.errs, err)
 		return 0
 	}
 	index, err := exportfmt.ReadPhotosCSV(bytes.NewReader(data))
 	if err != nil {
-		*errs = append(*errs, fmt.Errorf("restore: parse photos.csv: %w", err))
+		*state.errs = append(*state.errs, fmt.Errorf("restore: parse photos.csv: %w", err))
 		return 0
 	}
 	count := 0
 	for _, entry := range index {
-		blob, err := src.Read(ctx, cfg, entry.Filename)
+		blob, err := state.src.Read(state.ctx, state.cfg, entry.Filename)
 		if err != nil {
-			*errs = append(*errs, fmt.Errorf("restore: read photo blob %s: %w", entry.Filename, err))
+			*state.errs = append(*state.errs, fmt.Errorf("restore: read photo blob %s: %w", entry.Filename, err))
 			continue
 		}
-		entry.Photo.UserID = userID
+		entry.Photo.UserID = state.userID
 		entry.Photo.Data = blob
-		if err := store.RestorePhoto(ctx, entry.Photo); err != nil {
-			*errs = append(*errs, fmt.Errorf("restore: restore photo %s: %w", entry.Photo.ID, err))
+		if err := store.RestorePhoto(state.ctx, entry.Photo); err != nil {
+			*state.errs = append(*state.errs, fmt.Errorf("restore: restore photo %s: %w", entry.Photo.ID, err))
 			continue
 		}
 		count++
@@ -183,11 +194,11 @@ func restorePhotos(ctx context.Context, cfg types.BackupConfig, src Source, stor
 	return count
 }
 
-func readBackupFile(ctx context.Context, cfg types.BackupConfig, src Source, has map[string]bool, filename string) ([]byte, bool, error) {
-	if !has[filename] {
+func readBackupFile(state *restoreState, filename string) ([]byte, bool, error) {
+	if !state.has[filename] {
 		return nil, true, nil
 	}
-	data, err := src.Read(ctx, cfg, filename)
+	data, err := state.src.Read(state.ctx, state.cfg, filename)
 	if err != nil {
 		return nil, false, fmt.Errorf("restore: read %s: %w", filename, err)
 	}

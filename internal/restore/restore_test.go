@@ -249,6 +249,49 @@ func TestRunOnce_CorruptFileDoesNotBlockOthers(t *testing.T) {
 	}
 }
 
+func TestRunOnce_ReadFailuresDoNotBlockOthers(t *testing.T) {
+	src := &fakeSource{
+		files: buildBackupFiles(),
+		list:  allFilenames(),
+		readErr: map[string]error{
+			"weight.csv": fmt.Errorf("weight read failed"),
+			"photos.csv": fmt.Errorf("photo index read failed"),
+		},
+	}
+	store := &fakeStore{}
+
+	sum, err := New(store, src).RunOnce(context.Background(), "u1", types.BackupConfig{})
+	if err == nil || !strings.Contains(err.Error(), "weight.csv") || !strings.Contains(err.Error(), "photos.csv") {
+		t.Fatalf("expected both read errors, got %v", err)
+	}
+	if sum.Weight != 0 || sum.Photos != 0 {
+		t.Fatalf("expected failed files to restore nothing, got %+v", sum)
+	}
+	if sum.Meals != 1 || sum.Rollups != 1 || sum.Measurements != 1 || sum.Sleep != 1 ||
+		sum.Workouts != 1 || sum.Water != 1 || sum.Fasts != 1 {
+		t.Fatalf("expected other files restored, got %+v", sum)
+	}
+}
+
+func TestRunOnce_CorruptPhotoIndexDoesNotBlockOthers(t *testing.T) {
+	files := buildBackupFiles()
+	files["photos.csv"] = []byte("bad,header\n1,2\n")
+	src := &fakeSource{files: files, list: allFilenames()}
+	store := &fakeStore{}
+
+	sum, err := New(store, src).RunOnce(context.Background(), "u1", types.BackupConfig{})
+	if err == nil || !strings.Contains(err.Error(), "photos.csv") {
+		t.Fatalf("expected photo index parse error, got %v", err)
+	}
+	if sum.Photos != 0 {
+		t.Fatalf("expected no photos restored, got %+v", sum)
+	}
+	if sum.Meals != 1 || sum.Rollups != 1 || sum.Weight != 1 || sum.Measurements != 1 ||
+		sum.Sleep != 1 || sum.Workouts != 1 || sum.Water != 1 || sum.Fasts != 1 {
+		t.Fatalf("expected other files restored, got %+v", sum)
+	}
+}
+
 func TestRunOnce_IdempotentRerun(t *testing.T) {
 	src := &fakeSource{files: buildBackupFiles(), list: allFilenames()}
 	store := &fakeStore{}
