@@ -30,15 +30,17 @@ const RESTBaseURL = "https://discord.com/api/v10"
 
 // Adapter satisfies ports.MessagingAdapter for Discord.
 type Adapter struct {
-	token  string
-	client *http.Client
+	token         string
+	client        *http.Client
+	dialWebSocket func(context.Context, string) (*tls.Conn, error)
 }
 
 // New returns a ready Adapter. token is the Discord bot token.
 func New(token string) *Adapter {
 	return &Adapter{
-		token:  token,
-		client: &http.Client{Timeout: 30 * time.Second},
+		token:         token,
+		client:        &http.Client{Timeout: 30 * time.Second},
+		dialWebSocket: dialWebSocket,
 	}
 }
 
@@ -210,7 +212,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		return
 	}
 
-	conn, err := dialWebSocket(ctx, gatewayURL)
+	conn, err := a.dialWebSocket(ctx, gatewayURL)
 	if err != nil {
 		return
 	}
