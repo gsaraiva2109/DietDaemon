@@ -59,6 +59,11 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/web"
 )
 
+var (
+	loadConfig       = config.Load
+	newSignalContext = signal.NotifyContext
+)
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -67,7 +72,7 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -265,7 +270,7 @@ func run() error {
 	}
 
 	// Graceful shutdown on SIGINT/SIGTERM.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := newSignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := ensureOllamaModels(ctx, cfg); err != nil {
 		return err

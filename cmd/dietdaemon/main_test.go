@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,6 +25,49 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver"
 )
+
+func TestRunReturnsConfigLoadError(t *testing.T) {
+	want := errors.New("load config")
+	previous := loadConfig
+	loadConfig = func() (*config.Config, error) { return nil, want }
+	t.Cleanup(func() { loadConfig = previous })
+
+	if err := run(); !errors.Is(err, want) {
+		t.Fatalf("run() error = %v, want %v", err, want)
+	}
+}
+
+func TestRunStopsCleanlyWithCanceledContext(t *testing.T) {
+	cfg := &config.Config{
+		MessagingAdapter:  "telegram",
+		TelegramBotToken:  "test-token",
+		EmbedAdapter:      "ollama",
+		CompletionAdapter: "ollama",
+		DBDriver:          "sqlite",
+		DBPath:            filepath.Join(t.TempDir(), "dietdaemon.db"),
+		HealthCheckPath:   filepath.Join(t.TempDir(), "healthy"),
+		Location:          time.UTC,
+		MessageWorkers:    1,
+	}
+	previousLoadConfig := loadConfig
+	loadConfig = func() (*config.Config, error) { return cfg, nil }
+	t.Cleanup(func() { loadConfig = previousLoadConfig })
+
+	previousSignalContext := newSignalContext
+	newSignalContext = func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		cancel()
+		return ctx, func() {}
+	}
+	t.Cleanup(func() { newSignalContext = previousSignalContext })
+
+	if err := run(); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if _, err := os.Stat(cfg.DBPath); err != nil {
+		t.Fatalf("database was not initialized: %v", err)
+	}
+}
 
 func TestRequiredOllamaModels(t *testing.T) {
 	tests := []struct {
