@@ -406,12 +406,7 @@ func TestFetchBulkFile(t *testing.T) {
 			got = append(got, fm)
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
-		}
-		if len(got) != 2 {
-			t.Fatalf("emitted %d products, want 2 (A, C)", len(got))
-		}
+		requireFetchBulkCount(t, err, got, 2)
 	})
 
 	t.Run("emit error aborts early", func(t *testing.T) {
@@ -430,4 +425,27 @@ func TestFetchBulkFile(t *testing.T) {
 			t.Errorf("emit called %d times, want 1", n)
 		}
 	})
+
+	t.Run("MaxRows caps emitted count and stops early", func(t *testing.T) {
+		s := NewBulk(path)
+
+		var got []types.FoodMatch
+		err := s.FetchBulk(context.Background(), ports.BulkFilter{MaxRows: 1}, func(fm types.FoodMatch) error {
+			got = append(got, fm)
+			return nil
+		})
+		requireFetchBulkCount(t, err, got, 1)
+	})
+}
+
+// requireFetchBulkCount fails the test if a FetchBulk call errored or didn't
+// emit exactly wantLen matches.
+func requireFetchBulkCount(t *testing.T, err error, got []types.FoodMatch, wantLen int) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("FetchBulk: %v", err)
+	}
+	if len(got) != wantLen {
+		t.Fatalf("emitted %d products, want %d", len(got), wantLen)
+	}
 }
