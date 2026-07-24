@@ -85,6 +85,97 @@ func TestHealthFastingErrorSkipsRule(t *testing.T) {
 	}
 }
 
+// TestHealthRuleDisabledOverrideSkips pins down that a user's disabled
+// override for a health rule skips it entirely, even when its trigger
+// condition (water below threshold) is clearly met.
+func TestHealthRuleDisabledOverrideSkips(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	hs := &fakeHealthStore{waterToday: 0} // way below every water threshold
+	hr := DefaultHealthRules()
+	rcs := &fakeRuleConfigStore{configs: map[string][]types.NudgeRuleConfig{
+		"u1": {{UserID: "u1", RuleID: hr[0].ID, Enabled: false}},
+	}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithHealthRules(hs, hr), WithRuleConfig(rcs))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC))
+
+	for _, n := range nt.sent {
+		if n.Body == hr[0].Message {
+			t.Error("disabled override should skip the health rule, but it fired")
+		}
+	}
+}
+
+// TestHealthRuleSkipsOnWasNudgedError pins down that a nudge-dedupe lookup
+// error skips the rule (does not misfire) even though the trigger condition
+// is met.
+func TestHealthRuleSkipsOnWasNudgedError(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	hs := &fakeHealthStore{waterToday: 0}
+	hr := DefaultHealthRules()
+	nd := newFakeNudges()
+	nd.wasNudgedErr = errors.New("boom")
+	nt := &fakeNotifier{}
+	s := newHealthSched(st, hs, nd, nt, hr)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("was-nudged error should skip the health rule, sent %d", len(nt.sent))
+	}
+}
+
+// TestHealthWorkoutParseErrorSkipsRule pins down that a malformed
+// LoggedAt timestamp (one that matches none of parseLoggedAt's formats)
+// skips the workout-reminder rule rather than misfiring or crashing.
+func TestHealthWorkoutParseErrorSkipsRule(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{"u1": {Protein: 100}}, rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 0}}}
+	hs := &fakeHealthStore{workouts: []types.Workout{{LoggedAt: "not-a-real-date"}}}
+	nt := &fakeNotifier{}
+
+	hr := DefaultHealthRules()
+	s := newHealthSched(st, hs, newFakeNudges(), nt, hr)
+	s.tick(context.Background(), time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("unparseable workout LoggedAt should skip workout-reminder, sent %d", len(nt.sent))
+	}
+}
+
+// TestHealthRuleNotMarkedWhenDeliverFails pins down that a failed delivery
+// leaves the health rule un-marked so it retries next tick.
+func TestHealthRuleNotMarkedWhenDeliverFails(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	hs := &fakeHealthStore{waterToday: 0}
+	hr := DefaultHealthRules()
+	nd := newFakeNudges()
+	nt := &fakeNotifier{err: errors.New("delivery down")}
+	s := newHealthSched(st, hs, nd, nt, hr)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC))
+
+	if nd.marked[key("u1", "2026-06-17", hr[0].ID)] {
+		t.Error("failed delivery must not mark the health nudge, so it retries next tick")
+	}
+}
+
+// TestHealthRuleFiresEvenWhenMarkNudgedFails pins down that delivery still
+// happens when persisting the dedupe mark fails afterward.
+func TestHealthRuleFiresEvenWhenMarkNudgedFails(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	hs := &fakeHealthStore{waterToday: 0}
+	hr := DefaultHealthRules()
+	nd := newFakeNudges()
+	nd.markNudgedErr = errors.New("write failed")
+	nt := &fakeNotifier{}
+	s := newHealthSched(st, hs, nd, nt, hr)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC))
+
+	assertNudgeBodySent(t, nt, hr[0].Message, "delivery must still happen even if marking fails")
+}
+
 // --- evalSmartMealRules ---
 
 // mealTimesFor builds one meal timestamp per (day, hour) pair, all in UTC in

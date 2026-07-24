@@ -628,102 +628,129 @@ func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user typ
 	hour := local.Hour()
 
 	for _, base := range s.healthRules {
-		r, enabled := resolveRule(base, base.ID, overrides)
-		if !enabled {
-			continue
-		}
-		// Hour gate: CheckHour = 0 means always check (e.g. fast-ending).
-		if r.CheckHour > 0 && hour < r.CheckHour {
-			continue
-		}
+		s.evalHealthRule(ctx, now, user, date, hour, base, overrides)
+	}
+}
 
-		// Deduplication against nudge_log table.
-		done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: health was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
+// evalHealthRule evaluates a single health rule for one user: override
+// resolution, hour gate, dedupe, the domain-specific trigger condition, and
+// delivery.
+func (s *Scheduler) evalHealthRule(ctx context.Context, now time.Time, user types.User, date string, hour int, base HealthRule, overrides map[string]types.NudgeRuleConfig) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	// Hour gate: CheckHour = 0 means always check (e.g. fast-ending).
+	if r.CheckHour > 0 && hour < r.CheckHour {
+		return
+	}
 
-		triggered := false
-		switch r.Domain {
-		case "water":
-			_, totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
-			if err != nil {
-				s.log.Error("scheduler: get water", "rule", r.ID, "err", err)
-				continue
-			}
-			if totalML < int(r.MinDailyAmount) {
-				triggered = true
-			}
+	// Deduplication against nudge_log table.
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: health was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
 
-		case "workout":
-			workouts, err := s.healthStore.ListWorkouts(ctx, user.ID, 1)
-			if err != nil && !errors.Is(err, types.ErrNotFound) {
-				s.log.Error("scheduler: list workouts", "rule", r.ID, "err", err)
-				continue
-			}
-			if len(workouts) == 0 {
-				triggered = true // never worked out
-				break
-			}
-			lastTime, parseErr := parseLoggedAt(workouts[0].LoggedAt)
-			if parseErr != nil {
-				s.log.Error("scheduler: parse workout date", "rule", r.ID, "err", parseErr)
-				continue
-			}
-			if now.Sub(lastTime).Hours() >= float64(r.MaxGapDays)*24 {
-				triggered = true
-			}
+	if !s.healthRuleTriggered(ctx, now, user, date, r) {
+		return
+	}
 
-		case "sleep":
-			_, err := s.healthStore.GetActiveSleep(ctx, user.ID)
-			if errors.Is(err, types.ErrNotFound) {
-				triggered = true // no active sleep — nudge
-			} else if err != nil {
-				s.log.Error("scheduler: get sleep", "rule", r.ID, "err", err)
-				continue
-			}
+	s.deliverHealthNudge(ctx, user, date, r)
+}
 
-		case "fasting":
-			activeFast, err := s.healthStore.GetActiveFast(ctx, user.ID)
-			if errors.Is(err, types.ErrNotFound) {
-				continue // no active fast — nothing to nudge about
-			}
-			if err != nil {
-				s.log.Error("scheduler: get fast", "rule", r.ID, "err", err)
-				continue
-			}
-			elapsed := now.Sub(activeFast.StartAt).Hours()
-			remaining := activeFast.TargetHours - elapsed
-			if remaining > 0 && remaining <= 0.5 {
-				triggered = true // within 30 minutes of target
-			}
-		}
+// healthRuleTriggered evaluates the domain-specific trigger condition for a
+// single health rule (water/workout/sleep/fasting), logging and returning
+// false on any real data-source error.
+func (s *Scheduler) healthRuleTriggered(ctx context.Context, now time.Time, user types.User, date string, r HealthRule) bool {
+	switch r.Domain {
+	case "water":
+		return s.waterRuleTriggered(ctx, user, date, r)
+	case "workout":
+		return s.workoutRuleTriggered(ctx, now, user, r)
+	case "sleep":
+		return s.sleepRuleTriggered(ctx, user, r)
+	case "fasting":
+		return s.fastingRuleTriggered(ctx, now, user, r)
+	default:
+		return false
+	}
+}
 
-		if !triggered {
-			continue
-		}
+func (s *Scheduler) waterRuleTriggered(ctx context.Context, user types.User, date string, r HealthRule) bool {
+	_, totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
+	if err != nil {
+		s.log.Error("scheduler: get water", "rule", r.ID, "err", err)
+		return false
+	}
+	return totalML < int(r.MinDailyAmount)
+}
 
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon",
-			Body:     r.Message,
-			Priority: types.PriorityHigh,
-		}
-		var healthSnap *types.Macros
-		if len(r.QuickActions) > 0 {
-			healthSnap = &types.Macros{}
-		}
-		if err := s.deliver(ctx, user, r.ID, n, healthSnap, r.QuickActions); err != nil {
-			s.log.Error("scheduler: health notify", "rule", r.ID, "err", err)
-			continue // not marked: retry next tick
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-			s.log.Error("scheduler: health mark-nudged", "rule", r.ID, "err", err)
-		}
+func (s *Scheduler) workoutRuleTriggered(ctx context.Context, now time.Time, user types.User, r HealthRule) bool {
+	workouts, err := s.healthStore.ListWorkouts(ctx, user.ID, 1)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		s.log.Error("scheduler: list workouts", "rule", r.ID, "err", err)
+		return false
+	}
+	if len(workouts) == 0 {
+		return true // never worked out
+	}
+	lastTime, parseErr := parseLoggedAt(workouts[0].LoggedAt)
+	if parseErr != nil {
+		s.log.Error("scheduler: parse workout date", "rule", r.ID, "err", parseErr)
+		return false
+	}
+	return now.Sub(lastTime).Hours() >= float64(r.MaxGapDays)*24
+}
+
+func (s *Scheduler) sleepRuleTriggered(ctx context.Context, user types.User, r HealthRule) bool {
+	_, err := s.healthStore.GetActiveSleep(ctx, user.ID)
+	if errors.Is(err, types.ErrNotFound) {
+		return true // no active sleep — nudge
+	}
+	if err != nil {
+		s.log.Error("scheduler: get sleep", "rule", r.ID, "err", err)
+	}
+	return false
+}
+
+func (s *Scheduler) fastingRuleTriggered(ctx context.Context, now time.Time, user types.User, r HealthRule) bool {
+	activeFast, err := s.healthStore.GetActiveFast(ctx, user.ID)
+	if errors.Is(err, types.ErrNotFound) {
+		return false // no active fast — nothing to nudge about
+	}
+	if err != nil {
+		s.log.Error("scheduler: get fast", "rule", r.ID, "err", err)
+		return false
+	}
+	elapsed := now.Sub(activeFast.StartAt).Hours()
+	remaining := activeFast.TargetHours - elapsed
+	return remaining > 0 && remaining <= 0.5 // within 30 minutes of target
+}
+
+// deliverHealthNudge sends a triggered health rule's nudge and marks it as
+// delivered on success. Quick actions (if any) get a zero-value snapshot so
+// deliver still records/attaches an Undo button.
+func (s *Scheduler) deliverHealthNudge(ctx context.Context, user types.User, date string, r HealthRule) {
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     r.Message,
+		Priority: types.PriorityHigh,
+	}
+	var healthSnap *types.Macros
+	if len(r.QuickActions) > 0 {
+		healthSnap = &types.Macros{}
+	}
+	if err := s.deliver(ctx, user, r.ID, n, healthSnap, r.QuickActions); err != nil {
+		s.log.Error("scheduler: health notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: health mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 
