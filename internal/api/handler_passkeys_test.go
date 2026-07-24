@@ -52,7 +52,7 @@ func newPasskeyHandler(t *testing.T, authStore *passkeyTestStore) *Handler {
 	store := newFakeMealStore()
 	store.user = types.User{ID: "user-1", AccountID: "account-1", Email: "user@example.com", DisplayName: "User"}
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{IdleTTL: time.Hour, AbsoluteTTL: 24 * time.Hour, RememberTTL: 72 * time.Hour},
 			LockoutCfg: auth.DefaultLockoutConfig(),
 		}),

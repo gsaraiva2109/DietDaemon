@@ -670,7 +670,7 @@ func (s *Store) DeleteOIDCIdentity(ctx context.Context, userID, id string) error
 // CreateUserWithOIDC creates an account (if needed), inserts the user with
 // email_verified_at set to now (OIDC asserted it), and links the identity row —
 // all in one transaction. No password_credentials row is created.
-func (s *Store) CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error) {
+func (s *Store) CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName string, identity types.OIDCIdentityInput) (types.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return types.User{}, fmt.Errorf("store: create user with oidc tx: %w", err)
@@ -707,7 +707,7 @@ func (s *Store) CreateUserWithOIDC(ctx context.Context, accountID, userID, email
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO oidc_identities (id, user_id, provider, subject, email, linked_at, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		identityID, u.ID, provider, subject, nullStr(email), now, now,
+		identity.ID, u.ID, identity.Provider, identity.Subject, nullStr(email), now, now,
 	); err != nil {
 		return types.User{}, fmt.Errorf("store: insert oidc identity: %w", err)
 	}

@@ -842,7 +842,7 @@ func (s *fakeAuthStore) ListOIDCIdentities(_ context.Context, userID string) ([]
 func (s *fakeAuthStore) DeleteOIDCIdentity(_ context.Context, userID, id string) error {
 	return nil
 }
-func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error) {
+func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID, email, displayName string, identity types.OIDCIdentityInput) (types.User, error) {
 	s.lastOIDCCreateEmail, s.lastOIDCCreateDisplay = email, displayName
 	u := types.User{ID: userID, AccountID: accountID, Email: email, DisplayName: displayName, Status: "active", CreatedAt: time.Now().UTC()}
 	s.users[userID] = u
@@ -850,7 +850,7 @@ func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID,
 	if s.oidcIdentities == nil {
 		s.oidcIdentities = map[string]types.User{}
 	}
-	s.oidcIdentities[provider+"|"+subject] = u
+	s.oidcIdentities[identity.Provider+"|"+identity.Subject] = u
 	return u, nil
 }
 func (s *fakeAuthStore) CreateOIDCState(_ context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error {
@@ -931,7 +931,7 @@ func newHandler(store MealStore, logger MealLogger, sug ...Suggester) *Handler {
 		suggester = sug[0]
 	}
 	return New(store, logger, time.UTC, suggester, nil,
-		WithAuth(store2, store2, store2, store2, store2, store2, nil, "DietDaemon", AuthConfig{
+		WithAuth(store2, AuthRepos{Sessions: store2, LoginAttempts: store2, TOTP: store2, MFAChallenges: store2, RecoveryCodes: store2}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,

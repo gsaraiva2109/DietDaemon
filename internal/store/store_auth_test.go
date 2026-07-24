@@ -182,7 +182,11 @@ func TestGetUserByOIDCIdentity(t *testing.T) {
 	}
 
 	// Create user with OIDC.
-	u, err := s.CreateUserWithOIDC(ctx(), "acct-oidc", "user-oidc", "oidc@example.com", "OIDC User", "id-oidc-1", "google", "sub-123")
+	u, err := s.CreateUserWithOIDC(ctx(), "acct-oidc", "user-oidc", "oidc@example.com", "OIDC User", types.OIDCIdentityInput{
+		ID:       "id-oidc-1",
+		Provider: "google",
+		Subject:  "sub-123",
+	})
 	if err != nil {
 		t.Fatalf("CreateUserWithOIDC: %v", err)
 	}

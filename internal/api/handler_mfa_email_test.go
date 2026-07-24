@@ -95,7 +95,7 @@ func buildMFAEmailHandler(authStore *mfaEmailTestStore, m mailer.Mailer) *Handle
 		CreatedAt:       verifiedAt,
 	}
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     time.Hour,
 				AbsoluteTTL: 24 * time.Hour,

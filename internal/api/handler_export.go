@@ -12,6 +12,8 @@ import (
 // Data export handlers -- meals and rollups in JSON or CSV.
 // ---------------------------------------------------------------------------
 
+const contentDispositionHeader = "Content-Disposition"
+
 func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, userID string) {
 	format := r.URL.Query().Get("format")
 	start := r.URL.Query().Get("start")
@@ -32,11 +34,11 @@ func (h *Handler) handleExportMeals(w http.ResponseWriter, r *http.Request, user
 	switch format {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", "attachment; filename=meals.csv")
+		w.Header().Set(contentDispositionHeader, "attachment; filename=meals.csv")
 		_ = exportfmt.WriteMealsCSV(w, meals)
 	default:
 		// JSON (default).
-		w.Header().Set("Content-Disposition", "attachment; filename=meals.json")
+		w.Header().Set(contentDispositionHeader, "attachment; filename=meals.json")
 		if meals == nil {
 			meals = []types.Meal{}
 		}
@@ -64,10 +66,10 @@ func (h *Handler) handleExportRollups(w http.ResponseWriter, r *http.Request, us
 	switch format {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", "attachment; filename=rollups.csv")
+		w.Header().Set(contentDispositionHeader, "attachment; filename=rollups.csv")
 		_ = exportfmt.WriteRollupsCSV(w, rollups)
 	default:
-		w.Header().Set("Content-Disposition", "attachment; filename=rollups.json")
+		w.Header().Set(contentDispositionHeader, "attachment; filename=rollups.json")
 		if rollups == nil {
 			rollups = []types.DailyRollup{}
 		}

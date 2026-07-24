@@ -222,47 +222,60 @@ func TestHandleChatMessageToolCallEvent(t *testing.T) {
 		t.Fatalf("expected at least 3 events, got %d: %+v", len(events), events)
 	}
 
-	// Check tool-call event exists.
+	assertToolCallEvent(t, events, "tc_1", "suggest")
+	assertToolResultEvent(t, events, "tc_1")
+}
+
+// assertToolCallEvent checks that every tool-call SSE event carries the
+// expected id and name.
+func assertToolCallEvent(t *testing.T, events []sseEvent, wantID, wantName string) {
+	t.Helper()
 	var found bool
 	for _, e := range events {
-		if e.Event == "tool-call" {
-			found = true
-			var data map[string]string
-			if err := json.Unmarshal([]byte(e.Data), &data); err != nil {
-				t.Errorf("tool-call data: bad JSON: %v", err)
-			} else {
-				if data["id"] != "tc_1" {
-					t.Errorf("tool-call id: expected tc_1, got %q", data["id"])
-				}
-				if data["name"] != "suggest" {
-					t.Errorf("tool-call name: expected suggest, got %q", data["name"])
-				}
-			}
+		if e.Event != "tool-call" {
+			continue
+		}
+		found = true
+		var data map[string]string
+		if err := json.Unmarshal([]byte(e.Data), &data); err != nil {
+			t.Errorf("tool-call data: bad JSON: %v", err)
+			continue
+		}
+		if data["id"] != wantID {
+			t.Errorf("tool-call id: expected %s, got %q", wantID, data["id"])
+		}
+		if data["name"] != wantName {
+			t.Errorf("tool-call name: expected %s, got %q", wantName, data["name"])
 		}
 	}
 	if !found {
 		t.Error("expected a tool-call event")
 	}
+}
 
-	// Check tool-result event exists.
-	var foundTR bool
+// assertToolResultEvent checks that every tool-result SSE event carries the
+// expected id and non-empty text.
+func assertToolResultEvent(t *testing.T, events []sseEvent, wantID string) {
+	t.Helper()
+	var found bool
 	for _, e := range events {
-		if e.Event == "tool-result" {
-			foundTR = true
-			var data map[string]string
-			if err := json.Unmarshal([]byte(e.Data), &data); err != nil {
-				t.Errorf("tool-result data: bad JSON: %v", err)
-			} else {
-				if data["id"] != "tc_1" {
-					t.Errorf("tool-result id: expected tc_1, got %q", data["id"])
-				}
-				if data["text"] == "" {
-					t.Error("tool-result text should not be empty")
-				}
-			}
+		if e.Event != "tool-result" {
+			continue
+		}
+		found = true
+		var data map[string]string
+		if err := json.Unmarshal([]byte(e.Data), &data); err != nil {
+			t.Errorf("tool-result data: bad JSON: %v", err)
+			continue
+		}
+		if data["id"] != wantID {
+			t.Errorf("tool-result id: expected %s, got %q", wantID, data["id"])
+		}
+		if data["text"] == "" {
+			t.Error("tool-result text should not be empty")
 		}
 	}
-	if !foundTR {
+	if !found {
 		t.Error("expected a tool-result event")
 	}
 }

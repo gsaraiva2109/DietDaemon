@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,132 +55,166 @@ type UserDataExport struct {
 func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID string) {
 	ctx := r.Context()
 
-	user, err := h.store.GetUser(ctx, userID)
-	if err != nil {
-		if errors.Is(err, types.ErrNotFound) {
-			h.writeErr(w, fmt.Errorf("export authenticated user missing: %v", err))
-			return
-		}
-		h.writeErr(w, err)
-		return
-	}
-
-	profile, err := h.store.GetProfile(ctx, userID)
-	if err != nil && !errors.Is(err, types.ErrNotFound) {
-		h.writeErr(w, err)
-		return
-	}
-	if errors.Is(err, types.ErrNotFound) {
-		profile = types.UserProfile{UserID: userID, Onboarded: false}
-	}
-
-	meals, err := h.store.GetMealsInRange(ctx, userID, exportAllStart, exportAllEnd)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	rollups, err := h.store.GetRollups(ctx, userID, exportAllStart, exportAllEnd)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	weight, err := h.store.ListWeight(ctx, userID, exportAllLimit)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	measurements, err := h.store.ListMeasurements(ctx, userID, exportAllLimit)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	sleep, err := h.store.ListSleep(ctx, userID, exportAllLimit)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	workouts, err := h.store.ListWorkouts(ctx, userID, exportAllLimit)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	fasts, err := h.store.ListFasts(ctx, userID, exportAllLimit)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	waterTotals, err := h.store.GetWaterDailyTotals(ctx, userID, exportAllStart, exportAllEnd)
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-	templates, err := h.store.GetTemplates(ctx, userID)
+	user, profile, err := h.exportUserAndProfile(ctx, userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
 
-	photoMeta, err := h.store.ListPhotoMetadata(ctx, userID)
+	logs, err := h.exportLogData(ctx, userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	photos := make([]types.ProgressPhoto, 0, len(photoMeta))
-	for _, meta := range photoMeta {
-		full, err := h.store.GetPhotoData(ctx, meta.ID)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-		photos = append(photos, full)
-	}
 
-	if meals == nil {
-		meals = []types.Meal{}
-	}
-	if rollups == nil {
-		rollups = []types.DailyRollup{}
-	}
-	if weight == nil {
-		weight = []types.WeightEntry{}
-	}
-	if measurements == nil {
-		measurements = []types.MeasurementEntry{}
-	}
-	if sleep == nil {
-		sleep = []types.SleepLog{}
-	}
-	if workouts == nil {
-		workouts = []types.Workout{}
-	}
-	if fasts == nil {
-		fasts = []types.Fast{}
-	}
-	if waterTotals == nil {
-		waterTotals = []types.WaterDayTotal{}
-	}
-	if templates == nil {
-		templates = []types.MealTemplate{}
+	photos, err := h.exportPhotos(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
 	}
 
 	export := UserDataExport{
 		ExportedAt:       time.Now().UTC(),
 		User:             user,
 		Profile:          profile,
-		Meals:            meals,
-		Rollups:          rollups,
-		Weight:           weight,
-		Measurements:     measurements,
-		Sleep:            sleep,
-		Workouts:         workouts,
-		Fasts:            fasts,
-		WaterDailyTotals: waterTotals,
+		Meals:            logs.Meals,
+		Rollups:          logs.Rollups,
+		Weight:           logs.Weight,
+		Measurements:     logs.Measurements,
+		Sleep:            logs.Sleep,
+		Workouts:         logs.Workouts,
+		Fasts:            logs.Fasts,
+		WaterDailyTotals: logs.WaterTotals,
 		Photos:           photos,
-		Templates:        templates,
+		Templates:        logs.Templates,
 	}
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=dietdaemon-export-%s.json", userID))
 	_ = json.NewEncoder(w).Encode(export)
+}
+
+// exportUserAndProfile fetches the exporting user's account and profile. A
+// missing profile isn't an error here (an un-onboarded user has none yet) —
+// it's reported back as a zero-value UserProfile, same as before this was
+// split out of handleExportAll.
+func (h *Handler) exportUserAndProfile(ctx context.Context, userID string) (types.User, types.UserProfile, error) {
+	user, err := h.store.GetUser(ctx, userID)
+	if err != nil {
+		if errors.Is(err, types.ErrNotFound) {
+			return types.User{}, types.UserProfile{}, fmt.Errorf("export authenticated user missing: %v", err)
+		}
+		return types.User{}, types.UserProfile{}, err
+	}
+
+	profile, err := h.store.GetProfile(ctx, userID)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		return types.User{}, types.UserProfile{}, err
+	}
+	if errors.Is(err, types.ErrNotFound) {
+		profile = types.UserProfile{UserID: userID, Onboarded: false}
+	}
+	return user, profile, nil
+}
+
+// exportLogData bundles the export's range/limit-scoped store lookups: every
+// piece of UserDataExport except the user, profile, and photos.
+type exportLogData struct {
+	Meals        []types.Meal
+	Rollups      []types.DailyRollup
+	Weight       []types.WeightEntry
+	Measurements []types.MeasurementEntry
+	Sleep        []types.SleepLog
+	Workouts     []types.Workout
+	Fasts        []types.Fast
+	WaterTotals  []types.WaterDayTotal
+	Templates    []types.MealTemplate
+}
+
+func (h *Handler) exportLogData(ctx context.Context, userID string) (exportLogData, error) {
+	var d exportLogData
+	var err error
+
+	if d.Meals, err = h.store.GetMealsInRange(ctx, userID, exportAllStart, exportAllEnd); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Rollups, err = h.store.GetRollups(ctx, userID, exportAllStart, exportAllEnd); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Weight, err = h.store.ListWeight(ctx, userID, exportAllLimit); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Measurements, err = h.store.ListMeasurements(ctx, userID, exportAllLimit); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Sleep, err = h.store.ListSleep(ctx, userID, exportAllLimit); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Workouts, err = h.store.ListWorkouts(ctx, userID, exportAllLimit); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Fasts, err = h.store.ListFasts(ctx, userID, exportAllLimit); err != nil {
+		return exportLogData{}, err
+	}
+	if d.WaterTotals, err = h.store.GetWaterDailyTotals(ctx, userID, exportAllStart, exportAllEnd); err != nil {
+		return exportLogData{}, err
+	}
+	if d.Templates, err = h.store.GetTemplates(ctx, userID); err != nil {
+		return exportLogData{}, err
+	}
+
+	d.normalizeNilSlices()
+	return d, nil
+}
+
+// normalizeNilSlices replaces any nil slice with an empty one so the export
+// JSON always has "[]" instead of "null" for a user with no history in that
+// category.
+func (d *exportLogData) normalizeNilSlices() {
+	if d.Meals == nil {
+		d.Meals = []types.Meal{}
+	}
+	if d.Rollups == nil {
+		d.Rollups = []types.DailyRollup{}
+	}
+	if d.Weight == nil {
+		d.Weight = []types.WeightEntry{}
+	}
+	if d.Measurements == nil {
+		d.Measurements = []types.MeasurementEntry{}
+	}
+	if d.Sleep == nil {
+		d.Sleep = []types.SleepLog{}
+	}
+	if d.Workouts == nil {
+		d.Workouts = []types.Workout{}
+	}
+	if d.Fasts == nil {
+		d.Fasts = []types.Fast{}
+	}
+	if d.WaterTotals == nil {
+		d.WaterTotals = []types.WaterDayTotal{}
+	}
+	if d.Templates == nil {
+		d.Templates = []types.MealTemplate{}
+	}
+}
+
+// exportPhotos fetches every progress photo's full data (metadata lookup
+// returns thumbnails/refs only; each photo's bytes need a separate fetch).
+func (h *Handler) exportPhotos(ctx context.Context, userID string) ([]types.ProgressPhoto, error) {
+	photoMeta, err := h.store.ListPhotoMetadata(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	photos := make([]types.ProgressPhoto, 0, len(photoMeta))
+	for _, meta := range photoMeta {
+		full, err := h.store.GetPhotoData(ctx, meta.ID)
+		if err != nil {
+			return nil, err
+		}
+		photos = append(photos, full)
+	}
+	return photos, nil
 }
 
 // deleteAccountRequest is the safety-guard body for account deletion: the

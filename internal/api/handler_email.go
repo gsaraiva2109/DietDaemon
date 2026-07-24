@@ -20,6 +20,8 @@ import (
 const (
 	verifyTokenTTL = 24 * time.Hour
 	resetTokenTTL  = 1 * time.Hour
+
+	errEmailInvalidJSONBody = "invalid JSON body"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,7 +34,7 @@ func (h *Handler) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errEmailInvalidJSONBody})
 		return
 	}
 
@@ -140,7 +142,7 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errEmailInvalidJSONBody})
 		return
 	}
 
@@ -299,7 +301,7 @@ func (h *Handler) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errEmailInvalidJSONBody})
 		return
 	}
 

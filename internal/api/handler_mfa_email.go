@@ -16,6 +16,7 @@ import (
 
 const mfaEmailTTL = 10 * time.Minute
 const mfaEmailMaxAttempts = 5
+const errInvalidChallenge = "invalid challenge"
 
 // ---------------------------------------------------------------------------
 // Email OTP fallback for MFA step-up.
@@ -39,7 +40,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	chUserID, _, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -47,7 +48,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	if parseErr != nil || time.Now().UTC().After(exp) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -112,7 +113,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isSixDigit(body.Code) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
 		return
 	}
 
@@ -120,7 +121,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	chUserID, remember, chExpiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -129,7 +130,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -145,7 +146,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 		_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
 		return
 	}
 
@@ -156,7 +157,7 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 		ua := r.UserAgent()
 		h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad email code")
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
 		return
 	}
 

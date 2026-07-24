@@ -295,7 +295,11 @@ func (h *Handler) registerOIDCUser(ctx context.Context, provID string, identity 
 		displayName = identity.email
 	}
 	accountID := newHandlerID()
-	u, err := h.authStore.CreateUserWithOIDC(ctx, accountID, newHandlerID(), identity.email, displayName, newHandlerID(), provID, identity.subject)
+	u, err := h.authStore.CreateUserWithOIDC(ctx, accountID, newHandlerID(), identity.email, displayName, types.OIDCIdentityInput{
+		ID:       newHandlerID(),
+		Provider: provID,
+		Subject:  identity.subject,
+	})
 	if err != nil {
 		return types.User{}, "internal_error"
 	}

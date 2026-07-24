@@ -16,8 +16,10 @@ import (
 // Meals & rollups handlers -- daily rollups, meal CRUD, targets, nudges, budget, meal logging.
 // ---------------------------------------------------------------------------
 
+const invalidJSONBodyPrefix = "invalid JSON body: "
+
 func (h *Handler) handleRollupsToday(w http.ResponseWriter, r *http.Request, userID string) {
-	today := time.Now().In(h.loc).Format("2006-01-02")
+	today := time.Now().In(h.loc).Format(dateLayout)
 	rollup, err := h.store.GetRollup(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err)
@@ -90,7 +92,7 @@ func (h *Handler) handleCorrectItem(w http.ResponseWriter, r *http.Request, user
 	var corrected types.ResolvedItem
 	if err := json.NewDecoder(r.Body).Decode(&corrected); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidJSONBodyPrefix + err.Error()})
 		return
 	}
 
@@ -115,7 +117,7 @@ func (h *Handler) handleAddItem(w http.ResponseWriter, r *http.Request, userID s
 	var item types.ResolvedItem
 	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidJSONBodyPrefix + err.Error()})
 		return
 	}
 	if err := h.store.AddMealItem(r.Context(), userID, mealID, item); err != nil {
@@ -204,7 +206,7 @@ func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 	// Reflect immediately on the dashboard, which reads targets from the rollup.
-	today := time.Now().In(h.loc).Format("2006-01-02")
+	today := time.Now().In(h.loc).Format(dateLayout)
 	if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body.Macros); err != nil {
 		h.writeErr(w, err)
 		return
@@ -294,7 +296,7 @@ func (h *Handler) handleSetNudgeSettings(w http.ResponseWriter, r *http.Request,
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidJSONBodyPrefix + err.Error()})
 		return
 	}
 	if body.RuleID == "" {
@@ -321,7 +323,7 @@ func (h *Handler) handleSetNudgeSettings(w http.ResponseWriter, r *http.Request,
 // consumption data. GET /api/v1/budget/weekly
 func (h *Handler) handleGetBudgetWeekly(w http.ResponseWriter, r *http.Request, userID string) {
 	now := time.Now().In(h.loc)
-	today := now.Format("2006-01-02")
+	today := now.Format(dateLayout)
 
 	// Compute calendar week (Monday-Sunday) bounds.
 	weekday := now.Weekday()
@@ -333,7 +335,7 @@ func (h *Handler) handleGetBudgetWeekly(w http.ResponseWriter, r *http.Request, 
 	sunday := monday.AddDate(0, 0, 6)
 	daysRemaining := 7 - daysFromMonday
 
-	rollups, err := h.store.GetRollups(r.Context(), userID, monday.Format("2006-01-02"), sunday.Format("2006-01-02"))
+	rollups, err := h.store.GetRollups(r.Context(), userID, monday.Format(dateLayout), sunday.Format(dateLayout))
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -380,7 +382,7 @@ func (h *Handler) handleLogMeal(w http.ResponseWriter, r *http.Request, userID s
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidJSONBodyPrefix + err.Error()})
 		return
 	}
 	if body.Text == "" {
@@ -418,7 +420,7 @@ func (h *Handler) handleCreateStructuredMeal(w http.ResponseWriter, r *http.Requ
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidJSONBodyPrefix + err.Error()})
 		return
 	}
 	if len(body.Items) == 0 {

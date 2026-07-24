@@ -28,7 +28,7 @@ type accountRepos interface {
 // or to swap in a wrapper that simulates a not-found error).
 func newHandlerWithAccountStore(store MealStore, authStore accountRepos) *Handler {
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,
