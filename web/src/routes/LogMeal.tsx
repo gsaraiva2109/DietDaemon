@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type SyntheticEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   useLogMeal,
   useTemplates,
@@ -162,12 +163,77 @@ export function LogMeal() {
   )
 }
 
+type PickerTab = 'library' | 'catalog'
+
+// Which query backs `isLoading` depends on the active tab, and on the
+// library tab, on whether a search is active. Kept as its own statement
+// (not a nested ternary) so each case reads as a plain fact.
+function resolvePickerLoading(
+  tab: PickerTab,
+  searching: boolean,
+  catalogLoading: boolean,
+  searchLoading: boolean,
+  browseLoading: boolean,
+): boolean {
+  if (tab === 'catalog') return catalogLoading
+  return searching ? searchLoading : browseLoading
+}
+
+// Empty-state copy depends on the same tab/searching combination as
+// isLoading above, resolved together so title/hint never drift apart and
+// neither is a ternary nested inside another.
+function getPickerEmptyCopy(tab: PickerTab, searching: boolean, t: TFunction) {
+  if (tab === 'catalog') {
+    return { title: t('foods.catalogEmptyTitle'), hint: t('foods.catalogEmptyHint') }
+  }
+  if (searching) {
+    return { title: t('foods.noMatchesTitle'), hint: t('foods.noMatchesHint') }
+  }
+  return { title: t('foods.emptyTitle'), hint: t('foods.emptyHint') }
+}
+
+// Loading spinner, empty state, or the result grid, whichever applies. Split
+// out of FoodPicker so that choice (and its nested conditions) isn't part of
+// FoodPicker's own cognitive complexity.
+function FoodPickerList({
+  isLoading,
+  foods,
+  tab,
+  searching,
+  onSelect,
+}: {
+  isLoading: boolean
+  foods: FoodDetail[]
+  tab: PickerTab
+  searching: boolean
+  onSelect: (food: FoodDetail) => void
+}) {
+  const { t } = useTranslation()
+  if (isLoading) return <Spinner label={t('foods.loadingLabel')} />
+  if (!foods.length) {
+    const { title, hint } = getPickerEmptyCopy(tab, searching, t)
+    return <EmptyState icon={<FoodsIcon />} title={title} hint={hint} />
+  }
+  return (
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="show"
+      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+    >
+      {foods.map((f) => (
+        <FoodCard key={f.food_id} food={f} onClick={() => onSelect(f)} />
+      ))}
+    </motion.div>
+  )
+}
+
 // Precise alternative to the free-text parser: search the library/catalog,
 // pick exact foods, set grams, log synchronously via POST /meals.
 function FoodPicker() {
   const { t } = useTranslation()
   const { demo } = useDemo()
-  const [tab, setTab] = useState<'library' | 'catalog'>('library')
+  const [tab, setTab] = useState<PickerTab>('library')
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<SelectedFood[]>([])
@@ -184,7 +250,7 @@ function FoodPicker() {
   const browse = useFoods()
   const catalog = useCatalogSearch(query, '', 30)
 
-  const isLoading = tab === 'catalog' ? catalog.isLoading : searching ? search.isLoading : browse.isLoading
+  const isLoading = resolvePickerLoading(tab, searching, catalog.isLoading, search.isLoading, browse.isLoading)
   const foods = useMemo(() => {
     if (tab === 'catalog') return catalog.data ?? []
     return (searching ? search.data : browse.data) ?? []
@@ -274,21 +340,7 @@ function FoodPicker() {
         />
       </div>
 
-      {isLoading ? (
-        <Spinner label={t('foods.loadingLabel')} />
-      ) : !foods.length ? (
-        <EmptyState
-          icon={<FoodsIcon />}
-          title={tab === 'catalog' ? t('foods.catalogEmptyTitle') : searching ? t('foods.noMatchesTitle') : t('foods.emptyTitle')}
-          hint={tab === 'catalog' ? t('foods.catalogEmptyHint') : searching ? t('foods.noMatchesHint') : t('foods.emptyHint')}
-        />
-      ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {foods.map((f: FoodDetail) => (
-            <FoodCard key={f.food_id} food={f} onClick={() => addFood(f)} />
-          ))}
-        </motion.div>
-      )}
+      <FoodPickerList isLoading={isLoading} foods={foods} tab={tab} searching={searching} onSelect={addFood} />
 
       <div className="mt-5 flex justify-end">
         <button
