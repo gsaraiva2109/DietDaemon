@@ -126,6 +126,34 @@ func TestReadStreamEmptyAndMalformedLinesSkipped(t *testing.T) {
 	})
 }
 
+// TestEmitChunkStopsOnCancelledContextDuringTextDelta covers emitChunk
+// returning false when ctx is already cancelled and the channel has no
+// reader, so the blocking send in streamsend.Send hits ctx.Done() while
+// forwarding a text delta.
+func TestEmitChunkStopsOnCancelledContextDuringTextDelta(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ch := make(chan ports.ChatEvent) // unbuffered, no reader
+
+	line := `{"message":{"role":"assistant","content":"x"}}`
+	if emitChunk(ctx, ch, line) {
+		t.Error("expected emitChunk to return false when ctx is cancelled mid text-delta send")
+	}
+}
+
+// TestEmitChunkStopsOnCancelledContextDuringToolCall is the same as above
+// but for the tool-call send branch.
+func TestEmitChunkStopsOnCancelledContextDuringToolCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ch := make(chan ports.ChatEvent) // unbuffered, no reader
+
+	line := `{"message":{"role":"assistant","tool_calls":[{"function":{"name":"log_meal","arguments":{"args":"x"}}}]}}`
+	if emitChunk(ctx, ch, line) {
+		t.Error("expected emitChunk to return false when ctx is cancelled mid tool-call send")
+	}
+}
+
 // TestReadStreamScannerReadError covers the scanner erroring mid-read: it
 // must emit a single error event carrying the underlying error.
 func TestReadStreamScannerReadError(t *testing.T) {
