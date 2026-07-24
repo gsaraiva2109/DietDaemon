@@ -54,6 +54,24 @@ function parseSSEBlock(block: string): { event: string; data: string } | null {
   return { event, data: dataLines.join('\n') }
 }
 
+// Strips a trailing ```suggestions ... ``` fence the model may have echoed
+// inline into its reply text (the structured `suggestions` SSE event is
+// authoritative; this just hides the raw fence so it isn't shown twice).
+// Written with plain string scanning rather than a regex: the equivalent
+// /\n```suggestions\s*\n[\s\S]*?```\s*$/ has ambiguous \s*\n / \s*$ segments
+// that are super-linear to backtrack on non-matching input (S8786).
+function stripSuggestionsFence(text: string): string {
+  const openIdx = text.lastIndexOf('\n```suggestions')
+  if (openIdx === -1) return text
+  const bodyStart = text.indexOf('\n', openIdx + 1)
+  if (bodyStart === -1) return text
+  const closeIdx = text.indexOf('```', bodyStart)
+  if (closeIdx === -1) return text
+  const afterFence = text.slice(closeIdx + 3)
+  if (afterFence.trim() !== '') return text // fence must be the trailing content
+  return text.slice(0, openIdx)
+}
+
 export interface ChatAdapters {
   modelAdapter: ChatModelAdapter
   suggestionAdapter: SuggestionAdapter
@@ -131,7 +149,7 @@ export function createChatAdapters(getSessionID: () => string | null): ChatAdapt
           } else if (event === 'suggestions') {
             const payload = JSON.parse(data) as { options: string[] }
             latestSuggestions = payload.options ?? []
-            if (currentText) currentText.text = currentText.text.replace(/\n```suggestions\s*\n[\s\S]*?```\s*$/, '')
+            if (currentText) currentText.text = stripSuggestionsFence(currentText.text)
             yield snapshot()
           } else if (event === 'error') {
             const payload = JSON.parse(data) as { message: string }
