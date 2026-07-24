@@ -17,6 +17,8 @@ import (
 
 const dateLayout = "2006-01-02"
 
+const errProfileMeasurementsOutOfRange = "profile measurements are out of range"
+
 func (h *Handler) handleGetProfile(w http.ResponseWriter, r *http.Request, userID string) {
 	profile, err := h.store.GetProfile(r.Context(), userID)
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
@@ -68,13 +70,13 @@ func (h *Handler) validateProfileFields(body types.UserProfile) (string, bool) {
 // profile upsert request.
 func validateProfileMeasurements(body types.UserProfile) (string, bool) {
 	if body.HeightCm != 0 && (!isFinite(body.HeightCm) || body.HeightCm < 50 || body.HeightCm > 300) {
-		return "profile measurements are out of range", false
+		return errProfileMeasurementsOutOfRange, false
 	}
 	if body.TargetWeightKg != 0 && (!isFinite(body.TargetWeightKg) || body.TargetWeightKg < 20 || body.TargetWeightKg > 500) {
-		return "profile measurements are out of range", false
+		return errProfileMeasurementsOutOfRange, false
 	}
 	if body.WeeklyRate != 0 && (!isFinite(body.WeeklyRate) || body.WeeklyRate < 0) {
-		return "profile measurements are out of range", false
+		return errProfileMeasurementsOutOfRange, false
 	}
 	return "", true
 }
