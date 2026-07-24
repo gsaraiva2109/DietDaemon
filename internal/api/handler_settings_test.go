@@ -20,7 +20,7 @@ func newHandlerWithAIKeyCfg(store MealStore, logger MealLogger) *Handler {
 	authStore := newFakeAuthStore()
 	cfg := &config.Config{AIKeyEncKey: []byte("0123456789abcdef0123456789abcdef")[:32]}
 	return New(store, logger, time.UTC, nil, cfg,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,13 @@ import (
 )
 
 const webauthnCeremonyTTL = 5 * time.Minute
+
+const (
+	errMissingCeremonyCookie  = "missing ceremony cookie"
+	errInvalidExpiredCeremony = "invalid or expired ceremony"
+	// #nosec G101 — error-message text, not a credential value.
+	errInvalidCredentialPrefix = "invalid credential: "
+)
 
 // ---------------------------------------------------------------------------
 // Passkey management (auth required — h.wrap)
@@ -88,7 +96,7 @@ func (h *Handler) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Req
 	ceremonyID := h.readWebAuthnCookie(r)
 	if ceremonyID == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing ceremony cookie"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errMissingCeremonyCookie})
 		return
 	}
 
@@ -99,7 +107,7 @@ func (h *Handler) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Req
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 
@@ -107,7 +115,7 @@ func (h *Handler) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired ceremony"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidExpiredCeremony})
 		return
 	}
 	// Verify the authenticated user matches the ceremony user.
@@ -146,7 +154,7 @@ func (h *Handler) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid credential: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCredentialPrefix + err.Error()})
 		return
 	}
 
@@ -206,7 +214,7 @@ func (h *Handler) handleRenamePasskey(w http.ResponseWriter, r *http.Request, us
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 	if strings.TrimSpace(body.Label) == "" {
@@ -265,36 +273,15 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		Email string `json:"email"`
 	}
 	if err := decodeOptionalRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 
-	var (
-		assertion *protocol.CredentialAssertion
-		session   *gowa.SessionData
-		err       error
-		storeID   string // userID if known, "" for discoverable
-	)
-
-	if email != "" {
-		u, lookupErr := h.authStore.GetUserByEmail(ctx, email)
-		if lookupErr == nil {
-			// User exists — scope to their credentials.
-			creds, credErr := h.authStore.GetWebAuthnCredentialsRaw(ctx, u.ID)
-			if credErr == nil && len(creds) > 0 {
-				wUser := auth.WebAuthnUser{User: u, Credentials: creds}
-				assertion, session, err = h.webauthn.BeginLogin(wUser)
-				if err == nil {
-					storeID = u.ID
-				}
-			}
-		}
-		// Fall-through: if anything failed, fall back to discoverable.
-	}
-
+	assertion, session, storeID := h.beginScopedPasskeyLogin(r, email)
 	if assertion == nil {
-		// Discoverable path (no email, or unknown email, or no credentials).
+		// Discoverable path (no email, unknown email, or scoped begin failed).
+		var err error
 		assertion, session, err = h.webauthn.BeginDiscoverableLogin()
 		if err != nil {
 			h.writeErr(w, fmt.Errorf("webauthn begin discoverable login: %w", err))
@@ -319,16 +306,60 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(assertion)
 }
 
+// beginScopedPasskeyLogin starts a WebAuthn login ceremony scoped to a known
+// user's registered credentials. It returns a nil assertion (and empty
+// userID) when email is empty or the lookup/credential-fetch/BeginLogin step
+// fails for any reason, so the caller can fall back to a discoverable login
+// without distinguishing "unknown email" from "no passkeys" — that
+// distinction would let an attacker enumerate registered emails.
+func (h *Handler) beginScopedPasskeyLogin(r *http.Request, email string) (*protocol.CredentialAssertion, *gowa.SessionData, string) {
+	if email == "" {
+		return nil, nil, ""
+	}
+	ctx := r.Context()
+	u, err := h.authStore.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, nil, ""
+	}
+	creds, err := h.authStore.GetWebAuthnCredentialsRaw(ctx, u.ID)
+	if err != nil || len(creds) == 0 {
+		return nil, nil, ""
+	}
+	wUser := auth.WebAuthnUser{User: u, Credentials: creds}
+	assertion, session, err := h.webauthn.BeginLogin(wUser)
+	if err != nil {
+		return nil, nil, ""
+	}
+	return assertion, session, u.ID
+}
+
 // POST /auth/passkeys/login/finish
 func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
-	ip := h.clientIP(r)
+	storedUserID, session, parsed, ok := h.resolvePasskeyLoginCeremony(w, r)
+	if !ok {
+		return
+	}
+
+	u, cred, ok := h.verifyPasskeyLogin(w, r, storedUserID, session, parsed)
+	if !ok {
+		return
+	}
+
+	h.completePasskeyLogin(w, r, u, cred)
+}
+
+// resolvePasskeyLoginCeremony reads the ceremony cookie, decodes the request
+// body, consumes the pending WebAuthn session, and parses the credential
+// assertion. On any failure it writes the appropriate error response itself
+// and returns ok=false.
+func (h *Handler) resolvePasskeyLoginCeremony(w http.ResponseWriter, r *http.Request) (storedUserID string, session *gowa.SessionData, parsed *protocol.ParsedCredentialAssertionData, ok bool) {
 	ctx := r.Context()
 
 	ceremonyID := h.readWebAuthnCookie(r)
 	if ceremonyID == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing ceremony cookie"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errMissingCeremonyCookie})
+		return "", nil, nil, false
 	}
 
 	// Parse wrapper body: {credential}
@@ -337,35 +368,47 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
+		return "", nil, nil, false
 	}
 
 	storedUserID, sessionJSON, err := h.authStore.ConsumeWebAuthnSession(ctx, ceremonyID)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired ceremony"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidExpiredCeremony})
+		return "", nil, nil, false
 	}
 
-	session, err := auth.UnmarshalSessionData(sessionJSON)
+	session, err = auth.UnmarshalSessionData(sessionJSON)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		h.writeErr(w, err)
-		return
+		return "", nil, nil, false
 	}
 
-	parsed, err := auth.ParseCredentialRequestResponse(body.Credential)
+	parsed, err = auth.ParseCredentialRequestResponse(body.Credential)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid credential: " + err.Error()})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCredentialPrefix + err.Error()})
+		return "", nil, nil, false
 	}
+
+	return storedUserID, session, parsed, true
+}
+
+// verifyPasskeyLogin validates the parsed assertion against either the known
+// user's credentials (storedUserID set — scoped login) or, for discoverable
+// login, resolves the user from the authenticator response. On failure it
+// writes the error response (auditing a sign-count regression when
+// detected) and returns ok=false.
+func (h *Handler) verifyPasskeyLogin(w http.ResponseWriter, r *http.Request, storedUserID string, session *gowa.SessionData, parsed *protocol.ParsedCredentialAssertionData) (types.User, *gowa.Credential, bool) {
+	ctx := r.Context()
 
 	var cred *gowa.Credential
 	var u types.User
+	var err error
 
 	if storedUserID != "" {
 		// Scoped login — user known.
@@ -373,7 +416,7 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			h.clearWebAuthnCookie(w)
 			h.writeErr(w, err)
-			return
+			return types.User{}, nil, false
 		}
 		creds, _ := h.authStore.GetWebAuthnCredentialsRaw(ctx, u.ID)
 		wUser := auth.WebAuthnUser{User: u, Credentials: creds}
@@ -399,12 +442,23 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 		h.clearWebAuthnCookie(w)
 		// Check for sign-count regression.
 		if strings.Contains(err.Error(), "sign count") || strings.Contains(err.Error(), "counter") {
-			h.writeAudit(ctx, "", storedUserID, "passkey.signcount_anomaly", ip, r.UserAgent(), "")
+			h.writeAudit(ctx, "", storedUserID, "passkey.signcount_anomaly", h.clientIP(r), r.UserAgent(), "")
 		}
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "passkey sign-in failed"})
-		return
+		return types.User{}, nil, false
 	}
+
+	return u, cred, true
+}
+
+// completePasskeyLogin finalizes a verified passkey login: it clears the
+// ceremony cookie, persists the updated credential, applies TOTP step-up if
+// the user has it confirmed, and otherwise establishes the session.
+func (h *Handler) completePasskeyLogin(w http.ResponseWriter, r *http.Request, u types.User, cred *gowa.Credential) {
+	ctx := r.Context()
+	ip := h.clientIP(r)
+	ua := r.UserAgent()
 
 	h.clearWebAuthnCookie(w)
 
@@ -416,23 +470,10 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
-	ua := r.UserAgent()
-
 	// TOTP step-up check: passkey proves possession, but TOTP policy still applies.
 	if h.totp != nil {
 		if confirmed, checkErr := h.totp.HasConfirmedTOTP(ctx, u.ID); checkErr == nil && confirmed {
-			challengeTok := auth.NewToken()
-			challengeID := auth.HashToken(challengeTok)
-			expiresAt := time.Now().UTC().Add(5 * time.Minute)
-			if err := h.mfaChallenges.CreateMFAChallenge(ctx, challengeID, u.ID, false, expiresAt.Format(time.RFC3339)); err != nil {
-				h.writeErr(w, err)
-				return
-			}
-			h.writeAudit(ctx, u.AccountID, u.ID, "mfa.challenge_issued", ip, ua, "passkey")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"mfa_required":    true,
-				"challenge_token": challengeTok,
-			})
+			h.issuePasskeyMFAChallenge(w, ctx, u, ip, ua)
 			return
 		}
 	}
@@ -446,6 +487,23 @@ func (h *Handler) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 
 	h.writeAudit(ctx, u.AccountID, u.ID, "passkey.login", ip, ua, "")
 	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
+}
+
+// issuePasskeyMFAChallenge creates and returns the TOTP step-up challenge
+// that a passkey login must still pass when the user has TOTP confirmed.
+func (h *Handler) issuePasskeyMFAChallenge(w http.ResponseWriter, ctx context.Context, u types.User, ip, ua string) {
+	challengeTok := auth.NewToken()
+	challengeID := auth.HashToken(challengeTok)
+	expiresAt := time.Now().UTC().Add(5 * time.Minute)
+	if err := h.mfaChallenges.CreateMFAChallenge(ctx, challengeID, u.ID, false, expiresAt.Format(time.RFC3339)); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	h.writeAudit(ctx, u.AccountID, u.ID, "mfa.challenge_issued", ip, ua, "passkey")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"mfa_required":    true,
+		"challenge_token": challengeTok,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +527,7 @@ func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 	chUserID, _, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -478,7 +536,7 @@ func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 	if parseErr != nil || time.Now().UTC().After(exp) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -527,7 +585,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	ceremonyID := h.readWebAuthnCookie(r)
 	if ceremonyID == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing ceremony cookie"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errMissingCeremonyCookie})
 		return
 	}
 
@@ -537,7 +595,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 	if body.ChallengeToken == "" {
@@ -551,7 +609,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 	exp, parseErr := time.Parse(time.RFC3339, chExpiresAt)
@@ -559,7 +617,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, mfaChallengeID)
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
 		return
 	}
 
@@ -567,7 +625,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired ceremony"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidExpiredCeremony})
 		return
 	}
 	if storedUserID != chUserID {
@@ -598,7 +656,7 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.clearWebAuthnCookie(w)
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid credential: " + err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCredentialPrefix + err.Error()})
 		return
 	}
 

@@ -23,6 +23,12 @@ import (
 // change-password, and API-key CRUD.
 // ---------------------------------------------------------------------------
 
+const (
+	errInvalidJSONBody = "invalid JSON body"
+	errInvalidCode     = "invalid code"
+	auditMFAFail       = "mfa.fail"
+)
+
 // --- JSON shapes (frontend contract) ---
 
 type sessionResponse struct {
@@ -92,9 +98,16 @@ func (h *Handler) registrationAllowed(ctx context.Context, viaOIDC bool) (bool, 
 // POST /auth/register
 // ---------------------------------------------------------------------------
 
-func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
-	ip := h.clientIP(r)
+// registerRequest is the decoded, validated body for POST /auth/register.
+type registerRequest struct {
+	email       string
+	password    string
+	displayName string
+}
 
+// decodeRegisterRequest parses and validates the register request body,
+// writing the error response itself when invalid.
+func decodeRegisterRequest(w http.ResponseWriter, r *http.Request) (registerRequest, bool) {
 	var body struct {
 		Email       string `json:"email"`
 		Password    string `json:"password"`
@@ -102,15 +115,57 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
+		return registerRequest{}, false
 	}
 
 	email := strings.ToLower(strings.TrimSpace(body.Email))
-	password := body.Password
-	if email == "" || password == "" {
+	if email == "" || body.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
+		return registerRequest{}, false
+	}
+
+	displayName := strings.TrimSpace(body.DisplayName)
+	if displayName == "" {
+		displayName = email
+	}
+
+	return registerRequest{email: email, password: body.Password, displayName: displayName}, true
+}
+
+// finishRegistrationEmail auto-verifies the new account when no mailer is
+// configured (EMAIL_PROVIDER unset or "none"), otherwise issues and sends a
+// verification token. Returns the user, with EmailVerifiedAt populated when
+// auto-verified so the caller's response reflects it immediately.
+func (h *Handler) finishRegistrationEmail(ctx context.Context, u types.User, accountID, ip, ua string) (types.User, error) {
+	if h.emailProvider == "" || h.emailProvider == "none" {
+		// No mailer configured or explicitly "none" — auto-verify.
+		_ = h.authStore.MarkEmailVerified(ctx, u.ID)
+		u.EmailVerifiedAt = new(time.Now().UTC())
+		return u, nil
+	}
+
+	token := auth.NewToken()
+	hashedID := auth.HashToken(token)
+	expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if err := h.authStore.CreateEmailToken(ctx, hashedID, u.ID, "verify", expiresAt); err != nil {
+		return u, err
+	}
+	link := h.publicBaseURL + "/verify-email?token=" + token
+	msg := mailer.VerificationEmail(link)
+	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
+		slog.Error("send verification email failed", "err", err)
+	}
+	h.writeAudit(ctx, accountID, u.ID, "email.verification_sent", ip, ua, u.Email)
+	return u, nil
+}
+
+func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
+	ip := h.clientIP(r)
+
+	req, ok := decodeRegisterRequest(w, r)
+	if !ok {
 		return
 	}
 
@@ -132,7 +187,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// (argon2id, tuned to take tens of ms), so checking uniqueness first
 	// avoids wasting CPU (a cheap DoS amplifier) and avoids leaking
 	// account-existence timing through hash-then-reject.
-	if _, err := h.authStore.GetUserByEmail(ctx, email); err == nil {
+	if _, err := h.authStore.GetUserByEmail(ctx, req.email); err == nil {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrEmailTaken.Error()})
 		return
@@ -142,7 +197,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hash password (with length guards).
-	phc, err := auth.Hash(password)
+	phc, err := auth.Hash(req.password)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -151,12 +206,8 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	accountID := newHandlerID()
 	userID := newHandlerID()
-	displayName := strings.TrimSpace(body.DisplayName)
-	if displayName == "" {
-		displayName = email
-	}
 
-	u, err := h.authStore.CreateUserWithPassword(ctx, accountID, userID, email, displayName, phc)
+	u, err := h.authStore.CreateUserWithPassword(ctx, accountID, userID, req.email, req.displayName, phc)
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -171,28 +222,12 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, email)
+	h.writeAudit(ctx, accountID, u.ID, "user.registered", ip, ua, req.email)
 
-	// Email verification: auto-verify when EMAIL_PROVIDER=none,
-	// otherwise send verification email.
-	if h.emailProvider == "" || h.emailProvider == "none" {
-		// No mailer configured or explicitly "none" — auto-verify.
-		_ = h.authStore.MarkEmailVerified(ctx, u.ID)
-		u.EmailVerifiedAt = new(time.Now().UTC())
-	} else {
-		token := auth.NewToken()
-		hashedID := auth.HashToken(token)
-		expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
-		if err := h.authStore.CreateEmailToken(ctx, hashedID, u.ID, "verify", expiresAt); err != nil {
-			h.writeErr(w, err)
-			return
-		}
-		link := h.publicBaseURL + "/verify-email?token=" + token
-		msg := mailer.VerificationEmail(link)
-		if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
-			slog.Error("send verification email failed", "err", err)
-		}
-		h.writeAudit(ctx, accountID, u.ID, "email.verification_sent", ip, ua, u.Email)
+	u, err = h.finishRegistrationEmail(ctx, u, accountID, ip, ua)
+	if err != nil {
+		h.writeErr(w, err)
+		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -203,9 +238,16 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 // POST /auth/login
 // ---------------------------------------------------------------------------
 
-func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := h.clientIP(r)
+// loginRequest is the decoded, validated body for POST /auth/login.
+type loginRequest struct {
+	email    string
+	password string
+	remember bool
+}
 
+// decodeLoginRequest parses and validates the login request body, writing
+// the error response itself when invalid.
+func decodeLoginRequest(w http.ResponseWriter, r *http.Request) (loginRequest, bool) {
 	var body struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -213,38 +255,46 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
+		return loginRequest{}, false
 	}
 
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 	if email == "" || body.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
-		return
+		return loginRequest{}, false
 	}
 
-	ctx := r.Context()
+	return loginRequest{email: email, password: body.Password, remember: body.Remember}, true
+}
 
-	// Brute-force lockout on the email identifier.
+// checkLoginLockout enforces the brute-force lockout on the email
+// identifier, writing the 429 response itself when locked. Returns false
+// when the caller should stop (locked, or the lockout check itself failed).
+func (h *Handler) checkLoginLockout(w http.ResponseWriter, ctx context.Context, email string) bool {
 	locked, retryAfter, err := auth.CheckLockout(ctx, h.loginAttempts, email, h.lockoutCfg)
 	if err != nil {
 		h.writeErr(w, err)
-		return
+		return false
 	}
 	if locked {
 		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
-		return
+		return false
 	}
+	return true
+}
 
-	// Look up user by email. When the user doesn't exist (or has no password
-	// hash, e.g. an OIDC-only account), fall through to verifying against a
-	// dummy hash instead of returning early — an early return here would be
-	// much faster than the hash-and-compare path below, letting an attacker
-	// distinguish "no such account" from "wrong password" by timing.
+// verifyLoginCredentials looks up the user and verifies the password.
+// Verify always runs, even for a nonexistent user (or one with no password
+// hash, e.g. an OIDC-only account) against a dummy hash instead of
+// returning early — an early return would be much faster than the
+// hash-and-compare path, letting an attacker distinguish "no such account"
+// from "wrong password" by timing.
+func (h *Handler) verifyLoginCredentials(ctx context.Context, email, password string) (types.User, bool) {
 	u, err := h.authStore.GetUserByEmail(ctx, email)
 	phc := auth.DummyPHC
 	userFound := err == nil
@@ -256,39 +306,73 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Verify (always runs, even for a nonexistent user — see above).
-	ok, err := auth.Verify(body.Password, phc)
+	ok, err := auth.Verify(password, phc)
 	if !userFound || err != nil || !ok {
-		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
+		return types.User{}, false
+	}
+	return u, true
+}
+
+// tryLoginMFAStepUp issues an MFA challenge instead of a session when the
+// user has confirmed TOTP enrolled, writing the response itself. Returns
+// true when it handled the response (challenge issued, or an error was
+// written) — the caller must return immediately in that case.
+func (h *Handler) tryLoginMFAStepUp(w http.ResponseWriter, ctx context.Context, u types.User, remember bool, ip, ua string) bool {
+	if h.totp == nil {
+		return false
+	}
+	confirmed, err := h.totp.HasConfirmedTOTP(ctx, u.ID)
+	if err != nil || !confirmed {
+		return false
+	}
+
+	challengeTok := auth.NewToken()
+	challengeID := auth.HashToken(challengeTok)
+	expiresAt := time.Now().UTC().Add(5 * time.Minute)
+	if err := h.mfaChallenges.CreateMFAChallenge(ctx, challengeID, u.ID, remember, expiresAt.Format(time.RFC3339)); err != nil {
+		h.writeErr(w, err)
+		return true
+	}
+	h.writeAudit(ctx, u.AccountID, u.ID, "mfa.challenge_issued", ip, ua, "")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"mfa_required":    true,
+		"challenge_token": challengeTok,
+	})
+	return true
+}
+
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ip := h.clientIP(r)
+
+	req, ok := decodeLoginRequest(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+
+	if !h.checkLoginLockout(w, ctx, req.email) {
+		return
+	}
+
+	u, ok := h.verifyLoginCredentials(ctx, req.email, req.password)
+	if !ok {
+		_ = h.authStore.RecordLoginAttempt(ctx, req.email, false)
 		h.writeAuthError(w, auth.ErrInvalidCredentials)
 		return
 	}
 
 	// Success.
-	_ = h.authStore.RecordLoginAttempt(ctx, email, true)
+	_ = h.authStore.RecordLoginAttempt(ctx, req.email, true)
 	ua := r.UserAgent()
 
 	// MFA step-up when TOTP is confirmed.
-	if h.totp != nil {
-		if confirmed, err := h.totp.HasConfirmedTOTP(ctx, u.ID); err == nil && confirmed {
-			challengeTok := auth.NewToken()
-			challengeID := auth.HashToken(challengeTok)
-			expiresAt := time.Now().UTC().Add(5 * time.Minute)
-			if err := h.mfaChallenges.CreateMFAChallenge(ctx, challengeID, u.ID, body.Remember, expiresAt.Format(time.RFC3339)); err != nil {
-				h.writeErr(w, err)
-				return
-			}
-			h.writeAudit(ctx, u.AccountID, u.ID, "mfa.challenge_issued", ip, ua, "")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"mfa_required":    true,
-				"challenge_token": challengeTok,
-			})
-			return
-		}
+	if h.tryLoginMFAStepUp(w, ctx, u, req.remember, ip, ua) {
+		return
 	}
 
-	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, body.Remember, ip, ua, h.sessionCfg)
-	h.setSessionCookies(w, cookieTok, csrfTok, body.Remember)
+	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, req.remember, ip, ua, h.sessionCfg)
+	h.setSessionCookies(w, cookieTok, csrfTok, req.remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {
 		h.writeErr(w, err)
 		return
@@ -353,7 +437,7 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request, u
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 
@@ -469,7 +553,7 @@ func (h *Handler) handleCreateCred(w http.ResponseWriter, r *http.Request, userI
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 
@@ -673,13 +757,13 @@ func (h *Handler) handleTOTPVerify(w http.ResponseWriter, r *http.Request, userI
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
 		return
 	}
 
 	if !isSixDigit(body.Code) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
 		return
 	}
 
@@ -709,7 +793,7 @@ func (h *Handler) handleTOTPVerify(w http.ResponseWriter, r *http.Request, userI
 
 	if !auth.ValidateCode(string(plain), body.Code) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
 		return
 	}
 
@@ -743,12 +827,16 @@ func (h *Handler) handleTOTPVerify(w http.ResponseWriter, r *http.Request, userI
 	})
 }
 
-// POST /auth/totp/challenge — second login step. Accepts TOTP code or recovery code.
-func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
-	if !h.totpReady(w) {
-		return
-	}
+// totpChallengeRequest is the decoded, validated body for POST /auth/totp/challenge.
+type totpChallengeRequest struct {
+	challengeToken string
+	code           string
+	recoveryCode   string
+}
 
+// decodeTOTPChallengeRequest parses and validates the challenge request
+// body, writing the error response itself when invalid.
+func decodeTOTPChallengeRequest(w http.ResponseWriter, r *http.Request) (totpChallengeRequest, bool) {
 	var body struct {
 		ChallengeToken string `json:"challenge_token"`
 		Code           string `json:"code"`
@@ -756,112 +844,137 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
-		return
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidJSONBody})
+		return totpChallengeRequest{}, false
 	}
-
 	if body.ChallengeToken == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge_token is required"})
-		return
+		return totpChallengeRequest{}, false
 	}
+	return totpChallengeRequest{
+		challengeToken: body.ChallengeToken,
+		code:           body.Code,
+		recoveryCode:   body.RecoveryCode,
+	}, true
+}
 
-	ctx := r.Context()
-	challengeID := auth.HashToken(body.ChallengeToken)
-
+// resolveTOTPChallenge looks up the pending MFA challenge and checks its
+// expiry, writing the error response itself (and deleting the challenge on
+// expiry) when it can't proceed.
+func (h *Handler) resolveTOTPChallenge(w http.ResponseWriter, ctx context.Context, challengeID string) (chUserID string, remember, ok bool) {
 	chUserID, remember, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
-		return
+		return "", false, false
 	}
 
-	// Check expiry.
 	exp, err := time.Parse(time.RFC3339, expiresAt)
 	if err != nil || time.Now().UTC().After(exp) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge expired"})
-		return
+		return "", false, false
 	}
 
-	ip := h.clientIP(r)
-	ua := r.UserAgent()
+	return chUserID, remember, true
+}
 
-	// Per-user lockout on TOTP/recovery-code guesses. The challenge endpoint
-	// is only IP-rate-limited (wrapPublicLimited), which a distributed or
-	// IP-rotating attacker can bypass; brute-forcing a 6-digit code (or a
-	// recovery code) needs a cap keyed on the account being attacked too.
-	lockKey := "totp:" + chUserID
+// checkTOTPChallengeLockout enforces the per-user lockout on TOTP/recovery
+// guesses. The challenge endpoint is only IP-rate-limited
+// (wrapPublicLimited), which a distributed or IP-rotating attacker can
+// bypass; brute-forcing a 6-digit code (or a recovery code) needs a cap
+// keyed on the account being attacked too. Writes the 429 response itself
+// when locked.
+func (h *Handler) checkTOTPChallengeLockout(w http.ResponseWriter, ctx context.Context, lockKey string) bool {
 	locked, retryAfter, err := auth.CheckLockout(ctx, h.loginAttempts, lockKey, h.lockoutCfg)
 	if err != nil {
 		h.writeErr(w, err)
-		return
+		return false
 	}
 	if locked {
 		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
-		return
+		return false
+	}
+	return true
+}
+
+// verifyTOTPRecoveryCode consumes a one-time recovery code, recording the
+// failed attempt and audit event (and writing the response) on mismatch.
+func (h *Handler) verifyTOTPRecoveryCode(w http.ResponseWriter, ctx context.Context, recoveryCode, chUserID, lockKey, ip, ua string) bool {
+	codeHash := auth.HashToken(recoveryCode)
+	consumed, err := h.recoveryCodes.ConsumeRecoveryCode(ctx, chUserID, codeHash)
+	if err != nil {
+		h.writeErr(w, err)
+		return false
+	}
+	if !consumed {
+		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
+		h.writeAudit(ctx, "", chUserID, auditMFAFail, ip, ua, "bad recovery code")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
+		return false
+	}
+	return true
+}
+
+// verifyTOTPCode decrypts the user's TOTP secret and validates the
+// caller-supplied code, recording the failed attempt and audit event (and
+// writing the response) on any failure.
+func (h *Handler) verifyTOTPCode(w http.ResponseWriter, ctx context.Context, code, chUserID, lockKey, ip, ua string) bool {
+	if !isSixDigit(code) {
+		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
+		h.writeAudit(ctx, "", chUserID, auditMFAFail, ip, ua, "bad code format")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
+		return false
 	}
 
-	// Try recovery code first if provided.
-	if body.RecoveryCode != "" {
-		codeHash := auth.HashToken(body.RecoveryCode)
-		consumed, err := h.recoveryCodes.ConsumeRecoveryCode(ctx, chUserID, codeHash)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-		if !consumed {
-			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
-			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad recovery code")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
-			return
-		}
-	} else {
-		// Validate TOTP code.
-		if !isSixDigit(body.Code) {
-			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
-			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad code format")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
-			return
-		}
-
-		encSecret, _, err := h.totp.GetTOTPSecret(ctx, chUserID)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-
-		ct, err := base64.RawStdEncoding.DecodeString(encSecret)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-
-		plain, err := auth.Decrypt(ct, h.totpEncKey)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-
-		if !auth.ValidateCode(string(plain), body.Code) {
-			_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
-			h.writeAudit(ctx, "", chUserID, "mfa.fail", ip, ua, "bad totp code")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid code"})
-			return
-		}
+	encSecret, _, err := h.totp.GetTOTPSecret(ctx, chUserID)
+	if err != nil {
+		h.writeErr(w, err)
+		return false
 	}
 
-	// Success — delete challenge, create session.
-	_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, true)
-	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
+	ct, err := base64.RawStdEncoding.DecodeString(encSecret)
+	if err != nil {
+		h.writeErr(w, err)
+		return false
+	}
 
+	plain, err := auth.Decrypt(ct, h.totpEncKey)
+	if err != nil {
+		h.writeErr(w, err)
+		return false
+	}
+
+	if !auth.ValidateCode(string(plain), code) {
+		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
+		h.writeAudit(ctx, "", chUserID, auditMFAFail, ip, ua, "bad totp code")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidCode})
+		return false
+	}
+	return true
+}
+
+// verifyTOTPChallengeCode dispatches to recovery-code or TOTP-code
+// verification depending on which the caller supplied, preferring the
+// recovery code when both are present.
+func (h *Handler) verifyTOTPChallengeCode(w http.ResponseWriter, ctx context.Context, req totpChallengeRequest, chUserID, lockKey, ip, ua string) bool {
+	if req.recoveryCode != "" {
+		return h.verifyTOTPRecoveryCode(w, ctx, req.recoveryCode, chUserID, lockKey, ip, ua)
+	}
+	return h.verifyTOTPCode(w, ctx, req.code, chUserID, lockKey, ip, ua)
+}
+
+// finishTOTPChallengeLogin creates a session for the now-verified user and
+// writes the session response.
+func (h *Handler) finishTOTPChallengeLogin(w http.ResponseWriter, ctx context.Context, chUserID string, remember bool, ip, ua string) {
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {
@@ -878,6 +991,44 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 	h.writeAudit(ctx, u.AccountID, chUserID, "mfa.success", ip, ua, "")
 
 	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
+}
+
+// POST /auth/totp/challenge — second login step. Accepts TOTP code or recovery code.
+func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
+	if !h.totpReady(w) {
+		return
+	}
+
+	req, ok := decodeTOTPChallengeRequest(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	challengeID := auth.HashToken(req.challengeToken)
+
+	chUserID, remember, ok := h.resolveTOTPChallenge(w, ctx, challengeID)
+	if !ok {
+		return
+	}
+
+	ip := h.clientIP(r)
+	ua := r.UserAgent()
+
+	lockKey := "totp:" + chUserID
+	if !h.checkTOTPChallengeLockout(w, ctx, lockKey) {
+		return
+	}
+
+	if !h.verifyTOTPChallengeCode(w, ctx, req, chUserID, lockKey, ip, ua) {
+		return
+	}
+
+	// Success — delete challenge, create session.
+	_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, true)
+	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
+
+	h.finishTOTPChallengeLogin(w, ctx, chUserID, remember, ip, ua)
 }
 
 // DELETE /auth/totp — disable TOTP factor for the authenticated user.

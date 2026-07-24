@@ -27,6 +27,15 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
 )
 
+const (
+	contentTypeHeader = "Content-Type"
+	contentTypeJSON   = "application/json"
+
+	msgUnauthorized    = "Unauthorized."
+	retryAfterHeader   = "Retry-After"
+	msgTooManyRequests = "Too many requests."
+)
+
 // AccountStore covers core user account and credential lookups.
 type AccountStore interface {
 	GetUserByEmail(ctx context.Context, email string) (types.User, error)
@@ -65,7 +74,7 @@ type OIDCStore interface {
 	LinkOIDCIdentity(ctx context.Context, id, userID, provider, subject, email string) error
 	ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error)
 	DeleteOIDCIdentity(ctx context.Context, userID, id string) error
-	CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName, identityID, provider, subject string) (types.User, error)
+	CreateUserWithOIDC(ctx context.Context, accountID, userID, email, displayName string, identity types.OIDCIdentityInput) (types.User, error)
 	CreateOIDCState(ctx context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error
 	ConsumeOIDCState(ctx context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error)
 	DeleteOIDCState(ctx context.Context, id string) error
@@ -406,18 +415,30 @@ type FoodImportRunner interface {
 // related values behind named options removes that footgun.
 type Option func(*Handler)
 
+// AuthRepos groups the five auth-specific repos WithAuth wires into the
+// Handler. They are typically all the same concrete *store.Store, cast to
+// different narrow interfaces. Named fields (rather than folding these into
+// WithAuth's positional param list) keep the safety property the Option
+// pattern above exists for: a future field reorder fails to compile instead
+// of silently wiring the wrong repo into the wrong slot.
+type AuthRepos struct {
+	Sessions      auth.SessionRepo
+	LoginAttempts auth.LoginAttemptRepo
+	TOTP          auth.TOTPRepo
+	MFAChallenges auth.MFAChallengeRepo
+	RecoveryCodes auth.RecoveryCodeRepo
+}
+
 // WithAuth attaches the auth subsystem: the auth-specific store view plus its
-// session/lockout/TOTP/MFA/recovery-code repos and config. authStore and the
-// five repo params are typically all the same concrete *store.Store, cast to
-// different narrow interfaces.
-func WithAuth(authStore AuthStore, sessions auth.SessionRepo, loginAttempts auth.LoginAttemptRepo, totpRepo auth.TOTPRepo, mfaChallenges auth.MFAChallengeRepo, recoveryCodes auth.RecoveryCodeRepo, totpEncKey []byte, totpIssuer string, cfg AuthConfig) Option {
+// session/lockout/TOTP/MFA/recovery-code repos (see AuthRepos) and config.
+func WithAuth(authStore AuthStore, repos AuthRepos, totpEncKey []byte, totpIssuer string, cfg AuthConfig) Option {
 	return func(h *Handler) {
 		h.authStore = authStore
-		h.sessions = sessions
-		h.loginAttempts = loginAttempts
-		h.totp = totpRepo
-		h.mfaChallenges = mfaChallenges
-		h.recoveryCodes = recoveryCodes
+		h.sessions = repos.Sessions
+		h.loginAttempts = repos.LoginAttempts
+		h.totp = repos.TOTP
+		h.mfaChallenges = repos.MFAChallenges
+		h.recoveryCodes = repos.RecoveryCodes
 		h.totpEncKey = totpEncKey
 		h.totpIssuer = totpIssuer
 		h.sessionCfg = cfg.SessionCfg
@@ -821,16 +842,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // The handler receives the authenticated userID.
 func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
 	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
 
 		userID, err := h.authenticate(r)
 		if err != nil {
-			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, msgUnauthorized)
 			return
 		}
 		if !h.authLimiter(r).Allow(userID) {
-			w.Header().Set("Retry-After", "60")
-			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
+			w.Header().Set(retryAfterHeader, "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, msgTooManyRequests)
 			return
 		}
 		next(w, r, userID)
@@ -865,7 +886,7 @@ func isExpensiveRequest(r *http.Request) bool {
 // restriction is what keeps it from being a mutation vector.
 func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
 	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
 
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, ErrorMethodNotAllowed, "Method not allowed.")
@@ -876,12 +897,12 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 		hashed := auth.HashToken(token)
 		u, err := h.authStore.GetUserByShareToken(r.Context(), hashed)
 		if err != nil {
-			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, msgUnauthorized)
 			return
 		}
 		if !h.authLimiter(r).Allow(u.ID) {
-			w.Header().Set("Retry-After", "60")
-			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
+			w.Header().Set(retryAfterHeader, "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, msgTooManyRequests)
 			return
 		}
 		next(w, r, u.ID)
@@ -891,7 +912,7 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 // wrapPublic sets JSON headers but performs no authentication.
 func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
 	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
 		next(w, r)
 	}))
 }
@@ -899,7 +920,7 @@ func (h *Handler) wrapPublic(next http.HandlerFunc) http.HandlerFunc {
 // handleHealthz is a liveness probe for orchestration health checks.
 // No auth, no rate limit — it only confirms the HTTP server is alive.
 func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -908,8 +929,8 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
 	return h.wrapPublic(func(w http.ResponseWriter, r *http.Request) {
 		if !h.ipLimiter.Allow(h.clientIP(r)) {
-			w.Header().Set("Retry-After", "60")
-			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
+			w.Header().Set(retryAfterHeader, "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, msgTooManyRequests)
 			return
 		}
 		next(w, r)
@@ -924,7 +945,7 @@ func (h *Handler) wrapPublicLimited(next http.HandlerFunc) http.HandlerFunc {
 // disabled entirely (503) rather than left open. See issue #136.
 func (h *Handler) wrapAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return withAPIErrorEnvelope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(contentTypeHeader, contentTypeJSON)
 
 		if h.cfg == nil || h.cfg.APIAuthToken == "" {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -933,12 +954,12 @@ func (h *Handler) wrapAdmin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		token := bearerToken(r)
 		if subtle.ConstantTimeCompare([]byte(token), []byte(h.cfg.APIAuthToken)) != 1 {
-			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, "Unauthorized.")
+			WriteError(w, http.StatusUnauthorized, ErrorUnauthorized, msgUnauthorized)
 			return
 		}
 		if !h.expensiveLimiter.Allow("admin") {
-			w.Header().Set("Retry-After", "60")
-			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, "Too many requests.")
+			w.Header().Set(retryAfterHeader, "60")
+			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, msgTooManyRequests)
 			return
 		}
 		next(w, r)
@@ -951,23 +972,8 @@ func (h *Handler) wrapAdmin(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) authenticate(r *http.Request) (string, error) {
 	// 1. Cookie session.
 	if cookie := readSessionCookie(r); cookie != "" {
-		sess, result, err := auth.ValidateSession(r.Context(), h.sessions, cookie, h.sessionCfg)
-		if err == nil && result == auth.ValidateOK {
-			// CSRF on mutating methods.
-			if isMutating(r.Method) {
-				csrfHeader := r.Header.Get("X-CSRF-Token")
-				if !auth.VerifyCSRF(csrfHeader, sess.CSRFToken) {
-					return "", fmt.Errorf("csrf mismatch")
-				}
-			}
-			// Slide the idle expiry forward.
-			now := time.Now().UTC()
-			idleExpires := now.Add(h.sessionCfg.IdleTTL)
-			if idleExpires.After(sess.AbsoluteExpiresAt) {
-				idleExpires = sess.AbsoluteExpiresAt
-			}
-			_ = h.sessions.TouchSession(r.Context(), sess.ID, now, idleExpires)
-			return sess.UserID, nil
+		if userID, ok, err := h.authenticateCookieSession(r, cookie); ok {
+			return userID, err
 		}
 	}
 
@@ -981,6 +987,35 @@ func (h *Handler) authenticate(r *http.Request) (string, error) {
 	}
 
 	return "", fmt.Errorf("unauthorized")
+}
+
+// authenticateCookieSession validates a session cookie, verifies CSRF on
+// mutating methods, and slides the idle expiry forward. ok reports whether
+// the session was valid enough to decide authenticate's outcome by itself;
+// when ok is false, err is always nil and the caller should fall through to
+// the next auth scheme instead of returning err.
+func (h *Handler) authenticateCookieSession(r *http.Request, cookie string) (userID string, ok bool, err error) {
+	sess, result, verr := auth.ValidateSession(r.Context(), h.sessions, cookie, h.sessionCfg)
+	if verr != nil || result != auth.ValidateOK {
+		return "", false, nil
+	}
+
+	// CSRF on mutating methods.
+	if isMutating(r.Method) {
+		csrfHeader := r.Header.Get("X-CSRF-Token")
+		if !auth.VerifyCSRF(csrfHeader, sess.CSRFToken) {
+			return "", true, fmt.Errorf("csrf mismatch")
+		}
+	}
+
+	// Slide the idle expiry forward.
+	now := time.Now().UTC()
+	idleExpires := now.Add(h.sessionCfg.IdleTTL)
+	if idleExpires.After(sess.AbsoluteExpiresAt) {
+		idleExpires = sess.AbsoluteExpiresAt
+	}
+	_ = h.sessions.TouchSession(r.Context(), sess.ID, now, idleExpires)
+	return sess.UserID, true, nil
 }
 
 func isMutating(method string) bool {

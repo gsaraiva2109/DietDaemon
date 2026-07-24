@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -138,7 +139,7 @@ func buildAuthTestHandler(authStore authTestStore, user types.User, m mailer.Mai
 	store := newFakeMealStore()
 	store.user = user
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,
@@ -242,28 +243,45 @@ func TestForgotPasswordGenericResponse(t *testing.T) {
 	}
 }
 
+// seedForgotPasswordLockoutCase primes authStore so a forgot-password
+// request hits the given failure mode: "locked" racks up three prior failed
+// attempts to trigger the lockout; anything else simulates the lockout
+// store itself failing.
+func seedForgotPasswordLockoutCase(t *testing.T, authStore *emailTestAuthStore, name string) {
+	t.Helper()
+	if name != "locked" {
+		authStore.recentFailedAttemptsErr = errors.New("store unavailable")
+		return
+	}
+	for range 3 {
+		_ = authStore.RecordLoginAttempt(t.Context(), "forgot:test@example.com", false)
+	}
+}
+
+// assertForgotPasswordGenericNoOp checks that a locked-out (or failing)
+// forgot-password request still returns the generic 200 without issuing a
+// reset token or sending an email.
+func assertForgotPasswordGenericNoOp(t *testing.T, rec *httptest.ResponseRecorder, authStore *emailTestAuthStore, fm *fakeMailer) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected generic 200, got %d", rec.Code)
+	}
+	if len(authStore.emailTokens) != 0 || len(fm.sent) != 0 {
+		t.Error("lockout failure must not issue a reset token or send email")
+	}
+}
+
 func TestForgotPasswordLockoutFailuresAreGenericNoOps(t *testing.T) {
 	for _, name := range []string{"locked", "store error"} {
 		t.Run(name, func(t *testing.T) {
 			authStore := newEmailTestAuthStore()
 			authStore.userByEmail["test@example.com"] = types.User{ID: "test-user", Email: "test@example.com"}
 			authStore.phcHash["test-user"] = "password hash"
-			if name == "locked" {
-				for range 3 {
-					_ = authStore.RecordLoginAttempt(t.Context(), "forgot:test@example.com", false)
-				}
-			} else {
-				authStore.recentFailedAttemptsErr = errors.New("store unavailable")
-			}
+			seedForgotPasswordLockoutCase(t, authStore, name)
 
 			fm := &fakeMailer{}
 			rec := doRequest(buildEmailHandler(authStore, fm), http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "test@example.com"}, nil)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected generic 200, got %d", rec.Code)
-			}
-			if len(authStore.emailTokens) != 0 || len(fm.sent) != 0 {
-				t.Error("lockout failure must not issue a reset token or send email")
-			}
+			assertForgotPasswordGenericNoOp(t, rec, authStore, fm)
 		})
 	}
 }

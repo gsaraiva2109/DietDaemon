@@ -600,6 +600,15 @@ type AuditEvent struct {
 	CreatedAt time.Time
 }
 
+// OIDCIdentityInput carries the new-identity fields for CreateUserWithOIDC,
+// keeping identityID/provider/subject grouped instead of three trailing
+// positional string params.
+type OIDCIdentityInput struct {
+	ID       string
+	Provider string
+	Subject  string
+}
+
 // OIDCIdentity is a linked OIDC provider identity.
 type OIDCIdentity struct {
 	ID        string    `json:"id"`

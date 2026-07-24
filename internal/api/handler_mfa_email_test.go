@@ -29,6 +29,9 @@ type mfaEmailTestStore struct {
 	challenges map[string]mfaEmailChallenge
 	codes      map[string]mfaEmailCode
 	sessions   map[string]auth.Session
+
+	upsertMFAEmailCodeErr error
+	createSessionErr      error
 }
 
 func newMFAEmailTestStore() *mfaEmailTestStore {
@@ -54,6 +57,9 @@ func (s *mfaEmailTestStore) DeleteMFAChallenge(_ context.Context, id string) err
 }
 
 func (s *mfaEmailTestStore) UpsertMFAEmailCode(_ context.Context, userID, hash, expiresAt string) error {
+	if s.upsertMFAEmailCodeErr != nil {
+		return s.upsertMFAEmailCodeErr
+	}
 	s.codes[userID] = mfaEmailCode{hash: hash, expiresAt: expiresAt}
 	return nil
 }
@@ -79,6 +85,9 @@ func (s *mfaEmailTestStore) DeleteMFAEmailCode(_ context.Context, userID string)
 }
 
 func (s *mfaEmailTestStore) CreateSession(_ context.Context, session auth.Session) error {
+	if s.createSessionErr != nil {
+		return s.createSessionErr
+	}
 	s.sessions[session.ID] = session
 	return nil
 }
@@ -95,7 +104,7 @@ func buildMFAEmailHandler(authStore *mfaEmailTestStore, m mailer.Mailer) *Handle
 		CreatedAt:       verifiedAt,
 	}
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     time.Hour,
 				AbsoluteTTL: 24 * time.Hour,
@@ -237,5 +246,48 @@ func TestMFAEmailVerifyWrongCode(t *testing.T) {
 	}
 	if got := authStore.codes["test-user"].attempts; got != 1 {
 		t.Errorf("expected one failed attempt, got %d", got)
+	}
+}
+
+// TestMFAEmailSendLogsCodeWhenProviderNone exercises handleMFAEmailSend's
+// "no mailer" fallback (logCode), used in dev/homelab setups where
+// EMAIL_PROVIDER=none. The mailer must not be invoked in that case.
+func TestMFAEmailSendLogsCodeWhenProviderNone(t *testing.T) {
+	authStore := newMFAEmailTestStore()
+	store := newFakeMealStore()
+	verifiedAt := time.Now().UTC()
+	store.user = types.User{
+		ID:              "test-user",
+		AccountID:       "acct-1",
+		Email:           "test@example.com",
+		EmailVerifiedAt: &verifiedAt,
+		Status:          "active",
+		CreatedAt:       verifiedAt,
+	}
+	fm := &fakeMailer{}
+	h := New(store, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationOpen,
+		}),
+		WithMailer(fm, "none"),
+	)
+	challengeToken := "valid-challenge"
+	authStore.addChallenge(challengeToken, time.Now().UTC().Add(time.Minute))
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/mfa/email/send", map[string]string{"challenge_token": challengeToken}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fm.sent) != 0 {
+		t.Errorf("mailer must not be used when EMAIL_PROVIDER=none, got %#v", fm.sent)
+	}
+	if _, ok := authStore.codes["test-user"]; !ok {
+		t.Error("expected an MFA code to still be stored")
 	}
 }

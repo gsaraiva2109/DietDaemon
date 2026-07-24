@@ -179,26 +179,39 @@ func TestMagicRequestEmptyEmailGeneric(t *testing.T) {
 	}
 }
 
+// primeMagicLockoutScenario puts authStore into one of the two failure modes
+// exercised by TestMagicRequestLockoutFailuresAreGenericNoOps: an actual
+// lockout, or the recent-attempts lookup itself failing.
+func primeMagicLockoutScenario(t *testing.T, authStore *magicTestAuthStore, name string) {
+	t.Helper()
+	if name == "locked" {
+		for range 3 {
+			_ = authStore.RecordLoginAttempt(t.Context(), "magic:test@example.com", false)
+		}
+		return
+	}
+	authStore.recentFailedAttemptsErr = errors.New("store unavailable")
+}
+
+func assertMagicRequestGenericNoOp(t *testing.T, rec *httptest.ResponseRecorder, authStore *magicTestAuthStore, fm *fakeMailer) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected generic 200, got %d", rec.Code)
+	}
+	if len(authStore.emailTokens) != 0 || len(authStore.magicCodes) != 0 || len(fm.sent) != 0 {
+		t.Error("lockout failure must not issue credentials or send email")
+	}
+}
+
 func TestMagicRequestLockoutFailuresAreGenericNoOps(t *testing.T) {
 	for _, name := range []string{"locked", "store error"} {
 		t.Run(name, func(t *testing.T) {
 			authStore := newMagicTestAuthStore()
-			if name == "locked" {
-				for range 3 {
-					_ = authStore.RecordLoginAttempt(t.Context(), "magic:test@example.com", false)
-				}
-			} else {
-				authStore.recentFailedAttemptsErr = errors.New("store unavailable")
-			}
+			primeMagicLockoutScenario(t, authStore, name)
 			fm := &fakeMailer{}
 
 			rec := doRequest(buildMagicHandler(authStore, fm), http.MethodPost, "/api/v1/auth/magic/request", map[string]string{"email": "test@example.com"}, nil)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected generic 200, got %d", rec.Code)
-			}
-			if len(authStore.emailTokens) != 0 || len(authStore.magicCodes) != 0 || len(fm.sent) != 0 {
-				t.Error("lockout failure must not issue credentials or send email")
-			}
+			assertMagicRequestGenericNoOp(t, rec, authStore, fm)
 		})
 	}
 }

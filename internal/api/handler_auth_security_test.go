@@ -69,7 +69,7 @@ func TestClientIPNoTrustedProxiesConfigured(t *testing.T) {
 func buildAuthSecurityHandler(authStore *fakeAuthStore) *Handler {
 	store := newFakeMealStore()
 	return New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, nil, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,
@@ -168,7 +168,7 @@ func TestHandleTOTPChallengeLockout(t *testing.T) {
 	store := newFakeMealStore()
 	lockoutCfg := auth.LockoutConfig{MaxAttempts: 3, Window: time.Hour, LockDuration: time.Hour}
 	h := New(store, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(authStore, authStore, authStore, authStore, authStore, authStore, encKey, "DietDaemon", AuthConfig{
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, encKey, "DietDaemon", AuthConfig{
 			SessionCfg: auth.SessionConfig{
 				IdleTTL:     1 * time.Hour,
 				AbsoluteTTL: 24 * time.Hour,
