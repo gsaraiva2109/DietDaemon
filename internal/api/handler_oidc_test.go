@@ -34,6 +34,228 @@ func TestHandleOIDCStartRejectsUnknownProvider(t *testing.T) {
 	}
 }
 
+// --- handleOIDCStart ---
+
+func TestHandleOIDCStartLinkRequiresAuth(t *testing.T) {
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+	h.providers["known"] = &oidc.Provider{ID: "known"}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start?link=1", nil)
+	req.SetPathValue("id", "known")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "not_authenticated" {
+		t.Fatalf("status/location = %d/%q, want 302 with error=not_authenticated", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestHandleOIDCStartCreateStateError(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.createOIDCStateErr = errors.New("db down")
+	h := buildAuthSecurityHandler(authStore)
+	h.providers["known"] = &oidc.Provider{ID: "known"}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start", nil)
+	req.SetPathValue("id", "known")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("CreateOIDCState error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleOIDCStartProviderUnavailable(t *testing.T) {
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+	// No Issuer set — lazy discovery in AuthCodeURL fails.
+	h.providers["known"] = &oidc.Provider{ID: "known"}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start", nil)
+	req.SetPathValue("id", "known")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "provider_unavailable" {
+		t.Fatalf("status/location = %d/%q, want 302 with error=provider_unavailable", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestHandleOIDCStartSuccess(t *testing.T) {
+	idp := newTestIdP(t, "test-client")
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+	h.providers["known"] = idp.provider(false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start?next=/dashboard", nil)
+	req.SetPathValue("id", "known")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302: %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, idp.srv.URL) {
+		t.Errorf("Location = %q, want it to point at the provider's authorize endpoint", loc)
+	}
+	found := false
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "dd_oidc_state" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected dd_oidc_state cookie to be set")
+	}
+}
+
+func TestHandleOIDCStartLinkSuccess(t *testing.T) {
+	idp := newTestIdP(t, "test-client")
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+	h.providers["known"] = idp.provider(false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start?link=1", nil)
+	req.SetPathValue("id", "known")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- oidcProviderReportedError ---
+
+func TestHandleOIDCCallbackProviderReportedError(t *testing.T) {
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+	h.providers["known"] = &oidc.Provider{ID: "known"}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/callback?error=access_denied&error_description=user+cancelled", nil)
+	req.SetPathValue("id", "known")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCCallback(rec, req)
+
+	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "provider_error" {
+		t.Fatalf("status/location = %d/%q, want 302 with error=provider_error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// --- handleListIdentities / handleUnlinkIdentity ---
+
+func TestHandleListIdentities(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.listOIDCIdentitiesResult = []types.OIDCIdentity{
+		{ID: "id1", Provider: "known", Email: "user@example.com"},
+	}
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "GET", "/api/v1/auth/identities", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[[]types.OIDCIdentity](t, rec)
+	if len(got) != 1 || got[0].ID != "id1" {
+		t.Errorf("unexpected identities: %+v", got)
+	}
+}
+
+func TestHandleListIdentitiesNullReturn(t *testing.T) {
+	h := buildAuthSecurityHandler(newFakeAuthStore())
+
+	rec := doRequest(h, "GET", "/api/v1/auth/identities", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "[") {
+		t.Errorf("expected JSON array, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleListIdentitiesError(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.listOIDCIdentitiesErr = errors.New("db down")
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "GET", "/api/v1/auth/identities", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleUnlinkIdentity(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.phcHash["test-user"] = "hash" // has a password, so unlinking a lone identity is allowed
+	authStore.listOIDCIdentitiesResult = []types.OIDCIdentity{
+		{ID: "id1", Provider: "known", Subject: "sub1"},
+	}
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/auth/identities/id1", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleUnlinkIdentityListError(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.listOIDCIdentitiesErr = errors.New("db down")
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/auth/identities/id1", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleUnlinkIdentityNotFound(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.listOIDCIdentitiesResult = []types.OIDCIdentity{{ID: "other-id"}}
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/auth/identities/id1", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown identity id expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleUnlinkIdentityLastCredential(t *testing.T) {
+	authStore := newFakeAuthStore()
+	// No password hash + exactly one identity => refuse to avoid lockout.
+	authStore.listOIDCIdentitiesResult = []types.OIDCIdentity{{ID: "id1", Provider: "known"}}
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/auth/identities/id1", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// withAPIErrorEnvelope rewrites any 4xx/5xx body into the standard
+	// {"error":{"code":...,"message":...}} envelope, lifting the handler's
+	// raw {"error":"last_credential"} into the message field.
+	got := decodeJSON[errorEnvelope](t, rec)
+	if got.Error.Message != "last_credential" {
+		t.Errorf("error message = %q, want last_credential", got.Error.Message)
+	}
+}
+
+func TestHandleUnlinkIdentityDeleteError(t *testing.T) {
+	authStore := newFakeAuthStore()
+	authStore.phcHash["test-user"] = "hash"
+	authStore.listOIDCIdentitiesResult = []types.OIDCIdentity{{ID: "id1", Provider: "known"}}
+	authStore.deleteOIDCIdentityErr = errors.New("db down")
+	h := buildAuthSecurityHandler(authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/auth/identities/id1", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleOIDCCallbackRejectsUnknownProviderAndInvalidState(t *testing.T) {
 	h := buildAuthSecurityHandler(newFakeAuthStore())
 	h.providers["known"] = &oidc.Provider{ID: "known"}

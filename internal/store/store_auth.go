@@ -272,16 +272,17 @@ func (s *Store) listCreds(ctx context.Context, table, userID string) ([]credRow,
 	var out []credRow
 	for rows.Next() {
 		var c credRow
-		var ca, lua, ra string
+		var ca string
+		var lua, ra sql.NullString
 		if err := rows.Scan(&c.ID, &c.UserID, &c.Label, &ca, &lua, &ra); err != nil {
 			return nil, fmt.Errorf("store: scan %s row: %w", table, err)
 		}
 		c.CreatedAt = parseUTC(ca)
-		if lua != "" {
-			c.LastUsedAt = new(parseUTC(lua))
+		if lua.Valid && lua.String != "" {
+			c.LastUsedAt = new(parseUTC(lua.String))
 		}
-		if ra != "" {
-			c.RevokedAt = new(parseUTC(ra))
+		if ra.Valid && ra.String != "" {
+			c.RevokedAt = new(parseUTC(ra.String))
 		}
 		out = append(out, c)
 	}

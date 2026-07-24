@@ -35,7 +35,11 @@ type fakeMealStore struct {
 	deleteErr    error
 	backupConfig types.BackupConfig
 
-	nudgeRuleConfig map[string]types.NudgeRuleConfig
+	nudgeRuleConfig          map[string]types.NudgeRuleConfig
+	nudgeRuleConfigErr       error
+	setNudgeRuleConfigErr    error
+	deleteNudgeRuleConfigErr error
+	setTargetsErr            error
 
 	// Latest meal.
 	latestMealTime    string
@@ -235,6 +239,9 @@ func (s *fakeMealStore) GetTargets(_ context.Context, _ string) (types.DailyTarg
 	return s.targets, nil
 }
 func (s *fakeMealStore) SetTargets(_ context.Context, t types.DailyTargets) error {
+	if s.setTargetsErr != nil {
+		return s.setTargetsErr
+	}
 	if s.targetsErr != nil {
 		return s.targetsErr
 	}
@@ -246,6 +253,9 @@ func (s *fakeMealStore) UpdateRollupTargets(_ context.Context, _, _ string, t ty
 	return nil
 }
 func (s *fakeMealStore) GetNudgeRuleConfig(_ context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	if s.nudgeRuleConfigErr != nil {
+		return nil, s.nudgeRuleConfigErr
+	}
 	var out []types.NudgeRuleConfig
 	for _, c := range s.nudgeRuleConfig {
 		if c.UserID == userID {
@@ -255,6 +265,9 @@ func (s *fakeMealStore) GetNudgeRuleConfig(_ context.Context, userID string) ([]
 	return out, nil
 }
 func (s *fakeMealStore) SetNudgeRuleConfig(_ context.Context, userID, ruleID string, enabled bool, params json.RawMessage) error {
+	if s.setNudgeRuleConfigErr != nil {
+		return s.setNudgeRuleConfigErr
+	}
 	if s.nudgeRuleConfig == nil {
 		s.nudgeRuleConfig = map[string]types.NudgeRuleConfig{}
 	}
@@ -262,6 +275,9 @@ func (s *fakeMealStore) SetNudgeRuleConfig(_ context.Context, userID, ruleID str
 	return nil
 }
 func (s *fakeMealStore) DeleteNudgeRuleConfig(_ context.Context, userID, ruleID string) error {
+	if s.deleteNudgeRuleConfigErr != nil {
+		return s.deleteNudgeRuleConfigErr
+	}
 	delete(s.nudgeRuleConfig, userID+"|"+ruleID)
 	return nil
 }
@@ -615,6 +631,10 @@ type fakeAuthStore struct {
 	createSessionErr         error
 	lastOIDCCreateEmail      string
 	lastOIDCCreateDisplay    string
+	createOIDCStateErr       error
+	listOIDCIdentitiesResult []types.OIDCIdentity
+	listOIDCIdentitiesErr    error
+	deleteOIDCIdentityErr    error
 }
 
 type loginAttemptEntry struct {
@@ -837,10 +857,13 @@ func (s *fakeAuthStore) LinkOIDCIdentity(_ context.Context, _ /* id */, userID, 
 	return nil
 }
 func (s *fakeAuthStore) ListOIDCIdentities(_ context.Context, userID string) ([]types.OIDCIdentity, error) {
-	return nil, nil
+	if s.listOIDCIdentitiesErr != nil {
+		return nil, s.listOIDCIdentitiesErr
+	}
+	return s.listOIDCIdentitiesResult, nil
 }
 func (s *fakeAuthStore) DeleteOIDCIdentity(_ context.Context, userID, id string) error {
-	return nil
+	return s.deleteOIDCIdentityErr
 }
 func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID, email, displayName string, identity types.OIDCIdentityInput) (types.User, error) {
 	s.lastOIDCCreateEmail, s.lastOIDCCreateDisplay = email, displayName
@@ -854,7 +877,7 @@ func (s *fakeAuthStore) CreateUserWithOIDC(_ context.Context, accountID, userID,
 	return u, nil
 }
 func (s *fakeAuthStore) CreateOIDCState(_ context.Context, id, nonce, pkceVerifier, linkUserID, next, expiresAt string) error {
-	return nil
+	return s.createOIDCStateErr
 }
 func (s *fakeAuthStore) ConsumeOIDCState(_ context.Context, id string) (nonce, pkceVerifier, linkUserID, next string, err error) {
 	if s.consumeOIDCStateErr != nil {
@@ -1631,6 +1654,454 @@ func TestDeleteMealItemForbiddenOtherUser(t *testing.T) {
 	}
 }
 
+// --- add/delete/correct item error paths ---
+
+func TestHandleAddItemInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user"}
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/meals/m1/items", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAddItemStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user"}
+	store.addErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/meals/m1/items", types.ResolvedItem{}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAddItemGetMealErrorOnReturn(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user"}
+	h := newHandler(store, &fakeMealLogger{})
+	// AddMealItem reads/writes the meals map directly, so seeding succeeds;
+	// getMealErr only affects the subsequent returnMeal() read.
+	store.getMealErr = errors.New("db down")
+
+	rec := doRequest(h, "POST", "/api/v1/meals/m1/items", types.ResolvedItem{}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("returnMeal error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDeleteItemBadIndex(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/abc", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("bad itemID expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleDeleteItemStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.meals["m1"] = types.Meal{ID: "m1", UserID: "test-user", Items: []types.ResolvedItem{{}}}
+	store.deleteErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/meals/m1/items/0", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCorrectItemInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/meals/m1/items/0/correct", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleCorrectItemStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.correctErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/meals/m1/items/0/correct", types.ResolvedItem{}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCorrectItemGetMealErrorAfterCorrect(t *testing.T) {
+	store := newFakeMealStore()
+	store.getMealErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "POST", "/api/v1/meals/m1/items/0/correct", types.ResolvedItem{}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("post-correct GetMeal error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleMealsListInvalidLimit(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/meals?limit=0", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("out-of-range limit expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleRollupsRangeStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.rollupsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/rollups/range?start=2026-06-15&end=2026-06-17", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- targets ---
+
+func TestHandleGetTargets(t *testing.T) {
+	store := newFakeMealStore()
+	store.targets = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 2500}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/targets", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.DailyTargets](t, rec)
+	if got.Targets.Calories != 2500 {
+		t.Errorf("calories = %v, want 2500", got.Targets.Calories)
+	}
+}
+
+func TestHandleGetTargetsError(t *testing.T) {
+	store := newFakeMealStore()
+	store.targetsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/targets", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSetTargetsGetTargetsGenericError(t *testing.T) {
+	store := newFakeMealStore()
+	store.targetsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("generic GetTargets error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSetTargetsStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.setTargetsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := types.Macros{Calories: 2500, Protein: 150, Carbs: 300, Fat: 70, Fiber: 30}
+	rec := doRequest(h, "PUT", "/api/v1/targets", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("SetTargets error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- nudge settings ---
+
+func TestHandleGetNudgeSettings(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/settings/nudges", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	views := decodeJSON[[]nudgeRuleView](t, rec)
+	if len(views) == 0 {
+		t.Fatal("expected at least one nudge rule view")
+	}
+	var sawMacro, sawWeeklyBudget bool
+	for _, v := range views {
+		if v.RuleID == "protein-evening" {
+			sawMacro = true
+			if !v.Enabled {
+				t.Errorf("protein-evening should default enabled")
+			}
+		}
+		if v.Kind == "weekly-budget" {
+			sawWeeklyBudget = true
+			if v.Enabled {
+				t.Errorf("weekly-budget rules should default disabled")
+			}
+		}
+	}
+	if !sawMacro || !sawWeeklyBudget {
+		t.Errorf("expected macro and weekly-budget rules in views, got %+v", views)
+	}
+}
+
+func TestHandleGetNudgeSettingsWithOverrides(t *testing.T) {
+	store := newFakeMealStore()
+	store.nudgeRuleConfig = map[string]types.NudgeRuleConfig{
+		"test-user|protein-evening": {
+			UserID: "test-user", RuleID: "protein-evening", Enabled: true,
+			Params: json.RawMessage(`{"threshold_pct":50}`),
+		},
+		"test-user|weekly-budget-calories": {
+			UserID: "test-user", RuleID: "weekly-budget-calories", Enabled: true,
+		},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/settings/nudges", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	views := decodeJSON[[]nudgeRuleView](t, rec)
+	var sawEnabledBudget bool
+	for _, v := range views {
+		if v.RuleID == "weekly-budget-calories" && v.Enabled {
+			sawEnabledBudget = true
+		}
+	}
+	if !sawEnabledBudget {
+		t.Errorf("expected weekly-budget-calories override to enable the rule, got %+v", views)
+	}
+}
+
+func TestHandleGetNudgeSettingsDisabledOverride(t *testing.T) {
+	store := newFakeMealStore()
+	store.nudgeRuleConfig = map[string]types.NudgeRuleConfig{
+		"test-user|protein-evening": {UserID: "test-user", RuleID: "protein-evening", Enabled: false},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/settings/nudges", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	views := decodeJSON[[]nudgeRuleView](t, rec)
+	for _, v := range views {
+		if v.RuleID == "protein-evening" && v.Enabled {
+			t.Errorf("expected protein-evening disabled via override, got %+v", v)
+		}
+	}
+}
+
+func TestHandleGetNudgeSettingsError(t *testing.T) {
+	store := newFakeMealStore()
+	store.nudgeRuleConfigErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/settings/nudges", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSetNudgeSettings(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"rule_id": "protein-evening", "enabled": false}
+	rec := doRequest(h, "PUT", "/api/v1/settings/nudges", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cfg, ok := store.nudgeRuleConfig["test-user|protein-evening"]
+	if !ok || cfg.Enabled {
+		t.Errorf("expected override persisted as disabled, got %+v (ok=%v)", cfg, ok)
+	}
+}
+
+func TestHandleSetNudgeSettingsReset(t *testing.T) {
+	store := newFakeMealStore()
+	store.nudgeRuleConfig = map[string]types.NudgeRuleConfig{
+		"test-user|protein-evening": {UserID: "test-user", RuleID: "protein-evening", Enabled: false},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"rule_id": "protein-evening", "reset": true}
+	rec := doRequest(h, "PUT", "/api/v1/settings/nudges", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := store.nudgeRuleConfig["test-user|protein-evening"]; ok {
+		t.Error("expected override removed after reset")
+	}
+}
+
+func TestHandleSetNudgeSettingsMissingRuleID(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/settings/nudges", map[string]any{"enabled": true}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing rule_id expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetNudgeSettingsInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/nudges", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetNudgeSettingsResetError(t *testing.T) {
+	store := newFakeMealStore()
+	store.deleteNudgeRuleConfigErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"rule_id": "protein-evening", "reset": true}
+	rec := doRequest(h, "PUT", "/api/v1/settings/nudges", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("reset store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSetNudgeSettingsStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.setNudgeRuleConfigErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"rule_id": "protein-evening", "enabled": true}
+	rec := doRequest(h, "PUT", "/api/v1/settings/nudges", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- budget/weekly ---
+
+func TestHandleGetBudgetWeekly(t *testing.T) {
+	store := newFakeMealStore()
+	store.targets = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 2000, Protein: 150}}
+	store.rollups = []types.DailyRollup{
+		{UserID: "test-user", Date: "2020-01-01", Consumed: types.Macros{Calories: 500, Protein: 40}},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/budget/weekly", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[map[string]map[string]float64](t, rec)
+	if got["calories"]["plain"] != 2000 {
+		t.Errorf("calories.plain = %v, want 2000", got["calories"]["plain"])
+	}
+	if got["protein"]["plain"] != 150 {
+		t.Errorf("protein.plain = %v, want 150", got["protein"]["plain"])
+	}
+}
+
+func TestHandleGetBudgetWeeklyZeroTargets(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/budget/weekly", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[map[string]map[string]float64](t, rec)
+	if got["calories"]["plain"] != 0 || got["calories"]["effective"] != 0 {
+		t.Errorf("expected zero calories budget when no targets set, got %+v", got["calories"])
+	}
+	if got["protein"]["plain"] != 0 || got["protein"]["effective"] != 0 {
+		t.Errorf("expected zero protein budget when no targets set, got %+v", got["protein"])
+	}
+}
+
+func TestHandleGetBudgetWeeklyRollupsError(t *testing.T) {
+	store := newFakeMealStore()
+	store.rollupsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/budget/weekly", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("rollups error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGetBudgetWeeklyTargetsError(t *testing.T) {
+	store := newFakeMealStore()
+	store.targetsErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/budget/weekly", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("targets error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- structured meal edge cases ---
+
+func TestHandleCreateStructuredMealInvalidJSON(t *testing.T) {
+	h := newHandler(newFakeMealStore(), &fakeMealLogger{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/meals", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateStructuredMealLoggerError(t *testing.T) {
+	store := newFakeMealStore()
+	store.foodsByID = map[string]types.FoodMatch{
+		"egg": {FoodID: "egg", Name: "Egg", Per100g: types.Macros{Calories: 155, Protein: 13}},
+	}
+	logger := &fakeMealLogger{err: errors.New("pipeline busy")}
+	h := newHandler(store, logger)
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/meals", map[string]any{
+		"items": []map[string]any{{"food_id": "egg", "grams": 200}},
+	}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("logger error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Meals — latest
 // ---------------------------------------------------------------------------
@@ -1662,6 +2133,17 @@ func TestMealsLatestEmpty(t *testing.T) {
 	got := decodeJSON[map[string]string](t, rec)
 	if got["latest"] != "" {
 		t.Errorf("latest = %q, want empty", got["latest"])
+	}
+}
+
+func TestMealsLatestStoreError(t *testing.T) {
+	store := newFakeMealStore()
+	store.latestMealTimeErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/meals/latest", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("generic store error expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -123,6 +124,67 @@ func TestHandleExportAllUserNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleExportAllProfileNotFoundDefaults(t *testing.T) {
+	store := newFakeMealStore()
+	store.user = types.User{ID: "test-user"}
+	store.profileErr = types.ErrNotFound
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/export/all", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	export := decodeJSON[UserDataExport](t, rec)
+	if export.Profile.Onboarded {
+		t.Errorf("expected default (not onboarded) profile when none exists, got %+v", export.Profile)
+	}
+}
+
+// TestHandleExportAllStoreErrors covers every "if err != nil { h.writeErr }"
+// branch in handleExportAll's linear fetch sequence: each sub-fetch's store
+// error must propagate as a 500, independent of which one fails.
+func TestHandleExportAllStoreErrors(t *testing.T) {
+	dbErr := errors.New("db down")
+	for name, setup := range map[string]func(*fakeMealStore){
+		"profile":      func(s *fakeMealStore) { s.profileErr = dbErr },
+		"meals":        func(s *fakeMealStore) { s.mealsInRangeErr = dbErr },
+		"rollups":      func(s *fakeMealStore) { s.rollupsErr = dbErr },
+		"weight":       func(s *fakeMealStore) { s.weightsErr = dbErr },
+		"measurements": func(s *fakeMealStore) { s.measurementsErr = dbErr },
+		"sleep":        func(s *fakeMealStore) { s.listSleepErr = dbErr },
+		"workouts":     func(s *fakeMealStore) { s.listWorkoutsErr = dbErr },
+		"fasts":        func(s *fakeMealStore) { s.listFastsErr = dbErr },
+		"water totals": func(s *fakeMealStore) { s.waterDailyTotalsErr = dbErr },
+		"templates":    func(s *fakeMealStore) { s.templatesErr = dbErr },
+		"photo meta":   func(s *fakeMealStore) { s.photoMetadataErr = dbErr },
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeMealStore()
+			store.user = types.User{ID: "test-user"}
+			setup(store)
+			h := newHandler(store, &fakeMealLogger{})
+
+			rec := doRequest(h, "GET", "/api/v1/export/all", nil, nil)
+			if rec.Code != http.StatusInternalServerError {
+				t.Errorf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleExportAllPhotoDataError(t *testing.T) {
+	store := newFakeMealStore()
+	store.user = types.User{ID: "test-user"}
+	store.photoMetadata = []types.ProgressPhoto{{ID: "p1"}}
+	store.photoDataErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/export/all", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DELETE /api/v1/account
 // ---------------------------------------------------------------------------
@@ -171,6 +233,22 @@ func TestHandleDeleteAccountSuccess(t *testing.T) {
 	}
 	if !cleared {
 		t.Errorf("expected dd_session cookie to be cleared")
+	}
+}
+
+// TestHandleDeleteAccountClearsSessionCookie covers the best-effort session
+// cache cleanup: when the request carries a dd_session cookie, the handler
+// must also delete that cached session (in addition to always clearing the
+// response cookies, which TestHandleDeleteAccountSuccess already checks).
+func TestHandleDeleteAccountClearsSessionCookie(t *testing.T) {
+	authStore := newFakeAuthStore()
+	h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/account", map[string]string{"confirm": "DELETE"}, map[string]string{
+		"Cookie": "dd_session=some-session-token",
+	})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

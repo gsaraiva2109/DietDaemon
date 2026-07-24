@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -429,6 +430,10 @@ type fakeChatStore struct {
 	softDeleteErr   error
 	restoreErr      error
 	listDeletedErr  error
+	listSessionsErr error
+	getMessagesErr  error
+	getSettingsErr  error
+	setSettingsErr  error
 
 	// appendErr is returned on the first AppendChatMessage call only (then
 	// cleared), so tests can exercise the lazy session auto-create path where
@@ -450,6 +455,9 @@ func (f *fakeChatStore) CreateChatSession(ctx context.Context, id, userID, title
 	return nil
 }
 func (f *fakeChatStore) ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
+	if f.listSessionsErr != nil {
+		return nil, f.listSessionsErr
+	}
 	return f.sessions, nil
 }
 func (f *fakeChatStore) AppendChatMessage(ctx context.Context, id, userID, sessionID, role, content, toolName string) error {
@@ -461,13 +469,19 @@ func (f *fakeChatStore) AppendChatMessage(ctx context.Context, id, userID, sessi
 	return nil
 }
 func (f *fakeChatStore) GetChatMessages(ctx context.Context, userID, sessionID string) ([]assistant.Message, error) {
+	if f.getMessagesErr != nil {
+		return nil, f.getMessagesErr
+	}
 	return f.messages, nil
 }
 func (f *fakeChatStore) GetAssistantSettings(ctx context.Context, userID string) (string, bool, error) {
+	if f.getSettingsErr != nil {
+		return "", false, f.getSettingsErr
+	}
 	return f.settings, f.settingsFound, nil
 }
 func (f *fakeChatStore) SetAssistantSettings(ctx context.Context, userID, instructions string) error {
-	return nil
+	return f.setSettingsErr
 }
 func (f *fakeChatStore) SoftDeleteChatSession(ctx context.Context, userID, sessionID string) error {
 	return f.softDeleteErr
@@ -608,6 +622,224 @@ func TestHandleListDeletedChatSessionsNoStore(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session listing / message history / assistant settings handler tests
+// ---------------------------------------------------------------------------
+
+func TestHandleListChatSessions(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{sessions: []assistant.Session{{ID: "sess-1", Title: "Hi"}}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleListChatSessions(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var sessions []assistant.Session
+	if err := json.Unmarshal(rec.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "sess-1" {
+		t.Errorf("unexpected sessions: %+v", sessions)
+	}
+}
+
+func TestHandleListChatSessionsError(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{listSessionsErr: errors.New("db down")}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleListChatSessions(rec, req, "test-user")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleListChatSessionsNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleListChatSessions(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetChatMessages(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{messages: []assistant.Message{{Role: "user", Content: "hi"}}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/sess-1/messages", nil)
+	req.SetPathValue("id", "sess-1")
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatMessages(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var messages []assistant.Message
+	if err := json.Unmarshal(rec.Body.Bytes(), &messages); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Content != "hi" {
+		t.Errorf("unexpected messages: %+v", messages)
+	}
+}
+
+func TestHandleGetChatMessagesError(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{getMessagesErr: errors.New("db down")}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/sess-1/messages", nil)
+	req.SetPathValue("id", "sess-1")
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatMessages(rec, req, "test-user")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGetChatMessagesNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/sess-1/messages", nil)
+	req.SetPathValue("id", "sess-1")
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatMessages(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetChatSettings(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{settings: "be brief", settingsFound: true}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/settings", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[map[string]string](t, rec)
+	if got["custom_instructions"] != "be brief" {
+		t.Errorf("custom_instructions = %q, want %q", got["custom_instructions"], "be brief")
+	}
+	if got["base_prompt"] == "" {
+		t.Error("expected a non-empty base_prompt")
+	}
+}
+
+func TestHandleGetChatSettingsNotFound(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{settings: "stale", settingsFound: false}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/settings", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[map[string]string](t, rec)
+	if got["custom_instructions"] != "" {
+		t.Errorf("custom_instructions = %q, want empty when not found", got["custom_instructions"])
+	}
+}
+
+func TestHandleGetChatSettingsError(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{getSettingsErr: errors.New("db down")}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/settings", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGetChatSettingsNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/settings", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleGetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetChatSettings(t *testing.T) {
+	store := &fakeChatStore{}
+	h := &Handler{chatStore: store}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/chat/settings", strings.NewReader(`{"custom_instructions":"be concise"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleSetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[map[string]string](t, rec)
+	if got["status"] != "ok" {
+		t.Errorf("status = %q, want ok", got["status"])
+	}
+}
+
+func TestHandleSetChatSettingsInvalidJSON(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{}}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/chat/settings", strings.NewReader("not json"))
+	rec := httptest.NewRecorder()
+
+	h.handleSetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetChatSettingsTooLong(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{}}
+	longBody, _ := json.Marshal(map[string]string{"custom_instructions": strings.Repeat("a", 4001)})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/chat/settings", strings.NewReader(string(longBody)))
+	rec := httptest.NewRecorder()
+
+	h.handleSetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("too-long instructions expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetChatSettingsError(t *testing.T) {
+	h := &Handler{chatStore: &fakeChatStore{setSettingsErr: errors.New("db down")}}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/chat/settings", strings.NewReader(`{"custom_instructions":"hi"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleSetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("store error expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSetChatSettingsNoStore(t *testing.T) {
+	h := &Handler{chatStore: nil}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/chat/settings", strings.NewReader(`{"custom_instructions":"hi"}`))
+	rec := httptest.NewRecorder()
+
+	h.handleSetChatSettings(rec, req, "test-user")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
 	}
 }
 
