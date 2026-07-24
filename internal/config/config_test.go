@@ -837,6 +837,52 @@ func TestOIDCProviderValid(t *testing.T) {
 	}
 }
 
+// TestOIDCMultipleProvidersCustomNameAndTrustEmail pins the OIDC_PROVIDERS
+// parsing loop's behavior across everything TestOIDCProviderValid's single
+// default-name provider doesn't exercise: a second loop iteration, an
+// explicit OIDC_<ID>_NAME (skipping the derived-name branch), TrustEmail,
+// and a custom Scopes list. Written before extracting the parsing loop out
+// of Load (SonarQube go:S3776) so the extraction can't silently change
+// behavior.
+func TestOIDCMultipleProvidersCustomNameAndTrustEmail(t *testing.T) {
+	env := validBase()
+	env["PUBLIC_BASE_URL"] = "https://app.example.com"
+	env["OIDC_PROVIDERS"] = "google,authentik"
+	env["OIDC_GOOGLE_ISSUER"] = "https://accounts.google.com"
+	env["OIDC_GOOGLE_CLIENT_ID"] = "google-client-id"
+	env["OIDC_GOOGLE_CLIENT_SECRET"] = "google-client-secret"
+	env["OIDC_AUTHENTIK_NAME"] = "My Authentik"
+	env["OIDC_AUTHENTIK_ISSUER"] = "https://authentik.example.com"
+	env["OIDC_AUTHENTIK_CLIENT_ID"] = "authentik-client-id"
+	env["OIDC_AUTHENTIK_CLIENT_SECRET"] = "authentik-client-secret"
+	env["OIDC_AUTHENTIK_TRUST_EMAIL"] = "true"
+	env["OIDC_AUTHENTIK_SCOPES"] = "openid,email"
+	c := assertLoadOK(t, env)
+
+	if len(c.OIDCProviders) != 2 {
+		t.Fatalf("OIDCProviders = %v, want 2 entries", c.OIDCProviders)
+	}
+
+	google := c.OIDCProviders[0]
+	if google.ID != "google" || google.Name != "Google" || google.TrustEmail {
+		t.Errorf("google provider = %+v", google)
+	}
+	if len(google.Scopes) != 3 || google.Scopes[0] != "openid" || google.Scopes[1] != "email" || google.Scopes[2] != "profile" {
+		t.Errorf("google default scopes = %v", google.Scopes)
+	}
+
+	authentik := c.OIDCProviders[1]
+	if authentik.ID != "authentik" || authentik.Name != "My Authentik" || !authentik.TrustEmail {
+		t.Errorf("authentik provider = %+v", authentik)
+	}
+	if len(authentik.Scopes) != 2 || authentik.Scopes[0] != "openid" || authentik.Scopes[1] != "email" {
+		t.Errorf("authentik scopes = %v", authentik.Scopes)
+	}
+	if authentik.RedirectURL != "https://app.example.com/api/v1/auth/oidc/authentik/callback" {
+		t.Errorf("authentik RedirectURL = %q", authentik.RedirectURL)
+	}
+}
+
 func TestOIDCProvidersRequiresPublicBaseURL(t *testing.T) {
 	env := oidcValidBase()
 	env["PUBLIC_BASE_URL"] = ""
