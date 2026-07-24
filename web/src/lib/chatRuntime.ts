@@ -72,6 +72,73 @@ function stripSuggestionsFence(text: string): string {
   return text.slice(0, openIdx)
 }
 
+interface StreamState {
+  content: (TextPart | ToolPart)[]
+  toolParts: Map<string, ToolPart>
+  currentText: TextPart | null
+}
+
+function appendDelta(state: StreamState, data: string): void {
+  const payload = JSON.parse(data) as { text: string }
+  if (!state.currentText) {
+    state.currentText = { type: 'text', text: '' }
+    state.content.push(state.currentText)
+  }
+  state.currentText.text += payload.text
+}
+
+function appendToolCall(state: StreamState, data: string): void {
+  const payload = JSON.parse(data) as { id: string; name: string; args: string }
+  state.currentText = null // next delta (if any) starts a fresh block after this tool run
+  const part: ToolPart = { type: 'tool-call', toolCallId: payload.id, toolName: payload.name, args: {}, argsText: payload.args }
+  state.toolParts.set(payload.id, part)
+  state.content.push(part)
+}
+
+function applyToolResult(state: StreamState, data: string): void {
+  const payload = JSON.parse(data) as { id: string; text: string }
+  const tc = state.toolParts.get(payload.id)
+  if (tc) tc.result = payload.text
+}
+
+// Returns the new suggestion list so the caller can stash it for
+// suggestionAdapter.generate(); everything else mutates `state` in place.
+function applySuggestions(state: StreamState, data: string): string[] {
+  const payload = JSON.parse(data) as { options: string[] }
+  if (state.currentText) state.currentText.text = stripSuggestionsFence(state.currentText.text)
+  return payload.options ?? []
+}
+
+function raiseStreamError(data: string): never {
+  const payload = JSON.parse(data) as { message: string }
+  throw new Error(payload.message)
+}
+
+// Applies one parsed SSE block to the running state, returning a fresh
+// suggestion list when the event carries one (undefined otherwise).
+function applyStreamEvent(state: StreamState, event: string, data: string): string[] | undefined {
+  switch (event) {
+    case 'delta':
+      appendDelta(state, data)
+      return undefined
+    case 'tool-call':
+      appendToolCall(state, data)
+      return undefined
+    case 'tool-result':
+      applyToolResult(state, data)
+      return undefined
+    case 'suggestions':
+      return applySuggestions(state, data)
+    case 'error':
+      raiseStreamError(data)
+  }
+  return undefined
+}
+
+function snapshotOf(state: StreamState): ChatModelRunResult {
+  return { content: state.content.map((p) => ({ ...p })) as ThreadAssistantMessagePart[] }
+}
+
 export interface ChatAdapters {
   modelAdapter: ChatModelAdapter
   suggestionAdapter: SuggestionAdapter
@@ -92,7 +159,7 @@ export function createChatAdapters(getSessionID: () => string | null): ChatAdapt
       if (!sessionID) throw new Error('No active chat session yet.')
 
       latestSuggestions = []
-      const text = extractText(messages[messages.length - 1])
+      const text = extractText(messages.at(-1)!)
       const res = await api.chat.sendMessage(sessionID, text, abortSignal)
       if (!res.ok || !res.body) {
         throw new Error(`Chat request failed (${res.status})`)
@@ -105,13 +172,7 @@ export function createChatAdapters(getSessionID: () => string | null): ChatAdapt
       // Parts in arrival order — a tool-call run splits surrounding text into
       // separate blocks instead of merging everything into one leading blob,
       // so text that streams in after tools finish shows up below them.
-      const content: (TextPart | ToolPart)[] = []
-      let currentText: TextPart | null = null
-      const toolParts = new Map<string, ToolPart>()
-
-      function snapshot(): ChatModelRunResult {
-        return { content: content.map((p) => ({ ...p })) as ThreadAssistantMessagePart[] }
-      }
+      const state: StreamState = { content: [], toolParts: new Map(), currentText: null }
 
       while (true) {
         const { done, value } = await reader.read()
@@ -124,37 +185,9 @@ export function createChatAdapters(getSessionID: () => string | null): ChatAdapt
         for (const block of blocks) {
           const parsed = parseSSEBlock(block)
           if (!parsed) continue
-          const { event, data } = parsed
-
-          if (event === 'delta') {
-            const payload = JSON.parse(data) as { text: string }
-            if (!currentText) {
-              currentText = { type: 'text', text: '' }
-              content.push(currentText)
-            }
-            currentText.text += payload.text
-            yield snapshot()
-          } else if (event === 'tool-call') {
-            const payload = JSON.parse(data) as { id: string; name: string; args: string }
-            currentText = null // next delta (if any) starts a fresh block after this tool run
-            const part: ToolPart = { type: 'tool-call', toolCallId: payload.id, toolName: payload.name, args: {}, argsText: payload.args }
-            toolParts.set(payload.id, part)
-            content.push(part)
-            yield snapshot()
-          } else if (event === 'tool-result') {
-            const payload = JSON.parse(data) as { id: string; text: string }
-            const tc = toolParts.get(payload.id)
-            if (tc) tc.result = payload.text
-            yield snapshot()
-          } else if (event === 'suggestions') {
-            const payload = JSON.parse(data) as { options: string[] }
-            latestSuggestions = payload.options ?? []
-            if (currentText) currentText.text = stripSuggestionsFence(currentText.text)
-            yield snapshot()
-          } else if (event === 'error') {
-            const payload = JSON.parse(data) as { message: string }
-            throw new Error(payload.message)
-          }
+          const suggestions = applyStreamEvent(state, parsed.event, parsed.data)
+          if (suggestions) latestSuggestions = suggestions
+          yield snapshotOf(state)
         }
       }
     },
