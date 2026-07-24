@@ -126,60 +126,86 @@ func (a *Adapter) poll(ctx context.Context, ch chan<- types.InboundMessage) {
 			offset = newOffset
 		}
 
-		for _, u := range updates {
-			// Handle callback queries (inline button presses).
-			if u.CallbackQuery != nil {
-				if u.CallbackQuery.Message == nil {
-					continue
-				}
-				cb := u.CallbackQuery
-				log.Printf("telegram: received callback query %s = %q", cb.ID, cb.Data)
-				msg := types.InboundMessage{
-					UserID: strconv.FormatInt(cb.Message.Chat.ID, 10),
-					At:     time.Now().UTC(),
-					Kind:   types.MessageText,
-					Text:   cb.Data,
-					Locale: cb.From.LanguageCode,
-					ChannelMeta: map[string]string{
-						"chat_id":     strconv.FormatInt(cb.Message.Chat.ID, 10),
-						"message_id":  strconv.Itoa(cb.Message.MessageID),
-						"callback_id": cb.ID,
-						"is_callback": "true",
-					},
-				}
-				select {
-				case ch <- msg:
-				case <-ctx.Done():
-					return
-				}
-				// Answer immediately to dismiss the loading spinner.
-				if err := a.answerCallbackQuery(ctx, cb.ID); err != nil {
-					log.Printf("telegram: answerCallbackQuery: %v", err)
-				}
-				continue
-			}
-
-			if u.Message == nil || u.Message.Text == "" {
-				continue
-			}
-			msg := types.InboundMessage{
-				UserID: strconv.FormatInt(u.Message.Chat.ID, 10),
-				At:     time.Now().UTC(),
-				Kind:   types.MessageText,
-				Text:   u.Message.Text,
-				Locale: u.Message.From.LanguageCode,
-				ChannelMeta: map[string]string{
-					"chat_id":    strconv.FormatInt(u.Message.Chat.ID, 10),
-					"message_id": strconv.Itoa(u.Message.MessageID),
-				},
-			}
-			select {
-			case ch <- msg:
-			case <-ctx.Done():
-				return
-			}
+		if !a.emitUpdates(ctx, ch, updates) {
+			return
 		}
 	}
+}
+
+// emitUpdates dispatches each update to the callback-query or plain-message
+// handler. It returns false when ctx was cancelled and the poll loop must
+// stop.
+func (a *Adapter) emitUpdates(ctx context.Context, ch chan<- types.InboundMessage, updates []update) bool {
+	for _, u := range updates {
+		if u.CallbackQuery != nil {
+			if !a.handleCallbackQuery(ctx, ch, u.CallbackQuery) {
+				return false
+			}
+			continue
+		}
+		if !a.handleMessage(ctx, ch, u.Message) {
+			return false
+		}
+	}
+	return true
+}
+
+// handleCallbackQuery emits an InboundMessage for an inline-button press and
+// acknowledges it to dismiss the loading spinner. Returns false when ctx was
+// cancelled and the poll loop must stop.
+func (a *Adapter) handleCallbackQuery(ctx context.Context, ch chan<- types.InboundMessage, cb *callbackQuery) bool {
+	if cb.Message == nil {
+		return true
+	}
+	log.Printf("telegram: received callback query %s = %q", cb.ID, cb.Data)
+	msg := types.InboundMessage{
+		UserID: strconv.FormatInt(cb.Message.Chat.ID, 10),
+		At:     time.Now().UTC(),
+		Kind:   types.MessageText,
+		Text:   cb.Data,
+		Locale: cb.From.LanguageCode,
+		ChannelMeta: map[string]string{
+			"chat_id":     strconv.FormatInt(cb.Message.Chat.ID, 10),
+			"message_id":  strconv.Itoa(cb.Message.MessageID),
+			"callback_id": cb.ID,
+			"is_callback": "true",
+		},
+	}
+	select {
+	case ch <- msg:
+	case <-ctx.Done():
+		return false
+	}
+	// Answer immediately to dismiss the loading spinner.
+	if err := a.answerCallbackQuery(ctx, cb.ID); err != nil {
+		log.Printf("telegram: answerCallbackQuery: %v", err)
+	}
+	return true
+}
+
+// handleMessage emits an InboundMessage for a plain text update. Returns
+// false when ctx was cancelled and the poll loop must stop.
+func (a *Adapter) handleMessage(ctx context.Context, ch chan<- types.InboundMessage, msg *tgMsg) bool {
+	if msg == nil || msg.Text == "" {
+		return true
+	}
+	out := types.InboundMessage{
+		UserID: strconv.FormatInt(msg.Chat.ID, 10),
+		At:     time.Now().UTC(),
+		Kind:   types.MessageText,
+		Text:   msg.Text,
+		Locale: msg.From.LanguageCode,
+		ChannelMeta: map[string]string{
+			"chat_id":    strconv.FormatInt(msg.Chat.ID, 10),
+			"message_id": strconv.Itoa(msg.MessageID),
+		},
+	}
+	select {
+	case ch <- out:
+	case <-ctx.Done():
+		return false
+	}
+	return true
 }
 
 func (a *Adapter) fetchUpdates(ctx context.Context, pollURL string, offset int) ([]update, int, error) {
@@ -251,27 +277,11 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 		body.ParseMode = reply.ParseMode
 	}
 
-	// Convert markup to Telegram inline keyboard format.
-	if reply.Markup != nil && len(reply.Markup.InlineKeyboard) > 0 {
-		kb := tgInlineKeyboardMarkup{
-			InlineKeyboard: make([][]tgInlineKeyboardButton, len(reply.Markup.InlineKeyboard)),
-		}
-		for i, row := range reply.Markup.InlineKeyboard {
-			kb.InlineKeyboard[i] = make([]tgInlineKeyboardButton, len(row))
-			for j, btn := range row {
-				kb.InlineKeyboard[i][j] = tgInlineKeyboardButton{
-					Text:         btn.Text,
-					CallbackData: btn.CallbackData,
-				}
-			}
-		}
-		kbJSON, err := json.Marshal(kb)
-		if err != nil {
-			return fmt.Errorf("telegram: marshal inline keyboard: %w", err)
-		}
-		body.ReplyMarkup = new(json.RawMessage(kbJSON))
-		log.Printf("telegram: sent inline keyboard with %d row(s)", len(reply.Markup.InlineKeyboard))
+	markup, err := buildReplyMarkup(reply.Markup)
+	if err != nil {
+		return err
 	}
+	body.ReplyMarkup = markup
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -301,6 +311,35 @@ func (a *Adapter) Send(ctx context.Context, reply types.Reply) error {
 		return fmt.Errorf("telegram: sendMessage not ok")
 	}
 	return nil
+}
+
+// buildReplyMarkup converts a platform-agnostic ReplyMarkup into Telegram's
+// inline keyboard JSON format. It returns nil, nil when markup has no
+// buttons to send.
+func buildReplyMarkup(markup *types.ReplyMarkup) (*json.RawMessage, error) {
+	if markup == nil || len(markup.InlineKeyboard) == 0 {
+		return nil, nil
+	}
+
+	kb := tgInlineKeyboardMarkup{
+		InlineKeyboard: make([][]tgInlineKeyboardButton, len(markup.InlineKeyboard)),
+	}
+	for i, row := range markup.InlineKeyboard {
+		kb.InlineKeyboard[i] = make([]tgInlineKeyboardButton, len(row))
+		for j, btn := range row {
+			kb.InlineKeyboard[i][j] = tgInlineKeyboardButton{
+				Text:         btn.Text,
+				CallbackData: btn.CallbackData,
+			}
+		}
+	}
+	kbJSON, err := json.Marshal(kb)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: marshal inline keyboard: %w", err)
+	}
+	raw := json.RawMessage(kbJSON)
+	log.Printf("telegram: sent inline keyboard with %d row(s)", len(markup.InlineKeyboard))
+	return &raw, nil
 }
 
 // ---------------------------------------------------------------------------
