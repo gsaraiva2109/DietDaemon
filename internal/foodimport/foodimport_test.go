@@ -125,7 +125,7 @@ func (e *fakeEmbedder) BackfillEmbeddings(ctx context.Context, progress func(don
 	return e.embedded, e.failed, e.err
 }
 
-func TestRunOnce_EmbedderBackfillsAfterImport(t *testing.T) {
+func TestRunOnceEmbedderBackfillsAfterImport(t *testing.T) {
 	src := &fakeSource{name: "taco", count: 2}
 	store := &fakeStore{}
 	emb := &fakeEmbedder{embedded: 2}
@@ -138,7 +138,7 @@ func TestRunOnce_EmbedderBackfillsAfterImport(t *testing.T) {
 	}
 }
 
-func TestBackfillEmbeddings_SuccessLogOmitsFailed(t *testing.T) {
+func TestBackfillEmbeddingsSuccessLogOmitsFailed(t *testing.T) {
 	var logs bytes.Buffer
 	r := New(&fakeStore{}, nil, nil, 0, slog.New(slog.NewTextHandler(&logs, nil))).WithEmbedder(&fakeEmbedder{embedded: 601})
 
@@ -149,7 +149,7 @@ func TestBackfillEmbeddings_SuccessLogOmitsFailed(t *testing.T) {
 	}
 }
 
-func TestRunOnce_EmbedderRunsEvenWhenAllSourcesFail(t *testing.T) {
+func TestRunOnceEmbedderRunsEvenWhenAllSourcesFail(t *testing.T) {
 	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
 	store := &fakeStore{}
 	emb := &fakeEmbedder{}
@@ -162,7 +162,7 @@ func TestRunOnce_EmbedderRunsEvenWhenAllSourcesFail(t *testing.T) {
 	}
 }
 
-func TestRunOnce_EmbedderErrorDoesNotPanic(t *testing.T) {
+func TestRunOnceEmbedderErrorDoesNotPanic(t *testing.T) {
 	src := &fakeSource{name: "taco", count: 1}
 	store := &fakeStore{}
 	emb := &fakeEmbedder{err: errors.New("ollama unreachable")}
@@ -175,7 +175,7 @@ func TestRunOnce_EmbedderErrorDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestRunOnce_NoEmbedderIsNoOp(t *testing.T) {
+func TestRunOnceNoEmbedderIsNoOp(t *testing.T) {
 	src := &fakeSource{name: "taco", count: 1}
 	store := &fakeStore{}
 	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default())
@@ -187,7 +187,7 @@ func TestRunOnce_NoEmbedderIsNoOp(t *testing.T) {
 	}
 }
 
-func TestRunOnce_BatchingAndFinalPartialBatch(t *testing.T) {
+func TestRunOnceBatchingAndFinalPartialBatch(t *testing.T) {
 	src := &fakeSource{name: "usda", count: 1200} // 2 full batches of 500 + 1 partial of 200
 	store := &fakeStore{}
 	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default())
@@ -214,7 +214,7 @@ func TestRunOnce_BatchingAndFinalPartialBatch(t *testing.T) {
 	}
 }
 
-func TestRunOnce_AllSourcesRunEvenIfOneFails(t *testing.T) {
+func TestRunOnceAllSourcesRunEvenIfOneFails(t *testing.T) {
 	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
 	ok := &fakeSource{name: "taco", count: 3}
 	store := &fakeStore{}
@@ -233,7 +233,7 @@ func TestRunOnce_AllSourcesRunEvenIfOneFails(t *testing.T) {
 	}
 }
 
-func TestRunOnce_LocalFileSkipsUnchangedDataset(t *testing.T) {
+func TestRunOnceLocalFileSkipsUnchangedDataset(t *testing.T) {
 	for _, source := range []string{"usda", "openfoodfacts", "taco"} {
 		t.Run(source, func(t *testing.T) {
 			path := writeDataset(t, datasetFile, "one")
@@ -251,7 +251,7 @@ func TestRunOnce_LocalFileSkipsUnchangedDataset(t *testing.T) {
 	}
 }
 
-func TestRunOnce_LocalFileOrFilterChangeImportsAgain(t *testing.T) {
+func TestRunOnceLocalFileOrFilterChangeImportsAgain(t *testing.T) {
 	path := writeDataset(t, datasetFile, "one")
 	src := &fakeSource{name: "usda", count: 1}
 	store := &fakeStore{}
@@ -266,7 +266,7 @@ func TestRunOnce_LocalFileOrFilterChangeImportsAgain(t *testing.T) {
 	}
 }
 
-func TestRunOnce_LocalFileFailureAndMidImportChangeDoNotSaveFingerprint(t *testing.T) {
+func TestRunOnceLocalFileFailureAndMidImportChangeDoNotSaveFingerprint(t *testing.T) {
 	path := writeDataset(t, datasetFile, "one")
 	store := &fakeStore{}
 	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
@@ -288,7 +288,7 @@ func TestRunOnce_LocalFileFailureAndMidImportChangeDoNotSaveFingerprint(t *testi
 	}
 }
 
-func TestRunOnce_APISourceImportsEveryTime(t *testing.T) {
+func TestRunOnceAPISourceImportsEveryTime(t *testing.T) {
 	src := &fakeSource{name: "openfoodfacts", count: 1}
 	store := &fakeStore{}
 	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"openfoodfacts": {}}, 0, slog.Default())
@@ -299,7 +299,7 @@ func TestRunOnce_APISourceImportsEveryTime(t *testing.T) {
 	}
 }
 
-func TestRunOnce_LocalSourceRefreshesBeforeFirstAndChangedImport(t *testing.T) {
+func TestRunOnceLocalSourceRefreshesBeforeFirstAndChangedImport(t *testing.T) {
 	path := writeDataset(t, "taco.csv", "one")
 	store := &fakeStore{}
 	initial := &fakeSource{name: "taco"}
@@ -319,9 +319,9 @@ func TestRunOnce_LocalSourceRefreshesBeforeFirstAndChangedImport(t *testing.T) {
 	}
 }
 
-// TestRunOnce_RecordsStatus covers all four outcomes against a fake store,
+// TestRunOnceRecordsStatus covers all four outcomes against a fake store,
 // at the RunOnce->recordStatus choke point.
-func TestRunOnce_RecordsStatus(t *testing.T) {
+func TestRunOnceRecordsStatus(t *testing.T) {
 	t.Run("imported (API source)", func(t *testing.T) {
 		src := &fakeSource{name: "openfoodfacts", count: 1}
 		store := &fakeStore{}
@@ -373,7 +373,7 @@ func TestRunOnce_RecordsStatus(t *testing.T) {
 // runFor directly (white-box, same package) to isolate each branch without
 // needing a full RunOnce/recordStatus round trip.
 
-func TestRunFor_NoFingerprintStoreErrors(t *testing.T) {
+func TestRunForNoFingerprintStoreErrors(t *testing.T) {
 	path := writeDataset(t, datasetFile, "one")
 	src := &fakeSource{name: "usda", count: 1}
 	r := NewWithLocalPaths(bareStore{}, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
@@ -388,7 +388,7 @@ func TestRunFor_NoFingerprintStoreErrors(t *testing.T) {
 	}
 }
 
-func TestRunFor_GetFingerprintErrorPropagates(t *testing.T) {
+func TestRunForGetFingerprintErrorPropagates(t *testing.T) {
 	path := writeDataset(t, datasetFile, "one")
 	src := &fakeSource{name: "usda", count: 1}
 	store := &fakeStore{getErr: errors.New("db down")}
@@ -401,7 +401,7 @@ func TestRunFor_GetFingerprintErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestRunFor_RefreshErrorPropagates(t *testing.T) {
+func TestRunForRefreshErrorPropagates(t *testing.T) {
 	path := writeDataset(t, "taco.csv", "one")
 	src := &fakeSource{name: "taco"}
 	store := &fakeStore{}
@@ -416,7 +416,7 @@ func TestRunFor_RefreshErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestRunFor_SetFingerprintErrorPropagates(t *testing.T) {
+func TestRunForSetFingerprintErrorPropagates(t *testing.T) {
 	path := writeDataset(t, datasetFile, "one")
 	src := &fakeSource{name: "usda", count: 1}
 	store := &fakeStore{setErr: errors.New("disk full")}
@@ -429,7 +429,7 @@ func TestRunFor_SetFingerprintErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestRunFor_BulkUpsertErrorPropagates(t *testing.T) {
+func TestRunForBulkUpsertErrorPropagates(t *testing.T) {
 	src := &fakeSource{name: "openfoodfacts", count: 1}
 	store := &fakeStore{upsertErr: errors.New("write failed")}
 	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"openfoodfacts": {}}, 0, slog.Default())
@@ -441,7 +441,7 @@ func TestRunFor_BulkUpsertErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestRunFor_LocalFingerprintErrorPropagates(t *testing.T) {
+func TestRunForLocalFingerprintErrorPropagates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json") // never written
 	src := &fakeSource{name: "usda", count: 1}
 	store := &fakeStore{}
