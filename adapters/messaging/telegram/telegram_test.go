@@ -159,6 +159,145 @@ func TestReceiveEmitsMessages(t *testing.T) {
 	}
 }
 
+func TestReceiveHandlesCallbackQuery(t *testing.T) {
+	callCount := 0
+	var answered bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bottest-token/answerCallbackQuery" {
+			answered = true
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		callCount++
+		var resp getUpdatesResponse
+		switch callCount {
+		case 1:
+			resp = getUpdatesResponse{
+				OK: true,
+				Result: []update{
+					{
+						UpdateID: 1,
+						CallbackQuery: &callbackQuery{
+							ID:   "cb1",
+							Data: "confirm",
+							From: tgUser{LanguageCode: "pt-BR"},
+							Message: &tgMsg{
+								MessageID: 55,
+								Chat:      tgChat{ID: 333},
+							},
+						},
+					},
+					{
+						// CallbackQuery with nil Message must be skipped entirely.
+						UpdateID: 2,
+						CallbackQuery: &callbackQuery{
+							ID:      "cb2",
+							Data:    "ignored",
+							Message: nil,
+						},
+					},
+				},
+			}
+		default:
+			resp = getUpdatesResponse{OK: true, Result: nil}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := New("test-token")
+	a.apiURL = srv.URL
+	a.client.Timeout = 2 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	ch, err := a.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	var msgs []types.InboundMessage
+	for m := range ch {
+		msgs = append(msgs, m)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly 1 message (nil-Message callback must be skipped), got %d", len(msgs))
+	}
+
+	m := msgs[0]
+	if m.UserID != "333" || m.Text != "confirm" || m.Locale != "pt-BR" {
+		t.Errorf("callback msg: %+v", m)
+	}
+	if m.ChannelMeta["chat_id"] != "333" || m.ChannelMeta["message_id"] != "55" ||
+		m.ChannelMeta["callback_id"] != "cb1" || m.ChannelMeta["is_callback"] != "true" {
+		t.Errorf("callback msg ChannelMeta: %v", m.ChannelMeta)
+	}
+	if !answered {
+		t.Error("expected answerCallbackQuery to be called")
+	}
+}
+
+func TestReceiveRetriesOnFetchError(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		var resp getUpdatesResponse
+		switch callCount {
+		case 1:
+			// Force fetchUpdates to return an error (ok=false) so poll must
+			// back off and retry rather than crashing or spinning.
+			resp = getUpdatesResponse{OK: false}
+		case 2:
+			resp = getUpdatesResponse{
+				OK: true,
+				Result: []update{
+					{
+						UpdateID: 9,
+						Message: &tgMsg{
+							MessageID: 1,
+							Text:      "after retry",
+							Chat:      tgChat{ID: 444},
+						},
+					},
+				},
+			}
+		default:
+			resp = getUpdatesResponse{OK: true, Result: nil}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := New("test-token")
+	a.apiURL = srv.URL
+	a.client.Timeout = 2 * time.Second
+
+	// Must outlast the 2s backoff in poll so the retry-after-error path runs.
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+
+	ch, err := a.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	var msgs []types.InboundMessage
+	for m := range ch {
+		msgs = append(msgs, m)
+	}
+
+	if callCount < 2 {
+		t.Fatalf("expected at least 2 fetch attempts (retry after error), got %d", callCount)
+	}
+	if len(msgs) != 1 || msgs[0].Text != "after retry" {
+		t.Fatalf("expected message after retry, got %+v", msgs)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Send
 // ---------------------------------------------------------------------------
@@ -199,6 +338,87 @@ func TestSend(t *testing.T) {
 
 	if err := a.Send(context.Background(), reply); err != nil {
 		t.Fatalf("Send: %v", err)
+	}
+}
+
+func TestSendWithParseMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req sendMessageRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.ParseMode != "MarkdownV2" {
+			t.Errorf("parse_mode = %q, want MarkdownV2", req.ParseMode)
+		}
+		_ = json.NewEncoder(w).Encode(sendMessageResponse{OK: true})
+	}))
+	defer srv.Close()
+
+	a := New("test-token")
+	a.apiURL = srv.URL
+
+	reply := types.Reply{
+		Text:        "*bold*",
+		ParseMode:   "MarkdownV2",
+		ChannelMeta: map[string]string{"chat_id": "111"},
+	}
+
+	if err := a.Send(context.Background(), reply); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+func TestSendWithInlineKeyboard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		checkInlineKeyboardRequest(t, r)
+		_ = json.NewEncoder(w).Encode(sendMessageResponse{OK: true})
+	}))
+	defer srv.Close()
+
+	a := New("test-token")
+	a.apiURL = srv.URL
+
+	reply := types.Reply{
+		Text:        "choose",
+		ChannelMeta: map[string]string{"chat_id": "111"},
+		Markup: &types.ReplyMarkup{
+			InlineKeyboard: [][]types.InlineButton{
+				{
+					{Text: "Yes", CallbackData: "yes"},
+					{Text: "No", CallbackData: "no"},
+				},
+			},
+		},
+	}
+
+	if err := a.Send(context.Background(), reply); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+func checkInlineKeyboardRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	body, _ := io.ReadAll(r.Body)
+	var req sendMessageRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if req.ReplyMarkup == nil {
+		t.Fatal("expected reply_markup to be set")
+	}
+	var kb tgInlineKeyboardMarkup
+	if err := json.Unmarshal(*req.ReplyMarkup, &kb); err != nil {
+		t.Fatalf("decode reply_markup: %v", err)
+	}
+	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 2 {
+		t.Fatalf("inline_keyboard shape = %+v", kb.InlineKeyboard)
+	}
+	if kb.InlineKeyboard[0][0].Text != "Yes" || kb.InlineKeyboard[0][0].CallbackData != "yes" {
+		t.Errorf("button[0] = %+v", kb.InlineKeyboard[0][0])
+	}
+	if kb.InlineKeyboard[0][1].Text != "No" || kb.InlineKeyboard[0][1].CallbackData != "no" {
+		t.Errorf("button[1] = %+v", kb.InlineKeyboard[0][1])
 	}
 }
 
