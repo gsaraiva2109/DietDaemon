@@ -466,40 +466,52 @@ func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user 
 	hours := learnedMealHours(times, loc)
 	sort.Ints(hours) // ranking selects slots; chronological order finds each predecessor.
 	for slot, hour := range hours {
-		local := now.In(loc)
-		for _, offset := range []int{0, 1} {
-			target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
-			reminder := target.Add(-30 * time.Minute)
-			if now.Before(reminder) || !now.Before(reminder.Add(s.interval)) {
-				continue
-			}
-			previousHour := hours[(slot+len(hours)-1)%len(hours)]
-			previousDay := target.Day()
-			if slot == 0 {
-				previousDay--
-			}
-			previous := time.Date(target.Year(), target.Month(), previousDay, previousHour, 0, 0, 0, loc)
-			skipped := false
-			for _, at := range times {
-				if !at.Before(previous) && !at.After(now) {
-					skipped = true
-					break
-				}
-			}
-			if skipped {
-				continue
-			}
-			date, id := target.Format(dateLayout), fmt.Sprintf("%s-%02d", rule.ID, hour)
-			done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
-			if err != nil || done {
-				continue
-			}
-			n := types.Notification{UserID: user.ID, Title: "DietDaemon", Body: rule.Message, Priority: types.PriorityHigh}
-			if err := s.deliver(ctx, user, id, n, nil, nil); err == nil {
-				_ = s.nudges.MarkNudged(ctx, user.ID, date, id)
-			}
+		s.evalSmartMealSlot(ctx, now, user, rule, loc, hours, times, slot, hour)
+	}
+}
+
+// evalSmartMealSlot evaluates one learned meal-hour slot across both the
+// "today" and "tomorrow" occurrences (offset 0 and 1), firing a reminder for
+// whichever occurrence's 30-minute-before reminder window is currently open.
+func (s *Scheduler) evalSmartMealSlot(ctx context.Context, now time.Time, user types.User, rule SmartMealRule, loc *time.Location, hours []int, times []time.Time, slot, hour int) {
+	local := now.In(loc)
+	for _, offset := range []int{0, 1} {
+		target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
+		reminder := target.Add(-30 * time.Minute)
+		if now.Before(reminder) || !now.Before(reminder.Add(s.interval)) {
+			continue
+		}
+		if ateSincePreviousSlot(times, hours, loc, slot, target, now) {
+			continue
+		}
+		date, id := target.Format(dateLayout), fmt.Sprintf("%s-%02d", rule.ID, hour)
+		done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
+		if err != nil || done {
+			continue
+		}
+		n := types.Notification{UserID: user.ID, Title: "DietDaemon", Body: rule.Message, Priority: types.PriorityHigh}
+		if err := s.deliver(ctx, user, id, n, nil, nil); err == nil {
+			_ = s.nudges.MarkNudged(ctx, user.ID, date, id)
 		}
 	}
+}
+
+// ateSincePreviousSlot reports whether the user already logged a meal
+// between the previous learned slot's occurrence and now, which suppresses
+// the current slot's reminder (they already ate).
+func ateSincePreviousSlot(times []time.Time, hours []int, loc *time.Location, slot int, target, now time.Time) bool {
+	previousHour := hours[(slot+len(hours)-1)%len(hours)]
+	previousDay := target.Day()
+	if slot == 0 {
+		previousDay--
+	}
+	previous := time.Date(target.Year(), target.Month(), previousDay, previousHour, 0, 0, 0, loc)
+	for _, at := range times {
+		if !at.Before(previous) && !at.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveRule applies a user's override (if any) to a copy of the base rule.

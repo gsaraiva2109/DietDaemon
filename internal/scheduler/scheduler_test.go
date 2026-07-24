@@ -67,9 +67,15 @@ func (f *fakeNotifier) Notify(_ context.Context, n types.Notification) error {
 	return nil
 }
 
-type fakeMealHistory struct{ times []time.Time }
+type fakeMealHistory struct {
+	times []time.Time
+	err   error
+}
 
 func (f *fakeMealHistory) RecentMealTimes(_ context.Context, _ string, _ time.Time) ([]time.Time, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.times, nil
 }
 

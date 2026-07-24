@@ -100,6 +100,20 @@ func mealTimesFor(days []int, hours []int) []time.Time {
 	return out
 }
 
+// TestSmartMealRuleSkipsOnRecentMealTimesError pins down that a real
+// RecentMealTimes error (e.g. store unavailable) aborts evaluation for that
+// user's smart-meal rule instead of proceeding as if there were no history.
+func TestSmartMealRuleSkipsOnRecentMealTimesError(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute,
+		WithSmartMealRules(&fakeMealHistory{err: errors.New("db unavailable")}, DefaultSmartMealRules()))
+	s.tick(context.Background(), time.Date(2026, 6, 10, 11, 30, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("a RecentMealTimes error should skip smart-meal evaluation, sent %d", len(nt.sent))
+	}
+}
+
 func TestSmartMealRuleDisabledOverrideSkips(t *testing.T) {
 	times := mealTimesFor([]int{1, 2, 3, 4, 5, 6, 7}, []int{12})
 	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
