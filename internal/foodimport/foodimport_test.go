@@ -15,6 +15,11 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+// datasetFile is the local dataset filename shared by writeDataset callers
+// below, factored out to a constant per SonarQube go:S1192 (duplicated
+// string literal).
+const datasetFile = "foods.json"
+
 // fakeSource emits a fixed set of synthetic foods, or fails if err is set.
 type fakeSource struct {
 	name        string
@@ -50,9 +55,21 @@ type fakeStore struct {
 	fingerprints map[string]string
 	setCalls     int
 	statuses     map[string]types.FoodImportStatus
+	getErr       error // if set, GetFoodImportFingerprint fails with this error
+	setErr       error // if set, SetFoodImportFingerprint fails with this error
+	upsertErr    error // if set, BulkUpsertFoods fails with this error
 }
 
+// bareStore implements only the Store interface — no fingerprintStore
+// methods — to exercise runFor's "requires fingerprint store" guard.
+type bareStore struct{}
+
+func (bareStore) BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch) error { return nil }
+
 func (s *fakeStore) BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch) error {
+	if s.upsertErr != nil {
+		return s.upsertErr
+	}
 	cp := make([]types.FoodMatch, len(foods))
 	copy(cp, foods)
 	s.calls = append(s.calls, cp)
@@ -60,6 +77,9 @@ func (s *fakeStore) BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch
 }
 
 func (s *fakeStore) GetFoodImportFingerprint(ctx context.Context, source string) (string, error) {
+	if s.getErr != nil {
+		return "", s.getErr
+	}
 	fingerprint, ok := s.fingerprints[source]
 	if !ok {
 		return "", types.ErrNotFound
@@ -68,6 +88,9 @@ func (s *fakeStore) GetFoodImportFingerprint(ctx context.Context, source string)
 }
 
 func (s *fakeStore) SetFoodImportFingerprint(ctx context.Context, source, fingerprint string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
 	if s.fingerprints == nil {
 		s.fingerprints = make(map[string]string)
 	}
@@ -213,7 +236,7 @@ func TestRunOnce_AllSourcesRunEvenIfOneFails(t *testing.T) {
 func TestRunOnce_LocalFileSkipsUnchangedDataset(t *testing.T) {
 	for _, source := range []string{"usda", "openfoodfacts", "taco"} {
 		t.Run(source, func(t *testing.T) {
-			path := writeDataset(t, "foods.json", "one")
+			path := writeDataset(t, datasetFile, "one")
 			src := &fakeSource{name: source, count: 2}
 			store := &fakeStore{}
 			r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{source: {}}, 0, slog.Default(), map[string]string{source: path}, nil)
@@ -229,7 +252,7 @@ func TestRunOnce_LocalFileSkipsUnchangedDataset(t *testing.T) {
 }
 
 func TestRunOnce_LocalFileOrFilterChangeImportsAgain(t *testing.T) {
-	path := writeDataset(t, "foods.json", "one")
+	path := writeDataset(t, datasetFile, "one")
 	src := &fakeSource{name: "usda", count: 1}
 	store := &fakeStore{}
 	r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
@@ -244,7 +267,7 @@ func TestRunOnce_LocalFileOrFilterChangeImportsAgain(t *testing.T) {
 }
 
 func TestRunOnce_LocalFileFailureAndMidImportChangeDoNotSaveFingerprint(t *testing.T) {
-	path := writeDataset(t, "foods.json", "one")
+	path := writeDataset(t, datasetFile, "one")
 	store := &fakeStore{}
 	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
 	r := NewWithLocalPaths(store, []ports.BulkSource{failing}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
@@ -310,7 +333,7 @@ func TestRunOnce_RecordsStatus(t *testing.T) {
 	})
 
 	t.Run("skipped (unchanged local file)", func(t *testing.T) {
-		path := writeDataset(t, "foods.json", "one")
+		path := writeDataset(t, datasetFile, "one")
 		src := &fakeSource{name: "usda", count: 1}
 		store := &fakeStore{}
 		r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
@@ -322,7 +345,7 @@ func TestRunOnce_RecordsStatus(t *testing.T) {
 	})
 
 	t.Run("changed_during_import", func(t *testing.T) {
-		path := writeDataset(t, "foods.json", "one")
+		path := writeDataset(t, datasetFile, "one")
 		store := &fakeStore{}
 		src := &fakeSource{name: "taco", count: 1, duringFetch: func() { replaceDataset(t, path, "two") }}
 		r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default(), map[string]string{"taco": path}, nil)
@@ -342,6 +365,96 @@ func TestRunOnce_RecordsStatus(t *testing.T) {
 			t.Fatalf("status = %+v, want result=failed error=boom", st)
 		}
 	})
+}
+
+// The following runFor tests target error paths introduced by splitting
+// runFor into prepareLocalImport/fetchAndUpsert/finishLocalImport: before the
+// split these were already reachable but untested. They call the unexported
+// runFor directly (white-box, same package) to isolate each branch without
+// needing a full RunOnce/recordStatus round trip.
+
+func TestRunFor_NoFingerprintStoreErrors(t *testing.T) {
+	path := writeDataset(t, datasetFile, "one")
+	src := &fakeSource{name: "usda", count: 1}
+	r := NewWithLocalPaths(bareStore{}, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil || !strings.Contains(err.Error(), "requires fingerprint store") {
+		t.Fatalf("err = %v, want \"requires fingerprint store\"", err)
+	}
+	if src.fetchCalls != 0 {
+		t.Fatalf("FetchBulk calls = %d, want 0 (should fail before fetching)", src.fetchCalls)
+	}
+}
+
+func TestRunFor_GetFingerprintErrorPropagates(t *testing.T) {
+	path := writeDataset(t, datasetFile, "one")
+	src := &fakeSource{name: "usda", count: 1}
+	store := &fakeStore{getErr: errors.New("db down")}
+	r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil || !strings.Contains(err.Error(), "get fingerprint") {
+		t.Fatalf("err = %v, want \"get fingerprint\"", err)
+	}
+}
+
+func TestRunFor_RefreshErrorPropagates(t *testing.T) {
+	path := writeDataset(t, "taco.csv", "one")
+	src := &fakeSource{name: "taco"}
+	store := &fakeStore{}
+	r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"taco": {}}, 0, slog.Default(), map[string]string{"taco": path}, map[string]SourceFactory{
+		"taco": func() (ports.BulkSource, error) { return nil, errors.New("refresh boom") },
+	})
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil || !strings.Contains(err.Error(), "refresh source") {
+		t.Fatalf("err = %v, want \"refresh source\"", err)
+	}
+}
+
+func TestRunFor_SetFingerprintErrorPropagates(t *testing.T) {
+	path := writeDataset(t, datasetFile, "one")
+	src := &fakeSource{name: "usda", count: 1}
+	store := &fakeStore{setErr: errors.New("disk full")}
+	r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil || !strings.Contains(err.Error(), "set fingerprint") {
+		t.Fatalf("err = %v, want \"set fingerprint\"", err)
+	}
+}
+
+func TestRunFor_BulkUpsertErrorPropagates(t *testing.T) {
+	src := &fakeSource{name: "openfoodfacts", count: 1}
+	store := &fakeStore{upsertErr: errors.New("write failed")}
+	r := New(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"openfoodfacts": {}}, 0, slog.Default())
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("err = %v, want \"write failed\"", err)
+	}
+}
+
+func TestRunFor_LocalFingerprintErrorPropagates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json") // never written
+	src := &fakeSource{name: "usda", count: 1}
+	store := &fakeStore{}
+	r := NewWithLocalPaths(store, []ports.BulkSource{src}, map[string]ports.BulkFilter{"usda": {}}, 0, slog.Default(), map[string]string{"usda": path}, nil)
+
+	_, _, err := r.runFor(t.Context(), src)
+
+	if err == nil {
+		t.Fatal("err = nil, want stat error for missing dataset file")
+	}
+	if src.fetchCalls != 0 {
+		t.Fatalf("FetchBulk calls = %d, want 0 (should fail before fetching)", src.fetchCalls)
+	}
 }
 
 func writeDataset(t *testing.T, name, contents string) string {
