@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -16,6 +17,7 @@ type fakeStore struct {
 	aliases   [][]string
 	recorded  []string // foodIDs passed to RecordFoodQuery
 	upsertErr error
+	lookupErr error // when set, returned instead of ErrNoMatch on a lib miss
 
 	pendingAliases []types.PendingAlias // AddPendingAlias calls
 
@@ -26,6 +28,9 @@ type fakeStore struct {
 func (f *fakeStore) LookupFood(_ context.Context, _, phrase string) (types.FoodMatch, error) {
 	if m, ok := f.lib[phrase]; ok {
 		return m, nil
+	}
+	if f.lookupErr != nil {
+		return types.FoodMatch{}, f.lookupErr
 	}
 	return types.FoodMatch{}, types.ErrNoMatch
 }
@@ -156,6 +161,29 @@ func TestExternalMissThenWriteBack(t *testing.T) {
 	}
 	if got := res[0].Macros.Calories; got != 165 {
 		t.Errorf("calories = %v, want 165", got)
+	}
+}
+
+// TestStoreLookupErrorDegradesToNextTier pins the resilience guarantee for a
+// real (non-ErrNoMatch) store error on step 1: Resolve must degrade
+// gracefully and keep trying the next tier rather than treating any store
+// error as a hard failure for the item.
+func TestStoreLookupErrorDegradesToNextTier(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{}, lookupErr: errors.New("db unavailable")}
+	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
+	r := New(st, nil, nil, 0.92, st, src)
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0 (should still resolve via external source)", need)
+	}
+	if src.calls != 1 {
+		t.Errorf("external source called %d times, want 1", src.calls)
+	}
+	if res[0].Match.FoodID != "off:1" {
+		t.Errorf("resolved via %q, want off:1", res[0].Match.FoodID)
 	}
 }
 
@@ -494,6 +522,32 @@ func TestMatcherIrrelevantMatchRejectedFallsThrough(t *testing.T) {
 	}
 }
 
+// TestMatcherErrorDegradesToNextTier pins the same resilience guarantee for
+// step 2: a real matcher error (not types.ErrNoMatch) must fall through to
+// external sources instead of aborting resolution of the item.
+func TestMatcherErrorDegradesToNextTier(t *testing.T) {
+	st := &fakeStore{lib: map[string]types.FoodMatch{}}
+	m := &fakeMatcher{err: errors.New("index unavailable")}
+	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
+	r := New(st, m, nil, 0.92, st, src)
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0 (should still resolve via external source)", need)
+	}
+	if m.calls != 1 {
+		t.Errorf("matcher called %d times, want 1", m.calls)
+	}
+	if src.calls != 1 {
+		t.Errorf("external source called %d times, want 1", src.calls)
+	}
+	if res[0].Match.FoodID != "off:1" {
+		t.Errorf("resolved via %q, want off:1", res[0].Match.FoodID)
+	}
+}
+
 // TestNameMatchesQueryArrozSubstringLimitation documents a known limitation
 // of the relevance gate rather than asserting it's fully fixed: the real
 // production near-miss was query "arroz" matching the unrelated Spanish
@@ -645,6 +699,27 @@ func TestPrecedenceFallsBackToDefaultOnEmpty(t *testing.T) {
 
 	if res[0].Match.FoodID != "taco:1" {
 		t.Errorf("resolved via %q, want taco:1 (fall back to default order)", res[0].Match.FoodID)
+	}
+}
+
+// TestPrecedenceSkipsUnknownSourceName covers a stale precedence entry
+// naming a source that is no longer registered (e.g. removed from
+// NUTRITION_SOURCE config after the user customized their order): the
+// resolver must skip it silently and keep trying the rest of the order
+// instead of erroring out.
+func TestPrecedenceSkipsUnknownSourceName(t *testing.T) {
+	src := &fakeSource{name: "off", phr: "frango", match: chicken()}
+	st := &fakeStore{lib: map[string]types.FoodMatch{}, precedence: []string{"ghost", "off"}}
+	r := New(st, nil, nil, 0.92, st, src)
+
+	items := []types.ParsedItem{{RawPhrase: "frango", NormalizedGrams: 100}}
+	res, need := r.Resolve(context.Background(), "u1", items)
+
+	if need != 0 {
+		t.Fatalf("need=%d, want 0", need)
+	}
+	if res[0].Match.FoodID != "off:1" {
+		t.Errorf("resolved via %q, want off:1 (unknown source name should be skipped)", res[0].Match.FoodID)
 	}
 }
 
