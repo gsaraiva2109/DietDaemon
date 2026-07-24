@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -164,6 +165,68 @@ func TestAdminFoodImport_RepairMissingSource400(t *testing.T) {
 	rec := doAdminRequest(h, "/api/v1/admin/food-import/repair", adminTestToken, map[string]string{})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminFoodImport_RunInvalidJSON400(t *testing.T) {
+	h := newAdminTestHandler(&fakeFoodImportRunner{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/food-import/run", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminTestToken)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminFoodImport_RunError(t *testing.T) {
+	runner := &fakeFoodImportRunner{importErr: errors.New("upstream unavailable")}
+	h := newAdminTestHandler(runner)
+
+	rec := doAdminRequest(h, "/api/v1/admin/food-import/run", adminTestToken, map[string]string{"source": "taco"})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminFoodImport_RepairInvalidJSON400(t *testing.T) {
+	h := newAdminTestHandler(&fakeFoodImportRunner{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/food-import/repair", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminTestToken)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminFoodImport_RepairError(t *testing.T) {
+	runner := &fakeFoodImportRunner{repairErr: errors.New("upstream unavailable")}
+	h := newAdminTestHandler(runner)
+
+	rec := doAdminRequest(h, "/api/v1/admin/food-import/repair", adminTestToken, map[string]string{"source": "taco"})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminFoodImport_BackfillEmbeddingsError(t *testing.T) {
+	runner := &fakeFoodImportRunner{backfillErr: errors.New("ollama unreachable")}
+	h := newAdminTestHandler(runner)
+
+	rec := doAdminRequest(h, "/api/v1/admin/food-import/backfill-embeddings", adminTestToken, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

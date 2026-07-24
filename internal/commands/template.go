@@ -47,98 +47,104 @@ func (c *TemplateCommand) Name() string        { return "/template" }
 func (c *TemplateCommand) Aliases() []string   { return nil }
 func (c *TemplateCommand) Help() types.I18nKey { return "cmd.template.usage" }
 
+// templateSaveUsage is shown when /template save is malformed.
+const templateSaveUsage = "Usage: /template save <name>: <ingredients, e.g. 200g chicken, 150g rice>"
+
 func (c *TemplateCommand) Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	args = strings.TrimSpace(args)
 
 	if args == "" || args == "list" {
-		templates, err := c.store.GetTemplates(ctx, msg.UserID)
-		if err != nil || len(templates) == 0 {
-			return types.Reply{
-				Text:        "No templates saved yet. Save one from the dashboard or from a logged meal.",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
-		var b strings.Builder
-		b.WriteString("Templates:\n\n")
-		for _, t := range templates {
-			total := macrosSum(t.Items)
-			fmt.Fprintf(&b, "  - %s -- %.0f kcal (P%.0f/C%.0f/F%.0f)\n", t.Name, total.Calories, total.Protein, total.Carbs, total.Fat)
-		}
-		b.WriteString("\nUse /template <name> to log one.")
-		return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+		return c.listTemplates(ctx, msg)
 	}
 
 	// /template save <name>: <free text> — compose a new template from free text.
 	if strings.HasPrefix(args, "save ") {
-		rest := strings.TrimPrefix(args, "save ")
-		idx := strings.Index(rest, ":")
-		if idx < 0 {
-			return types.Reply{
-				Text:        "Usage: /template save <name>: <ingredients, e.g. 200g chicken, 150g rice>",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
-		name := strings.TrimSpace(rest[:idx])
-		freeText := strings.TrimSpace(rest[idx+1:])
-		if name == "" || freeText == "" {
-			return types.Reply{
-				Text:        "Usage: /template save <name>: <ingredients, e.g. 200g chicken, 150g rice>",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
+		return c.saveTemplate(ctx, msg, strings.TrimPrefix(args, "save "))
+	}
 
-		// ponytail: no retry loop for partial resolution — v1 scope cut.
-		// Users with ambiguous items get a clarification reply and can retry manually.
-		items, needsClarification, err := c.composer.ParseAndResolve(ctx, msg.UserID, freeText, msg.Locale)
-		if err != nil {
-			return types.Reply{}, fmt.Errorf("parse and resolve: %w", err)
-		}
-		if needsClarification > 0 || len(items) == 0 {
-			return types.Reply{
-				Text:        "Couldn't fully resolve all ingredients. Be more specific (e.g. \"200g grilled chicken breast, 150g white rice\").",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
+	return c.logTemplate(ctx, msg, args)
+}
 
-		tmpl := types.MealTemplate{
-			ID:        c.idgen(),
-			UserID:    msg.UserID,
-			Name:      name,
-			Items:     items,
-			CreatedAt: time.Now().UTC(),
-		}
-		if err := c.store.SaveTemplate(ctx, tmpl); err != nil {
-			return types.Reply{}, fmt.Errorf("save template: %w", err)
-		}
-
-		total := macrosSum(items)
+// listTemplates renders the user's saved templates.
+func (c *TemplateCommand) listTemplates(ctx context.Context, msg types.InboundMessage) (types.Reply, error) {
+	templates, err := c.store.GetTemplates(ctx, msg.UserID)
+	if err != nil || len(templates) == 0 {
 		return types.Reply{
-			Text: fmt.Sprintf("Saved template %q: %.0f kcal | P %.0fg · C %.0fg · F %.0fg",
-				name, total.Calories, total.Protein, total.Carbs, total.Fat),
+			Text:        "No templates saved yet. Save one from the dashboard or from a logged meal.",
+			ChannelMeta: msg.ChannelMeta,
+		}, nil
+	}
+	var b strings.Builder
+	b.WriteString("Templates:\n\n")
+	for _, t := range templates {
+		total := macrosSum(t.Items)
+		fmt.Fprintf(&b, "  - %s -- %.0f kcal (P%.0f/C%.0f/F%.0f)\n", t.Name, total.Calories, total.Protein, total.Carbs, total.Fat)
+	}
+	b.WriteString("\nUse /template <name> to log one.")
+	return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+}
+
+// saveTemplate composes a new template from free text via the composer and
+// persists it. rest is the text after the "save " prefix, e.g.
+// `<name>: <ingredients>`.
+func (c *TemplateCommand) saveTemplate(ctx context.Context, msg types.InboundMessage, rest string) (types.Reply, error) {
+	idx := strings.Index(rest, ":")
+	if idx < 0 {
+		return types.Reply{Text: templateSaveUsage, ChannelMeta: msg.ChannelMeta}, nil
+	}
+	name := strings.TrimSpace(rest[:idx])
+	freeText := strings.TrimSpace(rest[idx+1:])
+	if name == "" || freeText == "" {
+		return types.Reply{Text: templateSaveUsage, ChannelMeta: msg.ChannelMeta}, nil
+	}
+
+	// ponytail: no retry loop for partial resolution — v1 scope cut.
+	// Users with ambiguous items get a clarification reply and can retry manually.
+	items, needsClarification, err := c.composer.ParseAndResolve(ctx, msg.UserID, freeText, msg.Locale)
+	if err != nil {
+		return types.Reply{}, fmt.Errorf("parse and resolve: %w", err)
+	}
+	if needsClarification > 0 || len(items) == 0 {
+		return types.Reply{
+			Text:        "Couldn't fully resolve all ingredients. Be more specific (e.g. \"200g grilled chicken breast, 150g white rice\").",
 			ChannelMeta: msg.ChannelMeta,
 		}, nil
 	}
 
-	// Find template by name (case-insensitive).
+	tmpl := types.MealTemplate{
+		ID:        c.idgen(),
+		UserID:    msg.UserID,
+		Name:      name,
+		Items:     items,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := c.store.SaveTemplate(ctx, tmpl); err != nil {
+		return types.Reply{}, fmt.Errorf("save template: %w", err)
+	}
+
+	total := macrosSum(items)
+	return types.Reply{
+		Text: fmt.Sprintf("Saved template %q: %.0f kcal | P %.0fg · C %.0fg · F %.0fg",
+			name, total.Calories, total.Protein, total.Carbs, total.Fat),
+		ChannelMeta: msg.ChannelMeta,
+	}, nil
+}
+
+// logTemplate finds a template by name (case-insensitive) and logs it as a
+// meal, recording the template usage.
+func (c *TemplateCommand) logTemplate(ctx context.Context, msg types.InboundMessage, name string) (types.Reply, error) {
 	templates, err := c.store.GetTemplates(ctx, msg.UserID)
 	if err != nil {
 		return types.Reply{}, fmt.Errorf("get templates: %w", err)
 	}
-	var tmpl *types.MealTemplate
-	for i, t := range templates {
-		if strings.EqualFold(t.Name, args) {
-			tmpl = &templates[i]
-			break
-		}
-	}
+	tmpl := findTemplateByName(templates, name)
 	if tmpl == nil {
 		return types.Reply{
-			Text:        fmt.Sprintf("Template not found: %s", args),
+			Text:        fmt.Sprintf("Template not found: %s", name),
 			ChannelMeta: msg.ChannelMeta,
 		}, nil
 	}
 
-	// Log the template as a meal.
 	now := time.Now().UTC()
 	meal := types.Meal{
 		ID:         c.idgen(),
@@ -168,6 +174,17 @@ func (c *TemplateCommand) Handle(ctx context.Context, msg types.InboundMessage, 
 			tmpl.Name, total.Calories, total.Protein, total.Carbs, total.Fat),
 		ChannelMeta: msg.ChannelMeta,
 	}, nil
+}
+
+// findTemplateByName returns a pointer into templates for the first
+// case-insensitive name match, or nil if none matches.
+func findTemplateByName(templates []types.MealTemplate, name string) *types.MealTemplate {
+	for i, t := range templates {
+		if strings.EqualFold(t.Name, name) {
+			return &templates[i]
+		}
+	}
+	return nil
 }
 
 // macrosSum sums the macros across all resolved items.

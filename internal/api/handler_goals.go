@@ -15,6 +15,10 @@ import (
 // Goals & profile handlers -- profile CRUD, TDEE calculation, goal suggestions.
 // ---------------------------------------------------------------------------
 
+const dateLayout = "2006-01-02"
+
+const errProfileMeasurementsOutOfRange = "profile measurements are out of range"
+
 func (h *Handler) handleGetProfile(w http.ResponseWriter, r *http.Request, userID string) {
 	profile, err := h.store.GetProfile(r.Context(), userID)
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
@@ -33,26 +37,8 @@ func (h *Handler) handleUpsertProfile(w http.ResponseWriter, r *http.Request, us
 		writeValidationError(w, "invalid JSON body")
 		return
 	}
-	if (body.HeightCm != 0 && (!isFinite(body.HeightCm) || body.HeightCm < 50 || body.HeightCm > 300)) ||
-		(body.TargetWeightKg != 0 && (!isFinite(body.TargetWeightKg) || body.TargetWeightKg < 20 || body.TargetWeightKg > 500)) ||
-		(body.WeeklyRate != 0 && (!isFinite(body.WeeklyRate) || body.WeeklyRate < 0)) {
-		writeValidationError(w, "profile measurements are out of range")
-		return
-	}
-	if body.BirthDate != "" && !validDate(body.BirthDate, h.loc) {
-		writeValidationError(w, "birth_date must be a non-future YYYY-MM-DD date")
-		return
-	}
-	if body.Gender != "" && !validGender(body.Gender) {
-		writeValidationError(w, "gender is invalid")
-		return
-	}
-	if body.ActivityLevel != "" && !validActivityLevel(body.ActivityLevel) {
-		writeValidationError(w, "activity_level is invalid")
-		return
-	}
-	if body.Goal != "" && !validGoal(body.Goal) {
-		writeValidationError(w, "goal is invalid")
+	if msg, ok := h.validateProfileFields(body); !ok {
+		writeValidationError(w, msg)
 		return
 	}
 	now := time.Now().UTC()
@@ -66,6 +52,48 @@ func (h *Handler) handleUpsertProfile(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// validateProfileFields checks the fields set on a profile upsert request,
+// returning the validation-error message and false on the first failure.
+func (h *Handler) validateProfileFields(body types.UserProfile) (string, bool) {
+	if msg, ok := validateProfileMeasurements(body); !ok {
+		return msg, false
+	}
+	if body.BirthDate != "" && !validDate(body.BirthDate, h.loc) {
+		return "birth_date must be a non-future YYYY-MM-DD date", false
+	}
+	return validateProfileEnums(body)
+}
+
+// validateProfileMeasurements checks the numeric measurement fields of a
+// profile upsert request.
+func validateProfileMeasurements(body types.UserProfile) (string, bool) {
+	if body.HeightCm != 0 && (!isFinite(body.HeightCm) || body.HeightCm < 50 || body.HeightCm > 300) {
+		return errProfileMeasurementsOutOfRange, false
+	}
+	if body.TargetWeightKg != 0 && (!isFinite(body.TargetWeightKg) || body.TargetWeightKg < 20 || body.TargetWeightKg > 500) {
+		return errProfileMeasurementsOutOfRange, false
+	}
+	if body.WeeklyRate != 0 && (!isFinite(body.WeeklyRate) || body.WeeklyRate < 0) {
+		return errProfileMeasurementsOutOfRange, false
+	}
+	return "", true
+}
+
+// validateProfileEnums checks the enum-like string fields of a profile
+// upsert request.
+func validateProfileEnums(body types.UserProfile) (string, bool) {
+	if body.Gender != "" && !validGender(body.Gender) {
+		return "gender is invalid", false
+	}
+	if body.ActivityLevel != "" && !validActivityLevel(body.ActivityLevel) {
+		return "activity_level is invalid", false
+	}
+	if body.Goal != "" && !validGoal(body.Goal) {
+		return "goal is invalid", false
+	}
+	return "", true
 }
 
 func (h *Handler) handleCalculateTDEE(w http.ResponseWriter, r *http.Request, userID string) {
@@ -116,8 +144,8 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Get recent rollups for average intake.
-	endDate := time.Now().In(h.loc).Format("2006-01-02")
-	startDate := time.Now().In(h.loc).AddDate(0, 0, -7).Format("2006-01-02")
+	endDate := time.Now().In(h.loc).Format(dateLayout)
+	startDate := time.Now().In(h.loc).AddDate(0, 0, -7).Format(dateLayout)
 	rollups, _ := h.store.GetRollups(r.Context(), userID, startDate, endDate)
 
 	var avgKcal float64
@@ -144,7 +172,7 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 		})
 		return
 	}
-	parsed, err := time.Parse("2006-01-02", birthDate)
+	parsed, err := time.Parse(dateLayout, birthDate)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(types.GoalSuggestion{
 			Message: "Birth date is invalid — update it in Profile settings.",

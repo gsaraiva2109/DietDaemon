@@ -31,59 +31,67 @@ func (c *SleepCommand) Name() string        { return "/sleep" }
 func (c *SleepCommand) Aliases() []string   { return nil }
 func (c *SleepCommand) Help() types.I18nKey { return "cmd.sleep.usage" }
 
+// sleepUsage is shown for a bare /sleep.
+const sleepUsage = "Usage: /sleep <HH:MM bedtime> <HH:MM wake> [quality]\nQuality: poor, fair, good, great\nExample: /sleep 23:00 07:00 good"
+
 func (c *SleepCommand) Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	args = strings.TrimSpace(args)
 
-	if args == "" {
+	switch args {
+	case "":
+		return types.Reply{Text: sleepUsage, ChannelMeta: msg.ChannelMeta}, nil
+	case "status":
+		return c.handleStatus(ctx, msg)
+	case "list":
+		return c.handleList(ctx, msg)
+	default:
+		return c.handleLog(ctx, msg, args)
+	}
+}
+
+// handleStatus reports the active sleep session, if any.
+func (c *SleepCommand) handleStatus(ctx context.Context, msg types.InboundMessage) (types.Reply, error) {
+	active, err := c.store.GetActiveSleep(ctx, msg.UserID)
+	if err != nil || active == nil {
 		return types.Reply{
-			Text:        "Usage: /sleep <HH:MM bedtime> <HH:MM wake> [quality]\nQuality: poor, fair, good, great\nExample: /sleep 23:00 07:00 good",
+			Text:        "No active sleep session. Use /sleep <HH:MM> <HH:MM> [quality] to log one.",
 			ChannelMeta: msg.ChannelMeta,
 		}, nil
 	}
 
-	if args == "status" {
-		active, err := c.store.GetActiveSleep(ctx, msg.UserID)
-		if err != nil || active == nil {
-			return types.Reply{
-				Text:        "No active sleep session. Use /sleep <HH:MM> <HH:MM> [quality] to log one.",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
+	// Parse sleep_at to compute elapsed time. Since sleep_at is just HH:MM,
+	// assume it refers to today (or yesterday if it's in the future).
+	elapsed := computeSleepDuration(active.SleepAt, time.Now())
+	return types.Reply{
+		Text:        fmt.Sprintf("Sleeping since %s (%s elapsed)", active.SleepAt, formatDuration(elapsed)),
+		ChannelMeta: msg.ChannelMeta,
+	}, nil
+}
 
-		// Parse sleep_at to compute elapsed time. Since sleep_at is just HH:MM,
-		// assume it refers to today (or yesterday if it's in the future).
-		elapsed := computeSleepDuration(active.SleepAt, time.Now())
-		return types.Reply{
-			Text:        fmt.Sprintf("Sleeping since %s (%s elapsed)", active.SleepAt, formatDuration(elapsed)),
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
+// handleList renders the 10 most recent sleep logs.
+func (c *SleepCommand) handleList(ctx context.Context, msg types.InboundMessage) (types.Reply, error) {
+	logs, err := c.store.ListSleep(ctx, msg.UserID, 10)
+	if err != nil || len(logs) == 0 {
+		return types.Reply{Text: "No sleep logs yet.", ChannelMeta: msg.ChannelMeta}, nil
 	}
-
-	if args == "list" {
-		logs, err := c.store.ListSleep(ctx, msg.UserID, 10)
-		if err != nil || len(logs) == 0 {
-			return types.Reply{
-				Text:        "No sleep logs yet.",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
+	var b strings.Builder
+	b.WriteString("Recent sleep:\n\n")
+	for _, sl := range logs {
+		wakeStr := "active"
+		if sl.WakeAt != nil {
+			wakeStr = *sl.WakeAt
 		}
-		var b strings.Builder
-		b.WriteString("Recent sleep:\n\n")
-		for _, sl := range logs {
-			wakeStr := "active"
-			if sl.WakeAt != nil {
-				wakeStr = *sl.WakeAt
-			}
-			hours := calcSleepHours(sl.SleepAt, sl.WakeAt)
-			fmt.Fprintf(&b, "  - %s to %s (%.1fh) — %s\n", sl.SleepAt, wakeStr, hours, sl.Quality)
-			if sl.Note != "" {
-				fmt.Fprintf(&b, "    %s\n", sl.Note)
-			}
+		hours := calcSleepHours(sl.SleepAt, sl.WakeAt)
+		fmt.Fprintf(&b, "  - %s to %s (%.1fh) — %s\n", sl.SleepAt, wakeStr, hours, sl.Quality)
+		if sl.Note != "" {
+			fmt.Fprintf(&b, "    %s\n", sl.Note)
 		}
-		return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
 	}
+	return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+}
 
-	// Parse: <HH:MM> <HH:MM> [quality]
+// handleLog parses "<HH:MM> <HH:MM> [quality] [note...]" and logs a session.
+func (c *SleepCommand) handleLog(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	parts := strings.Fields(args)
 	if len(parts) < 2 {
 		return types.Reply{
@@ -92,39 +100,14 @@ func (c *SleepCommand) Handle(ctx context.Context, msg types.InboundMessage, arg
 		}, nil
 	}
 
-	sleepAt := parts[0]
-	wakeAt := parts[1]
-
-	// Validate time formats.
-	if _, err := time.Parse("15:04", sleepAt); err != nil {
-		return types.Reply{
-			Text:        fmt.Sprintf("Invalid time format: %s. Use HH:MM (e.g. 23:00).", sleepAt),
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
-	}
-	if _, err := time.Parse("15:04", wakeAt); err != nil {
-		return types.Reply{
-			Text:        fmt.Sprintf("Invalid time format: %s. Use HH:MM (e.g. 07:00).", wakeAt),
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
+	sleepAt, wakeAt := parts[0], parts[1]
+	if errText := validateSleepTimes(sleepAt, wakeAt); errText != "" {
+		return types.Reply{Text: errText, ChannelMeta: msg.ChannelMeta}, nil
 	}
 
-	// Quality is optional; default "ok".
-	quality := "ok"
-	if len(parts) > 2 {
-		q := strings.ToLower(parts[2])
-		switch q {
-		case "poor", "fair", "good", "great":
-			quality = q
-		default:
-			quality = q // accept any string
-		}
-	}
-
-	// Note is whatever remains after quality.
-	note := ""
-	if len(parts) > 3 {
-		note = strings.Join(parts[3:], " ")
+	quality, note, errText := parseQualityAndNote(parts[2:])
+	if errText != "" {
+		return types.Reply{Text: errText, ChannelMeta: msg.ChannelMeta}, nil
 	}
 
 	sl := types.SleepLog{
@@ -144,6 +127,45 @@ func (c *SleepCommand) Handle(ctx context.Context, msg types.InboundMessage, arg
 		Text:        fmt.Sprintf("Sleep logged: %.1fh from %s to %s (%s)", hours, sleepAt, wakeAt, quality),
 		ChannelMeta: msg.ChannelMeta,
 	}, nil
+}
+
+// validateSleepTimes checks that sleepAt and wakeAt parse as HH:MM, returning
+// a user-facing error message for the first one that doesn't (empty if both
+// are valid).
+func validateSleepTimes(sleepAt, wakeAt string) string {
+	if _, err := time.Parse("15:04", sleepAt); err != nil {
+		return fmt.Sprintf("Invalid time format: %s. Use HH:MM (e.g. 23:00).", sleepAt)
+	}
+	if _, err := time.Parse("15:04", wakeAt); err != nil {
+		return fmt.Sprintf("Invalid time format: %s. Use HH:MM (e.g. 07:00).", wakeAt)
+	}
+	return ""
+}
+
+// parseQualityAndNote parses the optional quality token and trailing note
+// from the fields after bedtime/wake. Quality defaults to "ok" when omitted.
+// When given, it must be one of the documented values (poor, fair, good,
+// great): the two switch branches used to both fall through to "accept
+// whatever string was typed" (SonarQube go:S3923), which silently let typos
+// like "godo" through as a bogus quality and swallowed the following word as
+// a "note" instead. Rejecting unknown values with a clear error is the
+// differentiated behavior the switch was originally meant to have.
+func parseQualityAndNote(rest []string) (quality, note, errText string) {
+	quality = "ok"
+	if len(rest) == 0 {
+		return quality, note, ""
+	}
+	q := strings.ToLower(rest[0])
+	switch q {
+	case "poor", "fair", "good", "great":
+		quality = q
+	default:
+		return "", "", fmt.Sprintf("Invalid quality: %s. Use one of: poor, fair, good, great.", rest[0])
+	}
+	if len(rest) > 1 {
+		note = strings.Join(rest[1:], " ")
+	}
+	return quality, note, ""
 }
 
 // computeSleepDuration calculates how long ago the sleep started. Since SleepAt

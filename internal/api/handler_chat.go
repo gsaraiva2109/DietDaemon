@@ -14,6 +14,8 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/assistant"
 )
 
+const errChatPersistenceUnavailable = "chat persistence not available"
+
 // handleChatMessage streams an AI chat response over SSE.
 // POST /api/v1/chat/sessions/{id}/messages
 func (h *Handler) handleChatMessage(w http.ResponseWriter, r *http.Request, userID string) {
@@ -275,7 +277,7 @@ func deriveSessionTitle(text string) string {
 func (h *Handler) handleListChatSessions(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 
@@ -293,7 +295,7 @@ func (h *Handler) handleListChatSessions(w http.ResponseWriter, r *http.Request,
 func (h *Handler) handleGetChatMessages(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 
@@ -315,7 +317,7 @@ func (h *Handler) handleGetChatMessages(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) handleGetChatSettings(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 
@@ -336,7 +338,7 @@ func (h *Handler) handleGetChatSettings(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) handleSetChatSettings(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 
@@ -373,7 +375,7 @@ func (h *Handler) handleSetChatSettings(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) handleDeleteChatSession(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 	if err := h.chatStore.SoftDeleteChatSession(r.Context(), userID, r.PathValue("id")); err != nil {
@@ -389,7 +391,7 @@ func (h *Handler) handleDeleteChatSession(w http.ResponseWriter, r *http.Request
 func (h *Handler) handleRestoreChatSession(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 	if err := h.chatStore.RestoreChatSession(r.Context(), userID, r.PathValue("id")); err != nil {
@@ -405,7 +407,7 @@ func (h *Handler) handleRestoreChatSession(w http.ResponseWriter, r *http.Reques
 func (h *Handler) handleListDeletedChatSessions(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.chatStore == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chat persistence not available"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errChatPersistenceUnavailable})
 		return
 	}
 	sessions, err := h.chatStore.ListDeletedChatSessions(r.Context(), userID)

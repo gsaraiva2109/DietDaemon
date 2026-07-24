@@ -23,6 +23,11 @@ import (
 
 const schedulerWorkers = 8
 
+// dateLayout is the local-date key format used throughout this package for
+// dedupe lookups (nudge_log rows) and rollup queries: Go's reference layout
+// for "2006-01-02".
+const dateLayout = "2006-01-02"
+
 // Store is the read side the scheduler needs. The concrete *store.Store
 // satisfies it once it gains ListUsers (its other methods already exist).
 type Store interface {
@@ -308,74 +313,12 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 // independent of macro goals).
 func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
+	date := local.Format(dateLayout)
 
-	// Fetch this user's rule overrides once per tick (not once per rule) to
-	// avoid N queries. Missing store or no rows: overrides stays nil, and
-	// resolveRule treats every rule as un-overridden — fully backward
-	// compatible with hardcoded defaults.
-	var overrides map[string]types.NudgeRuleConfig
-	if s.ruleConfig != nil {
-		cfgs, err := s.ruleConfig.GetNudgeRuleConfig(ctx, user.ID)
-		if err != nil {
-			s.log.Error("scheduler: get rule config", "user", user.ID, "err", err)
-		} else {
-			overrides = make(map[string]types.NudgeRuleConfig, len(cfgs))
-			for _, c := range cfgs {
-				overrides[c.RuleID] = c
-			}
-		}
-	}
+	overrides := s.resolveOverrides(ctx, user)
 
 	// Macro rules (require targets).
-	targets, err := s.store.GetTargets(ctx, user.ID)
-	if err == nil {
-		rollup, err := s.store.GetRollup(ctx, user.ID, date)
-		if err != nil {
-			rollup = types.DailyRollup{} // no meals logged yet today
-		}
-
-		for _, base := range s.rules {
-			r, enabled := resolveRule(base, base.ID, overrides)
-			if !enabled {
-				continue
-			}
-			if local.Hour() < r.AfterHour {
-				continue
-			}
-			target := macroValue(targets.Targets, r.Macro)
-			if target <= 0 {
-				continue // no target for this macro
-			}
-			consumed := macroValue(rollup.Consumed, r.Macro)
-			if consumed/target >= r.MinFraction {
-				continue // on track
-			}
-
-			done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-			if err != nil {
-				s.log.Error("scheduler: was-nudged", "rule", r.ID, "err", err)
-				continue
-			}
-			if done {
-				continue
-			}
-
-			n := types.Notification{
-				UserID:   user.ID,
-				Title:    "DietDaemon",
-				Body:     fmt.Sprintf(r.Message, consumed, target),
-				Priority: types.PriorityHigh,
-			}
-			if err := s.deliver(ctx, user, r.ID, n, &rollup.Consumed, r.QuickActions); err != nil {
-				s.log.Error("scheduler: notify", "rule", r.ID, "err", err)
-				continue // not marked: retry next tick
-			}
-			if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-				s.log.Error("scheduler: mark-nudged", "rule", r.ID, "err", err)
-			}
-		}
-	}
+	s.evalMacroRules(ctx, local, date, user, overrides)
 
 	// Health rules (independent of macro targets).
 	if s.healthStore != nil {
@@ -396,11 +339,100 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	}
 }
 
+// resolveOverrides fetches this user's rule overrides once per tick (not
+// once per rule) to avoid N queries. Missing store, a fetch error, or no rows
+// all return nil, and resolveRule treats every rule as un-overridden — fully
+// backward compatible with hardcoded defaults.
+func (s *Scheduler) resolveOverrides(ctx context.Context, user types.User) map[string]types.NudgeRuleConfig {
+	if s.ruleConfig == nil {
+		return nil
+	}
+	cfgs, err := s.ruleConfig.GetNudgeRuleConfig(ctx, user.ID)
+	if err != nil {
+		s.log.Error("scheduler: get rule config", "user", user.ID, "err", err)
+		return nil
+	}
+	overrides := make(map[string]types.NudgeRuleConfig, len(cfgs))
+	for _, c := range cfgs {
+		overrides[c.RuleID] = c
+	}
+	return overrides
+}
+
+// evalMacroRules evaluates every macro rule for one user at the given local
+// instant. Users without daily targets set are skipped entirely (macro rules
+// need a target to compute progress against).
+func (s *Scheduler) evalMacroRules(ctx context.Context, local time.Time, date string, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	targets, err := s.store.GetTargets(ctx, user.ID)
+	if err != nil {
+		return
+	}
+	rollup, err := s.store.GetRollup(ctx, user.ID, date)
+	if err != nil {
+		rollup = types.DailyRollup{} // no meals logged yet today
+	}
+	progress := macroProgress{targets: targets, rollup: &rollup}
+	for _, base := range s.rules {
+		s.evalMacroRule(ctx, local, date, user, base, overrides, progress)
+	}
+}
+
+// macroProgress bundles a user's daily macro targets and today's rollup so
+// far, the two pieces of state every macro rule needs to judge progress.
+type macroProgress struct {
+	targets types.DailyTargets
+	rollup  *types.DailyRollup
+}
+
+// evalMacroRule evaluates a single macro rule for one user, sending and
+// dedupe-marking a nudge when the user is behind on that macro.
+func (s *Scheduler) evalMacroRule(ctx context.Context, local time.Time, date string, user types.User, base Rule, overrides map[string]types.NudgeRuleConfig, progress macroProgress) {
+	targets, rollup := progress.targets, progress.rollup
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	if local.Hour() < r.AfterHour {
+		return
+	}
+	target := macroValue(targets.Targets, r.Macro)
+	if target <= 0 {
+		return // no target for this macro
+	}
+	consumed := macroValue(rollup.Consumed, r.Macro)
+	if consumed/target >= r.MinFraction {
+		return // on track
+	}
+
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
+
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     fmt.Sprintf(r.Message, consumed, target),
+		Priority: types.PriorityHigh,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, &rollup.Consumed, r.QuickActions); err != nil {
+		s.log.Error("scheduler: notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: mark-nudged", "rule", r.ID, "err", err)
+	}
+}
+
 func learnedMealHours(times []time.Time, loc *time.Location) []int {
 	days, hours := map[string]bool{}, map[int]map[string]bool{}
 	for _, at := range times {
 		local := at.In(loc)
-		day := local.Format("2006-01-02")
+		day := local.Format(dateLayout)
 		days[day] = true
 		if hours[local.Hour()] == nil {
 			hours[local.Hour()] = map[string]bool{}
@@ -442,41 +474,64 @@ func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user 
 	}
 	hours := learnedMealHours(times, loc)
 	sort.Ints(hours) // ranking selects slots; chronological order finds each predecessor.
+	sched := learnedSchedule{loc: loc, hours: hours, times: times}
 	for slot, hour := range hours {
-		local := now.In(loc)
-		for _, offset := range []int{0, 1} {
-			target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
-			reminder := target.Add(-30 * time.Minute)
-			if now.Before(reminder) || !now.Before(reminder.Add(s.interval)) {
-				continue
-			}
-			previousHour := hours[(slot+len(hours)-1)%len(hours)]
-			previousDay := target.Day()
-			if slot == 0 {
-				previousDay--
-			}
-			previous := time.Date(target.Year(), target.Month(), previousDay, previousHour, 0, 0, 0, loc)
-			skipped := false
-			for _, at := range times {
-				if !at.Before(previous) && !at.After(now) {
-					skipped = true
-					break
-				}
-			}
-			if skipped {
-				continue
-			}
-			date, id := target.Format("2006-01-02"), fmt.Sprintf("%s-%02d", rule.ID, hour)
-			done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
-			if err != nil || done {
-				continue
-			}
-			n := types.Notification{UserID: user.ID, Title: "DietDaemon", Body: rule.Message, Priority: types.PriorityHigh}
-			if err := s.deliver(ctx, user, id, n, nil, nil); err == nil {
-				_ = s.nudges.MarkNudged(ctx, user.ID, date, id)
-			}
+		s.evalSmartMealSlot(ctx, now, user, rule, sched, slot, hour)
+	}
+}
+
+// learnedSchedule bundles a user's learned meal-hour schedule: the timezone
+// it was computed in, the ranked candidate hours, and the raw meal history
+// each slot's suppression check scans.
+type learnedSchedule struct {
+	loc   *time.Location
+	hours []int
+	times []time.Time
+}
+
+// evalSmartMealSlot evaluates one learned meal-hour slot across both the
+// "today" and "tomorrow" occurrences (offset 0 and 1), firing a reminder for
+// whichever occurrence's 30-minute-before reminder window is currently open.
+func (s *Scheduler) evalSmartMealSlot(ctx context.Context, now time.Time, user types.User, rule SmartMealRule, sched learnedSchedule, slot, hour int) {
+	loc, hours, times := sched.loc, sched.hours, sched.times
+	local := now.In(loc)
+	for _, offset := range []int{0, 1} {
+		target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
+		reminder := target.Add(-30 * time.Minute)
+		if now.Before(reminder) || !now.Before(reminder.Add(s.interval)) {
+			continue
+		}
+		if ateSincePreviousSlot(times, hours, loc, slot, target, now) {
+			continue
+		}
+		date, id := target.Format(dateLayout), fmt.Sprintf("%s-%02d", rule.ID, hour)
+		done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
+		if err != nil || done {
+			continue
+		}
+		n := types.Notification{UserID: user.ID, Title: "DietDaemon", Body: rule.Message, Priority: types.PriorityHigh}
+		if err := s.deliver(ctx, user, id, n, nil, nil); err == nil {
+			_ = s.nudges.MarkNudged(ctx, user.ID, date, id)
 		}
 	}
+}
+
+// ateSincePreviousSlot reports whether the user already logged a meal
+// between the previous learned slot's occurrence and now, which suppresses
+// the current slot's reminder (they already ate).
+func ateSincePreviousSlot(times []time.Time, hours []int, loc *time.Location, slot int, target, now time.Time) bool {
+	previousHour := hours[(slot+len(hours)-1)%len(hours)]
+	previousDay := target.Day()
+	if slot == 0 {
+		previousDay--
+	}
+	previous := time.Date(target.Year(), target.Month(), previousDay, previousHour, 0, 0, 0, loc)
+	for _, at := range times {
+		if !at.Before(previous) && !at.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveRule applies a user's override (if any) to a copy of the base rule.
@@ -511,49 +566,76 @@ func resolveRule[T any](base T, ruleID string, overrides map[string]types.NudgeR
 // When snapshot is non-nil and a SentNudgeStore is configured, a sent_nudges
 // row is recorded and an Undo button is attached to the chat reply.
 func (s *Scheduler) deliver(ctx context.Context, user types.User, ruleID string, n types.Notification, snapshot *types.Macros, quickActions []types.InlineButton) error {
-	var nudgeID string
-	if snapshot != nil && s.sentNudges != nil {
-		var b [16]byte
-		_, _ = rand.Read(b[:])
-		nudgeID = hex.EncodeToString(b[:])
-		sn := types.SentNudge{
-			ID:       nudgeID,
-			UserID:   user.ID,
-			RuleID:   ruleID,
-			SentAt:   time.Now(),
-			Body:     n.Body,
-			Snapshot: *snapshot,
-			Status:   "sent",
-		}
-		if err := s.sentNudges.RecordSentNudge(ctx, sn); err != nil {
-			s.log.Error("scheduler: record sent nudge", "rule", ruleID, "err", err)
-		}
-	}
+	nudgeID := s.recordSentNudge(ctx, user, ruleID, n, snapshot)
 
-	if s.chatSender != nil && s.chatRoutes != nil && (snapshot != nil || len(quickActions) > 0) {
-		if _, meta, err := s.chatRoutes.GetChatRoute(ctx, user.ID); err == nil {
-			reply := types.Reply{UserID: user.ID, Text: n.Body, ChannelMeta: meta}
-			var row []types.InlineButton
-			if nudgeID != "" {
-				row = append(row, types.InlineButton{Text: "Not anymore, undo", CallbackData: "/nudge undo " + nudgeID})
-			}
-			row = append(row, quickActions...)
-			if len(row) > 0 {
-				reply.Markup = &types.ReplyMarkup{
-					InlineKeyboard: [][]types.InlineButton{row},
-				}
-			}
-			sendErr := s.chatSender.Send(ctx, reply)
-			if sendErr == nil {
-				return nil
-			}
-			s.log.Warn("scheduler: chat send failed, falling back to notifier", "rule", ruleID, "err", sendErr)
-		}
+	if s.tryChatDelivery(ctx, user, ruleID, n, nudgeID, snapshot, quickActions) {
+		return nil
 	}
 	if s.notifier == nil {
 		return fmt.Errorf("scheduler: no delivery channel configured for user %s", user.ID)
 	}
 	return s.notifier.Notify(ctx, n)
+}
+
+// recordSentNudge writes a sent_nudges row (when a SentNudgeStore is
+// configured and a snapshot was supplied, so the delivery is undoable) and
+// returns the generated nudge ID, or "" when nothing was recorded. A write
+// failure is logged but never blocks delivery itself.
+func (s *Scheduler) recordSentNudge(ctx context.Context, user types.User, ruleID string, n types.Notification, snapshot *types.Macros) string {
+	if snapshot == nil || s.sentNudges == nil {
+		return ""
+	}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	nudgeID := hex.EncodeToString(b[:])
+	sn := types.SentNudge{
+		ID:       nudgeID,
+		UserID:   user.ID,
+		RuleID:   ruleID,
+		SentAt:   time.Now(),
+		Body:     n.Body,
+		Snapshot: *snapshot,
+		Status:   "sent",
+	}
+	if err := s.sentNudges.RecordSentNudge(ctx, sn); err != nil {
+		s.log.Error("scheduler: record sent nudge", "rule", ruleID, "err", err)
+	}
+	return nudgeID
+}
+
+// tryChatDelivery attempts to deliver n as an interactive chat message when a
+// chat route is known for the user. Reports whether the send succeeded; the
+// caller falls back to the plain-text Notifier on false.
+func (s *Scheduler) tryChatDelivery(ctx context.Context, user types.User, ruleID string, n types.Notification, nudgeID string, snapshot *types.Macros, quickActions []types.InlineButton) bool {
+	if s.chatSender == nil || s.chatRoutes == nil || (snapshot == nil && len(quickActions) == 0) {
+		return false
+	}
+	_, meta, err := s.chatRoutes.GetChatRoute(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	reply := types.Reply{UserID: user.ID, Text: n.Body, ChannelMeta: meta}
+	row := nudgeButtons(nudgeID, quickActions)
+	if len(row) > 0 {
+		reply.Markup = &types.ReplyMarkup{InlineKeyboard: [][]types.InlineButton{row}}
+	}
+	if err := s.chatSender.Send(ctx, reply); err != nil {
+		s.log.Warn("scheduler: chat send failed, falling back to notifier", "rule", ruleID, "err", err)
+		return false
+	}
+	return true
+}
+
+// nudgeButtons assembles a chat reply's inline keyboard row: an Undo button
+// (when a sent-nudge was recorded) followed by any rule-specific quick
+// actions.
+func nudgeButtons(nudgeID string, quickActions []types.InlineButton) []types.InlineButton {
+	var row []types.InlineButton
+	if nudgeID != "" {
+		row = append(row, types.InlineButton{Text: "Not anymore, undo", CallbackData: "/nudge undo " + nudgeID})
+	}
+	row = append(row, quickActions...)
+	return row
 }
 
 // evalHealthRules evaluates every health rule for one user at the given
@@ -562,106 +644,133 @@ func (s *Scheduler) deliver(ctx context.Context, user types.User, ruleID string,
 // coexist safely with macro rule IDs.
 func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
+	date := local.Format(dateLayout)
 	hour := local.Hour()
 
 	for _, base := range s.healthRules {
-		r, enabled := resolveRule(base, base.ID, overrides)
-		if !enabled {
-			continue
-		}
-		// Hour gate: CheckHour = 0 means always check (e.g. fast-ending).
-		if r.CheckHour > 0 && hour < r.CheckHour {
-			continue
-		}
+		s.evalHealthRule(ctx, now, user, date, hour, base, overrides)
+	}
+}
 
-		// Deduplication against nudge_log table.
-		done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: health was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
+// evalHealthRule evaluates a single health rule for one user: override
+// resolution, hour gate, dedupe, the domain-specific trigger condition, and
+// delivery.
+func (s *Scheduler) evalHealthRule(ctx context.Context, now time.Time, user types.User, date string, hour int, base HealthRule, overrides map[string]types.NudgeRuleConfig) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	// Hour gate: CheckHour = 0 means always check (e.g. fast-ending).
+	if r.CheckHour > 0 && hour < r.CheckHour {
+		return
+	}
 
-		triggered := false
-		switch r.Domain {
-		case "water":
-			_, totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
-			if err != nil {
-				s.log.Error("scheduler: get water", "rule", r.ID, "err", err)
-				continue
-			}
-			if totalML < int(r.MinDailyAmount) {
-				triggered = true
-			}
+	// Deduplication against nudge_log table.
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: health was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
 
-		case "workout":
-			workouts, err := s.healthStore.ListWorkouts(ctx, user.ID, 1)
-			if err != nil && !errors.Is(err, types.ErrNotFound) {
-				s.log.Error("scheduler: list workouts", "rule", r.ID, "err", err)
-				continue
-			}
-			if len(workouts) == 0 {
-				triggered = true // never worked out
-				break
-			}
-			lastTime, parseErr := parseLoggedAt(workouts[0].LoggedAt)
-			if parseErr != nil {
-				s.log.Error("scheduler: parse workout date", "rule", r.ID, "err", parseErr)
-				continue
-			}
-			if now.Sub(lastTime).Hours() >= float64(r.MaxGapDays)*24 {
-				triggered = true
-			}
+	if !s.healthRuleTriggered(ctx, now, user, date, r) {
+		return
+	}
 
-		case "sleep":
-			_, err := s.healthStore.GetActiveSleep(ctx, user.ID)
-			if errors.Is(err, types.ErrNotFound) {
-				triggered = true // no active sleep — nudge
-			} else if err != nil {
-				s.log.Error("scheduler: get sleep", "rule", r.ID, "err", err)
-				continue
-			}
+	s.deliverHealthNudge(ctx, user, date, r)
+}
 
-		case "fasting":
-			activeFast, err := s.healthStore.GetActiveFast(ctx, user.ID)
-			if errors.Is(err, types.ErrNotFound) {
-				continue // no active fast — nothing to nudge about
-			}
-			if err != nil {
-				s.log.Error("scheduler: get fast", "rule", r.ID, "err", err)
-				continue
-			}
-			elapsed := now.Sub(activeFast.StartAt).Hours()
-			remaining := activeFast.TargetHours - elapsed
-			if remaining > 0 && remaining <= 0.5 {
-				triggered = true // within 30 minutes of target
-			}
-		}
+// healthRuleTriggered evaluates the domain-specific trigger condition for a
+// single health rule (water/workout/sleep/fasting), logging and returning
+// false on any real data-source error.
+func (s *Scheduler) healthRuleTriggered(ctx context.Context, now time.Time, user types.User, date string, r HealthRule) bool {
+	switch r.Domain {
+	case "water":
+		return s.waterRuleTriggered(ctx, user, date, r)
+	case "workout":
+		return s.workoutRuleTriggered(ctx, now, user, r)
+	case "sleep":
+		return s.sleepRuleTriggered(ctx, user, r)
+	case "fasting":
+		return s.fastingRuleTriggered(ctx, now, user, r)
+	default:
+		return false
+	}
+}
 
-		if !triggered {
-			continue
-		}
+func (s *Scheduler) waterRuleTriggered(ctx context.Context, user types.User, date string, r HealthRule) bool {
+	_, totalML, err := s.healthStore.GetWaterToday(ctx, user.ID, date)
+	if err != nil {
+		s.log.Error("scheduler: get water", "rule", r.ID, "err", err)
+		return false
+	}
+	return totalML < int(r.MinDailyAmount)
+}
 
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon",
-			Body:     r.Message,
-			Priority: types.PriorityHigh,
-		}
-		var healthSnap *types.Macros
-		if len(r.QuickActions) > 0 {
-			healthSnap = &types.Macros{}
-		}
-		if err := s.deliver(ctx, user, r.ID, n, healthSnap, r.QuickActions); err != nil {
-			s.log.Error("scheduler: health notify", "rule", r.ID, "err", err)
-			continue // not marked: retry next tick
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-			s.log.Error("scheduler: health mark-nudged", "rule", r.ID, "err", err)
-		}
+func (s *Scheduler) workoutRuleTriggered(ctx context.Context, now time.Time, user types.User, r HealthRule) bool {
+	workouts, err := s.healthStore.ListWorkouts(ctx, user.ID, 1)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		s.log.Error("scheduler: list workouts", "rule", r.ID, "err", err)
+		return false
+	}
+	if len(workouts) == 0 {
+		return true // never worked out
+	}
+	lastTime, parseErr := parseLoggedAt(workouts[0].LoggedAt)
+	if parseErr != nil {
+		s.log.Error("scheduler: parse workout date", "rule", r.ID, "err", parseErr)
+		return false
+	}
+	return now.Sub(lastTime).Hours() >= float64(r.MaxGapDays)*24
+}
+
+func (s *Scheduler) sleepRuleTriggered(ctx context.Context, user types.User, r HealthRule) bool {
+	_, err := s.healthStore.GetActiveSleep(ctx, user.ID)
+	if errors.Is(err, types.ErrNotFound) {
+		return true // no active sleep — nudge
+	}
+	if err != nil {
+		s.log.Error("scheduler: get sleep", "rule", r.ID, "err", err)
+	}
+	return false
+}
+
+func (s *Scheduler) fastingRuleTriggered(ctx context.Context, now time.Time, user types.User, r HealthRule) bool {
+	activeFast, err := s.healthStore.GetActiveFast(ctx, user.ID)
+	if errors.Is(err, types.ErrNotFound) {
+		return false // no active fast — nothing to nudge about
+	}
+	if err != nil {
+		s.log.Error("scheduler: get fast", "rule", r.ID, "err", err)
+		return false
+	}
+	elapsed := now.Sub(activeFast.StartAt).Hours()
+	remaining := activeFast.TargetHours - elapsed
+	return remaining > 0 && remaining <= 0.5 // within 30 minutes of target
+}
+
+// deliverHealthNudge sends a triggered health rule's nudge and marks it as
+// delivered on success. Quick actions (if any) get a zero-value snapshot so
+// deliver still records/attaches an Undo button.
+func (s *Scheduler) deliverHealthNudge(ctx context.Context, user types.User, date string, r HealthRule) {
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     r.Message,
+		Priority: types.PriorityHigh,
+	}
+	var healthSnap *types.Macros
+	if len(r.QuickActions) > 0 {
+		healthSnap = &types.Macros{}
+	}
+	if err := s.deliver(ctx, user, r.ID, n, healthSnap, r.QuickActions); err != nil {
+		s.log.Error("scheduler: health notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: health mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 
@@ -672,47 +781,53 @@ func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user typ
 // no format collision with daily "YYYY-MM-DD" keys.
 func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-
 	for _, base := range s.digestRules {
-		r, enabled := resolveRule(base, base.ID, overrides)
-		if !enabled {
-			continue
-		}
-		if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
-			continue
-		}
+		s.evalDigestRule(ctx, user, local, base, overrides)
+	}
+}
 
-		year, week := local.ISOWeek()
-		weekKey := fmt.Sprintf("%d-W%02d", year, week)
+// evalDigestRule evaluates a single weekly digest rule for one user: override
+// resolution, weekday/hour gate, ISO-week dedupe, and building/delivering the
+// digest body.
+func (s *Scheduler) evalDigestRule(ctx context.Context, user types.User, local time.Time, base DigestRule, overrides map[string]types.NudgeRuleConfig) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
+		return
+	}
 
-		done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: digest was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
+	year, week := local.ISOWeek()
+	weekKey := fmt.Sprintf("%d-W%02d", year, week)
 
-		body, err := s.buildDigestBody(ctx, user, local)
-		if err != nil {
-			s.log.Error("scheduler: build digest", "rule", r.ID, "err", err)
-			continue
-		}
+	done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: digest was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
 
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon Weekly Digest",
-			Body:     body,
-			Priority: types.PriorityDefault,
-		}
-		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
-			s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
-			continue // not marked: retry next tick
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
-			s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
-		}
+	body, err := s.buildDigestBody(ctx, user, local)
+	if err != nil {
+		s.log.Error("scheduler: build digest", "rule", r.ID, "err", err)
+		return
+	}
+
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon Weekly Digest",
+		Body:     body,
+		Priority: types.PriorityDefault,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+		s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
+		s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 
@@ -721,125 +836,152 @@ func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user typ
 // Dedupe uses the same nudge_log table, keyed by local date.
 func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
-
+	date := local.Format(dateLayout)
 	for _, base := range s.weeklyBudgetRules {
-		r := base
+		s.evalWeeklyBudgetRule(ctx, user, local, date, base, overrides)
+	}
+}
 
-		// Opt-in gate: this feature is OFF by default, so (unlike
-		// resolveRule's "not found = enabled with defaults" semantics used
-		// by the other rule families) an absent override means skip
-		// entirely rather than proceed with zero-value config.
-		if _, ok := overrides[r.ID]; !ok {
+// evalWeeklyBudgetRule evaluates a single weekly rolling budget rule for one
+// user: opt-in gate, hour gate, dedupe, effective-target computation, and
+// delivery of the catch-up/ease-up nudge.
+func (s *Scheduler) evalWeeklyBudgetRule(ctx context.Context, user types.User, local time.Time, date string, base WeeklyBudgetRule, overrides map[string]types.NudgeRuleConfig) {
+	r := base
+
+	budgetCfg, enabled := resolveWeeklyBudgetConfig(r.ID, overrides)
+	if !enabled {
+		return
+	}
+	floorPct, ceilPct := clampPercents(budgetCfg)
+
+	// Hour gate.
+	if local.Hour() < r.CheckHour {
+		return
+	}
+
+	// Dedupe against nudge_log.
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: weekly budget was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
+
+	monday, sunday, daysRemaining := weekBounds(local)
+	rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format(dateLayout), sunday.Format(dateLayout))
+	if err != nil {
+		s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
+		return
+	}
+	consumedPriorDays := sumConsumedBefore(rollups, date, r.Macro)
+
+	targets, err := s.store.GetTargets(ctx, user.ID)
+	if err != nil {
+		s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
+		return
+	}
+	plainDaily := macroValue(targets.Targets, r.Macro)
+	if plainDaily <= 0 {
+		return // no target for this macro
+	}
+	if budgetCfg.WeeklyTargetOverride > 0 {
+		plainDaily = budgetCfg.WeeklyTargetOverride
+	}
+
+	effective := EffectiveWeeklyTarget(plainDaily, consumedPriorDays, daysRemaining, floorPct, ceilPct)
+
+	// Negligible delta (< 3% of daily target): mark nudged so it doesn't
+	// keep re-checking, but don't bother the user over noise.
+	delta := effective - plainDaily
+	if math.Abs(delta) < plainDaily*0.03 {
+		_ = s.nudges.MarkNudged(ctx, user.ID, date, r.ID)
+		return
+	}
+
+	s.deliverWeeklyBudgetNudge(ctx, user, date, r, delta)
+}
+
+// resolveWeeklyBudgetConfig applies the user's override for a weekly-budget
+// rule. Unlike resolveRule's "not found = enabled with defaults" semantics
+// used by the other rule families, this feature is OFF by default: an
+// absent override means skip entirely rather than proceed with a
+// zero-value config.
+func resolveWeeklyBudgetConfig(ruleID string, overrides map[string]types.NudgeRuleConfig) (types.WeeklyBudgetConfig, bool) {
+	if _, ok := overrides[ruleID]; !ok {
+		return types.WeeklyBudgetConfig{}, false
+	}
+	return resolveRule(types.WeeklyBudgetConfig{}, ruleID, overrides)
+}
+
+// clampPercents applies the default floor/ceiling clamp percentages when a
+// budget config leaves them unset (zero value).
+func clampPercents(cfg types.WeeklyBudgetConfig) (floorPct, ceilPct float64) {
+	floorPct = cfg.ClampFloorPct
+	if floorPct == 0 {
+		floorPct = 0.70
+	}
+	ceilPct = cfg.ClampCeilPct
+	if ceilPct == 0 {
+		ceilPct = 1.30
+	}
+	return floorPct, ceilPct
+}
+
+// weekBounds returns the Monday-Sunday calendar week containing local, plus
+// the number of days remaining in that week including today (1-7).
+func weekBounds(local time.Time) (monday, sunday time.Time, daysRemaining int) {
+	weekday := local.Weekday()
+	daysFromMonday := int(weekday) - int(time.Monday)
+	if weekday == time.Sunday {
+		daysFromMonday = 6
+	}
+	monday = local.AddDate(0, 0, -daysFromMonday)
+	sunday = monday.AddDate(0, 0, 6)
+	daysRemaining = 7 - daysFromMonday
+	return monday, sunday, daysRemaining
+}
+
+// sumConsumedBefore sums a macro's consumed amount across rollups dated
+// strictly before date.
+func sumConsumedBefore(rollups []types.DailyRollup, date string, macro Macro) float64 {
+	var total float64
+	for _, roll := range rollups {
+		if roll.Date >= date {
 			continue
 		}
-		budgetCfg, enabled := resolveRule(types.WeeklyBudgetConfig{}, r.ID, overrides)
-		if !enabled {
-			continue
-		}
+		total += macroValue(roll.Consumed, macro)
+	}
+	return total
+}
 
-		// Apply defaults for clamp values.
-		floorPct := budgetCfg.ClampFloorPct
-		if floorPct == 0 {
-			floorPct = 0.70
-		}
-		ceilPct := budgetCfg.ClampCeilPct
-		if ceilPct == 0 {
-			ceilPct = 1.30
-		}
+// deliverWeeklyBudgetNudge builds the catch-up/ease-up message for a
+// non-negligible delta, delivers it, and marks it nudged on success.
+func (s *Scheduler) deliverWeeklyBudgetNudge(ctx context.Context, user types.User, date string, r WeeklyBudgetRule, delta float64) {
+	unit := "kcal"
+	if r.Macro == MacroProtein {
+		unit = "g"
+	}
+	var body string
+	if delta > 0 {
+		body = fmt.Sprintf("Catch up today, +%.0f%s", delta, unit)
+	} else {
+		body = fmt.Sprintf("Ease up today, -%.0f%s", -delta, unit)
+	}
 
-		// Hour gate.
-		if local.Hour() < r.CheckHour {
-			continue
-		}
-
-		// Dedupe against nudge_log.
-		done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: weekly budget was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
-
-		// Compute calendar week (Monday-Sunday) bounds.
-		weekday := local.Weekday()
-		daysFromMonday := int(weekday) - int(time.Monday)
-		if weekday == time.Sunday {
-			daysFromMonday = 6
-		}
-		monday := local.AddDate(0, 0, -daysFromMonday)
-		sunday := monday.AddDate(0, 0, 6)
-		daysRemaining := 7 - daysFromMonday
-
-		// Get rollups for the current week.
-		rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format("2006-01-02"), sunday.Format("2006-01-02"))
-		if err != nil {
-			s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
-			continue
-		}
-
-		// Sum consumed prior days (dates strictly before today).
-		var consumedPriorDays float64
-		for _, roll := range rollups {
-			if roll.Date >= date {
-				continue
-			}
-			consumedPriorDays += macroValue(roll.Consumed, r.Macro)
-		}
-
-		// Get daily target for this macro.
-		targets, err := s.store.GetTargets(ctx, user.ID)
-		if err != nil {
-			s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
-			continue
-		}
-		plainDaily := macroValue(targets.Targets, r.Macro)
-		if plainDaily <= 0 {
-			continue // no target for this macro
-		}
-
-		// Apply weekly target override if configured.
-		if budgetCfg.WeeklyTargetOverride > 0 {
-			plainDaily = budgetCfg.WeeklyTargetOverride
-		}
-
-		// Compute effective target.
-		effective := EffectiveWeeklyTarget(plainDaily, consumedPriorDays, daysRemaining, floorPct, ceilPct)
-
-		// Check if delta is negligible (< 3% of daily target).
-		delta := effective - plainDaily
-		if math.Abs(delta) < plainDaily*0.03 {
-			_ = s.nudges.MarkNudged(ctx, user.ID, date, r.ID)
-			continue
-		}
-
-		// Build notification message.
-		unit := "kcal"
-		if r.Macro == MacroProtein {
-			unit = "g"
-		}
-		var body string
-		if delta > 0 {
-			body = fmt.Sprintf("Catch up today, +%.0f%s", delta, unit)
-		} else {
-			body = fmt.Sprintf("Ease up today, -%.0f%s", -delta, unit)
-		}
-
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon",
-			Body:     body,
-			Priority: types.PriorityHigh,
-		}
-		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
-			s.log.Error("scheduler: weekly budget notify", "rule", r.ID, "err", err)
-			continue
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-			s.log.Error("scheduler: weekly budget mark-nudged", "rule", r.ID, "err", err)
-		}
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     body,
+		Priority: types.PriorityHigh,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+		s.log.Error("scheduler: weekly budget notify", "rule", r.ID, "err", err)
+		return
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: weekly budget mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 
@@ -847,8 +989,8 @@ func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, us
 // average calories/protein, average adherence to target, weight change,
 // water intake, and workouts.
 func (s *Scheduler) buildDigestBody(ctx context.Context, user types.User, local time.Time) (string, error) {
-	end := local.Format("2006-01-02")
-	start := local.AddDate(0, 0, -6).Format("2006-01-02")
+	end := local.Format(dateLayout)
+	start := local.AddDate(0, 0, -6).Format(dateLayout)
 
 	rollups, err := s.digestStore.GetRollups(ctx, user.ID, start, end)
 	if err != nil {
@@ -916,7 +1058,7 @@ func parseLoggedAt(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05", // internal store format (utcStr)
 		time.RFC3339,
-		"2006-01-02",
+		dateLayout,
 	}
 	for _, f := range formats {
 		if t, err := time.Parse(f, s); err == nil {

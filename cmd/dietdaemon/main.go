@@ -344,7 +344,7 @@ func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, ru
 	}
 	assistantRouter, toolDescs := newAssistantRouter(runtime.chat, runtime.registry, runtime.i18n)
 	handler := api.New(st, runtime.engine, cfg.Location, runtime.suggest, cfg,
-		api.WithAuth(st, st, st, st, st, st, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg), api.WithOIDC(oidcRegistry), api.WithMailer(m, cfg.EmailProvider), api.WithPublicBaseURL(cfg.PublicBaseURL),
+		api.WithAuth(st, api.AuthRepos{Sessions: st, LoginAttempts: st, TOTP: st, MFAChallenges: st, RecoveryCodes: st}, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg), api.WithOIDC(oidcRegistry), api.WithMailer(m, cfg.EmailProvider), api.WithPublicBaseURL(cfg.PublicBaseURL),
 		api.WithWebAuthn(wa), api.WithBackupRunner(backupRunner), api.WithFoodImportRunner(&foodImportAdmin{store: st, cfg: cfg}), api.WithChat(runtime.chat, assistantRouter, runtime.registry.List(), toolDescs, st), api.WithI18n(runtime.i18n), api.WithOCR(runtime.vision),
 	)
 	handler.StartRateLimiterCleanup(ctx)

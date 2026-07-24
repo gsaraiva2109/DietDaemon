@@ -5,6 +5,10 @@ import (
 	"net/http"
 )
 
+// foodImportNotEnabledMsg is returned by every admin food-import endpoint
+// when no FoodImportRunner is wired up (see WithFoodImportRunner).
+const foodImportNotEnabledMsg = "food import is not enabled on this server"
+
 // adminFoodImportRequest is the shared request body for the run/repair admin
 // food-import endpoints. max_rows is optional and only meaningful for run
 // (0 or omitted means "use the source's configured default").
@@ -20,7 +24,7 @@ type adminFoodImportRequest struct {
 func (h *Handler) handleAdminFoodImportRun(w http.ResponseWriter, r *http.Request) {
 	if h.foodImportRunner == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "food import is not enabled on this server"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": foodImportNotEnabledMsg})
 		return
 	}
 	var req adminFoodImportRequest
@@ -49,7 +53,7 @@ func (h *Handler) handleAdminFoodImportRun(w http.ResponseWriter, r *http.Reques
 func (h *Handler) handleAdminFoodImportRepair(w http.ResponseWriter, r *http.Request) {
 	if h.foodImportRunner == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "food import is not enabled on this server"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": foodImportNotEnabledMsg})
 		return
 	}
 	var req adminFoodImportRequest
@@ -77,7 +81,7 @@ func (h *Handler) handleAdminFoodImportRepair(w http.ResponseWriter, r *http.Req
 func (h *Handler) handleAdminFoodImportBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if h.foodImportRunner == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "food import is not enabled on this server"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": foodImportNotEnabledMsg})
 		return
 	}
 

@@ -56,7 +56,7 @@ func newAuthHandlerForTest(store *authHandlerTestStore, cfg AuthConfig) (*Handle
 		CreatedAt:   time.Now().UTC(),
 	}
 	h := New(meals, &fakeMealLogger{}, time.UTC, nil, nil,
-		WithAuth(store, store, store, store, store, store, nil, "DietDaemon", cfg),
+		WithAuth(store, AuthRepos{Sessions: store, LoginAttempts: store, TOTP: store, MFAChallenges: store, RecoveryCodes: store}, nil, "DietDaemon", cfg),
 		WithMailer(&fakeMailer{}, "none"),
 		WithPublicBaseURL("http://localhost:8080"),
 	)

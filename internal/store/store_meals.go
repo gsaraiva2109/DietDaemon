@@ -17,9 +17,13 @@ import (
 // Meals
 // ---------------------------------------------------------------------------
 
+// dateLayout is the Go reference layout for the plain "YYYY-MM-DD" local
+// date string stored alongside meals (and used to bucket them by day).
+const dateLayout = "2006-01-02"
+
 // SaveMeal inserts a meal and all its resolved items inside a transaction.
 func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
-	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format("2006-01-02")
+	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format(dateLayout)
 
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -473,7 +477,7 @@ func (s *Store) correctMealItemTx(ctx context.Context, tx *sqlx.Tx, userID strin
 	}
 
 	// Update the daily rollup: remove old macros, add new ones.
-	localDate := mealAt.In(loc).Format("2006-01-02")
+	localDate := mealAt.In(loc).Format(dateLayout)
 	const rollupQ = `
 		INSERT INTO daily_rollups
 			(user_id, date,
@@ -591,7 +595,7 @@ func (s *Store) AddMealItem(ctx context.Context, userID, mealID string, item typ
 		return fmt.Errorf("store: insert resolved_item: %w", err)
 	}
 
-	localDate := parseUTC(meal.AtUTC).In(loc).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).In(loc).Format(dateLayout)
 	const rollupQ = `
 		INSERT INTO daily_rollups
 			(user_id, date,
@@ -653,7 +657,7 @@ func (s *Store) DeleteMealItem(ctx context.Context, userID, mealID string, itemI
 		return fmt.Errorf("store: delete item: %w", err)
 	}
 
-	localDate := parseUTC(meal.AtUTC).In(loc).Format("2006-01-02")
+	localDate := parseUTC(meal.AtUTC).In(loc).Format(dateLayout)
 	const rollupQ = `
 		UPDATE daily_rollups SET
 			consumed_kcal    = consumed_kcal    - ?,

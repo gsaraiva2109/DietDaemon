@@ -219,34 +219,53 @@ func ReadWorkoutsCSV(r io.Reader) ([]types.Workout, error) {
 		if len(rec) != len(want) {
 			return nil, fmt.Errorf("exportfmt: workouts row has %d columns, want %d", len(rec), len(want))
 		}
-		durationMin, err := strconv.Atoi(rec[2])
+		wk, err := parseWorkoutRow(rec)
 		if err != nil {
-			return nil, fmt.Errorf("exportfmt: workouts row %q: parse duration_min: %w", rec[0], err)
-		}
-		var caloriesBurned *int
-		if rec[4] != "" {
-			v, err := strconv.Atoi(rec[4])
-			if err != nil {
-				return nil, fmt.Errorf("exportfmt: workouts row %q: parse calories_burned: %w", rec[0], err)
-			}
-			caloriesBurned = &v
-		}
-		var externalID *string
-		if rec[7] != "" {
-			externalID = new(rec[7])
-		}
-		wk := types.Workout{
-			ID: rec[0], Name: rec[1], DurationMin: durationMin, Intensity: rec[3],
-			CaloriesBurned: caloriesBurned, Note: rec[5], LoggedAt: rec[6], ExternalID: externalID,
-		}
-		if rec[8] != "" {
-			if err := json.Unmarshal([]byte(rec[8]), &wk.Exercises); err != nil {
-				return nil, fmt.Errorf("exportfmt: workouts row %q: parse exercises_json: %w", rec[0], err)
-			}
+			return nil, err
 		}
 		out = append(out, wk)
 	}
 	return out, nil
+}
+
+// parseWorkoutRow builds a single Workout from a workouts.csv data row. rec
+// is assumed to already have the expected column count.
+func parseWorkoutRow(rec []string) (types.Workout, error) {
+	durationMin, err := strconv.Atoi(rec[2])
+	if err != nil {
+		return types.Workout{}, fmt.Errorf("exportfmt: workouts row %q: parse duration_min: %w", rec[0], err)
+	}
+	caloriesBurned, err := parseOptionalInt(rec[4])
+	if err != nil {
+		return types.Workout{}, fmt.Errorf("exportfmt: workouts row %q: parse calories_burned: %w", rec[0], err)
+	}
+	var externalID *string
+	if rec[7] != "" {
+		externalID = new(rec[7])
+	}
+	wk := types.Workout{
+		ID: rec[0], Name: rec[1], DurationMin: durationMin, Intensity: rec[3],
+		CaloriesBurned: caloriesBurned, Note: rec[5], LoggedAt: rec[6], ExternalID: externalID,
+	}
+	if rec[8] != "" {
+		if err := json.Unmarshal([]byte(rec[8]), &wk.Exercises); err != nil {
+			return types.Workout{}, fmt.Errorf("exportfmt: workouts row %q: parse exercises_json: %w", rec[0], err)
+		}
+	}
+	return wk, nil
+}
+
+// parseOptionalInt parses s as an int, returning a nil pointer for an empty
+// string instead of an error.
+func parseOptionalInt(s string) (*int, error) {
+	if s == "" {
+		return nil, nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // ReadPhotosCSV parses the metadata index format written by WritePhotosCSV.

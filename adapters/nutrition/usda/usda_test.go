@@ -8,15 +8,28 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+// Literals reused across many tests below (extracted per SonarQube go:S1192).
+const (
+	testAPIKey          = "test-key"
+	dataTypeSRLegacy    = "SR Legacy"
+	brandedBarName      = "Branded Bar"
+	notJSONBody         = "not json"
+	errFmtFetchBulk     = "FetchBulk: %v"
+	errFmtWriteBulkFile = "write bulk file: %v"
+	errFmtUnmarshal     = "unmarshal: %v"
+	wantFoodToMatchOK   = "foodToMatch: ok = false, want true"
+)
+
 func TestResolve(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("api_key") != "test-key" {
+		if r.URL.Query().Get("api_key") != testAPIKey {
 			t.Errorf("missing or wrong api_key")
 		}
 		_ = json.NewEncoder(w).Encode(searchResponse{
@@ -37,7 +50,7 @@ func TestResolve(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "test-key"}
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: testAPIKey}
 	match, err := s.Resolve(t.Context(), types.ParsedItem{RawPhrase: "chicken breast"})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -129,7 +142,7 @@ func TestFetchBulkAPI(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "test-key"}
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: testAPIKey}
 
 	var got []types.FoodMatch
 	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
@@ -137,7 +150,7 @@ func TestFetchBulkAPI(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("FetchBulk: %v", err)
+		t.Fatalf(errFmtFetchBulk, err)
 	}
 	if len(got) != 4 {
 		t.Errorf("emitted %d matches, want 4", len(got))
@@ -172,13 +185,104 @@ func TestFetchBulkAPIMaxRows(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("FetchBulk: %v", err)
+		t.Fatalf(errFmtFetchBulk, err)
 	}
 	if len(got) != 3 {
 		t.Errorf("emitted %d matches, want 3 (MaxRows)", len(got))
 	}
 	if calls != 2 {
 		t.Errorf("server called %d times, want 2 (must stop before requesting a 3rd page)", calls)
+	}
+}
+
+// TestFetchBulkAPISkipsUnmatchedFood covers emitMatchedFood's ok=false path
+// (extracted from fetchBulkAPI's per-food loop): a food with no usable
+// FoodMatch (no energy value) must be silently skipped, not emitted or
+// counted against MaxRows.
+func TestFetchBulkAPISkipsUnmatchedFood(t *testing.T) {
+	orig := bulkPageDelay
+	bulkPageDelay = 0
+	defer func() { bulkPageDelay = orig }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("pageNumber"))
+		if page == 1 {
+			_ = json.NewEncoder(w).Encode(searchResponse{Foods: []food{
+				{FdcID: 1, Description: "Good", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 100}}},
+				{FdcID: 2, Description: "No energy", FoodNutrients: nil}, // ok=false: skipped
+			}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(searchResponse{Foods: []food{}})
+	}))
+	defer srv.Close()
+
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
+
+	var got []types.FoodMatch
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
+		got = append(got, fm)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf(errFmtFetchBulk, err)
+	}
+	if len(got) != 1 || got[0].FoodID != "1" {
+		t.Errorf("got %+v, want only FdcID 1 (unmatched food skipped)", got)
+	}
+}
+
+// TestFetchBulkAPIBuildRequestError covers fetchBulkAPIPage's request-build
+// error path, propagated through fetchBulkAPI's err-from-page check.
+func TestFetchBulkAPIBuildRequestError(t *testing.T) {
+	s := &Source{client: &http.Client{}, baseURL: "://bad-url", apiKey: "k"}
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error for malformed base URL")
+	}
+}
+
+// TestFetchBulkAPIConnectionError covers fetchBulkAPIPage's client.Do error
+// path: the server is closed before the request reaches it.
+func TestFetchBulkAPIConnectionError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		// unreachable: srv is closed below before any request can reach it.
+	}))
+	srv.Close() // closed: any request to srv.URL fails to connect
+
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error when server is unreachable")
+	}
+}
+
+// TestFetchBulkAPIHTTPError covers fetchBulkAPIPage's non-200-status path.
+func TestFetchBulkAPIHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error on 500")
+	}
+}
+
+// TestFetchBulkAPIDecodeError covers fetchBulkAPIPage's response-decode error
+// path.
+func TestFetchBulkAPIDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(notJSONBody))
+	}))
+	defer srv.Close()
+
+	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error on malformed JSON body")
 	}
 }
 
@@ -226,7 +330,7 @@ func writeBulkFile(t *testing.T, entries []food) string {
 		t.Fatalf("marshal: %v", err)
 	}
 	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatalf("write bulk file: %v", err)
+		t.Fatalf(errFmtWriteBulkFile, err)
 	}
 	return path
 }
@@ -234,8 +338,8 @@ func writeBulkFile(t *testing.T, entries []food) string {
 func TestFetchBulkFile(t *testing.T) {
 	path := writeBulkFile(t, []food{
 		{FdcID: 1, Description: "Apple", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 52}}},
-		{FdcID: 2, Description: "Banana", DataType: "SR Legacy", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
-		{FdcID: 3, Description: "Branded Bar", DataType: "Branded", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 400}}},
+		{FdcID: 2, Description: "Banana", DataType: dataTypeSRLegacy, FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
+		{FdcID: 3, Description: brandedBarName, DataType: "Branded", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 400}}},
 		{FdcID: 4, Description: "Survey Item", DataType: "Survey (FNDDS)", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 200}}},
 		{FdcID: 5, Description: "Carrot", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 41}}},
 	})
@@ -247,14 +351,14 @@ func TestFetchBulkFile(t *testing.T) {
 		got = append(got, fm)
 		return nil
 	}); err != nil {
-		t.Fatalf("FetchBulk: %v", err)
+		t.Fatalf(errFmtFetchBulk, err)
 	}
 
 	if len(got) != 3 {
 		t.Fatalf("emitted %d matches, want 3 (Foundation + SR Legacy only)", len(got))
 	}
 	for _, fm := range got {
-		if fm.Name == "Branded Bar" || fm.Name == "Survey Item" {
+		if fm.Name == brandedBarName || fm.Name == "Survey Item" {
 			t.Errorf("emitted disallowed dataType food: %s", fm.Name)
 		}
 	}
@@ -263,7 +367,7 @@ func TestFetchBulkFile(t *testing.T) {
 func TestFetchBulkFileMaxRows(t *testing.T) {
 	path := writeBulkFile(t, []food{
 		{FdcID: 1, Description: "Apple", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 52}}},
-		{FdcID: 2, Description: "Banana", DataType: "SR Legacy", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
+		{FdcID: 2, Description: "Banana", DataType: dataTypeSRLegacy, FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
 		{FdcID: 3, Description: "Carrot", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 41}}},
 	})
 
@@ -275,7 +379,7 @@ func TestFetchBulkFileMaxRows(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("FetchBulk: %v", err)
+		t.Fatalf(errFmtFetchBulk, err)
 	}
 	if len(got) != 1 {
 		t.Errorf("emitted %d matches, want 1 (MaxRows)", len(got))
@@ -288,8 +392,8 @@ func TestFetchBulkFileMaxRows(t *testing.T) {
 func TestFetchBulkFileWrappedObject(t *testing.T) {
 	entries := []food{
 		{FdcID: 1, Description: "Apple", DataType: "Foundation", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 52}}},
-		{FdcID: 2, Description: "Banana", DataType: "SR Legacy", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
-		{FdcID: 3, Description: "Branded Bar", DataType: "Branded", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 400}}},
+		{FdcID: 2, Description: "Banana", DataType: dataTypeSRLegacy, FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 89}}},
+		{FdcID: 3, Description: brandedBarName, DataType: "Branded", FoodNutrients: []foodNutrient{{NutrientID: nutrientEnergy, Amount: 400}}},
 	}
 	b, err := json.Marshal(map[string]any{"FoundationFoods": entries})
 	if err != nil {
@@ -297,7 +401,7 @@ func TestFetchBulkFileWrappedObject(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "wrapped.json")
 	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatalf("write bulk file: %v", err)
+		t.Fatalf(errFmtWriteBulkFile, err)
 	}
 
 	s := NewBulk("", path)
@@ -307,14 +411,14 @@ func TestFetchBulkFileWrappedObject(t *testing.T) {
 		got = append(got, fm)
 		return nil
 	}); err != nil {
-		t.Fatalf("FetchBulk: %v", err)
+		t.Fatalf(errFmtFetchBulk, err)
 	}
 
 	if len(got) != 2 {
 		t.Fatalf("emitted %d matches, want 2 (Foundation + SR Legacy only)", len(got))
 	}
 	for _, fm := range got {
-		if fm.Name == "Branded Bar" {
+		if fm.Name == brandedBarName {
 			t.Errorf("emitted disallowed dataType food: %s", fm.Name)
 		}
 	}
@@ -334,11 +438,11 @@ func TestFoodCategoryUnmarshalObjectShape(t *testing.T) {
 	}`
 	var f food
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+		t.Fatalf(errFmtUnmarshal, err)
 	}
 	fm, ok := foodToMatch(f)
 	if !ok {
-		t.Fatal("foodToMatch: ok = false, want true")
+		t.Fatal(wantFoodToMatchOK)
 	}
 	if fm.Category != "Dairy and Egg Products" {
 		t.Errorf("Category = %q, want %q", fm.Category, "Dairy and Egg Products")
@@ -357,11 +461,11 @@ func TestFoodCategoryUnmarshalStringShape(t *testing.T) {
 	}`
 	var f food
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+		t.Fatalf(errFmtUnmarshal, err)
 	}
 	fm, ok := foodToMatch(f)
 	if !ok {
-		t.Fatal("foodToMatch: ok = false, want true")
+		t.Fatal(wantFoodToMatchOK)
 	}
 	if fm.Category != "Snack Bars" {
 		t.Errorf("Category = %q, want %q (brandedFoodCategory should take priority)", fm.Category, "Snack Bars")
@@ -386,11 +490,11 @@ func TestFoodPortionsToServingUnits(t *testing.T) {
 	}`
 	var f food
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+		t.Fatalf(errFmtUnmarshal, err)
 	}
 	fm, ok := foodToMatch(f)
 	if !ok {
-		t.Fatal("foodToMatch: ok = false, want true")
+		t.Fatal(wantFoodToMatchOK)
 	}
 	want := []types.FoodServingUnit{
 		{Label: "1 large", Grams: 50},
@@ -424,6 +528,55 @@ func TestResolveRequestsFullFormat(t *testing.T) {
 	s := &Source{client: &http.Client{}, baseURL: srv.URL, apiKey: "k"}
 	if _, err := s.Resolve(t.Context(), types.ParsedItem{RawPhrase: "x"}); err != nil {
 		t.Fatalf("Resolve: %v", err)
+	}
+}
+
+// TestFetchBulkFileOpenError covers fetchBulkFile's os.Open error path.
+func TestFetchBulkFileOpenError(t *testing.T) {
+	s := NewBulk("", filepath.Join(t.TempDir(), "does-not-exist.json"))
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error for nonexistent bulk file")
+	}
+}
+
+// TestFetchBulkFileMalformedPreamble covers fetchBulkFile's error path when
+// skipToArrayStart can't find a '[' delimiter (extracted helper propagating
+// its error up through fetchBulkFile).
+func TestFetchBulkFileMalformedPreamble(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte(notJSONBody), 0o600); err != nil {
+		t.Fatalf(errFmtWriteBulkFile, err)
+	}
+
+	s := NewBulk("", path)
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error for a file with no JSON array")
+	}
+}
+
+// TestFetchBulkFileDecodeElementError covers tryEmitBulkFileFood's
+// dec.Decode error path: a malformed element inside an otherwise-valid array.
+func TestFetchBulkFileDecodeElementError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad-element.json")
+	if err := os.WriteFile(path, []byte(`[{"fdcId": "not-a-number"}]`), 0o600); err != nil {
+		t.Fatalf(errFmtWriteBulkFile, err)
+	}
+
+	s := NewBulk("", path)
+	err := s.FetchBulk(t.Context(), ports.BulkFilter{}, func(types.FoodMatch) error { return nil })
+	if err == nil {
+		t.Error("expected error for a malformed array element")
+	}
+}
+
+// TestSkipToArrayStartError covers skipToArrayStart's own error path
+// directly: input with no '[' delimiter at all.
+func TestSkipToArrayStartError(t *testing.T) {
+	dec := json.NewDecoder(strings.NewReader(notJSONBody))
+	if err := skipToArrayStart(dec); err == nil {
+		t.Error("expected error, got nil")
 	}
 }
 
