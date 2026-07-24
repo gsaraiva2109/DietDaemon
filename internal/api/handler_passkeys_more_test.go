@@ -145,69 +145,80 @@ func TestHandleRenamePasskey(t *testing.T) {
 	h := newPasskeyHandler(t, authStore)
 	authStore.creds["cred-1"] = webauthnCred{userID: "user-1", label: "Old label", createdAt: "2026-01-01T00:00:00Z"}
 
-	t.Run("missing id", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPatch, "/", nil)
-		h.handleRenamePasskey(rec, req, "user-1")
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+	t.Run("missing id", func(t *testing.T) { renamePasskeyMissingID(t, h) })
+	t.Run("invalid JSON", func(t *testing.T) { renamePasskeyInvalidJSON(t, h) })
+	t.Run("empty label", func(t *testing.T) { renamePasskeyEmptyLabel(t, h) })
+	t.Run("store error", func(t *testing.T) { renamePasskeyStoreError(t, h, authStore) })
+	t.Run("success", func(t *testing.T) { renamePasskeySuccess(t, h, authStore) })
+}
 
-	t.Run("invalid JSON", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader("{"))
-		req.SetPathValue("id", "cred-1")
-		h.handleRenamePasskey(rec, req, "user-1")
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func renamePasskeyMissingID(t *testing.T, h *Handler) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/", nil)
+	h.handleRenamePasskey(rec, req, "user-1")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("empty label", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"  "}`))
-		req.SetPathValue("id", "cred-1")
-		h.handleRenamePasskey(rec, req, "user-1")
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func renamePasskeyInvalidJSON(t *testing.T, h *Handler) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader("{"))
+	req.SetPathValue("id", "cred-1")
+	h.handleRenamePasskey(rec, req, "user-1")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("store error", func(t *testing.T) {
-		authStore.renameErr = errors.New("boom")
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"New"}`))
-		req.SetPathValue("id", "cred-1")
-		h.handleRenamePasskey(rec, req, "user-1")
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("status = %d, want 500", rec.Code)
-		}
-		authStore.renameErr = nil
-	})
+func renamePasskeyEmptyLabel(t *testing.T, h *Handler) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"  "}`))
+	req.SetPathValue("id", "cred-1")
+	h.handleRenamePasskey(rec, req, "user-1")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("success", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"New label"}`))
-		req.SetPathValue("id", "cred-1")
-		h.handleRenamePasskey(rec, req, "user-1")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+func renamePasskeyStoreError(t *testing.T, h *Handler, authStore *passkeyTestStore) {
+	t.Helper()
+	authStore.renameErr = errors.New("boom")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"New"}`))
+	req.SetPathValue("id", "cred-1")
+	h.handleRenamePasskey(rec, req, "user-1")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	authStore.renameErr = nil
+}
+
+func renamePasskeySuccess(t *testing.T, h *Handler, authStore *passkeyTestStore) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"label":"New label"}`))
+	req.SetPathValue("id", "cred-1")
+	h.handleRenamePasskey(rec, req, "user-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	pk := decodeJSON[types.Passkey](t, rec)
+	if pk.Label != "New label" {
+		t.Errorf("label = %q, want %q", pk.Label, "New label")
+	}
+	found := false
+	for _, ev := range authStore.auditEvents {
+		if ev.Event == "passkey.renamed" {
+			found = true
 		}
-		pk := decodeJSON[types.Passkey](t, rec)
-		if pk.Label != "New label" {
-			t.Errorf("label = %q, want %q", pk.Label, "New label")
-		}
-		found := false
-		for _, ev := range authStore.auditEvents {
-			if ev.Event == "passkey.renamed" {
-				found = true
-			}
-		}
-		if !found {
-			t.Error("expected passkey.renamed audit event")
-		}
-	})
+	}
+	if !found {
+		t.Error("expected passkey.renamed audit event")
+	}
 }
 
 // --- handleDeletePasskey ----------------------------------------------------
@@ -586,261 +597,293 @@ func TestHandlePasskeyLoginFinishTOTPStepUp(t *testing.T) {
 // --- handleMFAPasskeyBegin ---------------------------------------------------
 
 func TestHandleMFAPasskeyBegin(t *testing.T) {
-	t.Run("missing challenge token", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+	t.Run("missing challenge token", mfaPasskeyBeginMissingToken)
+	t.Run("invalid JSON", mfaPasskeyBeginInvalidJSON)
+	t.Run("unknown challenge", mfaPasskeyBeginUnknownChallenge)
+	t.Run("expired challenge", mfaPasskeyBeginExpiredChallenge)
+	t.Run("no passkeys registered", mfaPasskeyBeginNoPasskeysRegistered)
+	t.Run("success", mfaPasskeyBeginSuccess)
+}
 
-	t.Run("invalid JSON", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{`))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func mfaPasskeyBeginMissingToken(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("unknown challenge", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]string{"challenge_token": "nope"})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-	})
+func mfaPasskeyBeginInvalidJSON(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{`))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("expired challenge", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
-		}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-		if _, ok := authStore.mfaChallenges[auth.HashToken("tok")]; ok {
-			t.Error("expected expired challenge to be deleted")
-		}
-	})
+func mfaPasskeyBeginUnknownChallenge(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"challenge_token": "nope"})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
 
-	t.Run("no passkeys registered", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func mfaPasskeyBeginExpiredChallenge(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
+	}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	if _, ok := authStore.mfaChallenges[auth.HashToken("tok")]; ok {
+		t.Error("expected expired challenge to be deleted")
+	}
+}
 
-	t.Run("success", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		registerPasskey(t, h, "user-1")
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		h.handleMFAPasskeyBegin(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-		}
-		if authStore.createdCeremony.userID != "user-1" {
-			t.Errorf("ceremony userID = %q", authStore.createdCeremony.userID)
-		}
-	})
+func mfaPasskeyBeginNoPasskeysRegistered(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func mfaPasskeyBeginSuccess(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	registerPasskey(t, h, "user-1")
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	h.handleMFAPasskeyBegin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if authStore.createdCeremony.userID != "user-1" {
+		t.Errorf("ceremony userID = %q", authStore.createdCeremony.userID)
+	}
 }
 
 // --- handleMFAPasskeyFinish ---------------------------------------------------
 
 func TestHandleMFAPasskeyFinishErrors(t *testing.T) {
-	t.Run("missing cookie", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+	t.Run("missing cookie", mfaPasskeyFinishMissingCookie)
+	t.Run("invalid JSON body", mfaPasskeyFinishInvalidJSONBody)
+	t.Run("missing challenge token", mfaPasskeyFinishMissingChallengeToken)
+	t.Run("unknown challenge", mfaPasskeyFinishUnknownChallenge)
+	t.Run("expired challenge", mfaPasskeyFinishExpiredChallenge)
+	t.Run("ceremony consume fails", mfaPasskeyFinishCeremonyConsumeFails)
+	t.Run("ceremony user mismatch", mfaPasskeyFinishCeremonyUserMismatch)
+	t.Run("malformed credential", mfaPasskeyFinishMalformedCredential)
+	t.Run("validation failure", mfaPasskeyFinishValidationFailure)
+}
 
-	t.Run("invalid JSON body", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{"))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func mfaPasskeyFinishMissingCookie(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("missing challenge token", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]any{"credential": json.RawMessage(`{}`)})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
-		}
-	})
+func mfaPasskeyFinishInvalidJSONBody(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{"))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("unknown challenge", func(t *testing.T) {
-		h := newPasskeyHandler(t, newPasskeyTestStore())
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]any{"challenge_token": "nope", "credential": json.RawMessage(`{}`)})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-	})
+func mfaPasskeyFinishMissingChallengeToken(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"credential": json.RawMessage(`{}`)})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
 
-	t.Run("expired challenge", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
-		}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-	})
+func mfaPasskeyFinishUnknownChallenge(t *testing.T) {
+	t.Helper()
+	h := newPasskeyHandler(t, newPasskeyTestStore())
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"challenge_token": "nope", "credential": json.RawMessage(`{}`)})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
 
-	t.Run("ceremony consume fails", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "no-such-ceremony"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-	})
+func mfaPasskeyFinishExpiredChallenge(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
+	}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "any"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
 
-	t.Run("ceremony user mismatch", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
-		authStore.ceremonies["cer-1"] = webauthnCeremony{userID: "someone-else", session: `{}`, expiresAt: "later"}
-		rec := httptest.NewRecorder()
-		body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-		req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "cer-1"})
-		h.handleMFAPasskeyFinish(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
-		}
-		body2 := decodeJSON[map[string]string](t, rec)
-		if body2["error"] != "ceremony user mismatch" {
-			t.Errorf("error = %q", body2["error"])
-		}
-	})
+func mfaPasskeyFinishCeremonyConsumeFails(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "no-such-ceremony"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
 
-	t.Run("malformed credential", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		registerPasskey(t, h, "user-1")
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
+func mfaPasskeyFinishCeremonyUserMismatch(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	authStore.ceremonies["cer-1"] = webauthnCeremony{userID: "someone-else", session: `{}`, expiresAt: "later"}
+	rec := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{}`)})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "dd_webauthn", Value: "cer-1"})
+	h.handleMFAPasskeyFinish(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	body2 := decodeJSON[map[string]string](t, rec)
+	if body2["error"] != "ceremony user mismatch" {
+		t.Errorf("error = %q", body2["error"])
+	}
+}
 
-		beginRec := httptest.NewRecorder()
-		beginBody, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
-		beginReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(beginBody))
-		h.handleMFAPasskeyBegin(beginRec, beginReq)
-		if beginRec.Code != http.StatusOK {
-			t.Fatalf("mfa begin: status = %d: %s", beginRec.Code, beginRec.Body.String())
-		}
-		cookie := beginRec.Result().Cookies()[0]
+func mfaPasskeyFinishMalformedCredential(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	registerPasskey(t, h, "user-1")
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
 
-		finBody, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{"not":"valid"}`)})
-		finReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(finBody))
-		finReq.AddCookie(cookie)
-		finRec := httptest.NewRecorder()
-		h.handleMFAPasskeyFinish(finRec, finReq)
-		if finRec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400: %s", finRec.Code, finRec.Body.String())
-		}
-	})
+	beginRec := httptest.NewRecorder()
+	beginBody, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
+	beginReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(beginBody))
+	h.handleMFAPasskeyBegin(beginRec, beginReq)
+	if beginRec.Code != http.StatusOK {
+		t.Fatalf("mfa begin: status = %d: %s", beginRec.Code, beginRec.Body.String())
+	}
+	cookie := beginRec.Result().Cookies()[0]
 
-	t.Run("validation failure", func(t *testing.T) {
-		authStore := newPasskeyTestStore()
-		h := newPasskeyHandler(t, authStore)
-		registerPasskey(t, h, "user-1")
-		authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
-			userID:    "user-1",
-			expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
-		}
+	finBody, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(`{"not":"valid"}`)})
+	finReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(finBody))
+	finReq.AddCookie(cookie)
+	finRec := httptest.NewRecorder()
+	h.handleMFAPasskeyFinish(finRec, finReq)
+	if finRec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", finRec.Code, finRec.Body.String())
+	}
+}
 
-		beginRec := httptest.NewRecorder()
-		beginBody, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
-		beginReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(beginBody))
-		h.handleMFAPasskeyBegin(beginRec, beginReq)
-		if beginRec.Code != http.StatusOK {
-			t.Fatalf("mfa begin: status = %d: %s", beginRec.Code, beginRec.Body.String())
-		}
-		cookie := beginRec.Result().Cookies()[0]
+func mfaPasskeyFinishValidationFailure(t *testing.T) {
+	t.Helper()
+	authStore := newPasskeyTestStore()
+	h := newPasskeyHandler(t, authStore)
+	registerPasskey(t, h, "user-1")
+	authStore.mfaChallenges[auth.HashToken("tok")] = mfaChallengeRec{
+		userID:    "user-1",
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
 
-		assertionOptions, err := virtualwebauthn.ParseAssertionOptions(beginRec.Body.String())
-		if err != nil {
-			t.Fatalf("ParseAssertionOptions: %v", err)
-		}
-		rp := newPasskeyRP()
-		rogueAuthenticator := virtualwebauthn.NewAuthenticator()
-		rogueCredential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
-		assertionResponse := virtualwebauthn.CreateAssertionResponse(rp, rogueAuthenticator, rogueCredential, *assertionOptions)
+	beginRec := httptest.NewRecorder()
+	beginBody, _ := json.Marshal(map[string]string{"challenge_token": "tok"})
+	beginReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(beginBody))
+	h.handleMFAPasskeyBegin(beginRec, beginReq)
+	if beginRec.Code != http.StatusOK {
+		t.Fatalf("mfa begin: status = %d: %s", beginRec.Code, beginRec.Body.String())
+	}
+	cookie := beginRec.Result().Cookies()[0]
 
-		finBody, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(assertionResponse)})
-		finReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(finBody))
-		finReq.AddCookie(cookie)
-		finRec := httptest.NewRecorder()
-		h.handleMFAPasskeyFinish(finRec, finReq)
-		if finRec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401: %s", finRec.Code, finRec.Body.String())
-		}
-	})
+	assertionOptions, err := virtualwebauthn.ParseAssertionOptions(beginRec.Body.String())
+	if err != nil {
+		t.Fatalf("ParseAssertionOptions: %v", err)
+	}
+	rp := newPasskeyRP()
+	rogueAuthenticator := virtualwebauthn.NewAuthenticator()
+	rogueCredential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	assertionResponse := virtualwebauthn.CreateAssertionResponse(rp, rogueAuthenticator, rogueCredential, *assertionOptions)
+
+	finBody, _ := json.Marshal(map[string]any{"challenge_token": "tok", "credential": json.RawMessage(assertionResponse)})
+	finReq := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(finBody))
+	finReq.AddCookie(cookie)
+	finRec := httptest.NewRecorder()
+	h.handleMFAPasskeyFinish(finRec, finReq)
+	if finRec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", finRec.Code, finRec.Body.String())
+	}
 }
 
 func TestHandleMFAPasskeyFinishSuccess(t *testing.T) {

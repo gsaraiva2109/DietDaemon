@@ -603,6 +603,14 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	mustUser(t, s, types.User{ID: "ak-user", CreatedAt: time.Now().UTC()})
 	mustUser(t, s, types.User{ID: "ak-other", CreatedAt: time.Now().UTC()})
 
+	assertAPIKeyCreateAndList(t, s)
+	assertAPIKeyLookup(t, s)
+	assertAPIKeyRevoke(t, s)
+	assertAPIKeyPostRevokeState(t, s)
+}
+
+func assertAPIKeyCreateAndList(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.CreateAPIKey(ctx(), "ak-1", "ak-user", "hashed-key-1", "laptop"); err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
 	}
@@ -622,7 +630,10 @@ func TestAPIKeyLifecycle(t *testing.T) {
 			t.Fatalf("fresh key should have nil LastUsedAt/RevokedAt: %+v", k)
 		}
 	}
+}
 
+func assertAPIKeyLookup(t *testing.T, s *Store) {
+	t.Helper()
 	u, err := s.GetUserByAPIKey(ctx(), "hashed-key-1")
 	if err != nil {
 		t.Fatalf("GetUserByAPIKey: %v", err)
@@ -642,7 +653,10 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	if _, err := s.GetUserByAPIKey(ctx(), "no-such-key"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for unknown key, got %v", err)
 	}
+}
 
+func assertAPIKeyRevoke(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.RevokeAPIKey(ctx(), "ak-other", "ak-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound revoking as wrong user, got %v", err)
 	}
@@ -656,11 +670,14 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	if err := s.RevokeAPIKey(ctx(), "ak-user", "no-such-id"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound revoking nonexistent, got %v", err)
 	}
+}
 
+func assertAPIKeyPostRevokeState(t *testing.T, s *Store) {
+	t.Helper()
 	if _, err := s.GetUserByAPIKey(ctx(), "hashed-key-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for revoked key, got %v", err)
 	}
-	keys, err = s.ListAPIKeys(ctx(), "ak-user")
+	keys, err := s.ListAPIKeys(ctx(), "ak-user")
 	if err != nil {
 		t.Fatalf("ListAPIKeys after revoke: %v", err)
 	}
@@ -680,6 +697,14 @@ func TestShareTokenLifecycle(t *testing.T) {
 	mustUser(t, s, types.User{ID: "st-user", CreatedAt: time.Now().UTC()})
 	mustUser(t, s, types.User{ID: "st-other", CreatedAt: time.Now().UTC()})
 
+	assertShareTokenCreateAndList(t, s)
+	assertShareTokenLookup(t, s)
+	assertShareTokenRevoke(t, s)
+	assertShareTokenPostRevokeState(t, s)
+}
+
+func assertShareTokenCreateAndList(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.CreateShareToken(ctx(), "st-1", "st-user", "hashed-tok-1", "dashboard"); err != nil {
 		t.Fatalf("CreateShareToken: %v", err)
 	}
@@ -694,7 +719,10 @@ func TestShareTokenLifecycle(t *testing.T) {
 	if len(tokens) != 2 {
 		t.Fatalf("expected 2 tokens, got %d", len(tokens))
 	}
+}
 
+func assertShareTokenLookup(t *testing.T, s *Store) {
+	t.Helper()
 	u, err := s.GetUserByShareToken(ctx(), "hashed-tok-1")
 	if err != nil {
 		t.Fatalf("GetUserByShareToken: %v", err)
@@ -714,7 +742,10 @@ func TestShareTokenLifecycle(t *testing.T) {
 	if _, err := s.GetUserByShareToken(ctx(), "no-such-token"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for unknown token, got %v", err)
 	}
+}
 
+func assertShareTokenRevoke(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.RevokeShareToken(ctx(), "st-other", "st-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound revoking as wrong user, got %v", err)
 	}
@@ -724,11 +755,14 @@ func TestShareTokenLifecycle(t *testing.T) {
 	if err := s.RevokeShareToken(ctx(), "st-user", "st-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on double revoke, got %v", err)
 	}
+}
 
+func assertShareTokenPostRevokeState(t *testing.T, s *Store) {
+	t.Helper()
 	if _, err := s.GetUserByShareToken(ctx(), "hashed-tok-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for revoked token, got %v", err)
 	}
-	tokens, err = s.ListShareTokens(ctx(), "st-user")
+	tokens, err := s.ListShareTokens(ctx(), "st-user")
 	if err != nil {
 		t.Fatalf("ListShareTokens after revoke: %v", err)
 	}
@@ -783,10 +817,22 @@ func TestTOTPLifecycle(t *testing.T) {
 
 	mustUser(t, s, types.User{ID: "totp-user", CreatedAt: time.Now().UTC()})
 
+	assertTOTPBeforeUpsert(t, s)
+	assertTOTPUpsertAndGet(t, s)
+	assertTOTPConfirmFlow(t, s)
+	assertTOTPOverwrite(t, s)
+	assertTOTPDelete(t, s)
+}
+
+func assertTOTPBeforeUpsert(t *testing.T, s *Store) {
+	t.Helper()
 	if _, _, err := s.GetTOTPSecret(ctx(), "totp-user"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound before upsert, got %v", err)
 	}
+}
 
+func assertTOTPUpsertAndGet(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.UpsertTOTPSecret(ctx(), "totp-user", "enc-secret-1"); err != nil {
 		t.Fatalf("UpsertTOTPSecret: %v", err)
 	}
@@ -797,7 +843,10 @@ func TestTOTPLifecycle(t *testing.T) {
 	if secret != "enc-secret-1" || confirmed {
 		t.Fatalf("secret=%q confirmed=%v, want enc-secret-1/false", secret, confirmed)
 	}
+}
 
+func assertTOTPConfirmFlow(t *testing.T, s *Store) {
+	t.Helper()
 	if has, err := s.HasConfirmedTOTP(ctx(), "totp-user"); err != nil || has {
 		t.Fatalf("HasConfirmedTOTP before confirm = %v, %v; want false, nil", has, err)
 	}
@@ -805,7 +854,7 @@ func TestTOTPLifecycle(t *testing.T) {
 	if err := s.ConfirmTOTP(ctx(), "totp-user"); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
-	_, confirmed, err = s.GetTOTPSecret(ctx(), "totp-user")
+	_, confirmed, err := s.GetTOTPSecret(ctx(), "totp-user")
 	if err != nil {
 		t.Fatalf("GetTOTPSecret after confirm: %v", err)
 	}
@@ -815,19 +864,25 @@ func TestTOTPLifecycle(t *testing.T) {
 	if has, err := s.HasConfirmedTOTP(ctx(), "totp-user"); err != nil || !has {
 		t.Fatalf("HasConfirmedTOTP after confirm = %v, %v; want true, nil", has, err)
 	}
+}
 
+func assertTOTPOverwrite(t *testing.T, s *Store) {
+	t.Helper()
 	// Re-upsert replaces the secret without needing to reconfirm state to be readable.
 	if err := s.UpsertTOTPSecret(ctx(), "totp-user", "enc-secret-2"); err != nil {
 		t.Fatalf("UpsertTOTPSecret (overwrite): %v", err)
 	}
-	secret, _, err = s.GetTOTPSecret(ctx(), "totp-user")
+	secret, _, err := s.GetTOTPSecret(ctx(), "totp-user")
 	if err != nil {
 		t.Fatalf("GetTOTPSecret after overwrite: %v", err)
 	}
 	if secret != "enc-secret-2" {
 		t.Fatalf("secret after overwrite = %q, want enc-secret-2", secret)
 	}
+}
 
+func assertTOTPDelete(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.DeleteTOTP(ctx(), "totp-user"); err != nil {
 		t.Fatalf("DeleteTOTP: %v", err)
 	}
@@ -1140,6 +1195,14 @@ func TestWebAuthnCredentialLifecycle(t *testing.T) {
 
 	mustUser(t, s, types.User{ID: "pk-user", CreatedAt: time.Now().UTC()})
 
+	assertWebAuthnCredentialCreateAndList(t, s)
+	assertWebAuthnCredentialUpdateOnAuth(t, s)
+	assertWebAuthnCredentialRename(t, s)
+	assertWebAuthnCredentialDelete(t, s)
+}
+
+func assertWebAuthnCredentialCreateAndList(t *testing.T, s *Store) {
+	t.Helper()
 	createdAt := utcNow()
 	if err := s.CreateWebAuthnCredential(ctx(), "cred-1", "pk-user", "My Phone", `{"id":"cred-1"}`, 0, createdAt); err != nil {
 		t.Fatalf("CreateWebAuthnCredential: %v", err)
@@ -1160,46 +1223,55 @@ func TestWebAuthnCredentialLifecycle(t *testing.T) {
 	if len(raw) != 1 || raw[0].CredentialJSON != `{"id":"cred-1"}` {
 		t.Fatalf("unexpected raw credentials: %+v", raw)
 	}
+}
 
+func assertWebAuthnCredentialUpdateOnAuth(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.UpdateWebAuthnCredentialOnAuth(ctx(), "cred-1", `{"id":"cred-1","sc":1}`, 1, utcNow()); err != nil {
 		t.Fatalf("UpdateWebAuthnCredentialOnAuth: %v", err)
 	}
-	raw, err = s.GetWebAuthnCredentialsRaw(ctx(), "pk-user")
+	raw, err := s.GetWebAuthnCredentialsRaw(ctx(), "pk-user")
 	if err != nil {
 		t.Fatalf("GetWebAuthnCredentialsRaw after update: %v", err)
 	}
 	if raw[0].CredentialJSON != `{"id":"cred-1","sc":1}` {
 		t.Fatalf("credential JSON not updated: %+v", raw)
 	}
-	list, err = s.ListWebAuthnCredentials(ctx(), "pk-user")
+	list, err := s.ListWebAuthnCredentials(ctx(), "pk-user")
 	if err != nil {
 		t.Fatalf("ListWebAuthnCredentials after update: %v", err)
 	}
 	if list[0].LastUsedAt == "" {
 		t.Fatal("expected LastUsedAt to be set after auth update")
 	}
+}
 
+func assertWebAuthnCredentialRename(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.RenameWebAuthnCredential(ctx(), "wrong-user", "cred-1", "x"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound renaming as wrong user, got %v", err)
 	}
 	if err := s.RenameWebAuthnCredential(ctx(), "pk-user", "cred-1", "Renamed"); err != nil {
 		t.Fatalf("RenameWebAuthnCredential: %v", err)
 	}
-	list, err = s.ListWebAuthnCredentials(ctx(), "pk-user")
+	list, err := s.ListWebAuthnCredentials(ctx(), "pk-user")
 	if err != nil {
 		t.Fatalf("ListWebAuthnCredentials after rename: %v", err)
 	}
 	if list[0].Label != "Renamed" {
 		t.Fatalf("label = %q, want Renamed", list[0].Label)
 	}
+}
 
+func assertWebAuthnCredentialDelete(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.DeleteWebAuthnCredential(ctx(), "wrong-user", "cred-1"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound deleting as wrong user, got %v", err)
 	}
 	if err := s.DeleteWebAuthnCredential(ctx(), "pk-user", "cred-1"); err != nil {
 		t.Fatalf("DeleteWebAuthnCredential: %v", err)
 	}
-	list, err = s.ListWebAuthnCredentials(ctx(), "pk-user")
+	list, err := s.ListWebAuthnCredentials(ctx(), "pk-user")
 	if err != nil {
 		t.Fatalf("ListWebAuthnCredentials after delete: %v", err)
 	}
