@@ -14,7 +14,6 @@ package resolver
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -120,54 +119,79 @@ func (r *Resolver) Resolve(ctx context.Context, userID string, items []types.Par
 	return resolved, needsClarification
 }
 
-// resolveItem resolves one item. ok is false when the item needs clarification.
+// resolveItem resolves one item. ok is false when the item needs
+// clarification. Each step is tried in order (library, embedding matcher,
+// external sources); found reports whether a step reached a definitive
+// verdict, so resolveItem falls through to the next step whenever it didn't.
 func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.ParsedItem) (types.ResolvedItem, bool) {
-	// 1. Local-first: exact alias in the personal food library.
-	if match, err := r.store.LookupFood(ctx, userID, item.RawPhrase); err == nil {
-		_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
-		return finalize(item, match)
-	} else if !errors.Is(err, types.ErrNoMatch) {
-		// A real store error: degrade gracefully and try next steps.
-		_ = err
+	if ri, ok, found := r.resolveFromLibrary(ctx, userID, item); found {
+		return ri, ok
 	}
+	if ri, ok, found := r.resolveFromMatcher(ctx, userID, item); found {
+		return ri, ok
+	}
+	if ri, ok, found := r.resolveFromSources(ctx, userID, item); found {
+		return ri, ok
+	}
+	// Nothing matched: unresolved, needs clarification.
+	return types.ResolvedItem{Parsed: item}, false
+}
 
-	// 2. Embedding matcher (when configured): nearest-neighbour in the library.
-	if r.matcher != nil {
-		match, err := r.matcher.Match(ctx, userID, item.RawPhrase)
-		if err == nil && !nameMatchesQuery(item.RawPhrase, match.Name) {
-			// Cosine similarity alone isn't enough: the embedding matcher can
-			// confidently return a nearest neighbour with no real lexical
-			// relation to what the user said (e.g. "arroz" landing on an
-			// unrelated snack product). Gate it through the same relevance
-			// check external sources already pass (below) instead of trusting
-			// the similarity score blindly, and fall through to step 3.
-			err = types.ErrNoMatch
-		}
-		if err == nil {
-			_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
-			// Queue the new phrasing for user confirmation when the match is
-			// strong, rather than writing it straight into the library.
-			if match.MatchScore >= r.aliasThreshold {
-				_ = r.store.AddPendingAlias(ctx, userID, item.RawPhrase, match.FoodID, match.MatchScore)
-			}
-			return finalize(item, match)
-		} else if !errors.Is(err, types.ErrNoMatch) {
-			_ = err // real error, fall through
-		}
+// resolveFromLibrary is step 1, local-first: an exact alias in the personal
+// food library. found is false on any lookup error — ErrNoMatch or a real
+// store error alike degrade gracefully to the next step rather than aborting
+// resolution of the item.
+func (r *Resolver) resolveFromLibrary(ctx context.Context, userID string, item types.ParsedItem) (ri types.ResolvedItem, ok, found bool) {
+	match, err := r.store.LookupFood(ctx, userID, item.RawPhrase)
+	if err != nil {
+		return ri, false, false
 	}
+	_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
+	ri, ok = finalize(item, match)
+	return ri, ok, true
+}
 
-	// 3. External sources, in the user's precedence order (falling back to the
-	// startup-configured default). First match wins.
-	order := r.defaultOrder
-	if r.precedence != nil {
-		if o, err := r.precedence.GetSourcePrecedence(ctx, userID); err == nil && len(o) > 0 {
-			order = o
-		}
+// resolveFromMatcher is step 2, the embedding nearest-neighbour lookup over
+// the library, run only when a Matcher is configured (Tier >= 1). found is
+// false when no matcher is wired, the lookup errors, or the top hit is
+// rejected by the relevance gate — any of which falls through to external
+// sources.
+func (r *Resolver) resolveFromMatcher(ctx context.Context, userID string, item types.ParsedItem) (ri types.ResolvedItem, ok, found bool) {
+	if r.matcher == nil {
+		return ri, false, false
 	}
-	for _, name := range order {
-		src, ok := r.sourcesByName[name]
-		if !ok {
-			continue // unknown source name: skip
+	match, err := r.matcher.Match(ctx, userID, item.RawPhrase)
+	if err == nil && !nameMatchesQuery(item.RawPhrase, match.Name) {
+		// Cosine similarity alone isn't enough: the embedding matcher can
+		// confidently return a nearest neighbour with no real lexical
+		// relation to what the user said (e.g. "arroz" landing on an
+		// unrelated snack product). Gate it through the same relevance check
+		// external sources already pass (in resolveFromSources) instead of
+		// trusting the similarity score blindly.
+		err = types.ErrNoMatch
+	}
+	if err != nil {
+		return ri, false, false
+	}
+	_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
+	// Queue the new phrasing for user confirmation when the match is strong,
+	// rather than writing it straight into the library.
+	if match.MatchScore >= r.aliasThreshold {
+		_ = r.store.AddPendingAlias(ctx, userID, item.RawPhrase, match.FoodID, match.MatchScore)
+	}
+	ri, ok = finalize(item, match)
+	return ri, ok, true
+}
+
+// resolveFromSources is step 3: external sources, in the user's precedence
+// order (falling back to the startup-configured default). First relevant
+// match wins; found is false when every source misses or is rejected, so the
+// item needs clarification.
+func (r *Resolver) resolveFromSources(ctx context.Context, userID string, item types.ParsedItem) (ri types.ResolvedItem, ok, found bool) {
+	for _, name := range r.sourceOrder(ctx, userID) {
+		src, known := r.sourcesByName[name]
+		if !known {
+			continue // stale precedence entry naming a since-removed source
 		}
 		match, err := src.Resolve(ctx, item)
 		if err != nil { // ErrNoMatch or transient: skip to the next source.
@@ -181,22 +205,36 @@ func (r *Resolver) resolveItem(ctx context.Context, userID string, item types.Pa
 			// source instead of trusting this one's ranking blindly.
 			continue
 		}
-		// Write back into the personal library so the next lookup is local, and
-		// record this query so frequency ranking improves over time.
-		_ = r.store.UpsertFood(ctx, userID, match, []string{item.RawPhrase})
-		_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
-
-		// Embedding-on-write: index the canonical name so future embedding
-		// queries can match this food.
-		if r.embed != nil {
-			_ = r.embed.EmbedFood(ctx, userID, match.FoodID, match.Name)
-		}
-
-		return finalize(item, match)
+		r.writeBackMatch(ctx, userID, item, match)
+		ri, ok = finalize(item, match)
+		return ri, ok, true
 	}
+	return ri, false, false
+}
 
-	// 4. Nothing matched: unresolved, needs clarification.
-	return types.ResolvedItem{Parsed: item}, false
+// sourceOrder returns the external-source names to try, in order: the user's
+// customized precedence when GetSourcePrecedence returns one, else the
+// startup-configured default order.
+func (r *Resolver) sourceOrder(ctx context.Context, userID string) []string {
+	if r.precedence == nil {
+		return r.defaultOrder
+	}
+	if order, err := r.precedence.GetSourcePrecedence(ctx, userID); err == nil && len(order) > 0 {
+		return order
+	}
+	return r.defaultOrder
+}
+
+// writeBackMatch persists an external match into the personal library so the
+// next lookup is local, records the query so frequency ranking improves over
+// time, and — when an Embedder is configured — indexes the canonical name
+// (embedding-on-write) so future embedding queries can match this food.
+func (r *Resolver) writeBackMatch(ctx context.Context, userID string, item types.ParsedItem, match types.FoodMatch) {
+	_ = r.store.UpsertFood(ctx, userID, match, []string{item.RawPhrase})
+	_ = r.store.RecordFoodQuery(ctx, userID, match.FoodID)
+	if r.embed != nil {
+		_ = r.embed.EmbedFood(ctx, userID, match.FoodID, match.Name)
+	}
 }
 
 // nameMatchesQuery reports whether name shares at least one meaningful
