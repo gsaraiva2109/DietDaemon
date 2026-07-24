@@ -371,27 +371,7 @@ func TestSendWithParseMode(t *testing.T) {
 
 func TestSendWithInlineKeyboard(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req sendMessageRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.ReplyMarkup == nil {
-			t.Fatal("expected reply_markup to be set")
-		}
-		var kb tgInlineKeyboardMarkup
-		if err := json.Unmarshal(*req.ReplyMarkup, &kb); err != nil {
-			t.Fatalf("decode reply_markup: %v", err)
-		}
-		if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 2 {
-			t.Fatalf("inline_keyboard shape = %+v", kb.InlineKeyboard)
-		}
-		if kb.InlineKeyboard[0][0].Text != "Yes" || kb.InlineKeyboard[0][0].CallbackData != "yes" {
-			t.Errorf("button[0] = %+v", kb.InlineKeyboard[0][0])
-		}
-		if kb.InlineKeyboard[0][1].Text != "No" || kb.InlineKeyboard[0][1].CallbackData != "no" {
-			t.Errorf("button[1] = %+v", kb.InlineKeyboard[0][1])
-		}
+		checkInlineKeyboardRequest(t, r)
 		_ = json.NewEncoder(w).Encode(sendMessageResponse{OK: true})
 	}))
 	defer srv.Close()
@@ -414,6 +394,31 @@ func TestSendWithInlineKeyboard(t *testing.T) {
 
 	if err := a.Send(context.Background(), reply); err != nil {
 		t.Fatalf("Send: %v", err)
+	}
+}
+
+func checkInlineKeyboardRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	body, _ := io.ReadAll(r.Body)
+	var req sendMessageRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if req.ReplyMarkup == nil {
+		t.Fatal("expected reply_markup to be set")
+	}
+	var kb tgInlineKeyboardMarkup
+	if err := json.Unmarshal(*req.ReplyMarkup, &kb); err != nil {
+		t.Fatalf("decode reply_markup: %v", err)
+	}
+	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 2 {
+		t.Fatalf("inline_keyboard shape = %+v", kb.InlineKeyboard)
+	}
+	if kb.InlineKeyboard[0][0].Text != "Yes" || kb.InlineKeyboard[0][0].CallbackData != "yes" {
+		t.Errorf("button[0] = %+v", kb.InlineKeyboard[0][0])
+	}
+	if kb.InlineKeyboard[0][1].Text != "No" || kb.InlineKeyboard[0][1].CallbackData != "no" {
+		t.Errorf("button[1] = %+v", kb.InlineKeyboard[0][1])
 	}
 }
 
