@@ -248,18 +248,33 @@ func (s *Source) fetchBulkAPI(ctx context.Context, filter ports.BulkFilter, emit
 		}
 
 		for _, p := range sr.Products {
-			if !meetsPopularity(p, filter) {
-				continue
-			}
-			if err := emit(p.toFoodMatch()); err != nil {
+			done, err := tryEmitBulkProduct(p, filter, emit, &emitted)
+			if err != nil {
 				return err
 			}
-			emitted++
-			if filter.MaxRows > 0 && emitted >= filter.MaxRows {
+			if done {
 				return nil
 			}
 		}
 	}
+}
+
+// tryEmitBulkProduct emits p via emit if it passes filter's popularity
+// threshold, tracking *emitted. It returns done=true once filter.MaxRows is
+// reached, signalling the caller to stop iterating. Shared by fetchBulkAPI
+// and fetchBulkFile so the popularity/MaxRows bookkeeping lives in one place.
+func tryEmitBulkProduct(p product, filter ports.BulkFilter, emit func(types.FoodMatch) error, emitted *int) (done bool, err error) {
+	if !meetsPopularity(p, filter) {
+		return false, nil
+	}
+	if err := emit(p.toFoodMatch()); err != nil {
+		return false, err
+	}
+	*emitted++
+	if filter.MaxRows > 0 && *emitted >= filter.MaxRows {
+		return true, nil
+	}
+	return false, nil
 }
 
 // fetchBulkPage fetches one page of the bulk search, retrying a transient
@@ -353,14 +368,12 @@ func (s *Source) fetchBulkFile(ctx context.Context, filter ports.BulkFilter, emi
 			// import over one bad row.
 			continue
 		}
-		if !meetsPopularity(p, filter) {
-			continue
-		}
-		if err := emit(p.toFoodMatch()); err != nil {
+
+		done, err := tryEmitBulkProduct(p, filter, emit, &emitted)
+		if err != nil {
 			return err
 		}
-		emitted++
-		if filter.MaxRows > 0 && emitted >= filter.MaxRows {
+		if done {
 			return nil
 		}
 	}

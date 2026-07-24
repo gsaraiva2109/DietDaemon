@@ -149,6 +149,11 @@ func (r *Runner) recordStatus(ctx context.Context, source, result string, runErr
 // every item identically, so logging past the first few is just noise.
 const maxLoggedBackfillErrors = 3
 
+// backfillEmbeddingsLogMsg is the shared log message for backfillEmbeddings'
+// outcomes below, factored out to a constant per SonarQube go:S1192
+// (duplicated string literal).
+const backfillEmbeddingsLogMsg = "foodimport: embedding backfill"
+
 func (r *Runner) backfillEmbeddings(ctx context.Context) {
 	if r.embedder == nil {
 		return
@@ -159,18 +164,18 @@ func (r *Runner) backfillEmbeddings(ctx context.Context) {
 			return
 		}
 		loggedErrs++
-		r.log.Warn("foodimport: embedding backfill: food failed", "err", itemErr)
+		r.log.Warn(backfillEmbeddingsLogMsg+": food failed", "err", itemErr)
 	})
 	if err != nil {
-		r.log.Error("foodimport: embedding backfill", "result", "failed", "err", err)
+		r.log.Error(backfillEmbeddingsLogMsg, "result", "failed", "err", err)
 		return
 	}
 	if failed > 0 {
-		r.log.Info("foodimport: embedding backfill", "result", "done", "embedded", embedded, "failed", failed)
+		r.log.Info(backfillEmbeddingsLogMsg, "result", "done", "embedded", embedded, "failed", failed)
 		return
 	}
 	if embedded > 0 {
-		r.log.Info("foodimport: embedding backfill", "result", "done", "embedded", embedded)
+		r.log.Info(backfillEmbeddingsLogMsg, "result", "done", "embedded", embedded)
 	}
 }
 
@@ -182,31 +187,61 @@ func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSo
 	path := r.localPaths[src.Name()]
 	var before string
 	if path != "" {
+		var skip bool
 		var err error
-		before, err = localFingerprint(path, r.filters[src.Name()])
+		src, before, skip, err = r.prepareLocalImport(ctx, src, path)
 		if err != nil {
 			return src, "", err
 		}
-		fs, ok := r.store.(fingerprintStore)
-		if !ok {
-			return src, "", errors.New("foodimport: local file import requires fingerprint store")
-		}
-		previous, err := fs.GetFoodImportFingerprint(ctx, src.Name())
-		if err != nil && !errors.Is(err, types.ErrNotFound) {
-			return src, "", fmt.Errorf("get fingerprint: %w", err)
-		}
-		if err == nil && previous == before {
-			r.log.Info("foodimport: skipped", "source", src.Name(), "result", "skipped")
+		if skip {
 			return src, "skipped", nil
-		}
-		if makeSource := r.refresh[src.Name()]; makeSource != nil {
-			src, err = makeSource()
-			if err != nil {
-				return src, "", fmt.Errorf("refresh source: %w", err)
-			}
 		}
 	}
 
+	if err := r.fetchAndUpsert(ctx, src); err != nil {
+		return src, "", err
+	}
+
+	if path == "" {
+		r.log.Info("foodimport: imported", "source", src.Name(), "result", "imported")
+		return src, "imported", nil
+	}
+	return r.finishLocalImport(ctx, src, path, before)
+}
+
+// prepareLocalImport checks a local source's file fingerprint before fetching
+// it, rebuilding src via r.refresh when the file changed. skip is true when
+// the fingerprint is unchanged since the last successful import, meaning
+// runFor should skip re-fetching entirely.
+func (r *Runner) prepareLocalImport(ctx context.Context, src ports.BulkSource, path string) (next ports.BulkSource, before string, skip bool, err error) {
+	before, err = localFingerprint(path, r.filters[src.Name()])
+	if err != nil {
+		return src, "", false, err
+	}
+	fs, ok := r.store.(fingerprintStore)
+	if !ok {
+		return src, "", false, errors.New("foodimport: local file import requires fingerprint store")
+	}
+	previous, err := fs.GetFoodImportFingerprint(ctx, src.Name())
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		return src, "", false, fmt.Errorf("get fingerprint: %w", err)
+	}
+	if err == nil && previous == before {
+		r.log.Info("foodimport: skipped", "source", src.Name(), "result", "skipped")
+		return src, before, true, nil
+	}
+	if makeSource := r.refresh[src.Name()]; makeSource != nil {
+		next, err = makeSource()
+		if err != nil {
+			return src, before, false, fmt.Errorf("refresh source: %w", err)
+		}
+		return next, before, false, nil
+	}
+	return src, before, false, nil
+}
+
+// fetchAndUpsert streams src's bulk results into r.store in batchSize chunks.
+func (r *Runner) fetchAndUpsert(ctx context.Context, src ports.BulkSource) error {
 	batch := make([]types.FoodMatch, 0, batchSize)
 	flush := func() error {
 		if len(batch) == 0 {
@@ -224,16 +259,16 @@ func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSo
 		return nil
 	})
 	if err != nil {
-		return src, "", err
+		return err
 	}
-	if err := flush(); err != nil {
-		return src, "", err
-	}
-	if path == "" {
-		r.log.Info("foodimport: imported", "source", src.Name(), "result", "imported")
-		return src, "imported", nil
-	}
+	return flush()
+}
 
+// finishLocalImport verifies a local source's file didn't change mid-fetch
+// and, if it didn't, persists the new fingerprint so the next run can skip
+// re-importing an unchanged file. Called only when r.store already passed
+// prepareLocalImport's fingerprintStore check.
+func (r *Runner) finishLocalImport(ctx context.Context, src ports.BulkSource, path, before string) (ports.BulkSource, string, error) {
 	after, err := localFingerprint(path, r.filters[src.Name()])
 	if err != nil || after != before {
 		r.log.Warn("foodimport: changed during import", "source", src.Name(), "result", "changed_during_import")

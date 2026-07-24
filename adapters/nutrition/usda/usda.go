@@ -282,6 +282,28 @@ func bulkDataTypes(filter []string) []string {
 	return filter
 }
 
+// maxRowsReached reports whether n bulk rows have already been emitted
+// against filter.MaxRows (0 = unlimited).
+func maxRowsReached(filter ports.BulkFilter, n int) bool {
+	return filter.MaxRows > 0 && n >= filter.MaxRows
+}
+
+// emitMatchedFood converts f to a types.FoodMatch and emits it via emit,
+// incrementing *n on success. Does nothing (no error) when f has no usable
+// FoodMatch. Shared by the API and file bulk-fetch loops so the
+// convert-then-emit step lives in one place.
+func emitMatchedFood(f food, emit func(types.FoodMatch) error, n *int) error {
+	fm, ok := foodToMatch(f)
+	if !ok {
+		return nil
+	}
+	if err := emit(fm); err != nil {
+		return err
+	}
+	*n++
+	return nil
+}
+
 // fetchBulkAPI pages through USDA's /foods/search with no query — a bulk
 // browse of every food in the allowed dataType(s) — instead of Resolve's
 // name search. Stops on an empty page, ctx cancellation, filter.MaxRows, or
@@ -295,50 +317,22 @@ func (s *Source) fetchBulkAPI(ctx context.Context, filter ports.BulkFilter, emit
 			return ctx.Err()
 		}
 
-		q := url.Values{}
-		q.Set("api_key", s.apiKey)
-		q.Set("dataType", dataTypes)
-		q.Set("pageSize", strconv.Itoa(bulkAPIPageSize))
-		q.Set("pageNumber", strconv.Itoa(page))
-		q.Set("format", "full") // include foodPortions (household-measure data, #134)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			s.baseURL+"/foods/search?"+q.Encode(), nil)
+		sr, err := s.fetchBulkAPIPage(ctx, dataTypes, page)
 		if err != nil {
-			return fmt.Errorf("usda: build bulk request: %w", err)
+			return err
 		}
-
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return fmt.Errorf("usda: bulk search: %w", err)
-		}
-		var sr searchResponse
-		decErr := json.NewDecoder(resp.Body).Decode(&sr)
-		status := resp.StatusCode
-		_ = resp.Body.Close()
-		if status != http.StatusOK {
-			return fmt.Errorf("usda: bulk status %d", status)
-		}
-		if decErr != nil {
-			return fmt.Errorf("usda: bulk decode: %w", decErr)
-		}
-
 		if len(sr.Foods) == 0 {
 			return nil
 		}
 
 		for _, f := range sr.Foods {
-			if filter.MaxRows > 0 && n >= filter.MaxRows {
-				return nil
-			}
-			fm, ok := foodToMatch(f)
-			if !ok {
-				continue
-			}
-			if err := emit(fm); err != nil {
+			done, err := tryEmitBulkFood(f, filter, emit, &n)
+			if err != nil {
 				return err
 			}
-			n++
+			if done {
+				return nil
+			}
 		}
 
 		select {
@@ -349,15 +343,52 @@ func (s *Source) fetchBulkAPI(ctx context.Context, filter ports.BulkFilter, emit
 	}
 }
 
+// tryEmitBulkFood emits f via emitMatchedFood, tracking *n against
+// filter.MaxRows. It returns done=true once filter.MaxRows is reached,
+// signalling the caller to stop iterating the current page.
+func tryEmitBulkFood(f food, filter ports.BulkFilter, emit func(types.FoodMatch) error, n *int) (done bool, err error) {
+	if maxRowsReached(filter, *n) {
+		return true, nil
+	}
+	return false, emitMatchedFood(f, emit, n)
+}
+
+// fetchBulkAPIPage fetches and decodes one page of USDA's bulk
+// /foods/search results for the given dataTypes and page number.
+func (s *Source) fetchBulkAPIPage(ctx context.Context, dataTypes string, page int) (searchResponse, error) {
+	q := url.Values{}
+	q.Set("api_key", s.apiKey)
+	q.Set("dataType", dataTypes)
+	q.Set("pageSize", strconv.Itoa(bulkAPIPageSize))
+	q.Set("pageNumber", strconv.Itoa(page))
+	q.Set("format", "full") // include foodPortions (household-measure data, #134)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.baseURL+"/foods/search?"+q.Encode(), nil)
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("usda: build bulk request: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("usda: bulk search: %w", err)
+	}
+	var sr searchResponse
+	decErr := json.NewDecoder(resp.Body).Decode(&sr)
+	status := resp.StatusCode
+	_ = resp.Body.Close()
+	if status != http.StatusOK {
+		return searchResponse{}, fmt.Errorf("usda: bulk status %d", status)
+	}
+	if decErr != nil {
+		return searchResponse{}, fmt.Errorf("usda: bulk decode: %w", decErr)
+	}
+	return sr, nil
+}
+
 // fetchBulkFile stream-decodes USDA food objects from s.bulkFilePath one
 // element at a time, so a multi-GB bulk export never has to fit in memory.
 // Elements whose dataType isn't in the filter's allowlist are skipped.
-//
-// USDA's FoodData Central full downloads aren't a bare top-level array — they
-// wrap it in an object under a key like "FoundationFoods"/"SRLegacyFoods"
-// (e.g. {"FoundationFoods": [...]}). Rather than special-case the wrapper key
-// name, walk tokens until the first '[' delimiter and stream that array's
-// elements — this handles a wrapped export and a bare top-level array alike.
 func (s *Source) fetchBulkFile(ctx context.Context, filter ports.BulkFilter, emit func(types.FoodMatch) error) error {
 	// #nosec G304 -- path is host-configured at startup, not user input
 	f, err := os.Open(s.bulkFilePath)
@@ -372,14 +403,8 @@ func (s *Source) fetchBulkFile(ctx context.Context, filter ports.BulkFilter, emi
 	}
 
 	dec := json.NewDecoder(f)
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return fmt.Errorf("usda: bulk file: %w", err)
-		}
-		if tok == json.Delim('[') {
-			break
-		}
+	if err := skipToArrayStart(dec); err != nil {
+		return err
 	}
 
 	n := 0
@@ -387,25 +412,52 @@ func (s *Source) fetchBulkFile(ctx context.Context, filter ports.BulkFilter, emi
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if filter.MaxRows > 0 && n >= filter.MaxRows {
-			return nil
-		}
-
-		var item food
-		if err := dec.Decode(&item); err != nil {
-			return fmt.Errorf("usda: bulk file decode: %w", err)
-		}
-		if !allow[item.DataType] {
-			continue
-		}
-		fm, ok := foodToMatch(item)
-		if !ok {
-			continue
-		}
-		if err := emit(fm); err != nil {
+		done, err := tryEmitBulkFileFood(dec, allow, filter, emit, &n)
+		if err != nil {
 			return err
 		}
-		n++
+		if done {
+			return nil
+		}
 	}
 	return nil
+}
+
+// skipToArrayStart advances dec past USDA's bulk-export wrapper object (if
+// any) to the start of the food array.
+//
+// USDA's FoodData Central full downloads aren't a bare top-level array — they
+// wrap it in an object under a key like "FoundationFoods"/"SRLegacyFoods"
+// (e.g. {"FoundationFoods": [...]}). Rather than special-case the wrapper key
+// name, this walks tokens until the first '[' delimiter, which handles a
+// wrapped export and a bare top-level array alike.
+func skipToArrayStart(dec *json.Decoder) error {
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("usda: bulk file: %w", err)
+		}
+		if tok == json.Delim('[') {
+			return nil
+		}
+	}
+}
+
+// tryEmitBulkFileFood decodes the next food element from dec and, if
+// filter.MaxRows hasn't been reached, emits it via emitMatchedFood when its
+// dataType is in allow. It returns done=true once filter.MaxRows is reached,
+// signalling the caller to stop iterating without decoding another element.
+func tryEmitBulkFileFood(dec *json.Decoder, allow map[string]bool, filter ports.BulkFilter, emit func(types.FoodMatch) error, n *int) (done bool, err error) {
+	if maxRowsReached(filter, *n) {
+		return true, nil
+	}
+
+	var item food
+	if err := dec.Decode(&item); err != nil {
+		return false, fmt.Errorf("usda: bulk file decode: %w", err)
+	}
+	if !allow[item.DataType] {
+		return false, nil
+	}
+	return false, emitMatchedFood(item, emit, n)
 }
