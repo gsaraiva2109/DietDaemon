@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/streamsend"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
 
@@ -181,23 +182,6 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	return ch, nil
 }
 
-// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
-// this, a client that disconnects mid-stream while the channel's buffer is
-// full leaks this goroutine (and its open upstream connection) forever.
-func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
-	select {
-	case ch <- evt:
-		return true
-	default:
-	}
-	select {
-	case ch <- evt:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
 func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer func() { _ = body.Close() }()
@@ -210,49 +194,58 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 		if line == "" {
 			continue
 		}
-
-		var chunk ollamaStreamChunk
-		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-			continue
-		}
-
-		msg := chunk.Message
-
-		// Text delta: Ollama streams partial content in message.content.
-		// Not mutually exclusive with tool calls — a chunk can carry both.
-		if msg.Content != "" {
-			if !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: msg.Content}) {
-				return
-			}
-		}
-
-		// Tool calls: Ollama delivers them complete in a single chunk
-		// (not incrementally like OpenAI).
-		for _, tc := range msg.ToolCalls {
-			if !sendEvent(ctx, ch, ports.ChatEvent{
-				Kind: "tool-call",
-				ToolCall: &ports.ToolCallEvent{
-					ID:   tc.Function.Name, // Ollama has no tool-call ID; use name as ID
-					Name: tc.Function.Name,
-					Args: extractArgsOllama(tc.Function.Arguments),
-				},
-			}) {
-				return
-			}
-		}
-
-		if chunk.Done {
-			sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		if !emitChunk(ctx, ch, line) {
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		sendEvent(ctx, ch, ports.ChatEvent{
+		streamsend.Send(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("ollama chat: read stream: %w", err),
 		})
 	}
+}
+
+// emitChunk parses one NDJSON line and forwards its events. It returns false
+// once the stream is finished — either chunk.Done was set or a send was
+// cancelled by ctx — signalling the caller to stop reading.
+func emitChunk(ctx context.Context, ch chan<- ports.ChatEvent, line string) bool {
+	var chunk ollamaStreamChunk
+	if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+		return true
+	}
+
+	msg := chunk.Message
+
+	// Text delta: Ollama streams partial content in message.content.
+	// Not mutually exclusive with tool calls — a chunk can carry both.
+	if msg.Content != "" {
+		if !streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: msg.Content}) {
+			return false
+		}
+	}
+
+	// Tool calls: Ollama delivers them complete in a single chunk
+	// (not incrementally like OpenAI).
+	for _, tc := range msg.ToolCalls {
+		if !streamsend.Send(ctx, ch, ports.ChatEvent{
+			Kind: "tool-call",
+			ToolCall: &ports.ToolCallEvent{
+				ID:   tc.Function.Name, // Ollama has no tool-call ID; use name as ID
+				Name: tc.Function.Name,
+				Args: extractArgsOllama(tc.Function.Arguments),
+			},
+		}) {
+			return false
+		}
+	}
+
+	if chunk.Done {
+		streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "done"})
+		return false
+	}
+	return true
 }
 
 // extractArgsOllama extracts the "args" string from Ollama's tool-call arguments.
