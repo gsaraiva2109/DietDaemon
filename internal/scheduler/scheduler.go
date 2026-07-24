@@ -23,6 +23,11 @@ import (
 
 const schedulerWorkers = 8
 
+// dateLayout is the local-date key format used throughout this package for
+// dedupe lookups (nudge_log rows) and rollup queries: Go's reference layout
+// for "2006-01-02".
+const dateLayout = "2006-01-02"
+
 // Store is the read side the scheduler needs. The concrete *store.Store
 // satisfies it once it gains ListUsers (its other methods already exist).
 type Store interface {
@@ -308,7 +313,7 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 // independent of macro goals).
 func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
+	date := local.Format(dateLayout)
 
 	// Fetch this user's rule overrides once per tick (not once per rule) to
 	// avoid N queries. Missing store or no rows: overrides stays nil, and
@@ -400,7 +405,7 @@ func learnedMealHours(times []time.Time, loc *time.Location) []int {
 	days, hours := map[string]bool{}, map[int]map[string]bool{}
 	for _, at := range times {
 		local := at.In(loc)
-		day := local.Format("2006-01-02")
+		day := local.Format(dateLayout)
 		days[day] = true
 		if hours[local.Hour()] == nil {
 			hours[local.Hour()] = map[string]bool{}
@@ -466,7 +471,7 @@ func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user 
 			if skipped {
 				continue
 			}
-			date, id := target.Format("2006-01-02"), fmt.Sprintf("%s-%02d", rule.ID, hour)
+			date, id := target.Format(dateLayout), fmt.Sprintf("%s-%02d", rule.ID, hour)
 			done, err := s.nudges.WasNudged(ctx, user.ID, date, id)
 			if err != nil || done {
 				continue
@@ -562,7 +567,7 @@ func (s *Scheduler) deliver(ctx context.Context, user types.User, ruleID string,
 // coexist safely with macro rule IDs.
 func (s *Scheduler) evalHealthRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
+	date := local.Format(dateLayout)
 	hour := local.Hour()
 
 	for _, base := range s.healthRules {
@@ -721,7 +726,7 @@ func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user typ
 // Dedupe uses the same nudge_log table, keyed by local date.
 func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-	date := local.Format("2006-01-02")
+	date := local.Format(dateLayout)
 
 	for _, base := range s.weeklyBudgetRules {
 		r := base
@@ -774,7 +779,7 @@ func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, us
 		daysRemaining := 7 - daysFromMonday
 
 		// Get rollups for the current week.
-		rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format("2006-01-02"), sunday.Format("2006-01-02"))
+		rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format(dateLayout), sunday.Format(dateLayout))
 		if err != nil {
 			s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
 			continue
@@ -847,8 +852,8 @@ func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, us
 // average calories/protein, average adherence to target, weight change,
 // water intake, and workouts.
 func (s *Scheduler) buildDigestBody(ctx context.Context, user types.User, local time.Time) (string, error) {
-	end := local.Format("2006-01-02")
-	start := local.AddDate(0, 0, -6).Format("2006-01-02")
+	end := local.Format(dateLayout)
+	start := local.AddDate(0, 0, -6).Format(dateLayout)
 
 	rollups, err := s.digestStore.GetRollups(ctx, user.ID, start, end)
 	if err != nil {
@@ -916,7 +921,7 @@ func parseLoggedAt(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05", // internal store format (utcStr)
 		time.RFC3339,
-		"2006-01-02",
+		dateLayout,
 	}
 	for _, f := range formats {
 		if t, err := time.Parse(f, s); err == nil {
