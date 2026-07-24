@@ -101,9 +101,9 @@ func (c *ProfileCommand) viewProfile(ctx context.Context, msg types.InboundMessa
 func setProfileField(p types.UserProfile, k, v string) (types.UserProfile, string) {
 	switch k {
 	case "height_cm":
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f <= 0 {
-			return p, "height_cm must be a positive number (e.g. 175)"
+		f, errMsg := parsePositiveFloat(v, "height_cm", "175")
+		if errMsg != "" {
+			return p, errMsg
 		}
 		p.HeightCm = f
 	case "birth_date":
@@ -119,19 +119,30 @@ func setProfileField(p types.UserProfile, k, v string) (types.UserProfile, strin
 		}
 		p.Goal = v
 	case "target_weight_kg":
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f <= 0 {
-			return p, "target_weight_kg must be a positive number (e.g. 75)"
+		f, errMsg := parsePositiveFloat(v, "target_weight_kg", "75")
+		if errMsg != "" {
+			return p, errMsg
 		}
 		p.TargetWeightKg = f
 	case "weekly_rate":
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f <= 0 {
-			return p, "weekly_rate must be a positive number (e.g. 0.5)"
+		f, errMsg := parsePositiveFloat(v, "weekly_rate", "0.5")
+		if errMsg != "" {
+			return p, errMsg
 		}
 		p.WeeklyRate = f
 	default:
 		return p, fmt.Sprintf("Unknown profile key: %s\nValid keys: height_cm, birth_date, gender, goal, target_weight_kg, weekly_rate", k)
 	}
 	return p, ""
+}
+
+// parsePositiveFloat parses v as a positive float64 for the profile field
+// fieldName, returning a user-facing error message (using example as the
+// sample value) if v is missing, non-numeric, or not greater than zero.
+func parsePositiveFloat(v, fieldName, example string) (float64, string) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		return 0, fmt.Sprintf("%s must be a positive number (e.g. %s)", fieldName, example)
+	}
+	return f, ""
 }
