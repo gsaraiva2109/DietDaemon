@@ -69,9 +69,9 @@ export const AUTH_ERROR = 'Invalid email or password.'
 
 // Read a non-HttpOnly cookie value (used for the CSRF double-submit token).
 export function readCookie(name: string): string | null {
-  const match = document.cookie.match(
-    new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'),
-  )
+  const escapedName = name.replace(/([.$?*|{}()[\]\\/+^])/g, String.raw`\$1`)
+  const pattern = new RegExp(`(?:^|; )${escapedName}=([^;]*)`)
+  const match = pattern.exec(document.cookie)
   return match ? decodeURIComponent(match[1]) : null
 }
 
@@ -130,8 +130,7 @@ interface RequestOpts {
   suppressUnauthorized?: boolean
 }
 
-async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts): Promise<T> {
-  const method = (init?.method ?? 'GET').toUpperCase()
+function buildRequestHeaders(init: RequestInit | undefined, method: string): Headers {
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
   if (init?.body) headers.set('Content-Type', 'application/json')
@@ -139,6 +138,40 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
     const csrf = readCookie('dd_csrf')
     if (csrf) headers.set('X-CSRF-Token', csrf)
   }
+  return headers
+}
+
+// Best-effort parse of a JSON error envelope; falls back to a generic
+// message/code when the body is empty or not JSON.
+async function parseErrorBody(res: Response): Promise<{ message: string; code: string }> {
+  let message = `Request failed (${res.status})`
+  let code = 'internal_error'
+  try {
+    const body = (await res.json()) as { error?: { code?: string; message?: string } }
+    if (body?.error?.message) message = body.error.message
+    if (body?.error?.code) code = body.error.code
+  } catch {
+    /* non-JSON error body */
+  }
+  return { message, code }
+}
+
+// Turns a non-ok Response into the right typed error and throws it. Never
+// returns normally.
+async function throwForErrorResponse(res: Response, opts?: RequestOpts): Promise<never> {
+  const { message, code } = await parseErrorBody(res)
+  const requestID = res.headers.get('X-Request-ID')
+  if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized, message, requestID)
+  if (res.status === 429) {
+    const ra = res.headers.get('Retry-After')
+    throw new RateLimitError(ra ? Number(ra) : null, message, requestID)
+  }
+  throw new ApiError(res.status, message, code, requestID)
+}
+
+async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  const headers = buildRequestHeaders(init, method)
 
   let res: Response
   try {
@@ -147,24 +180,7 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts):
     throw new ApiError(0, 'Network error, is the DietDaemon server running?', 'service_unavailable')
   }
 
-  if (!res.ok) {
-    let msg = `Request failed (${res.status})`
-    let code = 'internal_error'
-    try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } }
-      if (body?.error?.message) msg = body.error.message
-      if (body?.error?.code) code = body.error.code
-    } catch {
-      /* non-JSON error body */
-    }
-    const requestID = res.headers.get('X-Request-ID')
-    if (res.status === 401) throw handleUnauthorized(opts?.suppressUnauthorized, msg, requestID)
-    if (res.status === 429) {
-      const ra = res.headers.get('Retry-After')
-      throw new RateLimitError(ra ? Number(ra) : null, msg, requestID)
-    }
-    throw new ApiError(res.status, msg, code, res.headers.get('X-Request-ID'))
-  }
+  if (!res.ok) await throwForErrorResponse(res, opts)
 
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -411,10 +427,10 @@ export const api = {
 
   // --- Food Discovery -------------------------------------------
   foods: {
-    list: (source = '', limit = 30, offset = 0) =>
-      request<FoodDetail[]>(
-        `/foods?limit=${limit}&offset=${offset}${source ? `&source=${encodeURIComponent(source)}` : ''}`,
-      ),
+    list: (source = '', limit = 30, offset = 0) => {
+      const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
+      return request<FoodDetail[]>(`/foods?limit=${limit}&offset=${offset}${sourceParam}`)
+    },
     search: (q: string) => request<FoodDetail[]>(`/foods/search?q=${encodeURIComponent(q)}`),
     frequent: (limit = 12) => request<FoodDetail[]>(`/foods/frequent?limit=${limit}`),
     get: (foodID: string) => request<FoodDetail>(`/foods/${encodeURIComponent(foodID)}`),
@@ -428,10 +444,10 @@ export const api = {
         `/foods/${encodeURIComponent(foodID)}/aliases/${encodeURIComponent(alias)}`,
         { method: 'DELETE' },
       ),
-    searchCatalog: (q = '', source = '', limit = 20, offset = 0) =>
-      request<FoodDetail[]>(
-        `/catalog/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}${source ? `&source=${encodeURIComponent(source)}` : ''}`,
-      ),
+    searchCatalog: (q = '', source = '', limit = 20, offset = 0) => {
+      const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
+      return request<FoodDetail[]>(`/catalog/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}${sourceParam}`)
+    },
     removeFromLibrary: (foodID: string) =>
       request<void>(`/foods/${encodeURIComponent(foodID)}/library`, { method: 'DELETE' }),
     addToLibrary: (foodID: string) =>

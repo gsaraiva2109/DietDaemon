@@ -380,27 +380,7 @@ func Load() (*Config, error) {
 
 	// OIDC providers.
 	c.PublicBaseURL = strings.TrimRight(getStr("PUBLIC_BASE_URL", ""), "/")
-	if raw := getStr("OIDC_PROVIDERS", ""); raw != "" {
-		ids := splitCSV(raw)
-		for _, id := range ids {
-			canon := strings.ToUpper(id)
-			name := getStr("OIDC_"+canon+"_NAME", "")
-			if name == "" {
-				name = strings.ToUpper(id[:1]) + id[1:]
-			}
-			cfg := OIDCProviderConfig{
-				ID:           id,
-				Name:         name,
-				Issuer:       getStr("OIDC_"+canon+"_ISSUER", ""),
-				ClientID:     getStr("OIDC_"+canon+"_CLIENT_ID", ""),
-				ClientSecret: getStr("OIDC_"+canon+"_CLIENT_SECRET", ""),
-				RedirectURL:  c.PublicBaseURL + "/api/v1/auth/oidc/" + id + "/callback",
-				Scopes:       splitCSV(getStr("OIDC_"+canon+"_SCOPES", "openid,email,profile")),
-				TrustEmail:   getBool("OIDC_"+canon+"_TRUST_EMAIL", false),
-			}
-			c.OIDCProviders = append(c.OIDCProviders, cfg)
-		}
-	}
+	c.OIDCProviders = buildOIDCProviders(c.PublicBaseURL)
 
 	// Auth mailer / email settings.
 	c.EmailProvider = strings.ToLower(getStr("EMAIL_PROVIDER", "none"))
@@ -427,6 +407,36 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// buildOIDCProviders parses OIDC_PROVIDERS (a comma-separated list of provider
+// IDs) into their per-provider configs, deriving each RedirectURL from
+// publicBaseURL. Returns nil when OIDC_PROVIDERS is unset. Extracted out of
+// Load to keep that function's cognitive complexity down (SonarQube go:S3776).
+func buildOIDCProviders(publicBaseURL string) []OIDCProviderConfig {
+	raw := getStr("OIDC_PROVIDERS", "")
+	if raw == "" {
+		return nil
+	}
+	var providers []OIDCProviderConfig
+	for _, id := range splitCSV(raw) {
+		canon := strings.ToUpper(id)
+		name := getStr("OIDC_"+canon+"_NAME", "")
+		if name == "" {
+			name = strings.ToUpper(id[:1]) + id[1:]
+		}
+		providers = append(providers, OIDCProviderConfig{
+			ID:           id,
+			Name:         name,
+			Issuer:       getStr("OIDC_"+canon+"_ISSUER", ""),
+			ClientID:     getStr("OIDC_"+canon+"_CLIENT_ID", ""),
+			ClientSecret: getStr("OIDC_"+canon+"_CLIENT_SECRET", ""),
+			RedirectURL:  publicBaseURL + "/api/v1/auth/oidc/" + id + "/callback",
+			Scopes:       splitCSV(getStr("OIDC_"+canon+"_SCOPES", "openid,email,profile")),
+			TrustEmail:   getBool("OIDC_"+canon+"_TRUST_EMAIL", false),
+		})
+	}
+	return providers
 }
 
 // LoadMinimal reads configuration from the environment like Load, but

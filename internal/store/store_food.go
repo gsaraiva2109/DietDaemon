@@ -273,43 +273,17 @@ func (s *Store) writeCustomFood(ctx context.Context, userID, foodID string, inpu
 
 	name := strings.TrimSpace(input.Name)
 	alias := normalize.Normalize(name)
-	var existing string
-	err = tx.GetContext(ctx, &existing, s.rewrite(`SELECT food_id FROM food_aliases WHERE user_id = ? AND alias_normalized = ?`), userID, alias)
-	if err == nil && existing != foodID {
-		return types.ErrConflict
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("store: check custom alias: %w", err)
+	if err := s.checkCustomAliasConflict(ctx, tx, userID, alias, foodID); err != nil {
+		return err
 	}
 
 	per100 := input.Macros.Scale(100 / input.BasisGrams)
 	if create {
-		const insertQ = `
-			INSERT INTO foods (food_id, owner_user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
-			                   serving_size, serving_unit, created_at, updated_at)
-			VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, 'g', ?, ?)
-		`
-		if _, err := tx.ExecContext(ctx, s.rewrite(insertQ), foodID, userID, name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, input.BasisGrams, utcNow(), utcNow()); err != nil {
-			return fmt.Errorf("store: create custom food: %w", err)
+		if err := s.insertCustomFoodRow(ctx, tx, userID, foodID, name, input.BasisGrams, per100); err != nil {
+			return err
 		}
-		const statsQ = `INSERT INTO user_food_stats (user_id, food_id, query_count, last_used) VALUES (?, ?, 0, '')`
-		if _, err := tx.ExecContext(ctx, s.rewrite(statsQ), userID, foodID); err != nil {
-			return fmt.Errorf("store: create custom food stats: %w", err)
-		}
-	} else {
-		const updateQ = `
-			UPDATE foods SET name = ?, kcal_100g = ?, protein_100g = ?, carbs_100g = ?, fat_100g = ?, fiber_100g = ?,
-			                 serving_size = ?, serving_unit = 'g', updated_at = ?
-			WHERE food_id = ? AND owner_user_id = ? AND source = 'custom'
-		`
-		res, err := tx.ExecContext(ctx, s.rewrite(updateQ), name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, input.BasisGrams, utcNow(), foodID, userID)
-		if err != nil {
-			return fmt.Errorf("store: update custom food: %w", err)
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return types.ErrNotFound
-		}
+	} else if err := s.updateCustomFoodRow(ctx, tx, userID, foodID, name, input.BasisGrams, per100); err != nil {
+		return err
 	}
 
 	const aliasQ = `INSERT INTO food_aliases (user_id, alias_normalized, food_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
@@ -317,6 +291,57 @@ func (s *Store) writeCustomFood(ctx context.Context, userID, foodID string, inpu
 		return fmt.Errorf("store: save custom alias: %w", err)
 	}
 	return tx.Commit()
+}
+
+// checkCustomAliasConflict returns types.ErrConflict when alias already
+// resolves to a different food than foodID for userID.
+func (s *Store) checkCustomAliasConflict(ctx context.Context, tx *sqlx.Tx, userID, alias, foodID string) error {
+	var existing string
+	err := tx.GetContext(ctx, &existing, s.rewrite(`SELECT food_id FROM food_aliases WHERE user_id = ? AND alias_normalized = ?`), userID, alias)
+	if err == nil && existing != foodID {
+		return types.ErrConflict
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("store: check custom alias: %w", err)
+	}
+	return nil
+}
+
+// insertCustomFoodRow creates the foods row and its zeroed usage-stats row
+// for a brand-new custom food.
+func (s *Store) insertCustomFoodRow(ctx context.Context, tx *sqlx.Tx, userID, foodID, name string, basisGrams float64, per100 types.Macros) error {
+	const insertQ = `
+		INSERT INTO foods (food_id, owner_user_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+		                   serving_size, serving_unit, created_at, updated_at)
+		VALUES (?, ?, ?, 'custom', ?, ?, ?, ?, ?, ?, 'g', ?, ?)
+	`
+	if _, err := tx.ExecContext(ctx, s.rewrite(insertQ), foodID, userID, name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, basisGrams, utcNow(), utcNow()); err != nil {
+		return fmt.Errorf("store: create custom food: %w", err)
+	}
+	const statsQ = `INSERT INTO user_food_stats (user_id, food_id, query_count, last_used) VALUES (?, ?, 0, '')`
+	if _, err := tx.ExecContext(ctx, s.rewrite(statsQ), userID, foodID); err != nil {
+		return fmt.Errorf("store: create custom food stats: %w", err)
+	}
+	return nil
+}
+
+// updateCustomFoodRow overwrites an existing custom food's label. It returns
+// types.ErrNotFound when foodID isn't a custom food owned by userID.
+func (s *Store) updateCustomFoodRow(ctx context.Context, tx *sqlx.Tx, userID, foodID, name string, basisGrams float64, per100 types.Macros) error {
+	const updateQ = `
+		UPDATE foods SET name = ?, kcal_100g = ?, protein_100g = ?, carbs_100g = ?, fat_100g = ?, fiber_100g = ?,
+		                 serving_size = ?, serving_unit = 'g', updated_at = ?
+		WHERE food_id = ? AND owner_user_id = ? AND source = 'custom'
+	`
+	res, err := tx.ExecContext(ctx, s.rewrite(updateQ), name, per100.Calories, per100.Protein, per100.Carbs, per100.Fat, per100.Fiber, basisGrams, utcNow(), foodID, userID)
+	if err != nil {
+		return fmt.Errorf("store: update custom food: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return types.ErrNotFound
+	}
+	return nil
 }
 
 // DeleteCustomFood removes only a food owned by userID. Foreign keys clean up
