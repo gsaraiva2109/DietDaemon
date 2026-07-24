@@ -5,10 +5,15 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
-func TestToWorkout(t *testing.T) {
-	hw := HevyWorkout{
+// legDayWorkout is the fixture shared by TestToWorkout's assertion helpers:
+// one exercise, three sets, weight ascending and reps descending so both the
+// max-reps and max-weight aggregation branches are exercised.
+func legDayWorkout() HevyWorkout {
+	return HevyWorkout{
 		ID:        "hw-123",
 		Title:     "Leg Day",
 		StartTime: time.Date(2025, 6, 15, 9, 0, 0, 0, time.UTC),
@@ -26,12 +31,21 @@ func TestToWorkout(t *testing.T) {
 			},
 		},
 	}
+}
 
-	w, err := ToWorkout("user-1", hw)
+func TestToWorkout(t *testing.T) {
+	w, err := ToWorkout("user-1", legDayWorkout())
 	if err != nil {
 		t.Fatalf("ToWorkout: %v", err)
 	}
 
+	assertWorkoutFields(t, w)
+	ex := assertExerciseAggregation(t, w)
+	assertNoteRoundTrips(t, ex)
+}
+
+func assertWorkoutFields(t *testing.T, w types.Workout) {
+	t.Helper()
 	if w.Name != "Leg Day" {
 		t.Errorf("Name = %q, want %q", w.Name, "Leg Day")
 	}
@@ -41,6 +55,10 @@ func TestToWorkout(t *testing.T) {
 	if w.ExternalID == nil || *w.ExternalID != "hw-123" {
 		t.Errorf("ExternalID = %v, want hw-123", w.ExternalID)
 	}
+}
+
+func assertExerciseAggregation(t *testing.T, w types.Workout) types.WorkoutExercise {
+	t.Helper()
 	if len(w.Exercises) != 1 {
 		t.Fatalf("len(Exercises) = %d, want 1", len(w.Exercises))
 	}
@@ -58,8 +76,12 @@ func TestToWorkout(t *testing.T) {
 	if ex.WeightKg == nil || *ex.WeightKg != 90 {
 		t.Errorf("weight_kg = %v, want 90", ex.WeightKg)
 	}
+	return ex
+}
 
-	// Note round-trips to original set data.
+// assertNoteRoundTrips checks that Note round-trips to the original set data.
+func assertNoteRoundTrips(t *testing.T, ex types.WorkoutExercise) {
+	t.Helper()
 	var roundTripped []HevySet
 	if err := json.Unmarshal([]byte(ex.Note), &roundTripped); err != nil {
 		t.Fatalf("unmarshal note: %v", err)
