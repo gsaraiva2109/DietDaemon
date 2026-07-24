@@ -2,6 +2,7 @@ package exportfmt
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,6 +212,42 @@ func TestWorkoutsCSVRoundTrip(t *testing.T) {
 	}
 	if got[1].CaloriesBurned != nil || got[1].ExternalID != nil || len(got[1].Exercises) != 0 {
 		t.Errorf("workout 1: got %+v, want nil-able fields nil/empty", got[1])
+	}
+}
+
+func TestReadWorkoutsCSV_Errors(t *testing.T) {
+	const header = "id,name,duration_min,intensity,calories_burned,note,logged_at,external_id,exercises_json\n"
+	tests := []struct {
+		name    string
+		row     string
+		wantErr string
+	}{
+		{
+			name:    "invalid duration_min",
+			row:     "wo1,Leg Day,not-a-number,high,,,2026-07-15 18:00:00,,\n",
+			wantErr: "parse duration_min",
+		},
+		{
+			name:    "invalid calories_burned",
+			row:     "wo1,Leg Day,45,high,not-a-number,,2026-07-15 18:00:00,,\n",
+			wantErr: "parse calories_burned",
+		},
+		{
+			name:    "invalid exercises_json",
+			row:     "wo1,Leg Day,45,high,,,2026-07-15 18:00:00,,{not valid json\n",
+			wantErr: "parse exercises_json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadWorkoutsCSV(strings.NewReader(header + tt.row))
+			if err == nil {
+				t.Fatalf("ReadWorkoutsCSV: want error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ReadWorkoutsCSV error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
 

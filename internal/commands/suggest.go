@@ -62,29 +62,40 @@ func (c *SuggestCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 	fmt.Fprintf(&b, "Left today: %.0f kcal · %.0fg protein · %.0fg carbs · %.0fg fat\n",
 		sug.Remaining.Calories, sug.Remaining.Protein, sug.Remaining.Carbs, sug.Remaining.Fat)
 
-	if len(sug.Candidates) > 0 {
-		b.WriteString("\n")
-		top := sug.Candidates[0]
-		b.WriteString("Try:\n")
-		for _, item := range top.Items {
-			fmt.Fprintf(&b, "  - %s -- %.0fg\n", item.Name, item.Grams)
-		}
-		fmt.Fprintf(&b, "  %.0f kcal | P%.0fg · C%.0fg · F%.0fg\n",
-			top.Macros.Calories, top.Macros.Protein, top.Macros.Carbs, top.Macros.Fat)
-
-		if len(sug.Candidates) > 1 {
-			b.WriteString("\nOther options:\n")
-			for _, combo := range sug.Candidates[1:] {
-				names := make([]string, 0, len(combo.Items))
-				for _, item := range combo.Items {
-					names = append(names, fmt.Sprintf("%s (%.0fg)", item.Name, item.Grams))
-				}
-				fmt.Fprintf(&b, "  - %s -- %.0f kcal\n", strings.Join(names, ", "), combo.Macros.Calories)
-			}
-		}
-	}
+	writeCandidates(&b, sug.Candidates)
 
 	return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+}
+
+// writeCandidates appends the top candidate meal and any other options to b.
+func writeCandidates(b *strings.Builder, candidates []types.SuggestedCombo) {
+	if len(candidates) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	top := candidates[0]
+	b.WriteString("Try:\n")
+	for _, item := range top.Items {
+		fmt.Fprintf(b, "  - %s -- %.0fg\n", item.Name, item.Grams)
+	}
+	fmt.Fprintf(b, "  %.0f kcal | P%.0fg · C%.0fg · F%.0fg\n",
+		top.Macros.Calories, top.Macros.Protein, top.Macros.Carbs, top.Macros.Fat)
+
+	if len(candidates) > 1 {
+		writeOtherOptions(b, candidates[1:])
+	}
+}
+
+// writeOtherOptions appends the non-top candidate meals as a compact list.
+func writeOtherOptions(b *strings.Builder, combos []types.SuggestedCombo) {
+	b.WriteString("\nOther options:\n")
+	for _, combo := range combos {
+		names := make([]string, 0, len(combo.Items))
+		for _, item := range combo.Items {
+			names = append(names, fmt.Sprintf("%s (%.0fg)", item.Name, item.Grams))
+		}
+		fmt.Fprintf(b, "  - %s -- %.0f kcal\n", strings.Join(names, ", "), combo.Macros.Calories)
+	}
 }
 
 // resolveIngredients turns a comma-separated ingredient list ("chicken, rice,
