@@ -1295,6 +1295,72 @@ func TestWeeklyBudgetDedupeViaNudgeLog(t *testing.T) {
 	}
 }
 
+// CHARACTERIZATION tests for evalWeeklyBudgetRules' remaining untested error
+// branches: pin down current behavior before decomposing the function
+// (go:S3776).
+
+func TestWeeklyBudgetSkipsOnWasNudgedError(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd := newFakeNudges()
+	nd.wasNudgedErr = errors.New("boom")
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("was-nudged error should skip the weekly budget rule, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyBudgetSkipsOnGetTargetsError(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{}, // GetTargets returns ErrNotFound for u1
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{{Date: "2026-06-15", Consumed: types.Macros{Calories: 500}}}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, newFakeNudges(), nt)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 0 {
+		t.Errorf("GetTargets error should skip the weekly budget rule, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyBudgetFiresEvenWhenMarkNudgedFails(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2200}},
+		rollups: map[string]types.Macros{},
+	}
+	wbs := &fakeWeeklyBudgetStore{rollups: []types.DailyRollup{
+		{Date: "2026-06-15", Consumed: types.Macros{Calories: 1500}},
+		{Date: "2026-06-16", Consumed: types.Macros{Calories: 1500}},
+	}}
+	rcs := &fakeRuleConfigStore{configs: enabledWeeklyOverride("weekly-budget-calories")}
+	nd := newFakeNudges()
+	nd.markNudgedErr = errors.New("write failed")
+	nt := &fakeNotifier{}
+	s := newWeeklyBudgetSched(st, wbs, rcs, nd, nt)
+
+	// Same non-negligible +280 delta scenario as the catch-up test.
+	s.tick(context.Background(), time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 1 {
+		t.Fatalf("delivery must still happen even if marking fails, sent %d, want 1", len(nt.sent))
+	}
+}
+
 // (5a) Calendar week bounds on a Monday: monday == today, 7 days remaining.
 func TestWeeklyBudgetWeekBoundsMonday(t *testing.T) {
 	st := &fakeStore{

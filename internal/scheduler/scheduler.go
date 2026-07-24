@@ -817,124 +817,151 @@ func (s *Scheduler) evalDigestRule(ctx context.Context, user types.User, local t
 func (s *Scheduler) evalWeeklyBudgetRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
 	date := local.Format(dateLayout)
-
 	for _, base := range s.weeklyBudgetRules {
-		r := base
+		s.evalWeeklyBudgetRule(ctx, user, local, date, base, overrides)
+	}
+}
 
-		// Opt-in gate: this feature is OFF by default, so (unlike
-		// resolveRule's "not found = enabled with defaults" semantics used
-		// by the other rule families) an absent override means skip
-		// entirely rather than proceed with zero-value config.
-		if _, ok := overrides[r.ID]; !ok {
+// evalWeeklyBudgetRule evaluates a single weekly rolling budget rule for one
+// user: opt-in gate, hour gate, dedupe, effective-target computation, and
+// delivery of the catch-up/ease-up nudge.
+func (s *Scheduler) evalWeeklyBudgetRule(ctx context.Context, user types.User, local time.Time, date string, base WeeklyBudgetRule, overrides map[string]types.NudgeRuleConfig) {
+	r := base
+
+	budgetCfg, enabled := resolveWeeklyBudgetConfig(r.ID, overrides)
+	if !enabled {
+		return
+	}
+	floorPct, ceilPct := clampPercents(budgetCfg)
+
+	// Hour gate.
+	if local.Hour() < r.CheckHour {
+		return
+	}
+
+	// Dedupe against nudge_log.
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: weekly budget was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
+
+	monday, sunday, daysRemaining := weekBounds(local)
+	rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format(dateLayout), sunday.Format(dateLayout))
+	if err != nil {
+		s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
+		return
+	}
+	consumedPriorDays := sumConsumedBefore(rollups, date, r.Macro)
+
+	targets, err := s.store.GetTargets(ctx, user.ID)
+	if err != nil {
+		s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
+		return
+	}
+	plainDaily := macroValue(targets.Targets, r.Macro)
+	if plainDaily <= 0 {
+		return // no target for this macro
+	}
+	if budgetCfg.WeeklyTargetOverride > 0 {
+		plainDaily = budgetCfg.WeeklyTargetOverride
+	}
+
+	effective := EffectiveWeeklyTarget(plainDaily, consumedPriorDays, daysRemaining, floorPct, ceilPct)
+
+	// Negligible delta (< 3% of daily target): mark nudged so it doesn't
+	// keep re-checking, but don't bother the user over noise.
+	delta := effective - plainDaily
+	if math.Abs(delta) < plainDaily*0.03 {
+		_ = s.nudges.MarkNudged(ctx, user.ID, date, r.ID)
+		return
+	}
+
+	s.deliverWeeklyBudgetNudge(ctx, user, date, r, delta)
+}
+
+// resolveWeeklyBudgetConfig applies the user's override for a weekly-budget
+// rule. Unlike resolveRule's "not found = enabled with defaults" semantics
+// used by the other rule families, this feature is OFF by default: an
+// absent override means skip entirely rather than proceed with a
+// zero-value config.
+func resolveWeeklyBudgetConfig(ruleID string, overrides map[string]types.NudgeRuleConfig) (types.WeeklyBudgetConfig, bool) {
+	if _, ok := overrides[ruleID]; !ok {
+		return types.WeeklyBudgetConfig{}, false
+	}
+	return resolveRule(types.WeeklyBudgetConfig{}, ruleID, overrides)
+}
+
+// clampPercents applies the default floor/ceiling clamp percentages when a
+// budget config leaves them unset (zero value).
+func clampPercents(cfg types.WeeklyBudgetConfig) (floorPct, ceilPct float64) {
+	floorPct = cfg.ClampFloorPct
+	if floorPct == 0 {
+		floorPct = 0.70
+	}
+	ceilPct = cfg.ClampCeilPct
+	if ceilPct == 0 {
+		ceilPct = 1.30
+	}
+	return floorPct, ceilPct
+}
+
+// weekBounds returns the Monday-Sunday calendar week containing local, plus
+// the number of days remaining in that week including today (1-7).
+func weekBounds(local time.Time) (monday, sunday time.Time, daysRemaining int) {
+	weekday := local.Weekday()
+	daysFromMonday := int(weekday) - int(time.Monday)
+	if weekday == time.Sunday {
+		daysFromMonday = 6
+	}
+	monday = local.AddDate(0, 0, -daysFromMonday)
+	sunday = monday.AddDate(0, 0, 6)
+	daysRemaining = 7 - daysFromMonday
+	return monday, sunday, daysRemaining
+}
+
+// sumConsumedBefore sums a macro's consumed amount across rollups dated
+// strictly before date.
+func sumConsumedBefore(rollups []types.DailyRollup, date string, macro Macro) float64 {
+	var total float64
+	for _, roll := range rollups {
+		if roll.Date >= date {
 			continue
 		}
-		budgetCfg, enabled := resolveRule(types.WeeklyBudgetConfig{}, r.ID, overrides)
-		if !enabled {
-			continue
-		}
+		total += macroValue(roll.Consumed, macro)
+	}
+	return total
+}
 
-		// Apply defaults for clamp values.
-		floorPct := budgetCfg.ClampFloorPct
-		if floorPct == 0 {
-			floorPct = 0.70
-		}
-		ceilPct := budgetCfg.ClampCeilPct
-		if ceilPct == 0 {
-			ceilPct = 1.30
-		}
+// deliverWeeklyBudgetNudge builds the catch-up/ease-up message for a
+// non-negligible delta, delivers it, and marks it nudged on success.
+func (s *Scheduler) deliverWeeklyBudgetNudge(ctx context.Context, user types.User, date string, r WeeklyBudgetRule, delta float64) {
+	unit := "kcal"
+	if r.Macro == MacroProtein {
+		unit = "g"
+	}
+	var body string
+	if delta > 0 {
+		body = fmt.Sprintf("Catch up today, +%.0f%s", delta, unit)
+	} else {
+		body = fmt.Sprintf("Ease up today, -%.0f%s", -delta, unit)
+	}
 
-		// Hour gate.
-		if local.Hour() < r.CheckHour {
-			continue
-		}
-
-		// Dedupe against nudge_log.
-		done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: weekly budget was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
-
-		// Compute calendar week (Monday-Sunday) bounds.
-		weekday := local.Weekday()
-		daysFromMonday := int(weekday) - int(time.Monday)
-		if weekday == time.Sunday {
-			daysFromMonday = 6
-		}
-		monday := local.AddDate(0, 0, -daysFromMonday)
-		sunday := monday.AddDate(0, 0, 6)
-		daysRemaining := 7 - daysFromMonday
-
-		// Get rollups for the current week.
-		rollups, err := s.weeklyBudgetStore.GetRollups(ctx, user.ID, monday.Format(dateLayout), sunday.Format(dateLayout))
-		if err != nil {
-			s.log.Error("scheduler: get weekly rollups", "rule", r.ID, "err", err)
-			continue
-		}
-
-		// Sum consumed prior days (dates strictly before today).
-		var consumedPriorDays float64
-		for _, roll := range rollups {
-			if roll.Date >= date {
-				continue
-			}
-			consumedPriorDays += macroValue(roll.Consumed, r.Macro)
-		}
-
-		// Get daily target for this macro.
-		targets, err := s.store.GetTargets(ctx, user.ID)
-		if err != nil {
-			s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
-			continue
-		}
-		plainDaily := macroValue(targets.Targets, r.Macro)
-		if plainDaily <= 0 {
-			continue // no target for this macro
-		}
-
-		// Apply weekly target override if configured.
-		if budgetCfg.WeeklyTargetOverride > 0 {
-			plainDaily = budgetCfg.WeeklyTargetOverride
-		}
-
-		// Compute effective target.
-		effective := EffectiveWeeklyTarget(plainDaily, consumedPriorDays, daysRemaining, floorPct, ceilPct)
-
-		// Check if delta is negligible (< 3% of daily target).
-		delta := effective - plainDaily
-		if math.Abs(delta) < plainDaily*0.03 {
-			_ = s.nudges.MarkNudged(ctx, user.ID, date, r.ID)
-			continue
-		}
-
-		// Build notification message.
-		unit := "kcal"
-		if r.Macro == MacroProtein {
-			unit = "g"
-		}
-		var body string
-		if delta > 0 {
-			body = fmt.Sprintf("Catch up today, +%.0f%s", delta, unit)
-		} else {
-			body = fmt.Sprintf("Ease up today, -%.0f%s", -delta, unit)
-		}
-
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon",
-			Body:     body,
-			Priority: types.PriorityHigh,
-		}
-		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
-			s.log.Error("scheduler: weekly budget notify", "rule", r.ID, "err", err)
-			continue
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-			s.log.Error("scheduler: weekly budget mark-nudged", "rule", r.ID, "err", err)
-		}
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     body,
+		Priority: types.PriorityHigh,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+		s.log.Error("scheduler: weekly budget notify", "rule", r.ID, "err", err)
+		return
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: weekly budget mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 
