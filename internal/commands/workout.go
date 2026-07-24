@@ -30,38 +30,66 @@ func (c *WorkoutCommand) Name() string        { return "/workout" }
 func (c *WorkoutCommand) Aliases() []string   { return nil }
 func (c *WorkoutCommand) Help() types.I18nKey { return "cmd.workout.usage" }
 
+// workoutUsage is shown for a bare /workout.
+const workoutUsage = "Usage: /workout <name> <minutes> [intensity]\nIntensity: light, moderate, heavy\nExample: /workout Bench Press 45 heavy"
+
 func (c *WorkoutCommand) Handle(ctx context.Context, msg types.InboundMessage, args string) (types.Reply, error) {
 	args = strings.TrimSpace(args)
 
 	if args == "" {
-		return types.Reply{
-			Text:        "Usage: /workout <name> <minutes> [intensity]\nIntensity: light, moderate, heavy\nExample: /workout Bench Press 45 heavy",
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
+		return types.Reply{Text: workoutUsage, ChannelMeta: msg.ChannelMeta}, nil
 	}
 
 	if args == "list" {
-		workouts, err := c.store.ListWorkouts(ctx, msg.UserID, 10)
-		if err != nil || len(workouts) == 0 {
-			return types.Reply{
-				Text:        "No workouts logged yet.",
-				ChannelMeta: msg.ChannelMeta,
-			}, nil
-		}
-		var b strings.Builder
-		b.WriteString("Recent workouts:\n\n")
-		for _, w := range workouts {
-			calStr := ""
-			if w.CaloriesBurned != nil {
-				calStr = fmt.Sprintf(" (~%d kcal)", *w.CaloriesBurned)
-			}
-			fmt.Fprintf(&b, "  - %s — %d min, %s%s\n", w.Name, w.DurationMin, w.Intensity, calStr)
-		}
-		return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+		return c.listWorkouts(ctx, msg)
 	}
 
-	// Parse: <name> <duration_min> [intensity] [note...]
-	//
+	name, durationMin, intensity, note, errText := parseWorkoutArgs(args)
+	if errText != "" {
+		return types.Reply{Text: errText, ChannelMeta: msg.ChannelMeta}, nil
+	}
+
+	entry := types.Workout{
+		ID:          randomID(),
+		UserID:      msg.UserID,
+		Name:        name,
+		DurationMin: durationMin,
+		Intensity:   intensity,
+		Note:        note,
+		LoggedAt:    time.Now().UTC().Format("2006-01-02 15:04:05"),
+	}
+	if err := c.store.LogWorkout(ctx, entry); err != nil {
+		return types.Reply{}, fmt.Errorf("log workout: %w", err)
+	}
+
+	return types.Reply{
+		Text:        fmt.Sprintf("Workout logged: %s — %d min, %s", name, durationMin, intensity),
+		ChannelMeta: msg.ChannelMeta,
+	}, nil
+}
+
+// listWorkouts renders the 10 most recent workouts.
+func (c *WorkoutCommand) listWorkouts(ctx context.Context, msg types.InboundMessage) (types.Reply, error) {
+	workouts, err := c.store.ListWorkouts(ctx, msg.UserID, 10)
+	if err != nil || len(workouts) == 0 {
+		return types.Reply{Text: "No workouts logged yet.", ChannelMeta: msg.ChannelMeta}, nil
+	}
+	var b strings.Builder
+	b.WriteString("Recent workouts:\n\n")
+	for _, w := range workouts {
+		calStr := ""
+		if w.CaloriesBurned != nil {
+			calStr = fmt.Sprintf(" (~%d kcal)", *w.CaloriesBurned)
+		}
+		fmt.Fprintf(&b, "  - %s — %d min, %s%s\n", w.Name, w.DurationMin, w.Intensity, calStr)
+	}
+	return types.Reply{Text: b.String(), ChannelMeta: msg.ChannelMeta}, nil
+}
+
+// parseWorkoutArgs parses "<name> <minutes> [intensity] [note...]". The name
+// is everything before the first positive-integer token (the duration). On
+// failure it returns a non-empty errText and zero values for the rest.
+func parseWorkoutArgs(args string) (name string, durationMin int, intensity, note, errText string) {
 	// Find the first numeric token: everything before it is the workout name.
 	parts := strings.Fields(args)
 
@@ -75,23 +103,17 @@ func (c *WorkoutCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 
 	if durationIdx < 1 {
 		// Need at least one word before the number (the name).
-		return types.Reply{
-			Text:        "Usage: /workout <name> <minutes> [intensity]\nExample: /workout Bench Press 45 heavy",
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
+		return "", 0, "", "", "Usage: /workout <name> <minutes> [intensity]\nExample: /workout Bench Press 45 heavy"
 	}
 
-	name := strings.Join(parts[:durationIdx], " ")
-	durationMin, _ := strconv.Atoi(parts[durationIdx])
+	name = strings.Join(parts[:durationIdx], " ")
+	durationMin, _ = strconv.Atoi(parts[durationIdx])
 	if durationMin <= 0 || durationMin > 1440 {
-		return types.Reply{
-			Text:        "Invalid duration. Use minutes (1-1440).",
-			ChannelMeta: msg.ChannelMeta,
-		}, nil
+		return "", 0, "", "", "Invalid duration. Use minutes (1-1440)."
 	}
 
 	// Optional intensity (next token after duration).
-	intensity := "moderate"
+	intensity = "moderate"
 	noteStart := durationIdx + 1
 	if noteStart < len(parts) {
 		switch strings.ToLower(parts[noteStart]) {
@@ -102,27 +124,9 @@ func (c *WorkoutCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 	}
 
 	// Optional note (everything after intensity).
-	note := ""
 	if noteStart < len(parts) {
 		note = strings.Join(parts[noteStart:], " ")
 	}
 
-	now := time.Now().UTC()
-	entry := types.Workout{
-		ID:          randomID(),
-		UserID:      msg.UserID,
-		Name:        name,
-		DurationMin: durationMin,
-		Intensity:   intensity,
-		Note:        note,
-		LoggedAt:    now.Format("2006-01-02 15:04:05"),
-	}
-	if err := c.store.LogWorkout(ctx, entry); err != nil {
-		return types.Reply{}, fmt.Errorf("log workout: %w", err)
-	}
-
-	return types.Reply{
-		Text:        fmt.Sprintf("Workout logged: %s — %d min, %s", name, durationMin, intensity),
-		ChannelMeta: msg.ChannelMeta,
-	}, nil
+	return name, durationMin, intensity, note, ""
 }
