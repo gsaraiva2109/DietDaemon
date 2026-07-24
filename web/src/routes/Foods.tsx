@@ -62,12 +62,12 @@ function FoodsEmptyState({
   searching,
   demo,
   onAddCustom,
-}: {
+}: Readonly<{
   tab: FoodsTab
   searching: boolean
   demo: boolean
   onAddCustom: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   const { title, hint } = getEmptyStateCopy(tab, searching, t)
   return (
@@ -95,13 +95,13 @@ function FoodsResults({
   catalogLimit,
   onSelect,
   onLoadMore,
-}: {
+}: Readonly<{
   foods: FoodDetail[]
   tab: FoodsTab
   catalogLimit: number
   onSelect: (foodID: string) => void
   onLoadMore: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   return (
     <>

@@ -201,13 +201,13 @@ function FoodPickerList({
   tab,
   searching,
   onSelect,
-}: {
+}: Readonly<{
   isLoading: boolean
   foods: FoodDetail[]
   tab: PickerTab
   searching: boolean
   onSelect: (food: FoodDetail) => void
-}) {
+}>) {
   const { t } = useTranslation()
   if (isLoading) return <Spinner label={t('foods.loadingLabel')} />
   if (!foods.length) {

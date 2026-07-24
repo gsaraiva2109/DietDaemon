@@ -371,14 +371,23 @@ func (s *Scheduler) evalMacroRules(ctx context.Context, local time.Time, date st
 	if err != nil {
 		rollup = types.DailyRollup{} // no meals logged yet today
 	}
+	progress := macroProgress{targets: targets, rollup: &rollup}
 	for _, base := range s.rules {
-		s.evalMacroRule(ctx, local, date, user, base, overrides, targets, &rollup)
+		s.evalMacroRule(ctx, local, date, user, base, overrides, progress)
 	}
+}
+
+// macroProgress bundles a user's daily macro targets and today's rollup so
+// far, the two pieces of state every macro rule needs to judge progress.
+type macroProgress struct {
+	targets types.DailyTargets
+	rollup  *types.DailyRollup
 }
 
 // evalMacroRule evaluates a single macro rule for one user, sending and
 // dedupe-marking a nudge when the user is behind on that macro.
-func (s *Scheduler) evalMacroRule(ctx context.Context, local time.Time, date string, user types.User, base Rule, overrides map[string]types.NudgeRuleConfig, targets types.DailyTargets, rollup *types.DailyRollup) {
+func (s *Scheduler) evalMacroRule(ctx context.Context, local time.Time, date string, user types.User, base Rule, overrides map[string]types.NudgeRuleConfig, progress macroProgress) {
+	targets, rollup := progress.targets, progress.rollup
 	r, enabled := resolveRule(base, base.ID, overrides)
 	if !enabled {
 		return
@@ -465,15 +474,26 @@ func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user 
 	}
 	hours := learnedMealHours(times, loc)
 	sort.Ints(hours) // ranking selects slots; chronological order finds each predecessor.
+	sched := learnedSchedule{loc: loc, hours: hours, times: times}
 	for slot, hour := range hours {
-		s.evalSmartMealSlot(ctx, now, user, rule, loc, hours, times, slot, hour)
+		s.evalSmartMealSlot(ctx, now, user, rule, sched, slot, hour)
 	}
+}
+
+// learnedSchedule bundles a user's learned meal-hour schedule: the timezone
+// it was computed in, the ranked candidate hours, and the raw meal history
+// each slot's suppression check scans.
+type learnedSchedule struct {
+	loc   *time.Location
+	hours []int
+	times []time.Time
 }
 
 // evalSmartMealSlot evaluates one learned meal-hour slot across both the
 // "today" and "tomorrow" occurrences (offset 0 and 1), firing a reminder for
 // whichever occurrence's 30-minute-before reminder window is currently open.
-func (s *Scheduler) evalSmartMealSlot(ctx context.Context, now time.Time, user types.User, rule SmartMealRule, loc *time.Location, hours []int, times []time.Time, slot, hour int) {
+func (s *Scheduler) evalSmartMealSlot(ctx context.Context, now time.Time, user types.User, rule SmartMealRule, sched learnedSchedule, slot, hour int) {
+	loc, hours, times := sched.loc, sched.hours, sched.times
 	local := now.In(loc)
 	for _, offset := range []int{0, 1} {
 		target := time.Date(local.Year(), local.Month(), local.Day()+offset, hour, 0, 0, 0, loc)
