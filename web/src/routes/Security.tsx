@@ -48,7 +48,7 @@ export function Security() {
   )
 }
 
-function ChangeEmailCard({ demo }: { demo: boolean }) {
+function ChangeEmailCard({ demo }: Readonly<{ demo: boolean }>) {
   const { t } = useTranslation()
   const { user, refresh } = useAuth()
   const change = useChangeEmail()
@@ -103,7 +103,7 @@ function ChangeEmailCard({ demo }: { demo: boolean }) {
   )
 }
 
-function PasskeysCard({ demo }: { demo: boolean }) {
+function PasskeysCard({ demo }: Readonly<{ demo: boolean }>) {
   const { t } = useTranslation()
   return (
     <Card className="mb-5 p-5">
@@ -123,7 +123,7 @@ function PasskeysCard({ demo }: { demo: boolean }) {
   )
 }
 
-function LinkedAccountsCard({ demo }: { demo: boolean }) {
+function LinkedAccountsCard({ demo }: Readonly<{ demo: boolean }>) {
   const { t } = useTranslation()
   return (
     <Card className="mb-5 p-5">
@@ -143,7 +143,59 @@ function LinkedAccountsCard({ demo }: { demo: boolean }) {
   )
 }
 
-function TwoFactorCard({ demo }: { demo: boolean }) {
+// The two-factor section body has five mutually exclusive states (demo,
+// enrolling, just-regenerated recovery codes, enabled, off). Split out of
+// TwoFactorCard so the state switch is a plain if/else chain instead of a
+// nested ternary, and so it doesn't count against TwoFactorCard's own
+// cognitive complexity.
+function TwoFactorBody({
+  demo,
+  enrolling,
+  recovery,
+  enabled,
+  onEnrolled,
+  onCancelEnroll,
+  onDoneRecovery,
+  onRegenerate,
+  regenPending,
+  onDisable,
+  disablePending,
+  onEnroll,
+}: Readonly<{
+  demo: boolean
+  enrolling: boolean
+  recovery: string[] | null
+  enabled: boolean
+  onEnrolled: () => void
+  onCancelEnroll: () => void
+  onDoneRecovery: () => void
+  onRegenerate: () => void
+  regenPending: boolean
+  onDisable: () => void
+  disablePending: boolean
+  onEnroll: () => void
+}>) {
+  const { t } = useTranslation()
+
+  if (demo) return <p className="text-sm text-muted">{t('security.twoFactorDemoNote')}</p>
+  if (enrolling) return <TotpEnroll onComplete={onEnrolled} onCancel={onCancelEnroll} />
+  if (recovery) return <RecoveryCodes codes={recovery} onDone={onDoneRecovery} />
+  if (enabled) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Button variant="ghost" onClick={onRegenerate} disabled={regenPending}>
+          {regenPending ? t('security.generating') : t('security.regenerateRecoveryCodes')}
+        </Button>
+        <Button variant="ghost" onClick={onDisable} disabled={disablePending}>
+          {disablePending ? t('security.disabling') : t('security.disableTwoFactor')}
+        </Button>
+      </div>
+    )
+  }
+  return <Button onClick={onEnroll}>{t('security.enableTwoFactor')}</Button>
+}
+
+function TwoFactorCard({ demo }: Readonly<{ demo: boolean }>) {
   const { t } = useTranslation()
   const { user, refresh } = useAuth()
   const disable = useTotpDisable()
@@ -192,30 +244,71 @@ function TwoFactorCard({ demo }: { demo: boolean }) {
         {t('security.twoFactorDesc')}
       </p>
 
-      {demo ? (
-        <p className="text-sm text-muted">{t('security.twoFactorDemoNote')}</p>
-      ) : enrolling ? (
-        <TotpEnroll onComplete={onEnrolled} onCancel={() => setEnrolling(false)} />
-      ) : recovery ? (
-        <RecoveryCodes codes={recovery} onDone={() => setRecovery(null)} />
-      ) : enabled ? (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" onClick={onRegenerate} disabled={regen.isPending}>
-            {regen.isPending ? t('security.generating') : t('security.regenerateRecoveryCodes')}
-          </Button>
-          <Button variant="ghost" onClick={onDisable} disabled={disable.isPending}>
-            {disable.isPending ? t('security.disabling') : t('security.disableTwoFactor')}
-          </Button>
-        </div>
-      ) : (
-        <Button onClick={() => setEnrolling(true)}>{t('security.enableTwoFactor')}</Button>
-      )}
+      <TwoFactorBody
+        demo={demo}
+        enrolling={enrolling}
+        recovery={recovery}
+        enabled={enabled}
+        onEnrolled={onEnrolled}
+        onCancelEnroll={() => setEnrolling(false)}
+        onDoneRecovery={() => setRecovery(null)}
+        onRegenerate={onRegenerate}
+        regenPending={regen.isPending}
+        onDisable={onDisable}
+        disablePending={disable.isPending}
+        onEnroll={() => setEnrolling(true)}
+      />
     </Card>
   )
 }
 
-function ApiKeysCard({ demo }: { demo: boolean }) {
+// Api keys and share links list the same shape of revocable token (id,
+// label, created_at, last_used_at); ApiKeysCard and ShareLinksCard share this
+// list body instead of each carrying its own loading/empty/list ternary.
+function RevocableTokenList({
+  loading,
+  items,
+  emptyLabel,
+  onRevoke,
+  revokePending,
+}: Readonly<{
+  loading: boolean
+  items: { id: string; label: string; created_at: string; last_used_at: string | null }[]
+  emptyLabel: string
+  onRevoke: (id: string) => void
+  revokePending: boolean
+}>) {
   const { t, i18n } = useTranslation()
+
+  if (loading) return <Spinner />
+  if (items.length === 0) return <p className="text-sm text-muted">{emptyLabel}</p>
+  return (
+    <ul className="flex flex-col divide-y divide-line">
+      {items.map((k) => (
+        <li key={k.id} className="flex items-center justify-between gap-3 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-ink">{k.label}</p>
+            <p className="text-xs text-muted">
+              {t('security.createdOn')} {new Date(k.created_at).toLocaleDateString(i18n.language)}
+              {k.last_used_at && ` · ${t('security.lastUsedOn')} ${new Date(k.last_used_at).toLocaleDateString(i18n.language)}`}
+            </p>
+          </div>
+          <button
+            onClick={() => onRevoke(k.id)}
+            disabled={revokePending}
+            className="grid size-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-accent disabled:opacity-50"
+            aria-label={t('security.revokeAria', { label: k.label })}
+          >
+            <TrashIcon width={18} height={18} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function ApiKeysCard({ demo }: Readonly<{ demo: boolean }>) {
+  const { t } = useTranslation()
   const keys = useApiKeys()
   const create = useCreateApiKey()
   const revoke = useRevokeApiKey()
@@ -293,39 +386,19 @@ function ApiKeysCard({ demo }: { demo: boolean }) {
         </Button>
       </form>
 
-      {keys.isLoading ? (
-        <Spinner />
-      ) : active.length === 0 ? (
-        <p className="text-sm text-muted">{t('security.noApiKeysYet')}</p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-line">
-          {active.map((k) => (
-            <li key={k.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{k.label}</p>
-                <p className="text-xs text-muted">
-                  {t('security.createdOn')} {new Date(k.created_at).toLocaleDateString(i18n.language)}
-                  {k.last_used_at && ` · ${t('security.lastUsedOn')} ${new Date(k.last_used_at).toLocaleDateString(i18n.language)}`}
-                </p>
-              </div>
-              <button
-                onClick={() => revoke.mutate(k.id)}
-                disabled={revoke.isPending}
-                className="grid size-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-accent disabled:opacity-50"
-                aria-label={t('security.revokeAria', { label: k.label })}
-              >
-                <TrashIcon width={18} height={18} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <RevocableTokenList
+        loading={keys.isLoading}
+        items={active}
+        emptyLabel={t('security.noApiKeysYet')}
+        onRevoke={(id) => revoke.mutate(id)}
+        revokePending={revoke.isPending}
+      />
     </Card>
   )
 }
 
-function ShareLinksCard({ demo }: { demo: boolean }) {
-  const { t, i18n } = useTranslation()
+function ShareLinksCard({ demo }: Readonly<{ demo: boolean }>) {
+  const { t } = useTranslation()
   const tokens = useShareTokens()
   const create = useCreateShareToken()
   const revoke = useRevokeShareToken()
@@ -400,38 +473,18 @@ function ShareLinksCard({ demo }: { demo: boolean }) {
         </Button>
       </form>
 
-      {tokens.isLoading ? (
-        <Spinner />
-      ) : active.length === 0 ? (
-        <p className="text-sm text-muted">{t('security.noShareLinksYet')}</p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-line">
-          {active.map((k) => (
-            <li key={k.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{k.label}</p>
-                <p className="text-xs text-muted">
-                  {t('security.createdOn')} {new Date(k.created_at).toLocaleDateString(i18n.language)}
-                  {k.last_used_at && ` · ${t('security.lastUsedOn')} ${new Date(k.last_used_at).toLocaleDateString(i18n.language)}`}
-                </p>
-              </div>
-              <button
-                onClick={() => revoke.mutate(k.id)}
-                disabled={revoke.isPending}
-                className="grid size-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-accent disabled:opacity-50"
-                aria-label={t('security.revokeAria', { label: k.label })}
-              >
-                <TrashIcon width={18} height={18} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <RevocableTokenList
+        loading={tokens.isLoading}
+        items={active}
+        emptyLabel={t('security.noShareLinksYet')}
+        onRevoke={(id) => revoke.mutate(id)}
+        revokePending={revoke.isPending}
+      />
     </Card>
   )
 }
 
-function ChangePasswordCard({ demo }: { demo: boolean }) {
+function ChangePasswordCard({ demo }: Readonly<{ demo: boolean }>) {
   const { t } = useTranslation()
   const change = useChangePassword()
   const [current, setCurrent] = useState('')
