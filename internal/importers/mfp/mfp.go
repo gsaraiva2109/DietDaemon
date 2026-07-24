@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// servingSizeKey is the canonical column key for a food's serving size.
+const servingSizeKey = "serving size"
+
 // mfpHeaders maps a canonical column key to the header names (matched
 // case-insensitively, with any parenthetical unit suffix like "(g)" or
 // "(mg)" ignored) that MyFitnessPal is known to use for it. Based on the
@@ -22,7 +25,7 @@ var mfpHeaders = map[string][]string{
 	"date":          {"date"},
 	"meal":          {"meal"},
 	"food":          {"food", "food name", "item"},
-	"serving size":  {"serving size", "serving"},
+	servingSizeKey:  {servingSizeKey, "serving"},
 	"calories":      {"calories", "energy"},
 	"fat":           {"fat"},
 	"carbohydrates": {"carbohydrates", "carbs"},
@@ -71,7 +74,7 @@ func ParseCSV(r io.Reader) ([]Row, error) {
 			Date:        field(rec, col, "date"),
 			Meal:        field(rec, col, "meal"),
 			Food:        field(rec, col, "food"),
-			ServingSize: field(rec, col, "serving size"),
+			ServingSize: field(rec, col, servingSizeKey),
 			Calories:    parseFloat(field(rec, col, "calories")),
 			FatG:        parseFloat(field(rec, col, "fat")),
 			CarbsG:      parseFloat(field(rec, col, "carbohydrates")),
