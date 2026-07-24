@@ -2,6 +2,7 @@ package hevy
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 )
@@ -98,5 +99,47 @@ func TestToWorkoutNilSafety(t *testing.T) {
 	}
 	if ex.WeightKg != nil {
 		t.Errorf("weight should be nil, got %v", ex.WeightKg)
+	}
+}
+
+func TestToWorkoutNegativeDuration(t *testing.T) {
+	// EndTime before StartTime (clock skew / bad export data) clamps to 0
+	// rather than going negative.
+	hw := HevyWorkout{
+		ID:        "hw-clock-skew",
+		Title:     "Odd Export",
+		StartTime: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2025, 6, 15, 11, 0, 0, 0, time.UTC),
+	}
+	w, err := ToWorkout("user-1", hw)
+	if err != nil {
+		t.Fatalf("ToWorkout: %v", err)
+	}
+	if w.DurationMin != 0 {
+		t.Errorf("DurationMin = %d, want 0", w.DurationMin)
+	}
+}
+
+func TestToWorkoutMarshalError(t *testing.T) {
+	// json.Marshal rejects NaN/Inf floats, giving a real (if rare) way to
+	// exercise ToWorkout's error path end to end.
+	nan := math.NaN()
+	hw := HevyWorkout{
+		ID:        "hw-bad-weight",
+		Title:     "Bad Data",
+		StartTime: time.Date(2025, 6, 15, 9, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2025, 6, 15, 9, 30, 0, 0, time.UTC),
+		Exercises: []HevyExercise{
+			{
+				Index: 0,
+				Title: "Bench Press",
+				Sets: []HevySet{
+					{Index: 0, Type: "normal", WeightKg: &nan, Reps: new(5)},
+				},
+			},
+		},
+	}
+	if _, err := ToWorkout("user-1", hw); err == nil {
+		t.Fatal("expected error for unmarshalable set data, got nil")
 	}
 }

@@ -14,34 +14,11 @@ import (
 func ToWorkout(userID string, hw HevyWorkout) (types.Workout, error) {
 	exercises := make([]types.WorkoutExercise, 0, len(hw.Exercises))
 	for _, he := range hw.Exercises {
-		setsCount := len(he.Sets)
-		var maxReps *int
-		var maxWeight *float64
-		for _, s := range he.Sets {
-			if s.Reps != nil {
-				if maxReps == nil || *s.Reps > *maxReps {
-					maxReps = new(*s.Reps)
-				}
-			}
-			if s.WeightKg != nil {
-				if maxWeight == nil || *s.WeightKg > *maxWeight {
-					maxWeight = new(*s.WeightKg)
-				}
-			}
-		}
-
-		rawSets, err := json.Marshal(he.Sets)
+		ex, err := toWorkoutExercise(he)
 		if err != nil {
-			return types.Workout{}, fmt.Errorf("hevy: marshal sets for exercise %q: %w", he.Title, err)
+			return types.Workout{}, err
 		}
-
-		exercises = append(exercises, types.WorkoutExercise{
-			Name:     he.Title,
-			Sets:     new(setsCount),
-			Reps:     maxReps,
-			WeightKg: maxWeight,
-			Note:     string(rawSets),
-		})
+		exercises = append(exercises, ex)
 	}
 
 	durationMin := int(hw.EndTime.Sub(hw.StartTime).Minutes())
@@ -58,4 +35,37 @@ func ToWorkout(userID string, hw HevyWorkout) (types.Workout, error) {
 		ExternalID:  new(hw.ID),
 		Exercises:   exercises,
 	}, nil
+}
+
+// toWorkoutExercise converts one Hevy exercise into a domain WorkoutExercise,
+// per the aggregation policy documented on ToWorkout.
+func toWorkoutExercise(he HevyExercise) (types.WorkoutExercise, error) {
+	setsCount := len(he.Sets)
+	maxReps, maxWeight := aggregateSets(he.Sets)
+
+	rawSets, err := json.Marshal(he.Sets)
+	if err != nil {
+		return types.WorkoutExercise{}, fmt.Errorf("hevy: marshal sets for exercise %q: %w", he.Title, err)
+	}
+
+	return types.WorkoutExercise{
+		Name:     he.Title,
+		Sets:     new(setsCount),
+		Reps:     maxReps,
+		WeightKg: maxWeight,
+		Note:     string(rawSets),
+	}, nil
+}
+
+// aggregateSets computes the nil-safe max reps and max weight_kg across sets.
+func aggregateSets(sets []HevySet) (maxReps *int, maxWeight *float64) {
+	for _, s := range sets {
+		if s.Reps != nil && (maxReps == nil || *s.Reps > *maxReps) {
+			maxReps = new(*s.Reps)
+		}
+		if s.WeightKg != nil && (maxWeight == nil || *s.WeightKg > *maxWeight) {
+			maxWeight = new(*s.WeightKg)
+		}
+	}
+	return maxReps, maxWeight
 }
