@@ -84,6 +84,24 @@ func TestParseCSV_HeaderVariants(t *testing.T) {
 	}
 }
 
+func TestParseCSV_DuplicateColumnAlias(t *testing.T) {
+	// Two columns both alias the same canonical key ("serving size" and
+	// "serving" both map to servingSizeKey) — the first matching column
+	// must win, and the second must not overwrite it.
+	const dupCSV = "Date,Meal,Food,Serving Size,Serving,Calories\n" +
+		"2024-03-01,Lunch,Soup,1 bowl,1 cup,200\n"
+	rows, err := ParseCSV(strings.NewReader(dupCSV))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	if rows[0].ServingSize != "1 bowl" {
+		t.Errorf("ServingSize = %q, want %q (first matching column)", rows[0].ServingSize, "1 bowl")
+	}
+}
+
 func TestToItem(t *testing.T) {
 	row := Row{
 		Date: "2024-01-15", Meal: "Breakfast", Food: "Oatmeal", ServingSize: "1 cup",

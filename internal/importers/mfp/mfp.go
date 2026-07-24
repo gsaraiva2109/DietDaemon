@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// servingSizeKey is the canonical column key for a food's serving size.
+const servingSizeKey = "serving size"
+
 // mfpHeaders maps a canonical column key to the header names (matched
 // case-insensitively, with any parenthetical unit suffix like "(g)" or
 // "(mg)" ignored) that MyFitnessPal is known to use for it. Based on the
@@ -22,7 +25,7 @@ var mfpHeaders = map[string][]string{
 	"date":          {"date"},
 	"meal":          {"meal"},
 	"food":          {"food", "food name", "item"},
-	"serving size":  {"serving size", "serving"},
+	servingSizeKey:  {servingSizeKey, "serving"},
 	"calories":      {"calories", "energy"},
 	"fat":           {"fat"},
 	"carbohydrates": {"carbohydrates", "carbs"},
@@ -71,7 +74,7 @@ func ParseCSV(r io.Reader) ([]Row, error) {
 			Date:        field(rec, col, "date"),
 			Meal:        field(rec, col, "meal"),
 			Food:        field(rec, col, "food"),
-			ServingSize: field(rec, col, "serving size"),
+			ServingSize: field(rec, col, servingSizeKey),
 			Calories:    parseFloat(field(rec, col, "calories")),
 			FatG:        parseFloat(field(rec, col, "fat")),
 			CarbsG:      parseFloat(field(rec, col, "carbohydrates")),
@@ -87,26 +90,41 @@ func ParseCSV(r io.Reader) ([]Row, error) {
 func indexHeaders(header []string) (map[string]int, error) {
 	col := make(map[string]int, len(mfpHeaders))
 	for i, h := range header {
-		norm := normalizeHeader(h)
-		for key, aliases := range mfpHeaders {
-			if _, found := col[key]; found {
-				continue
-			}
-			for _, alias := range aliases {
-				if norm == alias {
-					col[key] = i
-					break
-				}
+		key, ok := matchColumnKey(normalizeHeader(h))
+		if !ok {
+			continue
+		}
+		if _, found := col[key]; found {
+			continue // first matching column wins
+		}
+		col[key] = i
+	}
+	return col, requireColumns(col)
+}
+
+// matchColumnKey returns the canonical column key whose aliases contain the
+// (already normalized) header name norm, if any. mfpHeaders' alias lists are
+// disjoint, so at most one key can match.
+func matchColumnKey(norm string) (key string, ok bool) {
+	for key, aliases := range mfpHeaders {
+		for _, alias := range aliases {
+			if norm == alias {
+				return key, true
 			}
 		}
 	}
+	return "", false
+}
 
+// requireColumns returns an error naming the first required column (date,
+// meal, food) missing from col.
+func requireColumns(col map[string]int) error {
 	for _, required := range []string{"date", "meal", "food"} {
 		if _, ok := col[required]; !ok {
-			return nil, fmt.Errorf("mfp: csv header missing required column %q", required)
+			return fmt.Errorf("mfp: csv header missing required column %q", required)
 		}
 	}
-	return col, nil
+	return nil
 }
 
 // normalizeHeader lowercases a header and strips a trailing parenthetical
