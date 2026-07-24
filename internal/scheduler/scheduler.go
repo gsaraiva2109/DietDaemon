@@ -315,72 +315,10 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	local := now.In(s.locFor(user))
 	date := local.Format(dateLayout)
 
-	// Fetch this user's rule overrides once per tick (not once per rule) to
-	// avoid N queries. Missing store or no rows: overrides stays nil, and
-	// resolveRule treats every rule as un-overridden — fully backward
-	// compatible with hardcoded defaults.
-	var overrides map[string]types.NudgeRuleConfig
-	if s.ruleConfig != nil {
-		cfgs, err := s.ruleConfig.GetNudgeRuleConfig(ctx, user.ID)
-		if err != nil {
-			s.log.Error("scheduler: get rule config", "user", user.ID, "err", err)
-		} else {
-			overrides = make(map[string]types.NudgeRuleConfig, len(cfgs))
-			for _, c := range cfgs {
-				overrides[c.RuleID] = c
-			}
-		}
-	}
+	overrides := s.resolveOverrides(ctx, user)
 
 	// Macro rules (require targets).
-	targets, err := s.store.GetTargets(ctx, user.ID)
-	if err == nil {
-		rollup, err := s.store.GetRollup(ctx, user.ID, date)
-		if err != nil {
-			rollup = types.DailyRollup{} // no meals logged yet today
-		}
-
-		for _, base := range s.rules {
-			r, enabled := resolveRule(base, base.ID, overrides)
-			if !enabled {
-				continue
-			}
-			if local.Hour() < r.AfterHour {
-				continue
-			}
-			target := macroValue(targets.Targets, r.Macro)
-			if target <= 0 {
-				continue // no target for this macro
-			}
-			consumed := macroValue(rollup.Consumed, r.Macro)
-			if consumed/target >= r.MinFraction {
-				continue // on track
-			}
-
-			done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
-			if err != nil {
-				s.log.Error("scheduler: was-nudged", "rule", r.ID, "err", err)
-				continue
-			}
-			if done {
-				continue
-			}
-
-			n := types.Notification{
-				UserID:   user.ID,
-				Title:    "DietDaemon",
-				Body:     fmt.Sprintf(r.Message, consumed, target),
-				Priority: types.PriorityHigh,
-			}
-			if err := s.deliver(ctx, user, r.ID, n, &rollup.Consumed, r.QuickActions); err != nil {
-				s.log.Error("scheduler: notify", "rule", r.ID, "err", err)
-				continue // not marked: retry next tick
-			}
-			if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
-				s.log.Error("scheduler: mark-nudged", "rule", r.ID, "err", err)
-			}
-		}
-	}
+	s.evalMacroRules(ctx, local, date, user, overrides)
 
 	// Health rules (independent of macro targets).
 	if s.healthStore != nil {
@@ -398,6 +336,86 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	}
 	if s.mealHistory != nil {
 		s.evalSmartMealRules(ctx, now, user, overrides)
+	}
+}
+
+// resolveOverrides fetches this user's rule overrides once per tick (not
+// once per rule) to avoid N queries. Missing store, a fetch error, or no rows
+// all return nil, and resolveRule treats every rule as un-overridden — fully
+// backward compatible with hardcoded defaults.
+func (s *Scheduler) resolveOverrides(ctx context.Context, user types.User) map[string]types.NudgeRuleConfig {
+	if s.ruleConfig == nil {
+		return nil
+	}
+	cfgs, err := s.ruleConfig.GetNudgeRuleConfig(ctx, user.ID)
+	if err != nil {
+		s.log.Error("scheduler: get rule config", "user", user.ID, "err", err)
+		return nil
+	}
+	overrides := make(map[string]types.NudgeRuleConfig, len(cfgs))
+	for _, c := range cfgs {
+		overrides[c.RuleID] = c
+	}
+	return overrides
+}
+
+// evalMacroRules evaluates every macro rule for one user at the given local
+// instant. Users without daily targets set are skipped entirely (macro rules
+// need a target to compute progress against).
+func (s *Scheduler) evalMacroRules(ctx context.Context, local time.Time, date string, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	targets, err := s.store.GetTargets(ctx, user.ID)
+	if err != nil {
+		return
+	}
+	rollup, err := s.store.GetRollup(ctx, user.ID, date)
+	if err != nil {
+		rollup = types.DailyRollup{} // no meals logged yet today
+	}
+	for _, base := range s.rules {
+		s.evalMacroRule(ctx, local, date, user, base, overrides, targets, &rollup)
+	}
+}
+
+// evalMacroRule evaluates a single macro rule for one user, sending and
+// dedupe-marking a nudge when the user is behind on that macro.
+func (s *Scheduler) evalMacroRule(ctx context.Context, local time.Time, date string, user types.User, base Rule, overrides map[string]types.NudgeRuleConfig, targets types.DailyTargets, rollup *types.DailyRollup) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	if local.Hour() < r.AfterHour {
+		return
+	}
+	target := macroValue(targets.Targets, r.Macro)
+	if target <= 0 {
+		return // no target for this macro
+	}
+	consumed := macroValue(rollup.Consumed, r.Macro)
+	if consumed/target >= r.MinFraction {
+		return // on track
+	}
+
+	done, err := s.nudges.WasNudged(ctx, user.ID, date, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
+
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     fmt.Sprintf(r.Message, consumed, target),
+		Priority: types.PriorityHigh,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, &rollup.Consumed, r.QuickActions); err != nil {
+		s.log.Error("scheduler: notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, date, r.ID); err != nil {
+		s.log.Error("scheduler: mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 

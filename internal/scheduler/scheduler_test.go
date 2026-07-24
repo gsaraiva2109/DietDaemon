@@ -32,14 +32,24 @@ func (f *fakeStore) GetRollup(_ context.Context, userID, date string) (types.Dai
 	return types.DailyRollup{}, types.ErrNotFound
 }
 
-type fakeNudges struct{ marked map[string]bool }
+type fakeNudges struct {
+	marked        map[string]bool
+	wasNudgedErr  error
+	markNudgedErr error
+}
 
 func newFakeNudges() *fakeNudges { return &fakeNudges{marked: map[string]bool{}} }
 func key(u, d, r string) string  { return u + "|" + d + "|" + r }
 func (f *fakeNudges) WasNudged(_ context.Context, u, d, r string) (bool, error) {
+	if f.wasNudgedErr != nil {
+		return false, f.wasNudgedErr
+	}
 	return f.marked[key(u, d, r)], nil
 }
 func (f *fakeNudges) MarkNudged(_ context.Context, u, d, r string) error {
+	if f.markNudgedErr != nil {
+		return f.markNudgedErr
+	}
 	f.marked[key(u, d, r)] = true
 	return nil
 }
@@ -211,6 +221,89 @@ func TestNoFireWithoutTargets(t *testing.T) {
 	s.tick(context.Background(), time.Date(2026, 6, 17, 22, 0, 0, 0, time.UTC))
 	if len(nt.sent) != 0 {
 		t.Errorf("no targets should not nudge, sent %d", len(nt.sent))
+	}
+}
+
+// CHARACTERIZATION tests for evalUser's error/edge branches: pin down
+// current behavior before decomposing the function (go:S3776).
+
+func TestNoFireWhenMacroHasZeroTarget(t *testing.T) {
+	// Targets exist for the user, but not for this rule's macro (Protein=0)
+	// — distinct from GetTargets returning ErrNotFound entirely.
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1"}},
+		targets: map[string]types.Macros{"u1": {Calories: 2000}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {}},
+	}
+	nt := &fakeNotifier{}
+	s := newSched(st, newFakeNudges(), nt)
+	s.tick(context.Background(), time.Date(2026, 6, 17, 22, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("zero macro target should not nudge, sent %d", len(nt.sent))
+	}
+}
+
+func TestRuleConfigFetchErrorFallsBackToDefaults(t *testing.T) {
+	// GetNudgeRuleConfig failing must not block macro evaluation: overrides
+	// stays nil and every rule runs with its hardcoded defaults.
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	rcs := &fakeRuleConfigStore{err: errors.New("boom")}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithRuleConfig(rcs))
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 1 {
+		t.Fatalf("rule config error should fall back to default rule, sent %d, want 1", len(nt.sent))
+	}
+}
+
+func TestMacroRuleSkipsOnWasNudgedError(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nd := newFakeNudges()
+	nd.wasNudgedErr = errors.New("boom")
+	nt := &fakeNotifier{}
+	s := newSched(st, nd, nt)
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("was-nudged error should skip the rule, sent %d", len(nt.sent))
+	}
+}
+
+func TestMacroRuleNotMarkedWhenDeliverFails(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nd := newFakeNudges()
+	nt := &fakeNotifier{err: errors.New("delivery down")}
+	s := newSched(st, nd, nt)
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if nd.marked[key("u1", "2026-06-17", "protein-evening")] {
+		t.Error("failed delivery must not mark the nudge, so it retries next tick")
+	}
+}
+
+func TestMacroRuleFiresEvenWhenMarkNudgedFails(t *testing.T) {
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nd := newFakeNudges()
+	nd.markNudgedErr = errors.New("write failed")
+	nt := &fakeNotifier{}
+	s := newSched(st, nd, nt)
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 1 {
+		t.Fatalf("delivery must still happen even if marking fails, sent %d, want 1", len(nt.sent))
 	}
 }
 
@@ -506,9 +599,13 @@ func TestHealthRuleDedupe(t *testing.T) {
 
 type fakeRuleConfigStore struct {
 	configs map[string][]types.NudgeRuleConfig // userID -> overrides
+	err     error
 }
 
 func (f *fakeRuleConfigStore) GetNudgeRuleConfig(_ context.Context, userID string) ([]types.NudgeRuleConfig, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.configs[userID], nil
 }
 
