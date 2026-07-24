@@ -117,37 +117,46 @@ func (s *Store) runMigrations() error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-
-		var already int
-		if err := s.db.Get(&already, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), entry.Name()); err != nil {
-			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-		}
-		if already > 0 {
-			continue
-		}
-
-		content, err := migrations.FS(s.driver).ReadFile(s.driver + "/" + entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := s.db.Exec(s.rewrite(string(content))); err != nil {
-			// Idempotency: databases that predate migration tracking may
-			// already have tables/columns/indexes from manual or older
-			// migration paths. Treat "already exists" errors as success
-			// so the migration is tracked and skipped on next start.
-			if isBenignMigrationErr(err) {
-				if _, recErr := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); recErr != nil {
-					return fmt.Errorf("record migration %s after benign error: %w", entry.Name(), recErr)
-				}
-				continue
-			}
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		if _, err := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), entry.Name()); err != nil {
-			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
+		if err := s.applyMigrationFile(entry.Name()); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// applyMigrationFile applies a single migration file if it hasn't already
+// been recorded as applied. Extracted from runMigrations to keep the loop
+// body flat.
+func (s *Store) applyMigrationFile(name string) error {
+	var already int
+	if err := s.db.Get(&already, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), name); err != nil {
+		return fmt.Errorf("check migration %s: %w", name, err)
+	}
+	if already > 0 {
+		return nil
+	}
+
+	content, err := migrations.FS(s.driver).ReadFile(s.driver + "/" + name)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", name, err)
+	}
+
+	recordErrNote := ""
+	if _, err := s.db.Exec(s.rewrite(string(content))); err != nil {
+		// Idempotency: databases that predate migration tracking may
+		// already have tables/columns/indexes from manual or older
+		// migration paths. Treat "already exists" errors as success
+		// so the migration is tracked and skipped on next start.
+		if !isBenignMigrationErr(err) {
+			return fmt.Errorf("exec %s: %w", name, err)
+		}
+		recordErrNote = " after benign error"
+	}
+
+	if _, err := s.db.Exec(s.rewrite(`INSERT INTO schema_migrations (name) VALUES (?)`), name); err != nil {
+		return fmt.Errorf("record migration %s%s: %w", name, recordErrNote, err)
+	}
 	return nil
 }
 
