@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,12 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
+
+// setJSONContentType sets the JSON response header shared by every fake OFF
+// server in this file.
+func setJSONContentType(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+}
 
 func TestResolve(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +37,7 @@ func TestResolve(t *testing.T) {
 			t.Error("json param missing")
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		setJSONContentType(w)
 		_, _ = w.Write([]byte(`{
 			"count": 1,
 			"page": 1,
@@ -87,7 +94,7 @@ func TestResolve(t *testing.T) {
 
 func TestResolveNoResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		setJSONContentType(w)
 		_, _ = w.Write([]byte(`{"count":0,"products":[]}`))
 	}))
 	defer srv.Close()
@@ -103,7 +110,7 @@ func TestResolveNoResults(t *testing.T) {
 
 func TestResolveProductWithoutEnergy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		setJSONContentType(w)
 		_, _ = w.Write([]byte(`{
 			"count": 1,
 			"products": [
@@ -163,6 +170,9 @@ func TestHTTPError(t *testing.T) {
 	}
 }
 
+// productAName is the fixture name reused across bulk-test cases.
+const productAName = "Product A"
+
 // bulkPage is one fake page of OFF v2-search-shaped JSON for bulk tests.
 type bulkPage struct {
 	Code   string
@@ -203,22 +213,50 @@ func bulkPageJSON(products []bulkPage) string {
 	return fmt.Sprintf(`{"count": %d, "products": [%s]}`, len(products), items.String())
 }
 
-func TestFetchBulkAPI(t *testing.T) {
-	pages := [][]bulkPage{
-		{{Code: "A", Name: "Product A", ScansN: 100}, {Code: "B", Name: "Product B", ScansN: 5}},
-		{{Code: "C", Name: "Product C", ScansN: 50}, {Code: "D", Name: "Product D", ScansN: 1}},
-		{{Code: "E", Name: "Product E", ScansN: 200}, {Code: "F", Name: "Product F", ScansN: 0}},
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// newBulkPagesServer serves OFF v2-search-shaped JSON pages from pages,
+// returning an empty page once the requested page is out of range.
+func newBulkPagesServer(pages [][]bulkPage) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		w.Header().Set("Content-Type", "application/json")
+		setJSONContentType(w)
 		if page < 1 || page > len(pages) {
 			_, _ = w.Write([]byte(`{"count":0,"products":[]}`))
 			return
 		}
 		_, _ = w.Write([]byte(bulkPageJSON(pages[page-1])))
 	}))
+}
+
+// assertFirstBulkProductMapped checks the fields toFoodMatch is expected to
+// fill in for fixture product "A" shared by this file's bulk tests.
+func assertFirstBulkProductMapped(t *testing.T, fm types.FoodMatch) {
+	t.Helper()
+	if fm.FoodID != "A" || fm.Brand != "TestBrand" || fm.Category != "Test Category" {
+		t.Errorf("first product mapped wrong: %+v", fm)
+	}
+	if fm.ServingSize != 500 || fm.ServingUnit != "g" {
+		t.Errorf("serving = %v %v, want 500 g", fm.ServingSize, fm.ServingUnit)
+	}
+}
+
+// assertOnlyFoodIDs fails the test if got contains any FoodID not in want.
+func assertOnlyFoodIDs(t *testing.T, got []types.FoodMatch, want ...string) {
+	t.Helper()
+	for _, fm := range got {
+		if !slices.Contains(want, fm.FoodID) {
+			t.Errorf("unexpected product emitted: %q, want one of %v", fm.FoodID, want)
+		}
+	}
+}
+
+func TestFetchBulkAPI(t *testing.T) {
+	pages := [][]bulkPage{
+		{{Code: "A", Name: productAName, ScansN: 100}, {Code: "B", Name: "Product B", ScansN: 5}},
+		{{Code: "C", Name: "Product C", ScansN: 50}, {Code: "D", Name: "Product D", ScansN: 1}},
+		{{Code: "E", Name: "Product E", ScansN: 200}, {Code: "F", Name: "Product F", ScansN: 0}},
+	}
+
+	srv := newBulkPagesServer(pages)
 	defer srv.Close()
 
 	t.Run("no filter emits all", func(t *testing.T) {
@@ -230,18 +268,8 @@ func TestFetchBulkAPI(t *testing.T) {
 			got = append(got, fm)
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
-		}
-		if len(got) != 6 {
-			t.Fatalf("emitted %d products, want 6", len(got))
-		}
-		if got[0].FoodID != "A" || got[0].Brand != "TestBrand" || got[0].Category != "Test Category" {
-			t.Errorf("first product mapped wrong: %+v", got[0])
-		}
-		if got[0].ServingSize != 500 || got[0].ServingUnit != "g" {
-			t.Errorf("serving = %v %v, want 500 g", got[0].ServingSize, got[0].ServingUnit)
-		}
+		requireFetchBulkCount(t, err, got, 6)
+		assertFirstBulkProductMapped(t, got[0])
 	})
 
 	t.Run("MaxRows caps emitted count and stops early", func(t *testing.T) {
@@ -253,12 +281,7 @@ func TestFetchBulkAPI(t *testing.T) {
 			got = append(got, fm)
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
-		}
-		if len(got) != 3 {
-			t.Fatalf("emitted %d products, want 3", len(got))
-		}
+		requireFetchBulkCount(t, err, got, 3)
 	})
 
 	t.Run("MinPopularity filters low-scan products", func(t *testing.T) {
@@ -270,17 +293,8 @@ func TestFetchBulkAPI(t *testing.T) {
 			got = append(got, fm)
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
-		}
-		if len(got) != 3 {
-			t.Fatalf("emitted %d products, want 3 (A, C, E)", len(got))
-		}
-		for _, fm := range got {
-			if fm.FoodID != "A" && fm.FoodID != "C" && fm.FoodID != "E" {
-				t.Errorf("unexpected low-popularity product emitted: %q", fm.FoodID)
-			}
-		}
+		requireFetchBulkCount(t, err, got, 3)
+		assertOnlyFoodIDs(t, got, "A", "C", "E")
 	})
 
 	t.Run("emit error aborts early", func(t *testing.T) {
@@ -313,7 +327,7 @@ func TestFetchBulkAPIRetriesTransientStatus(t *testing.T) {
 	var page1Attempts int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		w.Header().Set("Content-Type", "application/json")
+		setJSONContentType(w)
 		switch page {
 		case 1:
 			page1Attempts++
@@ -321,7 +335,7 @@ func TestFetchBulkAPIRetriesTransientStatus(t *testing.T) {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			_, _ = w.Write([]byte(bulkPageJSON([]bulkPage{{Code: "A", Name: "Product A", ScansN: 10}})))
+			_, _ = w.Write([]byte(bulkPageJSON([]bulkPage{{Code: "A", Name: productAName, ScansN: 10}})))
 		default:
 			_, _ = w.Write([]byte(`{"count":0,"products":[]}`))
 		}
@@ -375,7 +389,7 @@ func TestFetchBulkAPINonTransientStatusFailsImmediately(t *testing.T) {
 
 func TestFetchBulkFile(t *testing.T) {
 	lines := []string{
-		bulkProductJSON(bulkPage{Code: "A", Name: "Product A", ScansN: 100}),
+		bulkProductJSON(bulkPage{Code: "A", Name: productAName, ScansN: 100}),
 		bulkProductJSON(bulkPage{Code: "B", Name: "Product B", ScansN: 5}),
 		bulkProductJSON(bulkPage{Code: "C", Name: "Product C", ScansN: 50}),
 	}
