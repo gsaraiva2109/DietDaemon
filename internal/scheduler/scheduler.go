@@ -761,47 +761,53 @@ func (s *Scheduler) deliverHealthNudge(ctx context.Context, user types.User, dat
 // no format collision with daily "YYYY-MM-DD" keys.
 func (s *Scheduler) evalDigestRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
 	local := now.In(s.locFor(user))
-
 	for _, base := range s.digestRules {
-		r, enabled := resolveRule(base, base.ID, overrides)
-		if !enabled {
-			continue
-		}
-		if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
-			continue
-		}
+		s.evalDigestRule(ctx, user, local, base, overrides)
+	}
+}
 
-		year, week := local.ISOWeek()
-		weekKey := fmt.Sprintf("%d-W%02d", year, week)
+// evalDigestRule evaluates a single weekly digest rule for one user: override
+// resolution, weekday/hour gate, ISO-week dedupe, and building/delivering the
+// digest body.
+func (s *Scheduler) evalDigestRule(ctx context.Context, user types.User, local time.Time, base DigestRule, overrides map[string]types.NudgeRuleConfig) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
+		return
+	}
 
-		done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
-		if err != nil {
-			s.log.Error("scheduler: digest was-nudged", "rule", r.ID, "err", err)
-			continue
-		}
-		if done {
-			continue
-		}
+	year, week := local.ISOWeek()
+	weekKey := fmt.Sprintf("%d-W%02d", year, week)
 
-		body, err := s.buildDigestBody(ctx, user, local)
-		if err != nil {
-			s.log.Error("scheduler: build digest", "rule", r.ID, "err", err)
-			continue
-		}
+	done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: digest was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
 
-		n := types.Notification{
-			UserID:   user.ID,
-			Title:    "DietDaemon Weekly Digest",
-			Body:     body,
-			Priority: types.PriorityDefault,
-		}
-		if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
-			s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
-			continue // not marked: retry next tick
-		}
-		if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
-			s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
-		}
+	body, err := s.buildDigestBody(ctx, user, local)
+	if err != nil {
+		s.log.Error("scheduler: build digest", "rule", r.ID, "err", err)
+		return
+	}
+
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon Weekly Digest",
+		Body:     body,
+		Priority: types.PriorityDefault,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+		s.log.Error("scheduler: digest notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
+		s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 

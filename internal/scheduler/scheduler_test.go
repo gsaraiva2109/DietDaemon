@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -675,12 +676,16 @@ func TestRuleConfigMissingOverrideRunsDefault(t *testing.T) {
 
 type fakeDigestStore struct {
 	rollups     []types.DailyRollup
+	rollupsErr  error
 	weights     []types.WeightEntry
 	waterTotals []types.WaterDayTotal
 	workouts    []types.Workout
 }
 
 func (f *fakeDigestStore) GetRollups(_ context.Context, _, _, _ string) ([]types.DailyRollup, error) {
+	if f.rollupsErr != nil {
+		return nil, f.rollupsErr
+	}
 	return f.rollups, nil
 }
 func (f *fakeDigestStore) ListWeight(_ context.Context, _ string, _ int) ([]types.WeightEntry, error) {
@@ -750,6 +755,65 @@ func TestWeeklyDigestDisabledOverrideSkips(t *testing.T) {
 	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
 	if len(nt.sent) != 0 {
 		t.Errorf("disabled digest override should skip it, sent %d", len(nt.sent))
+	}
+}
+
+// CHARACTERIZATION tests for evalDigestRules' error branches: pin down
+// current behavior before decomposing the function (go:S3776).
+
+func TestWeeklyDigestSkipsOnWasNudgedError(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{rollups: []types.DailyRollup{{Consumed: types.Macros{Calories: 2000}, Targets: types.Macros{Calories: 2200}}}}
+	nd := newFakeNudges()
+	nd.wasNudgedErr = errors.New("boom")
+	nt := &fakeNotifier{}
+	s := New(st, nd, nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("was-nudged error should skip the digest rule, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyDigestSkipsWhenBuildFails(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{rollupsErr: errors.New("db unavailable")}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("a buildDigestBody error should skip delivery, sent %d", len(nt.sent))
+	}
+}
+
+func TestWeeklyDigestNotMarkedWhenDeliverFails(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{rollups: []types.DailyRollup{{Consumed: types.Macros{Calories: 2000}, Targets: types.Macros{Calories: 2200}}}}
+	nd := newFakeNudges()
+	nt := &fakeNotifier{err: errors.New("delivery down")}
+	s := New(st, nd, nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	sunday9am := time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), sunday9am)
+	year, week := sunday9am.ISOWeek()
+	weekKey := fmt.Sprintf("%d-W%02d", year, week)
+	if nd.marked[key("u1", weekKey, "weekly-digest")] {
+		t.Error("failed delivery must not mark the digest nudge, so it retries next tick")
+	}
+}
+
+func TestWeeklyDigestFiresEvenWhenMarkNudgedFails(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	ds := &fakeDigestStore{rollups: []types.DailyRollup{{Consumed: types.Macros{Calories: 2000}, Targets: types.Macros{Calories: 2200}}}}
+	nd := newFakeNudges()
+	nd.markNudgedErr = errors.New("write failed")
+	nt := &fakeNotifier{}
+	s := New(st, nd, nt, nil, time.UTC, time.Minute, WithDigestRules(ds, DefaultDigestRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 1 {
+		t.Fatalf("delivery must still happen even if marking fails, sent %d, want 1", len(nt.sent))
 	}
 }
 
