@@ -31,6 +31,66 @@ func tempDB(t *testing.T) (*Store, func()) {
 	}
 }
 
+// TestRunMigrationsIdempotentReopen pins runMigrations' behavior across two
+// branches not otherwise exercised by tests that only ever open a fresh
+// temp DB once: (a) skipping migrations whose schema_migrations row already
+// exists, and (b) treating a migration as benign when its schema change is
+// already present (e.g. a database that predates migration tracking) but its
+// tracking row is missing, re-recording it instead of erroring.
+func TestRunMigrationsIdempotentReopen(t *testing.T) {
+	f, err := os.CreateTemp("", "dietdaemon-test-*.db")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	path := f.Name()
+	_ = f.Close()
+	_ = os.Remove(path) // New will create it
+	defer os.Remove(path)
+
+	s1, err := New("sqlite", path, SQLiteDialect(), nil)
+	if err != nil {
+		t.Fatalf("New (first open): %v", err)
+	}
+
+	var applied int
+	if err := s1.db.Get(&applied, s1.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "010_water_goal.sql"); err != nil {
+		t.Fatalf("query migration: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("migration count = %d, want 1", applied)
+	}
+
+	// Simulate a pre-migration-tracking database: the schema change
+	// (water_goal_ml column) already exists but its tracking row is gone.
+	if _, err := s1.db.Exec(`DELETE FROM schema_migrations WHERE name = ?`, "010_water_goal.sql"); err != nil {
+		t.Fatalf("delete tracking row: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s2, err := New("sqlite", path, SQLiteDialect(), nil)
+	if err != nil {
+		t.Fatalf("New (second open): %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	if err := s2.db.Get(&applied, s2.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "010_water_goal.sql"); err != nil {
+		t.Fatalf("query migration after reopen: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("migration count after reopen = %d, want 1 (benign-error re-record failed)", applied)
+	}
+
+	var otherApplied int
+	if err := s2.db.Get(&otherApplied, s2.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "001_init.sql"); err != nil {
+		t.Fatalf("query other migration: %v", err)
+	}
+	if otherApplied != 1 {
+		t.Fatalf("other migration count = %d, want 1 (already-applied skip failed to prevent re-apply)", otherApplied)
+	}
+}
+
 func TestFoodServingUnitsOwnership(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
