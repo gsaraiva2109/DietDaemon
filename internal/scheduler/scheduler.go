@@ -546,49 +546,76 @@ func resolveRule[T any](base T, ruleID string, overrides map[string]types.NudgeR
 // When snapshot is non-nil and a SentNudgeStore is configured, a sent_nudges
 // row is recorded and an Undo button is attached to the chat reply.
 func (s *Scheduler) deliver(ctx context.Context, user types.User, ruleID string, n types.Notification, snapshot *types.Macros, quickActions []types.InlineButton) error {
-	var nudgeID string
-	if snapshot != nil && s.sentNudges != nil {
-		var b [16]byte
-		_, _ = rand.Read(b[:])
-		nudgeID = hex.EncodeToString(b[:])
-		sn := types.SentNudge{
-			ID:       nudgeID,
-			UserID:   user.ID,
-			RuleID:   ruleID,
-			SentAt:   time.Now(),
-			Body:     n.Body,
-			Snapshot: *snapshot,
-			Status:   "sent",
-		}
-		if err := s.sentNudges.RecordSentNudge(ctx, sn); err != nil {
-			s.log.Error("scheduler: record sent nudge", "rule", ruleID, "err", err)
-		}
-	}
+	nudgeID := s.recordSentNudge(ctx, user, ruleID, n, snapshot)
 
-	if s.chatSender != nil && s.chatRoutes != nil && (snapshot != nil || len(quickActions) > 0) {
-		if _, meta, err := s.chatRoutes.GetChatRoute(ctx, user.ID); err == nil {
-			reply := types.Reply{UserID: user.ID, Text: n.Body, ChannelMeta: meta}
-			var row []types.InlineButton
-			if nudgeID != "" {
-				row = append(row, types.InlineButton{Text: "Not anymore, undo", CallbackData: "/nudge undo " + nudgeID})
-			}
-			row = append(row, quickActions...)
-			if len(row) > 0 {
-				reply.Markup = &types.ReplyMarkup{
-					InlineKeyboard: [][]types.InlineButton{row},
-				}
-			}
-			sendErr := s.chatSender.Send(ctx, reply)
-			if sendErr == nil {
-				return nil
-			}
-			s.log.Warn("scheduler: chat send failed, falling back to notifier", "rule", ruleID, "err", sendErr)
-		}
+	if s.tryChatDelivery(ctx, user, ruleID, n, nudgeID, snapshot, quickActions) {
+		return nil
 	}
 	if s.notifier == nil {
 		return fmt.Errorf("scheduler: no delivery channel configured for user %s", user.ID)
 	}
 	return s.notifier.Notify(ctx, n)
+}
+
+// recordSentNudge writes a sent_nudges row (when a SentNudgeStore is
+// configured and a snapshot was supplied, so the delivery is undoable) and
+// returns the generated nudge ID, or "" when nothing was recorded. A write
+// failure is logged but never blocks delivery itself.
+func (s *Scheduler) recordSentNudge(ctx context.Context, user types.User, ruleID string, n types.Notification, snapshot *types.Macros) string {
+	if snapshot == nil || s.sentNudges == nil {
+		return ""
+	}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	nudgeID := hex.EncodeToString(b[:])
+	sn := types.SentNudge{
+		ID:       nudgeID,
+		UserID:   user.ID,
+		RuleID:   ruleID,
+		SentAt:   time.Now(),
+		Body:     n.Body,
+		Snapshot: *snapshot,
+		Status:   "sent",
+	}
+	if err := s.sentNudges.RecordSentNudge(ctx, sn); err != nil {
+		s.log.Error("scheduler: record sent nudge", "rule", ruleID, "err", err)
+	}
+	return nudgeID
+}
+
+// tryChatDelivery attempts to deliver n as an interactive chat message when a
+// chat route is known for the user. Reports whether the send succeeded; the
+// caller falls back to the plain-text Notifier on false.
+func (s *Scheduler) tryChatDelivery(ctx context.Context, user types.User, ruleID string, n types.Notification, nudgeID string, snapshot *types.Macros, quickActions []types.InlineButton) bool {
+	if s.chatSender == nil || s.chatRoutes == nil || (snapshot == nil && len(quickActions) == 0) {
+		return false
+	}
+	_, meta, err := s.chatRoutes.GetChatRoute(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	reply := types.Reply{UserID: user.ID, Text: n.Body, ChannelMeta: meta}
+	row := nudgeButtons(nudgeID, quickActions)
+	if len(row) > 0 {
+		reply.Markup = &types.ReplyMarkup{InlineKeyboard: [][]types.InlineButton{row}}
+	}
+	if err := s.chatSender.Send(ctx, reply); err != nil {
+		s.log.Warn("scheduler: chat send failed, falling back to notifier", "rule", ruleID, "err", err)
+		return false
+	}
+	return true
+}
+
+// nudgeButtons assembles a chat reply's inline keyboard row: an Undo button
+// (when a sent-nudge was recorded) followed by any rule-specific quick
+// actions.
+func nudgeButtons(nudgeID string, quickActions []types.InlineButton) []types.InlineButton {
+	var row []types.InlineButton
+	if nudgeID != "" {
+		row = append(row, types.InlineButton{Text: "Not anymore, undo", CallbackData: "/nudge undo " + nudgeID})
+	}
+	row = append(row, quickActions...)
+	return row
 }
 
 // evalHealthRules evaluates every health rule for one user at the given

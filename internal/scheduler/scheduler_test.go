@@ -865,6 +865,47 @@ func TestDeliverFallsBackToNotifierOnChatSendError(t *testing.T) {
 	}
 }
 
+// CHARACTERIZATION tests for deliver's remaining error branches before
+// decomposing it (go:S3776).
+
+func TestDeliverRecordSentNudgeErrorStillDelivers(t *testing.T) {
+	// A SentNudgeStore write failure must be logged but must not block
+	// delivery itself.
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nt := &fakeNotifier{}
+	sns := &fakeSentNudgeStore{err: errors.New("disk full")}
+	s := New(st, newFakeNudges(), nt, proteinRule(), time.UTC, time.Minute, WithSentNudges(sns))
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+
+	if len(nt.sent) != 1 {
+		t.Fatalf("delivery must still happen when RecordSentNudge fails, sent %d, want 1", len(nt.sent))
+	}
+}
+
+func TestDeliverReturnsErrorWithNoDeliveryChannelConfigured(t *testing.T) {
+	// No Notifier and no chat route: deliver has nothing to fall back to and
+	// must return an error, which the caller logs without marking the nudge
+	// (so it retries next tick).
+	st := &fakeStore{
+		users:   []types.User{{ID: "u1", Timezone: "UTC"}},
+		targets: map[string]types.Macros{"u1": {Protein: 180}},
+		rollups: map[string]types.Macros{"u1|2026-06-17": {Protein: 100}},
+	}
+	nd := newFakeNudges()
+	s := New(st, nd, nil, proteinRule(), time.UTC, time.Minute)
+
+	s.tick(context.Background(), time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC))
+
+	if nd.marked[key("u1", "2026-06-17", "protein-evening")] {
+		t.Error("with no delivery channel configured, the nudge must not be marked as sent")
+	}
+}
+
 // --- Production wiring test ---
 //
 // fakeFullStore satisfies every scheduler collaborator interface in one
@@ -918,9 +959,13 @@ func TestHealthRulesFireThroughRealConstructionPath(t *testing.T) {
 
 type fakeSentNudgeStore struct {
 	recorded []types.SentNudge
+	err      error
 }
 
 func (f *fakeSentNudgeStore) RecordSentNudge(_ context.Context, n types.SentNudge) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.recorded = append(f.recorded, n)
 	return nil
 }
