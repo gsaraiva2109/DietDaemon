@@ -51,7 +51,7 @@ type Store interface {
 	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
 	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
 	ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error)
-	GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error)
+	GetPhotosData(ctx context.Context, photoIDs []string) (map[string][]byte, error)
 	GetWaterInRange(ctx context.Context, userID, startDate, endDate string) ([]types.WaterLog, error)
 	GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
 }
@@ -270,14 +270,20 @@ func (r *Runner) writePhotos(ctx context.Context, dst Destination, cfg types.Bac
 	if err != nil {
 		return fmt.Errorf("backup: load photos: %w", err)
 	}
+
+	ids := make([]string, len(photos))
+	for i, p := range photos {
+		ids[i] = p.ID
+	}
+	data, err := r.store.GetPhotosData(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("backup: load photo data: %w", err)
+	}
+
 	// Photos last: write every blob before the index, so a recovered
 	// photos.csv never references a blob that isn't actually there.
 	for _, p := range photos {
-		full, err := r.store.GetPhotoData(ctx, p.ID)
-		if err != nil {
-			return fmt.Errorf("backup: load photo data: %w", err)
-		}
-		if err := dst.Write(ctx, cfg, exportfmt.PhotoFilename(p.ID), full.Data); err != nil {
+		if err := dst.Write(ctx, cfg, exportfmt.PhotoFilename(p.ID), data[p.ID]); err != nil {
 			return fmt.Errorf("backup: write photo blob: %w", err)
 		}
 	}

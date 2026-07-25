@@ -11,6 +11,10 @@ import (
 
 const chatHistoryLimit = 100
 
+// maxChatSessionRows caps ListChatSessions/ListDeletedChatSessions as a
+// safety ceiling, not real pagination — a user isn't expected to approach it.
+const maxChatSessionRows = 10000
+
 // CreateChatSession inserts a new chat session for a user.
 func (s *Store) CreateChatSession(ctx context.Context, id, userID, title string) error {
 	const q = `INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)`
@@ -24,9 +28,9 @@ func (s *Store) CreateChatSession(ctx context.Context, id, userID, title string)
 // ListChatSessions returns all chat sessions for a user, newest first.
 // Soft-deleted sessions are excluded.
 func (s *Store) ListChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
-	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`
+	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`
 	var rows []assistant.Session
-	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID)
+	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, maxChatSessionRows)
 	if err != nil {
 		return nil, fmt.Errorf("store: list chat sessions: %w", err)
 	}
@@ -122,9 +126,9 @@ func (s *Store) RestoreChatSession(ctx context.Context, userID, sessionID string
 // ListDeletedChatSessions returns a user's soft-deleted sessions, most
 // recently deleted first.
 func (s *Store) ListDeletedChatSessions(ctx context.Context, userID string) ([]assistant.Session, error) {
-	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`
+	const q = `SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?`
 	var rows []assistant.Session
-	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID)
+	err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID, maxChatSessionRows)
 	if err != nil {
 		return nil, fmt.Errorf("store: list deleted chat sessions: %w", err)
 	}

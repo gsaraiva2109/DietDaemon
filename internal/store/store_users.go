@@ -70,7 +70,7 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 
 // ListUsers returns every user. Empty slice, nil error when there are none.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	const q = `SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle FROM users ORDER BY id`
+	q := fmt.Sprintf(`SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle FROM users ORDER BY id LIMIT %d`, maxListRows)
 	var rows []userRow
 	if err := s.db.SelectContext(ctx, &rows, q); err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -10,7 +11,14 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
+
+// maxListRows caps unbounded list-style queries so a table can never grow
+// into an incident. This is a safety ceiling, not pagination — at this
+// project's current scale (personal tracker, small per-user row counts) it
+// should never actually be hit.
+const maxListRows = 10000
 
 // scanUser scans a single *sql.Row with the same column order as userRow.
 // Kept for store_auth.go call sites (CreateUserWithPassword, GetUserByEmail,
@@ -76,12 +84,15 @@ func ptrTime(t time.Time) *time.Time {
 }
 
 // isUniqueViolation reports whether err is a SQL UNIQUE constraint violation.
-// Works with modernc.org/sqlite; kept simple and portable.
+// Handles both dialects: Postgres (lib/pq) surfaces this as *pq.Error with
+// Code "23505"; modernc.org/sqlite surfaces it in the error string.
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	// modernc.org/sqlite surfaces this in the error string.
+	if pqErr, ok := errors.AsType[*pq.Error](err); ok {
+		return pqErr.Code == "23505" // unique_violation
+	}
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 

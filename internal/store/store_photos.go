@@ -5,17 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+// maxPhotoRows caps ListPhotoMetadata as a safety ceiling, not pagination —
+// audited as safe at this project's current scale.
+const maxPhotoRows = 10000
+
 // ListPhotoMetadata returns progress photo records without the BLOB data.
 func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error) {
-	const q = `
+	q := fmt.Sprintf(`
 		SELECT id, user_id, date, view, mime_type, created_at
 		FROM progress_photos WHERE user_id = ?
 		ORDER BY date DESC
-	`
+		LIMIT %d
+	`, maxPhotoRows)
 	var rows []photoRow
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: list photo metadata: %w", err)
@@ -61,6 +67,43 @@ func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.Progres
 		return types.ProgressPhoto{}, fmt.Errorf("store: get photo data: %w", err)
 	}
 	return row.toProgressPhoto(), nil
+}
+
+// GetPhotosData batch-fetches BLOB data for multiple photo IDs in a single
+// query, returning a map keyed by photo ID. IDs with no matching row are
+// simply absent from the map (no error). Returns an empty map for an empty
+// input, without touching the DB.
+func (s *Store) GetPhotosData(ctx context.Context, photoIDs []string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(photoIDs))
+	if len(photoIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(photoIDs))
+	args := make([]any, len(photoIDs))
+	for i, id := range photoIDs {
+		placeholders[i] = s.dialect.Placeholder(i + 1)
+		args[i] = id
+	}
+
+	// #nosec G201 -- placeholder expansion is ? only, values are args
+	q := fmt.Sprintf(`SELECT id, data FROM progress_photos WHERE id IN (%s)`, strings.Join(placeholders, ","))
+
+	var rows []photoDataRow
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
+		return nil, fmt.Errorf("store: get photos data: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Data
+	}
+	return out, nil
+}
+
+// photoDataRow is the flat DB shape for the id+data-only batch fetch used by
+// GetPhotosData.
+type photoDataRow struct {
+	ID   string `db:"id"`
+	Data []byte `db:"data"`
 }
 
 // UploadPhoto inserts a progress photo with BLOB data.

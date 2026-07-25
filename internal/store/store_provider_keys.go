@@ -59,7 +59,7 @@ func (s *Store) DeleteProviderKey(ctx context.Context, userID, provider string) 
 // ListProviderKeys returns all stored provider keys for a user, ordered by
 // provider name.
 func (s *Store) ListProviderKeys(ctx context.Context, userID string) ([]ProviderKey, error) {
-	const q = `SELECT user_id, provider, enc_key, created_at FROM user_provider_keys WHERE user_id = ? ORDER BY provider`
+	q := fmt.Sprintf(`SELECT user_id, provider, enc_key, created_at FROM user_provider_keys WHERE user_id = ? ORDER BY provider LIMIT %d`, maxListRows)
 	var keys []ProviderKey
 	if err := s.db.SelectContext(ctx, &keys, s.rewrite(q), userID); err != nil {
 		return nil, fmt.Errorf("store: list provider keys: %w", err)

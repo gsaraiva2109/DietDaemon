@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/jmoiron/sqlx"
@@ -16,6 +17,11 @@ import (
 
 // LogWorkout inserts a workout and its exercises inside a transaction.
 func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
+	// userLoc queries the DB (GetUser), so it must run before BeginTxx: this
+	// pool is single-connection (SQLite), and computing it inside the open tx
+	// would self-deadlock waiting for a connection the tx is holding.
+	localDate := parseUTC(w.LoggedAt).In(s.userLoc(ctx, w.UserID)).Format("2006-01-02")
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -23,13 +29,13 @@ func (s *Store) LogWorkout(ctx context.Context, w types.Workout) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const workoutQ = `
-		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, external_id, created_at)
-		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :external_id, :created_at)
+		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, local_date, external_id, created_at)
+		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :local_date, :external_id, :created_at)
 	`
 	workoutQuery, workoutArgs, err := sqlx.Named(workoutQ, map[string]any{
 		"id": w.ID, "user_id": w.UserID, "name": w.Name, "duration_min": w.DurationMin,
 		"intensity": w.Intensity, "calories_burned": w.CaloriesBurned, "note": nullStr(w.Note),
-		"logged_at": w.LoggedAt, "external_id": w.ExternalID, "created_at": utcNow(),
+		"logged_at": w.LoggedAt, "local_date": localDate, "external_id": w.ExternalID, "created_at": utcNow(),
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind insert workout: %w", err)
@@ -108,7 +114,7 @@ func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endD
 	const q = `
 		SELECT id, user_id, name, duration_min, intensity, calories_burned, COALESCE(note, '') AS note, logged_at
 		FROM workouts
-		WHERE user_id = ? AND logged_date >= ? AND logged_date <= ?
+		WHERE user_id = ? AND local_date >= ? AND local_date <= ?
 		ORDER BY logged_at DESC
 	`
 	var out []types.Workout
@@ -120,18 +126,24 @@ func (s *Store) ListWorkoutsInRange(ctx context.Context, userID, startDate, endD
 
 // GetWorkoutsInRangeWithExercises returns every workout between startDate and
 // endDate (inclusive, "YYYY-MM-DD" format) with each workout's exercises
-// populated, composing ListWorkoutsInRange and loadWorkoutExercises.
+// populated, composing ListWorkoutsInRange and a single batched exercises
+// query (avoids one exercises query per workout).
 func (s *Store) GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error) {
 	workouts, err := s.ListWorkoutsInRange(ctx, userID, startDate, endDate)
 	if err != nil {
 		return nil, err
 	}
+
+	ids := make([]string, len(workouts))
+	for i, w := range workouts {
+		ids[i] = w.ID
+	}
+	byWorkout, err := s.loadWorkoutExercisesBatch(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	for i := range workouts {
-		exercises, err := s.loadWorkoutExercises(ctx, workouts[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		workouts[i].Exercises = exercises
+		workouts[i].Exercises = byWorkout[workouts[i].ID]
 	}
 	return workouts, nil
 }
@@ -150,11 +162,52 @@ func (s *Store) loadWorkoutExercises(ctx context.Context, workoutID string) ([]t
 	return out, nil
 }
 
+// loadWorkoutExercisesBatch loads exercises for every workout ID in one query
+// and groups the results by workout_id, avoiding an N+1 query pattern for
+// callers that need exercises for many workouts at once (mirrors
+// store_meals.go's loadItems).
+func (s *Store) loadWorkoutExercisesBatch(ctx context.Context, workoutIDs []string) (map[string][]types.WorkoutExercise, error) {
+	if len(workoutIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(workoutIDs))
+	args := make([]any, len(workoutIDs))
+	for i, id := range workoutIDs {
+		placeholders[i] = s.dialect.Placeholder(i + 1)
+		args[i] = id
+	}
+
+	// #nosec G201 -- placeholder expansion is ? only, values are args
+	q := fmt.Sprintf(`
+		SELECT id, workout_id, name, sets, reps, weight_kg, COALESCE(note, '') AS note
+		FROM workout_exercises
+		WHERE workout_id IN (%s)
+		ORDER BY workout_id, position
+	`, strings.Join(placeholders, ","))
+
+	var rows []types.WorkoutExercise
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {
+		return nil, fmt.Errorf("store: query exercises: %w", err)
+	}
+
+	out := make(map[string][]types.WorkoutExercise)
+	for _, r := range rows {
+		out[r.WorkoutID] = append(out[r.WorkoutID], r)
+	}
+	return out, nil
+}
+
 // ImportWorkout inserts a workout with its external_id set (for idempotent import).
 // Same transactional insert pattern as LogWorkout. On a unique-constraint violation
 // (duplicate external_id for the same user — the re-run-safety case), the call is a
 // safe no-op and returns nil rather than an error — "import ran twice" is harmless.
 func (s *Store) ImportWorkout(ctx context.Context, w types.Workout) error {
+	// userLoc queries the DB (GetUser), so it must run before BeginTxx: this
+	// pool is single-connection (SQLite), and computing it inside the open tx
+	// would self-deadlock waiting for a connection the tx is holding.
+	localDate := parseUTC(w.LoggedAt).In(s.userLoc(ctx, w.UserID)).Format("2006-01-02")
+
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -162,13 +215,13 @@ func (s *Store) ImportWorkout(ctx context.Context, w types.Workout) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const workoutQ = `
-		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, external_id, created_at)
-		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :external_id, :created_at)
+		INSERT INTO workouts (id, user_id, name, duration_min, intensity, calories_burned, note, logged_at, local_date, external_id, created_at)
+		VALUES (:id, :user_id, :name, :duration_min, :intensity, :calories_burned, :note, :logged_at, :local_date, :external_id, :created_at)
 	`
 	workoutQuery, workoutArgs, err := sqlx.Named(workoutQ, map[string]any{
 		"id": w.ID, "user_id": w.UserID, "name": w.Name, "duration_min": w.DurationMin,
 		"intensity": w.Intensity, "calories_burned": w.CaloriesBurned, "note": nullStr(w.Note),
-		"logged_at": w.LoggedAt, "external_id": w.ExternalID, "created_at": utcNow(),
+		"logged_at": w.LoggedAt, "local_date": localDate, "external_id": w.ExternalID, "created_at": utcNow(),
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind insert workout: %w", err)
