@@ -17,7 +17,7 @@ func TestGetChatMessagesCapsHistoryAndPreservesOrder(t *testing.T) {
 	if err := s.CreateChatSession(ctx(), "sess-history", "u-history", "history"); err != nil {
 		t.Fatalf("CreateChatSession: %v", err)
 	}
-	for i := 0; i < chatHistoryLimit+2; i++ {
+	for i := range chatHistoryLimit + 2 {
 		id := fmt.Sprintf("msg-%03d", i)
 		if err := s.AppendChatMessage(ctx(), id, "u-history", "sess-history", "user", id, ""); err != nil {
 			t.Fatalf("AppendChatMessage %d: %v", i, err)
@@ -33,6 +33,75 @@ func TestGetChatMessagesCapsHistoryAndPreservesOrder(t *testing.T) {
 	}
 	if msgs[0].ID != "msg-002" || msgs[len(msgs)-1].ID != fmt.Sprintf("msg-%03d", chatHistoryLimit+1) {
 		t.Fatalf("history range = %q..%q, want msg-002..msg-%03d", msgs[0].ID, msgs[len(msgs)-1].ID, chatHistoryLimit+1)
+	}
+}
+
+func TestListChatSessionsReturnsAllInOrder(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u-list"})
+	const n = 5
+	for i := range n {
+		id := fmt.Sprintf("sess-list-%d", i)
+		if err := s.CreateChatSession(ctx(), id, "u-list", id); err != nil {
+			t.Fatalf("CreateChatSession %d: %v", i, err)
+		}
+		// Give each session a distinct updated_at so DESC order is deterministic
+		// even when created within the same timestamp resolution tick.
+		ts := time.Now().Add(time.Duration(i) * time.Minute).UTC().Format("2006-01-02 15:04:05")
+		if _, err := s.db.Exec(`UPDATE chat_sessions SET updated_at = ? WHERE id = ?`, ts, id); err != nil {
+			t.Fatalf("backdate %s: %v", id, err)
+		}
+	}
+
+	sessions, err := s.ListChatSessions(ctx(), "u-list")
+	if err != nil {
+		t.Fatalf("ListChatSessions: %v", err)
+	}
+	if len(sessions) != n {
+		t.Fatalf("session count = %d, want %d", len(sessions), n)
+	}
+	for i, sess := range sessions {
+		want := fmt.Sprintf("sess-list-%d", n-1-i)
+		if sess.ID != want {
+			t.Errorf("sessions[%d].ID = %q, want %q (newest updated_at first)", i, sess.ID, want)
+		}
+	}
+}
+
+func TestListDeletedChatSessionsReturnsAllInOrder(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u-list-del"})
+	const n = 5
+	for i := range n {
+		id := fmt.Sprintf("sess-del-%d", i)
+		if err := s.CreateChatSession(ctx(), id, "u-list-del", id); err != nil {
+			t.Fatalf("CreateChatSession %d: %v", i, err)
+		}
+		if err := s.SoftDeleteChatSession(ctx(), "u-list-del", id); err != nil {
+			t.Fatalf("SoftDeleteChatSession %d: %v", i, err)
+		}
+		ts := time.Now().Add(time.Duration(i) * time.Minute).UTC().Format("2006-01-02 15:04:05")
+		if _, err := s.db.Exec(`UPDATE chat_sessions SET deleted_at = ? WHERE id = ?`, ts, id); err != nil {
+			t.Fatalf("backdate %s: %v", id, err)
+		}
+	}
+
+	deleted, err := s.ListDeletedChatSessions(ctx(), "u-list-del")
+	if err != nil {
+		t.Fatalf("ListDeletedChatSessions: %v", err)
+	}
+	if len(deleted) != n {
+		t.Fatalf("deleted count = %d, want %d", len(deleted), n)
+	}
+	for i, sess := range deleted {
+		want := fmt.Sprintf("sess-del-%d", n-1-i)
+		if sess.ID != want {
+			t.Errorf("deleted[%d].ID = %q, want %q (newest deleted_at first)", i, sess.ID, want)
+		}
 	}
 }
 

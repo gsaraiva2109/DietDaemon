@@ -8,6 +8,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/lib/pq"
 )
 
 func TestPurgeAuthRecords(t *testing.T) {
@@ -1327,6 +1328,82 @@ func TestWebAuthnSessionLifecycle(t *testing.T) {
 
 	if _, _, err := s.ConsumeWebAuthnSession(ctx(), "nonexistent"); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for nonexistent session, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isUniqueViolation — dialect detection (Postgres *pq.Error + SQLite text)
+// ---------------------------------------------------------------------------
+
+func TestIsUniqueViolation(t *testing.T) {
+	pqUnique := &pq.Error{Code: "23505"}
+	if !isUniqueViolation(pqUnique) {
+		t.Fatal("expected true for *pq.Error with code 23505")
+	}
+
+	sqliteUnique := errors.New("UNIQUE constraint failed: oidc_identities.provider, oidc_identities.subject")
+	if !isUniqueViolation(sqliteUnique) {
+		t.Fatal("expected true for SQLite UNIQUE constraint error text")
+	}
+
+	pqOther := &pq.Error{Code: "23503"} // foreign_key_violation
+	if isUniqueViolation(pqOther) {
+		t.Fatal("expected false for non-unique-violation *pq.Error")
+	}
+
+	if isUniqueViolation(errors.New("connection refused")) {
+		t.Fatal("expected false for unrelated error")
+	}
+
+	if isUniqueViolation(nil) {
+		t.Fatal("expected false for nil error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReplaceRecoveryCodes — batched insert round-trips correctly
+// ---------------------------------------------------------------------------
+
+func TestReplaceRecoveryCodesBatchInsert(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "rc-batch-user", CreatedAt: time.Now().UTC()})
+
+	hashes := []string{"batch-h1", "batch-h2", "batch-h3", "batch-h4"}
+	if err := s.ReplaceRecoveryCodes(ctx(), "rc-batch-user", hashes); err != nil {
+		t.Fatalf("ReplaceRecoveryCodes: %v", err)
+	}
+
+	// Every hash must be present and consumable exactly once.
+	for _, h := range hashes {
+		ok, err := s.ConsumeRecoveryCode(ctx(), "rc-batch-user", h)
+		if err != nil {
+			t.Fatalf("ConsumeRecoveryCode(%q): %v", h, err)
+		}
+		if !ok {
+			t.Fatalf("expected %q to be consumable after batch insert", h)
+		}
+	}
+
+	var count int
+	if err := s.db.Get(&count, `SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?`, "rc-batch-user"); err != nil {
+		t.Fatalf("count recovery codes: %v", err)
+	}
+	if count != len(hashes) {
+		t.Fatalf("recovery_codes row count = %d, want %d", count, len(hashes))
+	}
+
+	// Replacing again wipes the old batch and inserts the new one.
+	newHashes := []string{"batch-hA", "batch-hB"}
+	if err := s.ReplaceRecoveryCodes(ctx(), "rc-batch-user", newHashes); err != nil {
+		t.Fatalf("ReplaceRecoveryCodes (2nd batch): %v", err)
+	}
+	if err := s.db.Get(&count, `SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?`, "rc-batch-user"); err != nil {
+		t.Fatalf("count recovery codes after replace: %v", err)
+	}
+	if count != len(newHashes) {
+		t.Fatalf("recovery_codes row count after replace = %d, want %d", count, len(newHashes))
 	}
 }
 

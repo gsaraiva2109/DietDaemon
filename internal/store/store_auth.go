@@ -262,7 +262,7 @@ func (s *Store) createCred(ctx context.Context, table, secretCol, id, userID, ha
 // listCreds returns all non-revoked rows from table for userID.
 func (s *Store) listCreds(ctx context.Context, table, userID string) ([]credRow, error) {
 	q := fmt.Sprintf(`SELECT id, user_id, label, created_at, last_used_at, revoked_at
-		FROM %s WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`, table)
+		FROM %s WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC LIMIT %d`, table, maxListRows)
 	rows, err := s.db.QueryContext(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list %s: %w", table, err)
@@ -505,7 +505,7 @@ func (s *Store) HasConfirmedTOTP(ctx context.Context, userID string) (bool, erro
 // ReplaceRecoveryCodes deletes all existing recovery codes for the user and
 // inserts new ones in a single transaction.
 func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, hashes []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: replace recovery codes tx: %w", err)
 	}
@@ -516,13 +516,13 @@ func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, hashes 
 	}
 
 	now := utcNow()
+	const insertPrefix = `INSERT INTO recovery_codes (id, user_id, code_hash, created_at) VALUES `
+	rows := make([][]any, 0, len(hashes))
 	for _, h := range hashes {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO recovery_codes (id, user_id, code_hash, created_at) VALUES (?, ?, ?, ?)`,
-			newID(), userID, h, now,
-		); err != nil {
-			return fmt.Errorf("store: insert recovery code: %w", err)
-		}
+		rows = append(rows, []any{newID(), userID, h, now})
+	}
+	if err := s.insertRows(ctx, tx, insertPrefix, "", rows); err != nil {
+		return fmt.Errorf("store: insert recovery codes: %w", err)
 	}
 
 	return tx.Commit()
@@ -627,8 +627,8 @@ func (s *Store) LinkOIDCIdentity(ctx context.Context, id, userID, provider, subj
 
 // ListOIDCIdentities returns all OIDC identities for a user.
 func (s *Store) ListOIDCIdentities(ctx context.Context, userID string) ([]types.OIDCIdentity, error) {
-	const q = `SELECT id, user_id, provider, subject, email, linked_at, created_at
-		FROM oidc_identities WHERE user_id = ? ORDER BY linked_at DESC`
+	q := fmt.Sprintf(`SELECT id, user_id, provider, subject, email, linked_at, created_at
+		FROM oidc_identities WHERE user_id = ? ORDER BY linked_at DESC LIMIT %d`, maxListRows)
 	rows, err := s.db.QueryContext(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list oidc identities: %w", err)
@@ -960,7 +960,7 @@ func (s *Store) CreateWebAuthnCredential(ctx context.Context, id, userID, label,
 
 // ListWebAuthnCredentials returns the user-visible passkey list for a user.
 func (s *Store) ListWebAuthnCredentials(ctx context.Context, userID string) ([]types.Passkey, error) {
-	const q = `SELECT id, label, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at DESC`
+	q := fmt.Sprintf(`SELECT id, label, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at DESC LIMIT %d`, maxListRows)
 	rows, err := s.db.QueryContext(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list webauthn credentials: %w", err)

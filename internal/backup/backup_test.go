@@ -87,8 +87,8 @@ func (f *fakeStore) ListPhotoMetadata(context.Context, string) ([]types.Progress
 	return nil, nil
 }
 
-func (f *fakeStore) GetPhotoData(context.Context, string) (types.ProgressPhoto, error) {
-	return types.ProgressPhoto{}, nil
+func (f *fakeStore) GetPhotosData(context.Context, []string) (map[string][]byte, error) {
+	return map[string][]byte{}, nil
 }
 
 func (f *fakeStore) GetWaterInRange(context.Context, string, string, string) ([]types.WaterLog, error) {
@@ -148,8 +148,8 @@ type photoDataErrFakeStore struct {
 	err error
 }
 
-func (f *photoDataErrFakeStore) GetPhotoData(context.Context, string) (types.ProgressPhoto, error) {
-	return types.ProgressPhoto{}, f.err
+func (f *photoDataErrFakeStore) GetPhotosData(context.Context, []string) (map[string][]byte, error) {
+	return nil, f.err
 }
 
 func TestWritePhotos_WrapsStageErrors(t *testing.T) {
@@ -327,8 +327,12 @@ func (f *allEntitiesFakeStore) ListPhotoMetadata(context.Context, string) ([]typ
 	return []types.ProgressPhoto{{ID: "p1"}}, nil
 }
 
-func (f *allEntitiesFakeStore) GetPhotoData(_ context.Context, photoID string) (types.ProgressPhoto, error) {
-	return types.ProgressPhoto{ID: photoID, Data: []byte("jpeg-bytes")}, nil
+func (f *allEntitiesFakeStore) GetPhotosData(_ context.Context, photoIDs []string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(photoIDs))
+	for _, id := range photoIDs {
+		out[id] = []byte("jpeg-bytes")
+	}
+	return out, nil
 }
 
 func (f *allEntitiesFakeStore) GetWaterInRange(context.Context, string, string, string) ([]types.WaterLog, error) {
@@ -455,5 +459,72 @@ func TestRunFor_WarnsOnCountDrop(t *testing.T) {
 	output := buf.String()
 	if output == "" {
 		t.Fatalf("expected warning logs for row count drops, got none")
+	}
+}
+
+// multiPhotoFakeStore returns several photos from ListPhotoMetadata and
+// counts GetPhotosData invocations, so writePhotos's batching can be pinned:
+// one call for however many photos there are, not one call per photo.
+type multiPhotoFakeStore struct {
+	*allEntitiesFakeStore
+	getPhotosDataCalls int
+}
+
+func (f *multiPhotoFakeStore) ListPhotoMetadata(context.Context, string) ([]types.ProgressPhoto, error) {
+	return []types.ProgressPhoto{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}, nil
+}
+
+func (f *multiPhotoFakeStore) GetPhotosData(_ context.Context, photoIDs []string) (map[string][]byte, error) {
+	f.getPhotosDataCalls++
+	out := make(map[string][]byte, len(photoIDs))
+	for _, id := range photoIDs {
+		out[id] = []byte("data-" + id)
+	}
+	return out, nil
+}
+
+// capturingDest records every write keyed by filename, so blob contents (not
+// just counts) can be asserted.
+type capturingDest struct {
+	writes map[string][]byte
+}
+
+func (d *capturingDest) Write(_ context.Context, _ types.BackupConfig, filename string, data []byte) error {
+	if d.writes == nil {
+		d.writes = map[string][]byte{}
+	}
+	d.writes[filename] = append([]byte(nil), data...)
+	return nil
+}
+
+// TestWritePhotos_BatchesDataFetch pins the N+1 fix: GetPhotosData is called
+// exactly once for all photos, and every blob still ends up with the right
+// bytes under the right filename.
+func TestWritePhotos_BatchesDataFetch(t *testing.T) {
+	store := &multiPhotoFakeStore{allEntitiesFakeStore: &allEntitiesFakeStore{newFakeStore()}}
+	dst := &capturingDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	if err := r.writePhotos(context.Background(), dst, types.BackupConfig{}, "u1"); err != nil {
+		t.Fatalf("writePhotos: %v", err)
+	}
+
+	if store.getPhotosDataCalls != 1 {
+		t.Fatalf("expected GetPhotosData called exactly once, got %d", store.getPhotosDataCalls)
+	}
+
+	for _, id := range []string{"p1", "p2", "p3"} {
+		want := "data-" + id
+		got, ok := dst.writes[exportfmt.PhotoFilename(id)]
+		if !ok {
+			t.Fatalf("expected blob written for %s", id)
+		}
+		if string(got) != want {
+			t.Fatalf("blob for %s = %q, want %q", id, got, want)
+		}
+	}
+
+	if _, ok := dst.writes["photos.csv"]; !ok {
+		t.Fatalf("expected photos.csv written")
 	}
 }

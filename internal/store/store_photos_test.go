@@ -1,0 +1,124 @@
+package store
+
+import (
+	"testing"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
+)
+
+func TestGetPhotosData_BatchReturnsCorrectData(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	uid := "u-photos"
+	mustUser(t, s, types.User{ID: uid})
+
+	want := map[string][]byte{
+		"photo1": []byte("front-bytes"),
+		"photo2": []byte("side-bytes"),
+		"photo3": []byte("back-bytes"),
+	}
+	for id, data := range want {
+		if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+			ID: id, UserID: uid, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: data,
+		}); err != nil {
+			t.Fatalf("UploadPhoto(%s): %v", id, err)
+		}
+	}
+
+	got, err := s.GetPhotosData(ctx(), []string{"photo1", "photo2", "photo3"})
+	if err != nil {
+		t.Fatalf("GetPhotosData: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("GetPhotosData returned %d entries, want %d", len(got), len(want))
+	}
+	for id, data := range want {
+		if string(got[id]) != string(data) {
+			t.Fatalf("GetPhotosData[%s] = %q, want %q", id, got[id], data)
+		}
+	}
+}
+
+func TestGetPhotosData_EmptyInput(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	got, err := s.GetPhotosData(ctx(), nil)
+	if err != nil {
+		t.Fatalf("GetPhotosData(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("GetPhotosData(nil) = %v, want empty map", got)
+	}
+}
+
+func TestGetPhotosData_MissingIDIgnored(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	uid := "u-photos-missing"
+	mustUser(t, s, types.User{ID: uid})
+	if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+		ID: "photo1", UserID: uid, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("bytes"),
+	}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+
+	got, err := s.GetPhotosData(ctx(), []string{"photo1", "no-such-id"})
+	if err != nil {
+		t.Fatalf("GetPhotosData: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("GetPhotosData returned %d entries, want 1 (missing id silently absent)", len(got))
+	}
+	if string(got["photo1"]) != "bytes" {
+		t.Fatalf("GetPhotosData[photo1] = %q, want %q", got["photo1"], "bytes")
+	}
+	if _, ok := got["no-such-id"]; ok {
+		t.Fatalf("expected no-such-id absent from result map")
+	}
+}
+
+func TestListPhotoMetadata_ExcludesBlobAndReturnsCorrectResults(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	uid := "u-photos-meta"
+	mustUser(t, s, types.User{ID: uid})
+
+	photos := []types.ProgressPhoto{
+		{ID: "m1", UserID: uid, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("blob-1")},
+		{ID: "m2", UserID: uid, Date: "2026-07-02", View: "side", MimeType: "image/jpeg", Data: []byte("blob-2")},
+	}
+	for _, p := range photos {
+		if err := s.UploadPhoto(ctx(), p); err != nil {
+			t.Fatalf("UploadPhoto(%s): %v", p.ID, err)
+		}
+	}
+
+	got, err := s.ListPhotoMetadata(ctx(), uid)
+	if err != nil {
+		t.Fatalf("ListPhotoMetadata: %v", err)
+	}
+	if len(got) != len(photos) {
+		t.Fatalf("ListPhotoMetadata returned %d rows, want %d", len(got), len(photos))
+	}
+
+	byID := make(map[string]types.ProgressPhoto, len(got))
+	for _, p := range got {
+		byID[p.ID] = p
+	}
+	for _, want := range photos {
+		p, ok := byID[want.ID]
+		if !ok {
+			t.Fatalf("ListPhotoMetadata missing photo %s", want.ID)
+		}
+		if p.View != want.View || p.MimeType != want.MimeType || p.Date != want.Date {
+			t.Fatalf("ListPhotoMetadata[%s] = %+v, want fields matching %+v", want.ID, p, want)
+		}
+		if len(p.Data) != 0 {
+			t.Fatalf("ListPhotoMetadata[%s] included BLOB data %q, want none", want.ID, p.Data)
+		}
+	}
+}
