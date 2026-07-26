@@ -178,6 +178,94 @@ func TestHandleUpdatePlanUnknownDayTypeInPattern(t *testing.T) {
 	}
 }
 
+func TestHandleUpdatePlanInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "PUT", "/api/v1/plans/p1", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanMissingName(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"valid_from": "2026-01-05", "cycle_anchor_date": "2026-01-05"}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1", body, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing name expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanBadDates(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "x", "valid_from": "not-a-date", "cycle_anchor_date": "2026-01-05"}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1", body, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("bad valid_from expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanNotFound(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "x", "valid_from": "2026-01-05", "cycle_anchor_date": "2026-01-05"}
+	rec := doRequest(h, "PUT", "/api/v1/plans/missing", body, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("update of missing plan expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanCyclePatternBundleErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.getPlanBundleErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"name": "New", "valid_from": "2026-01-05", "cycle_anchor_date": "2026-01-05",
+		"cycle_pattern": []string{"dt-1"},
+	}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetPlanBundle failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.updatePlanErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "New", "valid_from": "2026-01-05", "cycle_anchor_date": "2026-01-05"}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdatePlan failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdatePlanCallsRefreshTodayTargets(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.refreshTodayTargetsErr = errors.New("refresh failed")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "New", "valid_from": "2026-01-05", "cycle_anchor_date": "2026-01-05"}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("RefreshTodayTargets failure expected 500, got %d", rec.Code)
+	}
+}
+
 func TestHandleUpdatePlanWrongUser(t *testing.T) {
 	store := newFakeMealStore()
 	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "other-user"}}
@@ -292,6 +380,61 @@ func TestHandleUpdateDayTypeWrongPlan(t *testing.T) {
 	}
 }
 
+func TestHandleUpdateDayType(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1", Name: "Old"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "New", "position": 1, "water_goal_ml": 2500}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.DietPlanDayType](t, rec)
+	if got.ID != "dt-1" || got.PlanID != "p1" || got.Name != "New" || got.WaterGoalMl != 2500 {
+		t.Errorf("unexpected day type: %+v", got)
+	}
+}
+
+func TestHandleUpdateDayTypeInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "PUT", "/api/v1/plans/p1/day-types/dt-1", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateDayTypeInvalidBody(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1", map[string]any{"position": -1}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing name / negative position expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateDayTypeStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.updateDayTypeErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"name": "New", "position": 0}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateDayType failure expected 500, got %d", rec.Code)
+	}
+}
+
 func TestHandleDeleteDayType(t *testing.T) {
 	store := newFakeMealStore()
 	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
@@ -301,6 +444,44 @@ func TestHandleDeleteDayType(t *testing.T) {
 	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDeleteDayTypeWrongPlan(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "some-other-plan"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("day-type belonging to a different plan expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleDeleteDayTypeStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.deleteDayTypeErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("DeleteDayType failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleDeleteDayTypeCallsRefreshTodayTargets(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.refreshTodayTargetsErr = errors.New("refresh failed")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("RefreshTodayTargets failure expected 500, got %d", rec.Code)
 	}
 }
 
@@ -332,6 +513,99 @@ func TestHandleCreateSlotMissingLabel(t *testing.T) {
 	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots", map[string]any{"position": 0}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing label expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotWrongPlan(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "some-other-plan"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"label": "Café da manhã", "position": 0}
+	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots", body, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("slot create under mismatched day-type expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.createSlotErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"label": "Café da manhã", "position": 0}
+	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("CreateSlot failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlot(t *testing.T) {
+	store := newFakeMealStore()
+	store.planBundles = map[string]types.PlanBundle{
+		"p1": {Plan: types.DietPlan{ID: "p1", UserID: "test-user"}, DayTypes: []types.DietPlanDayTypeBundle{
+			{DietPlanDayType: types.DietPlanDayType{ID: "dt-1", PlanID: "p1"}, Slots: []types.DietPlanSlotBundle{
+				{DietPlanSlot: types.DietPlanSlot{ID: "sl-1", DayTypeID: "dt-1", Label: "Old"}},
+			}},
+		}},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"label": "New label", "position": 2}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.DietPlanSlot](t, rec)
+	if got.ID != "sl-1" || got.Label != "New label" || got.Position != 2 {
+		t.Errorf("unexpected slot: %+v", got)
+	}
+}
+
+func TestHandleUpdateSlotInvalidJSON(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotMissingLabel(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1", map[string]any{"position": 0}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing label expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotStoreErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.updateSlotErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{"label": "New label", "position": 0}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateSlot failure expected 500, got %d", rec.Code)
 	}
 }
 
@@ -443,6 +717,60 @@ func TestHandleCreateSlotOptionMissingItems(t *testing.T) {
 	}
 }
 
+func TestHandleCreateSlotOptionWrongSlot(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "Opção 2",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots/missing-slot/options", body, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("slot option create under missing slot expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotOptionInvalidJSON(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotOptionSaveTemplateErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.saveTemplateErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "Opção 2",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("SaveTemplate failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleCreateSlotOptionStoreErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.createSlotOptionErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "Opção 2",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "POST", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("CreateSlotOption failure expected 500, got %d", rec.Code)
+	}
+}
+
 func TestHandleUpdateSlotOptionReusesExistingTemplateID(t *testing.T) {
 	store := planBundleWithSlot()
 	h := newHandler(store, &fakeMealLogger{})
@@ -457,6 +785,121 @@ func TestHandleUpdateSlotOptionReusesExistingTemplateID(t *testing.T) {
 	}
 	if len(store.savedTemplates) != 1 || store.savedTemplates[0].ID != "tmpl-1" {
 		t.Fatalf("expected update to re-save the existing backing template tmpl-1, got %+v", store.savedTemplates)
+	}
+}
+
+func TestHandleUpdateSlotOptionInvalidJSON(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotOptionMissingItems(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", map[string]any{"label": "x"}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing items expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotOptionNotFound(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "x",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/missing", body, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("update of missing option expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotOptionSaveTemplateErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.saveTemplateErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "x",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("SaveTemplate failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleUpdateSlotOptionStoreErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.updateSlotOptionErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	body := map[string]any{
+		"label": "x",
+		"items": []types.ResolvedItem{{Parsed: types.ParsedItem{RawPhrase: "arroz", NormalizedGrams: 150}}},
+	}
+	rec := doRequest(h, "PUT", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", body, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateSlotOption failure expected 500, got %d", rec.Code)
+	}
+}
+
+// TestOwnedOptionMismatchedSlotOrDayType confirms ownedOption -- walked from
+// the plan bundle rather than a point query -- rejects an option ID that
+// exists but under a different slot or day-type than the URL claims, not
+// just an option ID that doesn't exist anywhere.
+func TestOwnedOptionMismatchedSlotOrDayType(t *testing.T) {
+	store := planBundleWithSlot()
+	h := newHandler(store, &fakeMealLogger{})
+
+	for _, tc := range []struct {
+		name, path string
+	}{
+		{"wrong day-type", "/api/v1/plans/p1/day-types/wrong-dt/slots/sl-1/options/opt-1"},
+		{"wrong slot", "/api/v1/plans/p1/day-types/dt-1/slots/wrong-slot/options/opt-1"},
+	} {
+		rec := doRequest(h, "DELETE", tc.path, nil, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", tc.name, rec.Code)
+		}
+	}
+}
+
+func TestOwnedOptionPlanBundleErr(t *testing.T) {
+	store := planBundleWithSlot()
+	store.getPlanBundleErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetPlanBundle failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestOwnedOptionWrongUser(t *testing.T) {
+	store := newFakeMealStore()
+	store.planBundles = map[string]types.PlanBundle{
+		"p1": {Plan: types.DietPlan{ID: "p1", UserID: "other-user"}, DayTypes: []types.DietPlanDayTypeBundle{
+			{DietPlanDayType: types.DietPlanDayType{ID: "dt-1", PlanID: "p1"}, Slots: []types.DietPlanSlotBundle{
+				{DietPlanSlot: types.DietPlanSlot{ID: "sl-1", DayTypeID: "dt-1"}, Options: []types.DietPlanSlotOption{
+					{ID: "opt-1", SlotID: "sl-1"},
+				}},
+			}},
+		}},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "DELETE", "/api/v1/plans/p1/day-types/dt-1/slots/sl-1/options/opt-1", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("cross-user option access expected 404, got %d", rec.Code)
 	}
 }
 
@@ -564,6 +1007,109 @@ func TestHandleGetPlanDayActivePlanCycle(t *testing.T) {
 	}
 }
 
+func TestHandleGetPlanDayTargetsForErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.targetsForErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("TargetsFor failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetPlanDayOverrideStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.getDayOverrideErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetDayOverride failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetPlanDayActivePlanErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.activePlanErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetActivePlan failure expected 500, got %d", rec.Code)
+	}
+}
+
+// TestHandleGetPlanDayOverrideDayTypeGone confirms an override pointing at a
+// day-type that no longer exists (deleted after the override was set)
+// degrades gracefully: no plan/day-type in the response instead of an error.
+func TestHandleGetPlanDayOverrideDayTypeGone(t *testing.T) {
+	store := newFakeMealStore()
+	store.dayOverrides = map[string]types.DietPlanDayOverride{
+		"test-user|2026-07-27": {UserID: "test-user", Date: "2026-07-27", DayTypeID: "dt-gone"},
+	}
+	store.getDayTypeErr = types.ErrNotFound
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[planDayView](t, rec)
+	if !got.Overridden || got.PlanActive || got.DayType != nil {
+		t.Errorf("expected overridden but unresolved day-type, got %+v", got)
+	}
+}
+
+// TestHandleGetPlanDayOverrideWrongUserBundle confirms resolveDayTypeView
+// rejects a day-type whose plan belongs to a different user, even though the
+// day-type row itself was found.
+func TestHandleGetPlanDayOverrideWrongUserBundle(t *testing.T) {
+	store := newFakeMealStore()
+	store.dayOverrides = map[string]types.DietPlanDayOverride{
+		"test-user|2026-07-27": {UserID: "test-user", Date: "2026-07-27", DayTypeID: "dt-1"},
+	}
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.planBundles = map[string]types.PlanBundle{
+		"p1": {Plan: types.DietPlan{ID: "p1", UserID: "other-user"}, DayTypes: []types.DietPlanDayTypeBundle{
+			{DietPlanDayType: types.DietPlanDayType{ID: "dt-1", PlanID: "p1"}},
+		}},
+	}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[planDayView](t, rec)
+	if !got.Overridden || got.PlanActive || got.DayType != nil {
+		t.Errorf("expected overridden but unresolved (cross-user) day-type, got %+v", got)
+	}
+}
+
+// TestHandleGetPlanDayActivePlanBundleErr confirms a GetPlanBundle failure
+// while resolving the active plan's cycle day-type degrades gracefully
+// rather than failing the whole request -- the targets fallback already
+// succeeded, so the day/slots view just stays unresolved.
+func TestHandleGetPlanDayActivePlanBundleErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.activePlan = types.DietPlan{
+		ID: "p1", UserID: "test-user",
+		CyclePattern: []string{"dt-low"}, CycleAnchorDate: "2026-07-27",
+	}
+	store.getPlanBundleErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/plans/day/2026-07-27", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[planDayView](t, rec)
+	if !got.PlanActive || got.DayType != nil {
+		t.Errorf("expected plan active but no resolved day-type, got %+v", got)
+	}
+}
+
 // --- handleSetDayOverride / handleDeleteDayOverride ---
 
 func TestHandleSetDayOverride(t *testing.T) {
@@ -597,6 +1143,73 @@ func TestHandleSetDayOverrideInvalidDate(t *testing.T) {
 	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/not-a-date", map[string]any{"day_type_id": "dt-1"}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverrideInvalidJSON(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequestRawBody(h, "PUT", "/api/v1/plans/overrides/2026-07-27", "{not json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid JSON expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverrideMissingDayTypeID(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/2026-07-27", map[string]any{}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing day_type_id expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverrideDayTypeNotFound(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/2026-07-27", map[string]any{"day_type_id": "missing"}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("override referencing missing day-type expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverridePlanNotFound(t *testing.T) {
+	store := newFakeMealStore()
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "missing-plan"}}
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/2026-07-27", map[string]any{"day_type_id": "dt-1"}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("day-type whose plan is missing expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverrideStoreErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.setDayOverrideErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/2026-07-27", map[string]any{"day_type_id": "dt-1"}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("SetDayOverride failure expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleSetDayOverrideCallsRefreshTodayTargets(t *testing.T) {
+	store := newFakeMealStore()
+	store.dayTypes = map[string]types.DietPlanDayType{"dt-1": {ID: "dt-1", PlanID: "p1"}}
+	store.plans = map[string]types.DietPlan{"p1": {ID: "p1", UserID: "test-user"}}
+	store.refreshTodayTargetsErr = errors.New("refresh failed")
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "PUT", "/api/v1/plans/overrides/2026-07-27", map[string]any{"day_type_id": "dt-1"}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("RefreshTodayTargets failure expected 500, got %d", rec.Code)
 	}
 }
 

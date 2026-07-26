@@ -436,6 +436,175 @@ func TestGetPlanBundleShape(t *testing.T) {
 	}
 }
 
+func TestUpdateSlot(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustPlanUser(t, s, "u1")
+
+	p, err := s.CreatePlan(ctx(), types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "DT", Targets: types.Macros{Calories: 2000}})
+	if err != nil {
+		t.Fatalf("CreateDayType: %v", err)
+	}
+	slot, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, TimeOfDay: "07:00", Label: "Café"})
+	if err != nil {
+		t.Fatalf("CreateSlot: %v", err)
+	}
+
+	slot.Position = 1
+	slot.TimeOfDay = "08:00"
+	slot.Label = "Café revisado"
+	if err := s.UpdateSlot(ctx(), slot); err != nil {
+		t.Fatalf("UpdateSlot: %v", err)
+	}
+
+	bundle, err := s.GetPlanBundle(ctx(), p.ID)
+	if err != nil {
+		t.Fatalf("GetPlanBundle: %v", err)
+	}
+	if len(bundle.DayTypes) != 1 || len(bundle.DayTypes[0].Slots) != 1 {
+		t.Fatalf("bundle = %+v", bundle)
+	}
+	got := bundle.DayTypes[0].Slots[0].DietPlanSlot
+	if got.Position != 1 || got.TimeOfDay != "08:00" || got.Label != "Café revisado" {
+		t.Fatalf("slot after update = %+v", got)
+	}
+
+	// A slot ID that exists but under the wrong day_type_id is not found.
+	slot.DayTypeID = "some-other-day-type"
+	if err := s.UpdateSlot(ctx(), slot); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("UpdateSlot wrong day_type_id = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListDayOverrides(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustPlanUser(t, s, "u1")
+	mustPlanUser(t, s, "u2")
+
+	p, err := s.CreatePlan(ctx(), types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "DT", Targets: types.Macros{Calories: 2000}})
+	if err != nil {
+		t.Fatalf("CreateDayType: %v", err)
+	}
+
+	if list, err := s.ListDayOverrides(ctx(), "u1"); err != nil || len(list) != 0 {
+		t.Fatalf("ListDayOverrides (empty) = %+v, err = %v", list, err)
+	}
+
+	if err := s.SetDayOverride(ctx(), types.DietPlanDayOverride{UserID: "u1", Date: "2026-01-20", DayTypeID: dt.ID}); err != nil {
+		t.Fatalf("SetDayOverride: %v", err)
+	}
+	if err := s.SetDayOverride(ctx(), types.DietPlanDayOverride{UserID: "u1", Date: "2026-01-10", DayTypeID: dt.ID}); err != nil {
+		t.Fatalf("SetDayOverride: %v", err)
+	}
+	// u2's override must not leak into u1's list.
+	if err := s.SetDayOverride(ctx(), types.DietPlanDayOverride{UserID: "u2", Date: "2026-01-15", DayTypeID: dt.ID}); err != nil {
+		t.Fatalf("SetDayOverride u2: %v", err)
+	}
+
+	list, err := s.ListDayOverrides(ctx(), "u1")
+	if err != nil {
+		t.Fatalf("ListDayOverrides: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("ListDayOverrides = %+v, want 2", list)
+	}
+	// Ordered by date.
+	if list[0].Date != "2026-01-10" || list[1].Date != "2026-01-20" {
+		t.Fatalf("ListDayOverrides not ordered by date: %+v", list)
+	}
+}
+
+// TestRestorePlanFullChainIdempotent exercises RestorePlan, RestoreDayType,
+// RestoreSlot, and RestoreSlotOption together, in the plan -> day-type ->
+// slot -> option order the real restore caller uses, confirming each
+// preserves its original ID and each is a safe no-op on a repeated call
+// (disaster-recovery replay safety, the same convention as every other
+// Restore* method in this store).
+func TestRestorePlanFullChainIdempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustPlanUser(t, s, "u1")
+
+	now := time.Now().UTC()
+	plan := types.DietPlan{
+		ID: "restored-plan", UserID: "u1", Name: "Restored", Notes: "from backup",
+		ValidFrom: "2026-01-01", ValidTo: "", CyclePattern: []string{"restored-dt"},
+		CycleAnchorDate: "2026-01-01", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.RestorePlan(ctx(), plan); err != nil {
+		t.Fatalf("RestorePlan: %v", err)
+	}
+
+	dt := types.DietPlanDayType{
+		ID: "restored-dt", PlanID: "restored-plan", Name: "Low-carb", Position: 0,
+		Targets: types.Macros{Calories: 1800, Protein: 150, Carbs: 100, Fat: 60, Fiber: 25}, WaterGoalMl: 3000,
+	}
+	if err := s.RestoreDayType(ctx(), dt); err != nil {
+		t.Fatalf("RestoreDayType: %v", err)
+	}
+
+	slot := types.DietPlanSlot{ID: "restored-slot", DayTypeID: "restored-dt", Position: 0, TimeOfDay: "07:00", Label: "Café"}
+	if err := s.RestoreSlot(ctx(), slot); err != nil {
+		t.Fatalf("RestoreSlot: %v", err)
+	}
+
+	if err := s.RestoreTemplate(ctx(), types.MealTemplate{ID: "restored-tmpl", UserID: "u1", Name: "Opção 1", OwnerKind: types.TemplateOwnerPlan, CreatedAt: now, LastUsed: now}); err != nil {
+		t.Fatalf("RestoreTemplate (dependency for slot option FK): %v", err)
+	}
+	opt := types.DietPlanSlotOption{ID: "restored-opt", SlotID: "restored-slot", Position: 0, Label: "Opção 1", TemplateID: "restored-tmpl"}
+	if err := s.RestoreSlotOption(ctx(), opt); err != nil {
+		t.Fatalf("RestoreSlotOption: %v", err)
+	}
+
+	bundle, err := s.GetPlanBundle(ctx(), "restored-plan")
+	if err != nil {
+		t.Fatalf("GetPlanBundle: %v", err)
+	}
+	if bundle.Plan.ID != "restored-plan" || bundle.Plan.Name != "Restored" || len(bundle.Plan.CyclePattern) != 1 {
+		t.Fatalf("restored bundle.Plan = %+v", bundle.Plan)
+	}
+	if len(bundle.DayTypes) != 1 || bundle.DayTypes[0].ID != "restored-dt" {
+		t.Fatalf("restored bundle.DayTypes = %+v", bundle.DayTypes)
+	}
+	if len(bundle.DayTypes[0].Slots) != 1 || bundle.DayTypes[0].Slots[0].ID != "restored-slot" {
+		t.Fatalf("restored slots = %+v", bundle.DayTypes[0].Slots)
+	}
+	if len(bundle.DayTypes[0].Slots[0].Options) != 1 || bundle.DayTypes[0].Slots[0].Options[0].ID != "restored-opt" {
+		t.Fatalf("restored options = %+v", bundle.DayTypes[0].Slots[0].Options)
+	}
+
+	// Replaying the entire chain again is a safe no-op, not an error, and
+	// doesn't duplicate rows.
+	if err := s.RestorePlan(ctx(), plan); err != nil {
+		t.Fatalf("RestorePlan (duplicate): %v", err)
+	}
+	if err := s.RestoreDayType(ctx(), dt); err != nil {
+		t.Fatalf("RestoreDayType (duplicate): %v", err)
+	}
+	if err := s.RestoreSlot(ctx(), slot); err != nil {
+		t.Fatalf("RestoreSlot (duplicate): %v", err)
+	}
+	if err := s.RestoreSlotOption(ctx(), opt); err != nil {
+		t.Fatalf("RestoreSlotOption (duplicate): %v", err)
+	}
+	bundleAgain, err := s.GetPlanBundle(ctx(), "restored-plan")
+	if err != nil {
+		t.Fatalf("GetPlanBundle after duplicate restore: %v", err)
+	}
+	if len(bundleAgain.DayTypes) != 1 || len(bundleAgain.DayTypes[0].Slots) != 1 || len(bundleAgain.DayTypes[0].Slots[0].Options) != 1 {
+		t.Fatalf("duplicate restore changed row counts: %+v", bundleAgain)
+	}
+}
+
 // TestGetPlanBundleQueryCount pins the constant-query-count acceptance
 // criterion: GetPlanBundle must not issue one query per day-type/slot/option
 // (an N+1 regression), regardless of how many there are. Counted via a

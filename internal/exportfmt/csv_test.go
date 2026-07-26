@@ -294,6 +294,255 @@ func TestFastsCSVRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPlansCSVRoundTrip(t *testing.T) {
+	plans := []types.DietPlan{
+		{
+			ID: "p1", Name: `Cutting, "cycle"`, Notes: "from Dra. Ana",
+			ValidFrom: "2026-01-05", ValidTo: "2026-06-30",
+			CyclePattern:    []string{"dt-low", "dt-high"},
+			CycleAnchorDate: "2026-01-05",
+			CreatedAt:       time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC),
+			UpdatedAt:       time.Date(2026, 1, 6, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			ID: "p2", Name: "Open-ended", ValidFrom: "2026-07-01", ValidTo: "",
+			CyclePattern:    nil,
+			CycleAnchorDate: "2026-07-01",
+			CreatedAt:       time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+			UpdatedAt:       time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	var buf bytes.Buffer
+	if err := WritePlansCSV(&buf, plans); err != nil {
+		t.Fatalf("WritePlansCSV: %v", err)
+	}
+	got, err := ReadPlansCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadPlansCSV: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d plans, want 2", len(got))
+	}
+	if got[0].Name != plans[0].Name || len(got[0].CyclePattern) != 2 || got[0].CyclePattern[0] != "dt-low" ||
+		got[0].ValidTo != plans[0].ValidTo || !got[0].CreatedAt.Equal(plans[0].CreatedAt) || !got[0].UpdatedAt.Equal(plans[0].UpdatedAt) {
+		t.Errorf("plan 0: got %+v", got[0])
+	}
+	if len(got[1].CyclePattern) != 0 || got[1].ValidTo != "" {
+		t.Errorf("plan 1: got %+v, want empty cycle_pattern and valid_to", got[1])
+	}
+}
+
+func TestReadPlansCSV_Errors(t *testing.T) {
+	const header = "id,name,notes,valid_from,valid_to,cycle_pattern_json,cycle_anchor_date,created_at,updated_at\n"
+	tests := []struct {
+		name    string
+		row     string
+		wantErr string
+	}{
+		{
+			name:    "invalid cycle_pattern_json",
+			row:     "p1,X,,2026-01-01,,{not valid,2026-01-01,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z\n",
+			wantErr: "parse cycle_pattern_json",
+		},
+		{
+			name:    "invalid created_at",
+			row:     "p1,X,,2026-01-01,,,2026-01-01,not-a-time,2026-01-01T00:00:00Z\n",
+			wantErr: "parse created_at",
+		},
+		{
+			name:    "invalid updated_at",
+			row:     "p1,X,,2026-01-01,,,2026-01-01,2026-01-01T00:00:00Z,not-a-time\n",
+			wantErr: "parse updated_at",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadPlansCSV(strings.NewReader(header + tt.row))
+			if err == nil {
+				t.Fatalf("ReadPlansCSV: want error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ReadPlansCSV error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDayTypesCSVRoundTrip(t *testing.T) {
+	dayTypes := []types.DietPlanDayType{
+		{
+			ID: "dt1", PlanID: "p1", Name: `Low-carb, "cheat day"`, Position: 0,
+			Targets:     types.Macros{Calories: 1800, Protein: 150.5, Carbs: 100.2, Fat: 60.1, Fiber: 25.3},
+			WaterGoalMl: 3000,
+		},
+	}
+	var buf bytes.Buffer
+	if err := WriteDayTypesCSV(&buf, dayTypes); err != nil {
+		t.Fatalf("WriteDayTypesCSV: %v", err)
+	}
+	got, err := ReadDayTypesCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadDayTypesCSV: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "dt1" || got[0].Name != dayTypes[0].Name ||
+		got[0].Targets != dayTypes[0].Targets || got[0].WaterGoalMl != 3000 {
+		t.Errorf("got %+v, want %+v", got, dayTypes)
+	}
+}
+
+func TestReadDayTypesCSV_Errors(t *testing.T) {
+	const header = "id,plan_id,name,position,kcal,protein,carbs,fat,fiber,water_goal_ml\n"
+	tests := []struct {
+		name    string
+		row     string
+		wantErr string
+	}{
+		{name: "invalid position", row: "dt1,p1,X,not-a-number,1800,150,100,60,25,3000\n", wantErr: "parse position"},
+		{name: "invalid water_goal_ml", row: "dt1,p1,X,0,1800,150,100,60,25,not-a-number\n", wantErr: "parse water_goal_ml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadDayTypesCSV(strings.NewReader(header + tt.row))
+			if err == nil {
+				t.Fatalf("ReadDayTypesCSV: want error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ReadDayTypesCSV error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSlotsCSVRoundTrip(t *testing.T) {
+	slots := []types.DietPlanSlot{
+		{ID: "sl1", DayTypeID: "dt1", Position: 0, TimeOfDay: "07:00", Label: `Café da manhã, "cedo"`},
+	}
+	var buf bytes.Buffer
+	if err := WriteSlotsCSV(&buf, slots); err != nil {
+		t.Fatalf("WriteSlotsCSV: %v", err)
+	}
+	got, err := ReadSlotsCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadSlotsCSV: %v", err)
+	}
+	if len(got) != 1 || got[0] != slots[0] {
+		t.Errorf("got %+v, want %+v", got, slots)
+	}
+}
+
+func TestReadSlotsCSV_Errors(t *testing.T) {
+	const header = "id,day_type_id,position,time_of_day,label\n"
+	_, err := ReadSlotsCSV(strings.NewReader(header + "sl1,dt1,not-a-number,07:00,X\n"))
+	if err == nil || !strings.Contains(err.Error(), "parse position") {
+		t.Errorf("ReadSlotsCSV error = %v, want substring %q", err, "parse position")
+	}
+}
+
+func TestSlotOptionsCSVRoundTrip(t *testing.T) {
+	options := []types.DietPlanSlotOption{
+		{ID: "opt1", SlotID: "sl1", Position: 0, Label: `Opção 1, "principal"`, TemplateID: "tmpl1"},
+	}
+	var buf bytes.Buffer
+	if err := WriteSlotOptionsCSV(&buf, options); err != nil {
+		t.Fatalf("WriteSlotOptionsCSV: %v", err)
+	}
+	got, err := ReadSlotOptionsCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadSlotOptionsCSV: %v", err)
+	}
+	if len(got) != 1 || got[0] != options[0] {
+		t.Errorf("got %+v, want %+v", got, options)
+	}
+}
+
+func TestReadSlotOptionsCSV_Errors(t *testing.T) {
+	const header = "id,slot_id,position,label,template_id\n"
+	_, err := ReadSlotOptionsCSV(strings.NewReader(header + "opt1,sl1,not-a-number,X,tmpl1\n"))
+	if err == nil || !strings.Contains(err.Error(), "parse position") {
+		t.Errorf("ReadSlotOptionsCSV error = %v, want substring %q", err, "parse position")
+	}
+}
+
+func TestDayOverridesCSVRoundTrip(t *testing.T) {
+	overrides := []types.DietPlanDayOverride{
+		{Date: "2026-07-15", DayTypeID: "dt-low"},
+		{Date: "2026-07-16", DayTypeID: "dt-high"},
+	}
+	var buf bytes.Buffer
+	if err := WriteDayOverridesCSV(&buf, overrides); err != nil {
+		t.Fatalf("WriteDayOverridesCSV: %v", err)
+	}
+	got, err := ReadDayOverridesCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadDayOverridesCSV: %v", err)
+	}
+	if len(got) != 2 || got[0].Date != overrides[0].Date || got[0].DayTypeID != overrides[0].DayTypeID ||
+		got[1].Date != overrides[1].Date || got[1].DayTypeID != overrides[1].DayTypeID {
+		t.Errorf("got %+v, want %+v (UserID intentionally left zero-value)", got, overrides)
+	}
+}
+
+func TestTemplatesCSVRoundTrip(t *testing.T) {
+	templates := []types.MealTemplate{
+		{
+			ID: "t1", Name: `Café da manhã, "padrão"`, OwnerKind: types.TemplateOwnerPlan,
+			CreatedAt: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC),
+			LastUsed:  time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC),
+			Items: []types.ResolvedItem{
+				{Macros: types.Macros{Calories: 300, Protein: 20, Carbs: 30, Fat: 10, Fiber: 5}},
+			},
+		},
+		{
+			ID: "t2", Name: "No items", OwnerKind: types.TemplateOwnerUser,
+			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			LastUsed:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	var buf bytes.Buffer
+	if err := WriteTemplatesCSV(&buf, templates); err != nil {
+		t.Fatalf("WriteTemplatesCSV: %v", err)
+	}
+	got, err := ReadTemplatesCSV(&buf)
+	if err != nil {
+		t.Fatalf("ReadTemplatesCSV: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d templates, want 2", len(got))
+	}
+	if got[0].ID != "t1" || got[0].Name != templates[0].Name || got[0].OwnerKind != types.TemplateOwnerPlan ||
+		!got[0].CreatedAt.Equal(templates[0].CreatedAt) || !got[0].LastUsed.Equal(templates[0].LastUsed) ||
+		len(got[0].Items) != 1 || got[0].Items[0].Macros != templates[0].Items[0].Macros {
+		t.Errorf("template 0: got %+v", got[0])
+	}
+	if got[1].OwnerKind != types.TemplateOwnerUser || len(got[1].Items) != 0 {
+		t.Errorf("template 1: got %+v", got[1])
+	}
+}
+
+func TestReadTemplatesCSV_Errors(t *testing.T) {
+	const header = "id,name,owner_kind,created_at,last_used,items_json\n"
+	tests := []struct {
+		name    string
+		row     string
+		wantErr string
+	}{
+		{name: "invalid created_at", row: "t1,X,user,not-a-time,2026-01-01T00:00:00Z,\n", wantErr: "parse created_at"},
+		{name: "invalid last_used", row: "t1,X,user,2026-01-01T00:00:00Z,not-a-time,\n", wantErr: "parse last_used"},
+		{name: "invalid items_json", row: "t1,X,user,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z,{not valid json\n", wantErr: "parse items_json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadTemplatesCSV(strings.NewReader(header + tt.row))
+			if err == nil {
+				t.Fatalf("ReadTemplatesCSV: want error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ReadTemplatesCSV error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestPhotosCSVRoundTrip(t *testing.T) {
 	photos := []types.ProgressPhoto{
 		{ID: "p1", Date: "2026-07-15", View: "front", MimeType: "image/jpeg", Data: []byte("blob-bytes-not-written")},
