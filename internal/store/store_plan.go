@@ -428,6 +428,99 @@ func (s *Store) DeleteDayOverride(ctx context.Context, userID, date string) erro
 	return nil
 }
 
+// ListDayOverrides returns every day-type override for a user, for backup
+// export. GetDayOverride is scoped to a single date and unsuited to bulk
+// listing.
+func (s *Store) ListDayOverrides(ctx context.Context, userID string) ([]types.DietPlanDayOverride, error) {
+	const q = `SELECT user_id, date, day_type_id FROM diet_plan_day_overrides WHERE user_id = ? ORDER BY date`
+	var rows []types.DietPlanDayOverride
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
+		return nil, fmt.Errorf("store: list day overrides: %w", err)
+	}
+	return rows, nil
+}
+
+// ---------------------------------------------------------------------------
+// Restore (disaster recovery)
+// ---------------------------------------------------------------------------
+//
+// Unlike the Create* methods above, which always assign a fresh ID, every
+// Restore* method here preserves the ID from the backup row directly -- the
+// same convention as RestoreSleep/RestoreWater/RestoreFast elsewhere in this
+// store. Restoring in plan -> day-type -> slot -> option order (enforced by
+// the caller in internal/restore) keeps every foreign key valid as each
+// table is replayed. A duplicate ID (already restored) is a safe no-op.
+// RestoreDayOverride has no separate method: SetDayOverride already upserts
+// on (user_id, date), which is exactly the idempotent behavior restore needs.
+
+// RestorePlan idempotently inserts a plan, preserving its original ID.
+func (s *Store) RestorePlan(ctx context.Context, p types.DietPlan) error {
+	pattern, err := json.Marshal(p.CyclePattern)
+	if err != nil {
+		return fmt.Errorf("store: marshal cycle_pattern: %w", err)
+	}
+	const q = `
+		INSERT INTO diet_plans
+			(id, user_id, name, notes, valid_from, valid_to, cycle_pattern, cycle_anchor_date, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = s.db.ExecContext(ctx, s.rewrite(q),
+		p.ID, p.UserID, p.Name, p.Notes, p.ValidFrom, p.ValidTo, string(pattern), p.CycleAnchorDate,
+		utcStr(p.CreatedAt), utcStr(p.UpdatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil
+		}
+		return fmt.Errorf("store: restore plan: %w", err)
+	}
+	return nil
+}
+
+// RestoreDayType idempotently inserts a day-type, preserving its original ID.
+func (s *Store) RestoreDayType(ctx context.Context, dt types.DietPlanDayType) error {
+	const q = `
+		INSERT INTO diet_plan_day_types (id, plan_id, name, position, kcal, protein, carbs, fat, fiber, water_goal_ml)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), dt.ID, dt.PlanID, dt.Name, dt.Position,
+		dt.Targets.Calories, dt.Targets.Protein, dt.Targets.Carbs, dt.Targets.Fat, dt.Targets.Fiber, dt.WaterGoalMl)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil
+		}
+		return fmt.Errorf("store: restore day type: %w", err)
+	}
+	return nil
+}
+
+// RestoreSlot idempotently inserts a slot, preserving its original ID.
+func (s *Store) RestoreSlot(ctx context.Context, sl types.DietPlanSlot) error {
+	const q = `INSERT INTO diet_plan_slots (id, day_type_id, position, time_of_day, label) VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), sl.ID, sl.DayTypeID, sl.Position, sl.TimeOfDay, sl.Label)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil
+		}
+		return fmt.Errorf("store: restore slot: %w", err)
+	}
+	return nil
+}
+
+// RestoreSlotOption idempotently inserts a slot option, preserving its
+// original ID. Requires the referenced template_id to already exist (foreign
+// keys are enforced) -- restore templates before slot options.
+func (s *Store) RestoreSlotOption(ctx context.Context, opt types.DietPlanSlotOption) error {
+	const q = `INSERT INTO diet_plan_slot_options (id, slot_id, position, label, template_id) VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, s.rewrite(q), opt.ID, opt.SlotID, opt.Position, opt.Label, opt.TemplateID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil
+		}
+		return fmt.Errorf("store: restore slot option: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Plan bundle
 // ---------------------------------------------------------------------------

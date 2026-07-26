@@ -99,6 +99,20 @@ func (f *fakeStore) GetWorkoutsInRangeWithExercises(context.Context, string, str
 	return nil, nil
 }
 
+func (f *fakeStore) ListPlans(context.Context, string) ([]types.DietPlan, error) { return nil, nil }
+
+func (f *fakeStore) GetPlanBundle(context.Context, string) (types.PlanBundle, error) {
+	return types.PlanBundle{}, nil
+}
+
+func (f *fakeStore) ListDayOverrides(context.Context, string) ([]types.DietPlanDayOverride, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) ListTemplatesForBackup(context.Context, string) ([]types.MealTemplate, error) {
+	return nil, nil
+}
+
 type fakeDest struct {
 	writes int
 }
@@ -187,8 +201,8 @@ func TestTick_RunsWhenIntervalElapsed(t *testing.T) {
 
 	r.tick(context.Background())
 
-	if dst.writes != 9 { // meals, rollups, weight, measurements, sleep, workouts, water, fasts, photos csv (no photo blobs)
-		t.Fatalf("expected 9 writes (9 empty CSVs), got %d", dst.writes)
+	if dst.writes != 15 { // 9 existing CSVs + 6 plan-related CSVs (templates, plans, day_types, slots, slot_options, day_overrides), all empty
+		t.Fatalf("expected 15 writes (15 empty CSVs), got %d", dst.writes)
 	}
 	if store.lastRuns["u1"].IsZero() {
 		t.Fatalf("expected last_run_at to be updated")
@@ -206,7 +220,7 @@ func TestRun_ChecksImmediatelyBeforeCancelledContextReturns(t *testing.T) {
 
 	r.Run(ctx)
 
-	if dst.writes != 9 {
+	if dst.writes != 15 {
 		t.Fatalf("expected immediate backup before cancellation returns, got %d writes", dst.writes)
 	}
 }
@@ -260,7 +274,7 @@ func TestRunOnce_IgnoresIntervalGate(t *testing.T) {
 	if err := r.RunOnce(context.Background(), "u1"); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if dst.writes != 9 {
+	if dst.writes != 15 {
 		t.Fatalf("expected RunOnce to write regardless of interval, got %d writes", dst.writes)
 	}
 }
@@ -353,9 +367,10 @@ func TestRunFor_ExportsAllEntities(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	// 9 CSVs (meals, rollups, weight, measurements, sleep, workouts, water,
-	// fasts, photos) + 1 photo blob = 10.
-	if dst.writes != 10 {
-		t.Fatalf("expected 10 writes (9 CSVs + 1 photo blob), got %d", dst.writes)
+	// fasts, photos) + 1 photo blob + 6 plan-related CSVs (templates, plans,
+	// day_types, slots, slot_options, day_overrides) = 16.
+	if dst.writes != 16 {
+		t.Fatalf("expected 16 writes (9 CSVs + 1 photo blob + 6 plan CSVs), got %d", dst.writes)
 	}
 }
 

@@ -186,6 +186,115 @@ func WritePhotosCSV(w io.Writer, photos []types.ProgressPhoto) error {
 	return nil
 }
 
+// WritePlansCSV writes diet plans as CSV to w:
+// id,name,notes,valid_from,valid_to,cycle_pattern_json,cycle_anchor_date,created_at,updated_at.
+// UserID is not included; restore scopes rows to the -user CLI flag.
+func WritePlansCSV(w io.Writer, plans []types.DietPlan) error {
+	const header = "id,name,notes,valid_from,valid_to,cycle_pattern_json,cycle_anchor_date,created_at,updated_at"
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, p := range plans {
+		patternJSON, err := json.Marshal(p.CyclePattern)
+		if err != nil {
+			return fmt.Errorf("exportfmt: marshal cycle_pattern for plan %s: %w", p.ID, err)
+		}
+		if _, err := fmt.Fprintf(w, "%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+			p.ID, csvEscape(p.Name), csvEscape(p.Notes), p.ValidFrom, p.ValidTo,
+			csvEscape(string(patternJSON)), p.CycleAnchorDate,
+			p.CreatedAt.UTC().Format(time.RFC3339), p.UpdatedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteDayTypesCSV writes diet plan day-types as CSV to w:
+// id,plan_id,name,position,kcal,protein,carbs,fat,fiber,water_goal_ml.
+func WriteDayTypesCSV(w io.Writer, dayTypes []types.DietPlanDayType) error {
+	const header = "id,plan_id,name,position,kcal,protein,carbs,fat,fiber,water_goal_ml"
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, dt := range dayTypes {
+		if _, err := fmt.Fprintf(w, "%s,%s,%s,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%d\n",
+			dt.ID, dt.PlanID, csvEscape(dt.Name), dt.Position,
+			dt.Targets.Calories, dt.Targets.Protein, dt.Targets.Carbs, dt.Targets.Fat, dt.Targets.Fiber,
+			dt.WaterGoalMl,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteSlotsCSV writes diet plan slots as CSV to w: id,day_type_id,position,time_of_day,label.
+func WriteSlotsCSV(w io.Writer, slots []types.DietPlanSlot) error {
+	const header = "id,day_type_id,position,time_of_day,label"
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, sl := range slots {
+		if _, err := fmt.Fprintf(w, "%s,%s,%d,%s,%s\n", sl.ID, sl.DayTypeID, sl.Position, sl.TimeOfDay, csvEscape(sl.Label)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteSlotOptionsCSV writes diet plan slot options as CSV to w: id,slot_id,position,label,template_id.
+func WriteSlotOptionsCSV(w io.Writer, options []types.DietPlanSlotOption) error {
+	const header = "id,slot_id,position,label,template_id"
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, opt := range options {
+		if _, err := fmt.Fprintf(w, "%s,%s,%d,%s,%s\n", opt.ID, opt.SlotID, opt.Position, csvEscape(opt.Label), opt.TemplateID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteDayOverridesCSV writes diet plan day overrides as CSV to w: date,day_type_id.
+// UserID is not included; restore scopes rows to the -user CLI flag.
+func WriteDayOverridesCSV(w io.Writer, overrides []types.DietPlanDayOverride) error {
+	if _, err := fmt.Fprintln(w, "date,day_type_id"); err != nil {
+		return err
+	}
+	for _, o := range overrides {
+		if _, err := fmt.Fprintf(w, "%s,%s\n", o.Date, o.DayTypeID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteTemplatesCSV writes meal templates (both user- and plan-owned) as CSV
+// to w: id,name,owner_kind,created_at,last_used,items_json. UserID is not
+// included; restore scopes rows to the -user CLI flag.
+func WriteTemplatesCSV(w io.Writer, templates []types.MealTemplate) error {
+	const header = "id,name,owner_kind,created_at,last_used,items_json"
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, t := range templates {
+		itemsJSON, err := json.Marshal(t.Items)
+		if err != nil {
+			return fmt.Errorf("exportfmt: marshal items for template %s: %w", t.ID, err)
+		}
+		if _, err := fmt.Fprintf(w, "%s,%s,%s,%s,%s,%s\n",
+			t.ID, csvEscape(t.Name), t.OwnerKind,
+			t.CreatedAt.UTC().Format(time.RFC3339), t.LastUsed.UTC().Format(time.RFC3339),
+			csvEscape(string(itemsJSON)),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PhotoFilename returns the flat (no directory separators) filename used to
 // store a progress photo's binary blob alongside the photos.csv index. Flat
 // names matter: the localdisk backup destination strips any "/" via

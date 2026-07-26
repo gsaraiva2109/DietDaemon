@@ -361,7 +361,8 @@ type MealTemplate struct {
 	LastUsed  time.Time      `json:"last_used"`
 	// OwnerKind is TemplateOwnerUser (default, zero value included) or
 	// TemplateOwnerPlan when the row backs a DietPlanSlotOption. Plan-owned
-	// templates are excluded from the user's own Templates list.
+	// templates are excluded from the user's own Templates list and must
+	// round-trip through backup/restore so they stay hidden after restore.
 	OwnerKind string `json:"owner_kind,omitempty"`
 }
 

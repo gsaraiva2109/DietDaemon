@@ -120,6 +120,110 @@ func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTe
 	return out, nil
 }
 
+// ListTemplatesForBackup returns every template for a user, both user- and
+// plan-owned, with owner_kind populated (unlike GetTemplates, which existing
+// callers such as the Templates list endpoint don't need it for). Backup
+// export needs it so a restored plan-owned template stays hidden from the
+// user's own Templates list.
+func (s *Store) ListTemplatesForBackup(ctx context.Context, userID string) ([]types.MealTemplate, error) {
+	const q = `
+		SELECT id, user_id, name, owner_kind, created_at, last_used
+		FROM meal_templates WHERE user_id = ?
+		ORDER BY created_at
+	`
+	var rows []struct {
+		ID        string `db:"id"`
+		UserID    string `db:"user_id"`
+		Name      string `db:"name"`
+		OwnerKind string `db:"owner_kind"`
+		CreatedAt string `db:"created_at"`
+		LastUsed  string `db:"last_used"`
+	}
+	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), userID); err != nil {
+		return nil, fmt.Errorf("store: list templates for backup: %w", err)
+	}
+
+	out := make([]types.MealTemplate, 0, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, types.MealTemplate{
+			ID: r.ID, UserID: r.UserID, Name: r.Name, OwnerKind: r.OwnerKind,
+			CreatedAt: parseUTC(r.CreatedAt), LastUsed: parseUTC(r.LastUsed),
+		})
+		ids = append(ids, r.ID)
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+
+	itemsByTemplate, err := s.loadTemplateItems(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		items := itemsByTemplate[out[i].ID]
+		if items == nil {
+			items = []types.ResolvedItem{}
+		}
+		out[i].Items = items
+	}
+	return out, nil
+}
+
+// RestoreTemplate idempotently inserts a template and its items for disaster
+// recovery, preserving the original ID and owner_kind from the backup
+// (unlike SaveTemplate, the live-app write path, which never sets owner_kind
+// explicitly and always relies on the column's "user" default). OwnerKind
+// defaults to TemplateOwnerUser when empty, for backups taken before this
+// column existed. A duplicate ID (already restored) is a safe no-op,
+// matching every other Restore* method in this store.
+func (s *Store) RestoreTemplate(ctx context.Context, t types.MealTemplate) error {
+	ownerKind := t.OwnerKind
+	if ownerKind == "" {
+		ownerKind = types.TemplateOwnerUser
+	}
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const q = `
+		INSERT INTO meal_templates (id, user_id, name, owner_kind, created_at, last_used)
+		VALUES (:id, :user_id, :name, :owner_kind, :created_at, :last_used)
+	`
+	query, args, err := sqlx.Named(q, map[string]any{
+		"id": t.ID, "user_id": t.UserID, "name": t.Name, "owner_kind": ownerKind,
+		"created_at": utcStr(t.CreatedAt), "last_used": utcStr(t.LastUsed),
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind restore template: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, s.rewrite(query), args...); err != nil {
+		if isUniqueViolation(err) {
+			return nil // already restored; items were inserted alongside it last time
+		}
+		return fmt.Errorf("store: restore template: %w", err)
+	}
+
+	const itemPrefix = `
+		INSERT INTO meal_template_items
+			(id, template_id, position, raw_phrase, quantity, unit, normalized_grams,
+			 food_id, food_name, source, match_score,
+			 kcal, protein, carbs, fat, fiber)
+		VALUES `
+	rows := make([][]any, 0, len(t.Items))
+	for i, it := range t.Items {
+		rows = append(rows, templateItemValues(newID(), t.ID, i, it))
+	}
+	if err := s.insertRows(ctx, tx, itemPrefix, "", rows); err != nil {
+		return fmt.Errorf("store: restore template items: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetTemplate returns a single template by ID.
 func (s *Store) GetTemplate(ctx context.Context, templateID string) (types.MealTemplate, error) {
 	const q = `
