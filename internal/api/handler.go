@@ -688,6 +688,28 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/templates/{id}/log", h.wrap(h.handleLogTemplate))
 	mux.HandleFunc("POST /api/v1/meals/{mealID}/duplicate", h.wrap(h.handleDuplicateMeal))
 
+	// Diet plans — CRUD for plans, day-types, slots, slot options, day
+	// overrides, and the resolved day-type+slots+targets view the dashboard,
+	// week strip, and bot all read from.
+	mux.HandleFunc("GET /api/v1/plans", h.wrap(h.handleListPlans))
+	mux.HandleFunc("POST /api/v1/plans", h.wrap(h.handleCreatePlan))
+	mux.HandleFunc("GET /api/v1/plans/active", h.wrap(h.handleGetActivePlan))
+	mux.HandleFunc("GET /api/v1/plans/day/{date}", h.wrap(h.handleGetPlanDay))
+	mux.HandleFunc("PUT /api/v1/plans/overrides/{date}", h.wrap(h.handleSetDayOverride))
+	mux.HandleFunc("DELETE /api/v1/plans/overrides/{date}", h.wrap(h.handleDeleteDayOverride))
+	mux.HandleFunc("GET /api/v1/plans/{planID}", h.wrap(h.handleGetPlan))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}", h.wrap(h.handleUpdatePlan))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}", h.wrap(h.handleDeletePlan))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types", h.wrap(h.handleCreateDayType))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}", h.wrap(h.handleUpdateDayType))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}", h.wrap(h.handleDeleteDayType))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types/{dayTypeID}/slots", h.wrap(h.handleCreateSlot))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}", h.wrap(h.handleUpdateSlot))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}", h.wrap(h.handleDeleteSlot))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options", h.wrap(h.handleCreateSlotOption))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleUpdateSlotOption))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleDeleteSlotOption))
+
 	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
 	mux.HandleFunc("POST /api/v1/body/weight", h.wrap(h.handleLogWeight))

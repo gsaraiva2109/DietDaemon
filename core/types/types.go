@@ -359,6 +359,10 @@ type MealTemplate struct {
 	Items     []ResolvedItem `json:"items"`
 	CreatedAt time.Time      `json:"created_at"`
 	LastUsed  time.Time      `json:"last_used"`
+	// OwnerKind is TemplateOwnerUser (default, zero value included) or
+	// TemplateOwnerPlan when the row backs a DietPlanSlotOption. Plan-owned
+	// templates are excluded from the user's own Templates list.
+	OwnerKind string `json:"owner_kind,omitempty"`
 }
 
 // TemplateLog records a template usage event.

@@ -23,9 +23,16 @@ func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// owner_kind is deliberately absent from the DO UPDATE SET clause: it's
+	// fixed at creation (a plan-owned template never becomes user-owned or
+	// vice versa), so a re-save must not be able to clobber it.
+	ownerKind := t.OwnerKind
+	if ownerKind == "" {
+		ownerKind = types.TemplateOwnerUser
+	}
 	const q = `
-		INSERT INTO meal_templates (id, user_id, name, created_at, last_used)
-		VALUES (:id, :user_id, :name, :created_at, :last_used)
+		INSERT INTO meal_templates (id, user_id, name, created_at, last_used, owner_kind)
+		VALUES (:id, :user_id, :name, :created_at, :last_used, :owner_kind)
 		ON CONFLICT(id) DO UPDATE SET
 			name      = excluded.name,
 			last_used = excluded.last_used
@@ -33,6 +40,7 @@ func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
 	query, args, err := sqlx.Named(q, map[string]any{
 		"id": t.ID, "user_id": t.UserID, "name": t.Name,
 		"created_at": utcStr(t.CreatedAt), "last_used": utcStr(t.LastUsed),
+		"owner_kind": ownerKind,
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind save template: %w", err)
@@ -63,11 +71,14 @@ func (s *Store) SaveTemplate(ctx context.Context, t types.MealTemplate) error {
 	return tx.Commit()
 }
 
-// GetTemplates returns all templates for a user, newest first.
+// GetTemplates returns all templates for a user, newest first. Plan-owned
+// templates (owner_kind = 'plan', backing a DietPlanSlotOption) are excluded
+// so they don't clutter the user's own template list; fetch one directly by
+// ID via GetTemplate when its owning slot option needs it.
 func (s *Store) GetTemplates(ctx context.Context, userID string) ([]types.MealTemplate, error) {
 	const q = `
 		SELECT id, user_id, name, created_at, last_used
-		FROM meal_templates WHERE user_id = ?
+		FROM meal_templates WHERE user_id = ? AND owner_kind != 'plan'
 		ORDER BY created_at DESC
 	`
 	var rows []struct {
