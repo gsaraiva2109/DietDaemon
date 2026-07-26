@@ -38,7 +38,7 @@ type MealStore interface {
 	UpsertUser(ctx context.Context, u types.User) error
 	GetUser(ctx context.Context, userID string) (types.User, error)
 	SaveMeal(ctx context.Context, m types.Meal) error
-	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
+	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	UpsertRollup(ctx context.Context, r types.DailyRollup) error
@@ -478,7 +478,7 @@ func (e *Engine) updateRollup(ctx context.Context, userID string, at time.Time, 
 			return err
 		}
 		rollup = types.DailyRollup{UserID: userID, Date: localDate}
-		if t, terr := e.store.GetTargets(ctx, userID); terr == nil {
+		if t, terr := e.store.TargetsFor(ctx, userID, localDate); terr == nil {
 			rollup.Targets = t.Targets
 		} else if !isNotFound(terr) {
 			return terr

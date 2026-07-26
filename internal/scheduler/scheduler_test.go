@@ -26,6 +26,9 @@ func (f *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTar
 	}
 	return types.DailyTargets{}, types.ErrNotFound
 }
+func (f *fakeStore) TargetsFor(ctx context.Context, userID, _ string) (types.DailyTargets, error) {
+	return f.GetTargets(ctx, userID)
+}
 func (f *fakeStore) GetRollup(_ context.Context, userID, date string) (types.DailyRollup, error) {
 	if m, ok := f.rollups[userID+"|"+date]; ok {
 		return types.DailyRollup{UserID: userID, Date: date, Consumed: m}, nil
@@ -136,6 +139,9 @@ func (s *blockingStore) GetTargets(context.Context, string) (types.DailyTargets,
 	s.started <- struct{}{}
 	<-s.release
 	return types.DailyTargets{}, types.ErrNotFound
+}
+func (s *blockingStore) TargetsFor(ctx context.Context, userID, _ string) (types.DailyTargets, error) {
+	return s.GetTargets(ctx, userID)
 }
 func (*blockingStore) GetRollup(context.Context, string, string) (types.DailyRollup, error) {
 	return types.DailyRollup{}, types.ErrNotFound

@@ -678,6 +678,9 @@ func (s *fakeMealStore) GetActivePlan(_ context.Context, _, _ string) (types.Die
 	if s.activePlanErr != nil {
 		return types.DietPlan{}, s.activePlanErr
 	}
+	if s.activePlan.ID == "" {
+		return types.DietPlan{}, types.ErrNotFound
+	}
 	return s.activePlan, nil
 }
 func (s *fakeMealStore) UpdatePlan(_ context.Context, p types.DietPlan) error {
@@ -1789,7 +1792,7 @@ func TestSetTargetsWaterGoalRejectsNonPositive(t *testing.T) {
 func TestGetWaterToday(t *testing.T) {
 	t.Run("no targets row falls back to default", func(t *testing.T) {
 		store := newFakeMealStore()
-		store.targetsErr = types.ErrNotFound
+		store.targetsForErr = types.ErrNotFound
 		h := newHandler(store, &fakeMealLogger{})
 
 		rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)
@@ -1807,7 +1810,7 @@ func TestGetWaterToday(t *testing.T) {
 
 	t.Run("stored non-default water goal", func(t *testing.T) {
 		store := newFakeMealStore()
-		store.targets = types.DailyTargets{UserID: "test-user", WaterGoalMl: 3200}
+		store.targetsFor = types.DailyTargets{UserID: "test-user", WaterGoalMl: 3200}
 		h := newHandler(store, &fakeMealLogger{})
 
 		rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)
@@ -2230,7 +2233,7 @@ func TestHandleSetNudgeSettingsStoreError(t *testing.T) {
 
 func TestHandleGetBudgetWeekly(t *testing.T) {
 	store := newFakeMealStore()
-	store.targets = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 2000, Protein: 150}}
+	store.targetsFor = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 2000, Protein: 150}}
 	store.rollups = []types.DailyRollup{
 		{UserID: "test-user", Date: "2020-01-01", Consumed: types.Macros{Calories: 500, Protein: 40}},
 	}
@@ -2279,7 +2282,7 @@ func TestHandleGetBudgetWeeklyRollupsError(t *testing.T) {
 
 func TestHandleGetBudgetWeeklyTargetsError(t *testing.T) {
 	store := newFakeMealStore()
-	store.targetsErr = errors.New("db down")
+	store.targetsForErr = errors.New("db down")
 	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/budget/weekly", nil, nil)
