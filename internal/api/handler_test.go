@@ -88,6 +88,7 @@ type fakeMealStore struct {
 	template          types.MealTemplate
 	templateErr       error
 	saveTemplateErr   error
+	savedTemplates    []types.MealTemplate // captures every SaveTemplate call, for plan slot-option tests
 	deleteTemplateErr error
 	logTemplateErr    error
 	saveMealErr       error
@@ -420,8 +421,12 @@ func (s *fakeMealStore) GetFoodImportStatuses(_ context.Context) ([]types.FoodIm
 }
 
 // Meal templates.
-func (s *fakeMealStore) SaveTemplate(_ context.Context, _ types.MealTemplate) error {
-	return s.saveTemplateErr
+func (s *fakeMealStore) SaveTemplate(_ context.Context, t types.MealTemplate) error {
+	if s.saveTemplateErr != nil {
+		return s.saveTemplateErr
+	}
+	s.savedTemplates = append(s.savedTemplates, t)
+	return nil
 }
 func (s *fakeMealStore) GetTemplates(_ context.Context, _ string) ([]types.MealTemplate, error) {
 	return s.templates, s.templatesErr
