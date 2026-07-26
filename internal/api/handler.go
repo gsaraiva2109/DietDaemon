@@ -283,6 +283,33 @@ type MealStore interface {
 	EndSleep(ctx context.Context, userID, id, wakeAt, quality string) error
 	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
 	DeleteSleep(ctx context.Context, userID, id string) error
+
+	// TargetsFor Diet plans — resolves the day-type in effect (override, then
+	// active plan's cycle pattern, then the flat daily_targets fallback) and
+	// RefreshTodayTargets mirrors today's rollup targets whenever a plan
+	// mutation, day-type edit, or override change could have moved them.
+	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
+	RefreshTodayTargets(ctx context.Context, userID string) error
+	CreatePlan(ctx context.Context, p types.DietPlan) (types.DietPlan, error)
+	GetPlan(ctx context.Context, planID string) (types.DietPlan, error)
+	ListPlans(ctx context.Context, userID string) ([]types.DietPlan, error)
+	GetActivePlan(ctx context.Context, userID, date string) (types.DietPlan, error)
+	UpdatePlan(ctx context.Context, p types.DietPlan) error
+	DeletePlan(ctx context.Context, userID, planID string) error
+	GetPlanBundle(ctx context.Context, planID string) (types.PlanBundle, error)
+	CreateDayType(ctx context.Context, dt types.DietPlanDayType) (types.DietPlanDayType, error)
+	GetDayType(ctx context.Context, dayTypeID string) (types.DietPlanDayType, error)
+	UpdateDayType(ctx context.Context, dt types.DietPlanDayType) error
+	DeleteDayType(ctx context.Context, dayTypeID string) error
+	CreateSlot(ctx context.Context, sl types.DietPlanSlot) (types.DietPlanSlot, error)
+	UpdateSlot(ctx context.Context, sl types.DietPlanSlot) error
+	DeleteSlot(ctx context.Context, slotID string) error
+	CreateSlotOption(ctx context.Context, opt types.DietPlanSlotOption) (types.DietPlanSlotOption, error)
+	UpdateSlotOption(ctx context.Context, opt types.DietPlanSlotOption) error
+	DeleteSlotOption(ctx context.Context, optionID string) error
+	SetDayOverride(ctx context.Context, o types.DietPlanDayOverride) error
+	GetDayOverride(ctx context.Context, userID, date string) (types.DietPlanDayOverride, error)
+	DeleteDayOverride(ctx context.Context, userID, date string) error
 }
 
 // MealLogger submits raw text through the parsing pipeline, and can also directly

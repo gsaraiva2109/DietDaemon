@@ -99,3 +99,17 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
 }
+
+// TargetsFor resolves the targets in effect for userID on localDate: an
+// override for that date, else the active plan's cycle pattern, else the
+// flat daily_targets fallback. Currently always falls through to GetTargets;
+// override and plan resolution land with the store-interface swap.
+func (s *Store) TargetsFor(ctx context.Context, userID, _ string) (types.DailyTargets, error) {
+	return s.GetTargets(ctx, userID)
+}
+
+// RefreshTodayTargets mirrors today's resolved targets into the rollup when a
+// plan mutation could have moved them. No-op until plan resolution lands.
+func (s *Store) RefreshTodayTargets(_ context.Context, _ string) error {
+	return nil
+}

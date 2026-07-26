@@ -167,6 +167,38 @@ type fakeMealStore struct {
 	linkingCodeErr        error
 	createLinkingCodeErr  error
 	consumeLinkingCodeErr error
+
+	// Diet plans.
+	targetsFor             types.DailyTargets
+	targetsForErr          error
+	refreshTodayTargetsErr error
+	plans                  map[string]types.DietPlan
+	activePlan             types.DietPlan
+	activePlanErr          error
+	planBundles            map[string]types.PlanBundle
+	dayTypes               map[string]types.DietPlanDayType
+	slots                  map[string]types.DietPlanSlot
+	slotOptions            map[string]types.DietPlanSlotOption
+	dayOverrides           map[string]types.DietPlanDayOverride
+	createPlanErr          error
+	getPlanErr             error
+	listPlansErr           error
+	updatePlanErr          error
+	deletePlanErr          error
+	getPlanBundleErr       error
+	createDayTypeErr       error
+	getDayTypeErr          error
+	updateDayTypeErr       error
+	deleteDayTypeErr       error
+	createSlotErr          error
+	updateSlotErr          error
+	deleteSlotErr          error
+	createSlotOptionErr    error
+	updateSlotOptionErr    error
+	deleteSlotOptionErr    error
+	setDayOverrideErr      error
+	getDayOverrideErr      error
+	deleteDayOverrideErr   error
 }
 
 func newFakeMealStore() *fakeMealStore {
@@ -602,6 +634,193 @@ func (s *fakeMealStore) ListSleep(_ context.Context, _ string, _ int) ([]types.S
 }
 func (s *fakeMealStore) DeleteSleep(_ context.Context, _, _ string) error {
 	return s.deleteSleepErr
+}
+
+func (s *fakeMealStore) TargetsFor(_ context.Context, _, _ string) (types.DailyTargets, error) {
+	if s.targetsForErr != nil {
+		return types.DailyTargets{}, s.targetsForErr
+	}
+	return s.targetsFor, nil
+}
+func (s *fakeMealStore) RefreshTodayTargets(_ context.Context, _ string) error {
+	return s.refreshTodayTargetsErr
+}
+func (s *fakeMealStore) CreatePlan(_ context.Context, p types.DietPlan) (types.DietPlan, error) {
+	if s.createPlanErr != nil {
+		return types.DietPlan{}, s.createPlanErr
+	}
+	if s.plans == nil {
+		s.plans = map[string]types.DietPlan{}
+	}
+	s.plans[p.ID] = p
+	return p, nil
+}
+func (s *fakeMealStore) GetPlan(_ context.Context, planID string) (types.DietPlan, error) {
+	if s.getPlanErr != nil {
+		return types.DietPlan{}, s.getPlanErr
+	}
+	if p, ok := s.plans[planID]; ok {
+		return p, nil
+	}
+	return types.DietPlan{}, types.ErrNotFound
+}
+func (s *fakeMealStore) ListPlans(_ context.Context, _ string) ([]types.DietPlan, error) {
+	if s.listPlansErr != nil {
+		return nil, s.listPlansErr
+	}
+	out := make([]types.DietPlan, 0, len(s.plans))
+	for _, p := range s.plans {
+		out = append(out, p)
+	}
+	return out, nil
+}
+func (s *fakeMealStore) GetActivePlan(_ context.Context, _, _ string) (types.DietPlan, error) {
+	if s.activePlanErr != nil {
+		return types.DietPlan{}, s.activePlanErr
+	}
+	return s.activePlan, nil
+}
+func (s *fakeMealStore) UpdatePlan(_ context.Context, p types.DietPlan) error {
+	if s.updatePlanErr != nil {
+		return s.updatePlanErr
+	}
+	if s.plans == nil {
+		s.plans = map[string]types.DietPlan{}
+	}
+	s.plans[p.ID] = p
+	return nil
+}
+func (s *fakeMealStore) DeletePlan(_ context.Context, _, planID string) error {
+	if s.deletePlanErr != nil {
+		return s.deletePlanErr
+	}
+	delete(s.plans, planID)
+	return nil
+}
+func (s *fakeMealStore) GetPlanBundle(_ context.Context, planID string) (types.PlanBundle, error) {
+	if s.getPlanBundleErr != nil {
+		return types.PlanBundle{}, s.getPlanBundleErr
+	}
+	if b, ok := s.planBundles[planID]; ok {
+		return b, nil
+	}
+	return types.PlanBundle{}, types.ErrNotFound
+}
+func (s *fakeMealStore) CreateDayType(_ context.Context, dt types.DietPlanDayType) (types.DietPlanDayType, error) {
+	if s.createDayTypeErr != nil {
+		return types.DietPlanDayType{}, s.createDayTypeErr
+	}
+	if s.dayTypes == nil {
+		s.dayTypes = map[string]types.DietPlanDayType{}
+	}
+	s.dayTypes[dt.ID] = dt
+	return dt, nil
+}
+func (s *fakeMealStore) GetDayType(_ context.Context, dayTypeID string) (types.DietPlanDayType, error) {
+	if s.getDayTypeErr != nil {
+		return types.DietPlanDayType{}, s.getDayTypeErr
+	}
+	if dt, ok := s.dayTypes[dayTypeID]; ok {
+		return dt, nil
+	}
+	return types.DietPlanDayType{}, types.ErrNotFound
+}
+func (s *fakeMealStore) UpdateDayType(_ context.Context, dt types.DietPlanDayType) error {
+	if s.updateDayTypeErr != nil {
+		return s.updateDayTypeErr
+	}
+	if s.dayTypes == nil {
+		s.dayTypes = map[string]types.DietPlanDayType{}
+	}
+	s.dayTypes[dt.ID] = dt
+	return nil
+}
+func (s *fakeMealStore) DeleteDayType(_ context.Context, dayTypeID string) error {
+	if s.deleteDayTypeErr != nil {
+		return s.deleteDayTypeErr
+	}
+	delete(s.dayTypes, dayTypeID)
+	return nil
+}
+func (s *fakeMealStore) CreateSlot(_ context.Context, sl types.DietPlanSlot) (types.DietPlanSlot, error) {
+	if s.createSlotErr != nil {
+		return types.DietPlanSlot{}, s.createSlotErr
+	}
+	if s.slots == nil {
+		s.slots = map[string]types.DietPlanSlot{}
+	}
+	s.slots[sl.ID] = sl
+	return sl, nil
+}
+func (s *fakeMealStore) UpdateSlot(_ context.Context, sl types.DietPlanSlot) error {
+	if s.updateSlotErr != nil {
+		return s.updateSlotErr
+	}
+	if s.slots == nil {
+		s.slots = map[string]types.DietPlanSlot{}
+	}
+	s.slots[sl.ID] = sl
+	return nil
+}
+func (s *fakeMealStore) DeleteSlot(_ context.Context, slotID string) error {
+	if s.deleteSlotErr != nil {
+		return s.deleteSlotErr
+	}
+	delete(s.slots, slotID)
+	return nil
+}
+func (s *fakeMealStore) CreateSlotOption(_ context.Context, opt types.DietPlanSlotOption) (types.DietPlanSlotOption, error) {
+	if s.createSlotOptionErr != nil {
+		return types.DietPlanSlotOption{}, s.createSlotOptionErr
+	}
+	if s.slotOptions == nil {
+		s.slotOptions = map[string]types.DietPlanSlotOption{}
+	}
+	s.slotOptions[opt.ID] = opt
+	return opt, nil
+}
+func (s *fakeMealStore) UpdateSlotOption(_ context.Context, opt types.DietPlanSlotOption) error {
+	if s.updateSlotOptionErr != nil {
+		return s.updateSlotOptionErr
+	}
+	if s.slotOptions == nil {
+		s.slotOptions = map[string]types.DietPlanSlotOption{}
+	}
+	s.slotOptions[opt.ID] = opt
+	return nil
+}
+func (s *fakeMealStore) DeleteSlotOption(_ context.Context, optionID string) error {
+	if s.deleteSlotOptionErr != nil {
+		return s.deleteSlotOptionErr
+	}
+	delete(s.slotOptions, optionID)
+	return nil
+}
+func (s *fakeMealStore) SetDayOverride(_ context.Context, o types.DietPlanDayOverride) error {
+	if s.setDayOverrideErr != nil {
+		return s.setDayOverrideErr
+	}
+	if s.dayOverrides == nil {
+		s.dayOverrides = map[string]types.DietPlanDayOverride{}
+	}
+	s.dayOverrides[o.UserID+"|"+o.Date] = o
+	return nil
+}
+func (s *fakeMealStore) GetDayOverride(_ context.Context, userID, date string) (types.DietPlanDayOverride, error) {
+	if s.getDayOverrideErr != nil {
+		return types.DietPlanDayOverride{}, s.getDayOverrideErr
+	}
+	if o, ok := s.dayOverrides[userID+"|"+date]; ok {
+		return o, nil
+	}
+	return types.DietPlanDayOverride{}, types.ErrNotFound
+}
+func (s *fakeMealStore) DeleteDayOverride(_ context.Context, userID, date string) error {
+	if s.deleteDayOverrideErr != nil {
+		return s.deleteDayOverrideErr
+	}
+	delete(s.dayOverrides, userID+"|"+date)
+	return nil
 }
 
 // fakeAuthStore implements AuthStore for tests.
