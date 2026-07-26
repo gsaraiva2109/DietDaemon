@@ -11,7 +11,7 @@ import (
 
 // StatusStore is the subset of store methods needed by /status.
 type StatusStore interface {
-	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
+	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 	RecentMeals(ctx context.Context, userID string, limit int) ([]types.Meal, error)
 	GetUser(ctx context.Context, userID string) (types.User, error)
@@ -44,7 +44,7 @@ func (c *StatusCommand) Handle(ctx context.Context, msg types.InboundMessage, ar
 	today := time.Now().In(loc).Format("2006-01-02")
 
 	// Get targets.
-	targets, err := c.store.GetTargets(ctx, msg.UserID)
+	targets, err := c.store.TargetsFor(ctx, msg.UserID, today)
 	if err != nil {
 		return types.Reply{
 			Text:        "No targets set. Use /target to set your daily goals.\nExample: /target kcal=2000 protein=180 carbs=200 fat=60",

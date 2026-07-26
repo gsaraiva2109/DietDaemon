@@ -135,7 +135,7 @@ func TestGetActivePlanRangeAndFallback(t *testing.T) {
 }
 
 // TestCycleIndexArithmetic pins the Euclidean-modulo requirement that
-// TargetsFor (#187) depends on: Go's % returns a negative result for a
+// TargetsFor depends on: Go's % returns a negative result for a
 // negative dividend, so naive (offset % len) indexing panics or picks the
 // wrong day-type for any date before cycle_anchor_date. This test exercises
 // the data GetPlanBundle/CreatePlan hand to that resolver, computing the

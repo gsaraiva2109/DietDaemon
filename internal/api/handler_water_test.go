@@ -116,7 +116,7 @@ func TestHandleGetWaterToday(t *testing.T) {
 
 func TestHandleGetWaterTodayCustomGoal(t *testing.T) {
 	store := newFakeMealStore()
-	store.targets = types.DailyTargets{WaterGoalMl: 3000}
+	store.targetsFor = types.DailyTargets{WaterGoalMl: 3000}
 	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)
@@ -142,7 +142,7 @@ func TestHandleGetWaterTodayStoreError(t *testing.T) {
 
 func TestHandleGetWaterTodayTargetsError(t *testing.T) {
 	store := newFakeMealStore()
-	store.targetsErr = errors.New("db unavailable")
+	store.targetsForErr = errors.New("db unavailable")
 	h := newHandler(store, &fakeMealLogger{})
 
 	rec := doRequest(h, "GET", "/api/v1/body/water", nil, nil)

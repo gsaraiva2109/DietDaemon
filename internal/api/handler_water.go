@@ -62,7 +62,7 @@ func (h *Handler) handleGetWaterToday(w http.ResponseWriter, r *http.Request, us
 		logs = []types.WaterLog{}
 	}
 	goalMl := defaultWaterGoalMl
-	dt, err := h.store.GetTargets(r.Context(), userID)
+	dt, err := h.store.TargetsFor(r.Context(), userID, today)
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
 		h.writeErr(w, err)
 		return

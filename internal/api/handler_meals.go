@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -157,13 +158,38 @@ func (h *Handler) returnMeal(w http.ResponseWriter, r *http.Request, mealID, use
 	_ = json.NewEncoder(w).Encode(meal)
 }
 
+// targetsResponse is types.DailyTargets plus plan_active, a response-only
+// hint (never stored) telling the frontend a plan already owns today's
+// numbers before the user edits them.
+type targetsResponse struct {
+	types.DailyTargets
+	PlanActive bool `json:"plan_active"`
+}
+
+// planGovernsToday reports whether an override or an active plan resolves
+// userID's targets for today, mirroring TargetsFor's own precedence (override,
+// then active plan) without needing the day-type's values. It decides which
+// of the two write paths in handleSetTargets owns today's rollup targets, and
+// feeds the plan_active hint on GET/PUT /api/v1/targets. Best-effort: any
+// lookup error is treated as "no plan" so this check never fails a caller's
+// own request.
+func (h *Handler) planGovernsToday(ctx context.Context, userID, today string) bool {
+	if _, err := h.store.GetDayOverride(ctx, userID, today); err == nil {
+		return true
+	}
+	_, err := h.store.GetActivePlan(ctx, userID, today)
+	return err == nil
+}
+
 func (h *Handler) handleGetTargets(w http.ResponseWriter, r *http.Request, userID string) {
 	dt, err := h.store.GetTargets(r.Context(), userID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(dt)
+	today := time.Now().In(h.loc).Format(dateLayout)
+	resp := targetsResponse{DailyTargets: dt, PlanActive: h.planGovernsToday(r.Context(), userID, today)}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userID string) {
@@ -201,18 +227,26 @@ func (h *Handler) handleSetTargets(w http.ResponseWriter, r *http.Request, userI
 		waterGoalMl = *body.WaterGoalMl
 	}
 	dt := types.DailyTargets{UserID: userID, Targets: body.Macros, WaterGoalMl: waterGoalMl}
+	// Always write the flat row and return 200: onboarding, restore, and
+	// import all PUT here unconditionally and must keep working untouched.
 	if err := h.store.SetTargets(r.Context(), dt); err != nil {
 		h.writeErr(w, err)
 		return
 	}
-	// Reflect immediately on the dashboard, which reads targets from the rollup.
+	// Reflect immediately on the dashboard, which reads targets from the
+	// rollup -- but only when no plan governs today. Otherwise this write
+	// would stomp today's plan-derived targets, corrupting a prescribed day
+	// until the plan's own refresh path (RefreshTodayTargets) runs again.
 	today := time.Now().In(h.loc).Format(dateLayout)
-	if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body.Macros); err != nil {
-		h.writeErr(w, err)
-		return
+	planActive := h.planGovernsToday(r.Context(), userID, today)
+	if !planActive {
+		if err := h.store.UpdateRollupTargets(r.Context(), userID, today, body.Macros); err != nil {
+			h.writeErr(w, err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(dt)
+	_ = json.NewEncoder(w).Encode(targetsResponse{DailyTargets: dt, PlanActive: planActive})
 }
 
 // nudgeRuleView is the effective (default merged with the user's override)
@@ -341,7 +375,7 @@ func (h *Handler) handleGetBudgetWeekly(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	targets, err := h.store.GetTargets(r.Context(), userID)
+	targets, err := h.store.TargetsFor(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err)
 		return
