@@ -721,3 +721,96 @@ const (
 	RegistrationInvite   RegistrationMode = "invite"
 	RegistrationOIDCOnly RegistrationMode = "oidc-only"
 )
+
+// ---------------------------------------------------------------------------
+// Diet plans
+// ---------------------------------------------------------------------------
+
+// TemplateOwnerUser and TemplateOwnerPlan are the values of
+// meal_templates.owner_kind. Plan-owned templates back a
+// DietPlanSlotOption and are hidden from the user's own Templates list.
+const (
+	TemplateOwnerUser = "user"
+	TemplateOwnerPlan = "plan"
+)
+
+// DietPlan is a prescribed meal schedule the user transcribed from a
+// nutritionist. Every macro value in it originates from that transcription;
+// nothing in this feature computes or infers a target. CyclePattern is an
+// ordered list of DietPlanDayType IDs; the day-type in effect on a given date
+// is CyclePattern[(date-CycleAnchorDate) mod len(CyclePattern)], so a
+// 7-element pattern anchored on a Monday is an ordinary weekday plan.
+type DietPlan struct {
+	ID              string    `json:"id" db:"id"`
+	UserID          string    `json:"user_id" db:"user_id"`
+	Name            string    `json:"name" db:"name"`
+	Notes           string    `json:"notes" db:"notes"`
+	ValidFrom       string    `json:"valid_from" db:"valid_from"` // local date "YYYY-MM-DD"
+	ValidTo         string    `json:"valid_to" db:"valid_to"`     // "" = open-ended (current plan)
+	CyclePattern    []string  `json:"cycle_pattern" db:"-"`
+	CycleAnchorDate string    `json:"cycle_anchor_date" db:"cycle_anchor_date"`
+	CreatedAt       time.Time `json:"created_at" db:"-"`
+	UpdatedAt       time.Time `json:"updated_at" db:"-"`
+}
+
+// DietPlanDayType is a named day within a plan (e.g. "Low-carb", "High-carb")
+// carrying its own targets, typed by the user. WaterGoalMl is per day-type
+// because hydration genuinely differs on training days.
+type DietPlanDayType struct {
+	ID          string `json:"id" db:"id"`
+	PlanID      string `json:"plan_id" db:"plan_id"`
+	Name        string `json:"name" db:"name"`
+	Position    int    `json:"position" db:"position"`
+	Targets     Macros `json:"targets" db:"-"`
+	WaterGoalMl int    `json:"water_goal_ml" db:"water_goal_ml"`
+}
+
+// DietPlanSlot is a prescribed meal slot within a day-type
+// (e.g. "Café da manhã").
+type DietPlanSlot struct {
+	ID        string `json:"id" db:"id"`
+	DayTypeID string `json:"day_type_id" db:"day_type_id"`
+	Position  int    `json:"position" db:"position"`
+	TimeOfDay string `json:"time_of_day" db:"time_of_day"`
+	Label     string `json:"label" db:"label"`
+}
+
+// DietPlanSlotOption is one alternative for a slot ("Opção 1 / Opção 2"),
+// backed by a meal_templates row (owner_kind = TemplateOwnerPlan) that holds
+// the prescribed foods.
+type DietPlanSlotOption struct {
+	ID         string `json:"id" db:"id"`
+	SlotID     string `json:"slot_id" db:"slot_id"`
+	Position   int    `json:"position" db:"position"`
+	Label      string `json:"label" db:"label"`
+	TemplateID string `json:"template_id" db:"template_id"`
+}
+
+// DietPlanDayOverride pins a single date to a specific day-type, taking
+// precedence over the plan's cycle_pattern for that date (the dashboard's
+// one-tap "pick today's type").
+type DietPlanDayOverride struct {
+	UserID    string `json:"user_id" db:"user_id"`
+	Date      string `json:"date" db:"date"`
+	DayTypeID string `json:"day_type_id" db:"day_type_id"`
+}
+
+// DietPlanSlotOptionBundle nests a slot option under its slot for
+// GetPlanBundle's single-shot read.
+type DietPlanSlotBundle struct {
+	DietPlanSlot
+	Options []DietPlanSlotOption `json:"options"`
+}
+
+// DietPlanDayTypeBundle nests slots under their day-type for GetPlanBundle.
+type DietPlanDayTypeBundle struct {
+	DietPlanDayType
+	Slots []DietPlanSlotBundle `json:"slots"`
+}
+
+// PlanBundle is a full plan tree — plan, day-types, slots, and options — as
+// returned by GetPlanBundle in a bounded number of queries regardless of size.
+type PlanBundle struct {
+	Plan     DietPlan                `json:"plan"`
+	DayTypes []DietPlanDayTypeBundle `json:"day_types"`
+}
