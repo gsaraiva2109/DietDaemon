@@ -32,6 +32,16 @@ type Store interface {
 	RestorePhoto(ctx context.Context, p types.ProgressPhoto) error
 	RestoreWater(ctx context.Context, w types.WaterLog) error
 	RestoreFast(ctx context.Context, f types.Fast) error
+
+	// Diet plans. Restore order matters: templates before slot options
+	// (template_id is a foreign key), plans before day-types before slots
+	// before slot options, day-types before day overrides.
+	RestoreTemplate(ctx context.Context, t types.MealTemplate) error
+	RestorePlan(ctx context.Context, p types.DietPlan) error
+	RestoreDayType(ctx context.Context, dt types.DietPlanDayType) error
+	RestoreSlot(ctx context.Context, sl types.DietPlanSlot) error
+	RestoreSlotOption(ctx context.Context, opt types.DietPlanSlotOption) error
+	SetDayOverride(ctx context.Context, o types.DietPlanDayOverride) error
 }
 
 // Source abstracts where a backup is read from. Symmetric with
@@ -55,6 +65,12 @@ type Summary struct {
 	Water        int
 	Fasts        int
 	Photos       int
+	Templates    int
+	Plans        int
+	DayTypes     int
+	Slots        int
+	SlotOptions  int
+	DayOverrides int
 	Skipped      []string // filenames absent from the backup
 }
 
@@ -131,8 +147,35 @@ func (r *Runner) RunOnce(ctx context.Context, userID string, cfg types.BackupCon
 		func(f types.Fast) string { return f.ID }, r.store.RestoreFast)
 	sum.Photos = restorePhotos(&state, r.store)
 
+	// Diet plans, restored in foreign-key order: templates (slot options
+	// reference them) -> plans -> day-types -> slots -> slot options ->
+	// day overrides (reference day-types).
+	sum.Templates = restoreCSV(&state, "templates.csv", "restore template", exportfmt.ReadTemplatesCSV,
+		func(t types.MealTemplate, userID string) types.MealTemplate { t.UserID = userID; return t },
+		func(t types.MealTemplate) string { return t.ID }, r.store.RestoreTemplate)
+	sum.Plans = restoreCSV(&state, "plans.csv", "restore plan", exportfmt.ReadPlansCSV,
+		func(p types.DietPlan, userID string) types.DietPlan { p.UserID = userID; return p },
+		func(p types.DietPlan) string { return p.ID }, r.store.RestorePlan)
+	sum.DayTypes = restoreCSV(&state, "day_types.csv", "restore day type", exportfmt.ReadDayTypesCSV,
+		noSetUser[types.DietPlanDayType], func(dt types.DietPlanDayType) string { return dt.ID }, r.store.RestoreDayType)
+	sum.Slots = restoreCSV(&state, "slots.csv", "restore slot", exportfmt.ReadSlotsCSV,
+		noSetUser[types.DietPlanSlot], func(sl types.DietPlanSlot) string { return sl.ID }, r.store.RestoreSlot)
+	sum.SlotOptions = restoreCSV(&state, "slot_options.csv", "restore slot option", exportfmt.ReadSlotOptionsCSV,
+		noSetUser[types.DietPlanSlotOption], func(opt types.DietPlanSlotOption) string { return opt.ID }, r.store.RestoreSlotOption)
+	sum.DayOverrides = restoreCSV(&state, "day_overrides.csv", "restore day override", exportfmt.ReadDayOverridesCSV,
+		func(o types.DietPlanDayOverride, userID string) types.DietPlanDayOverride {
+			o.UserID = userID
+			return o
+		},
+		func(o types.DietPlanDayOverride) string { return o.Date }, r.store.SetDayOverride)
+
 	return sum, errors.Join(errs...)
 }
+
+// noSetUser is a no-op setUser for restoreCSV entities scoped by a parent ID
+// (plan_id, day_type_id, slot_id) rather than carrying their own UserID
+// field -- diet_plan_day_types, diet_plan_slots, diet_plan_slot_options.
+func noSetUser[T any](t T, _ string) T { return t }
 
 func restoreCSV[T any](state *restoreState, filename, action string, parse func(io.Reader) ([]T, error), setUser func(T, string) T, key func(T) string, save func(context.Context, T) error) int {
 	data, skipped, err := readBackupFile(state, filename)

@@ -290,6 +290,168 @@ func ReadPhotosCSV(r io.Reader) ([]PhotoIndexEntry, error) {
 	return out, nil
 }
 
+// ReadPlansCSV parses the format written by WritePlansCSV. UserID is left
+// zero-value; the restore caller sets it before calling the store.
+func ReadPlansCSV(r io.Reader) ([]types.DietPlan, error) {
+	want := []string{"id", "name", "notes", "valid_from", "valid_to", "cycle_pattern_json", "cycle_anchor_date", "created_at", "updated_at"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.DietPlan, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: plans row has %d columns, want %d", len(rec), len(want))
+		}
+		var pattern []string
+		if rec[5] != "" {
+			if err := json.Unmarshal([]byte(rec[5]), &pattern); err != nil {
+				return nil, fmt.Errorf("exportfmt: plans row %q: parse cycle_pattern_json: %w", rec[0], err)
+			}
+		}
+		createdAt, err := time.Parse(time.RFC3339, rec[7])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: plans row %q: parse created_at: %w", rec[0], err)
+		}
+		updatedAt, err := time.Parse(time.RFC3339, rec[8])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: plans row %q: parse updated_at: %w", rec[0], err)
+		}
+		out = append(out, types.DietPlan{
+			ID: rec[0], Name: rec[1], Notes: rec[2], ValidFrom: rec[3], ValidTo: rec[4],
+			CyclePattern: pattern, CycleAnchorDate: rec[6], CreatedAt: createdAt, UpdatedAt: updatedAt,
+		})
+	}
+	return out, nil
+}
+
+// ReadDayTypesCSV parses the format written by WriteDayTypesCSV.
+func ReadDayTypesCSV(r io.Reader) ([]types.DietPlanDayType, error) {
+	want := []string{"id", "plan_id", "name", "position", "kcal", "protein", "carbs", "fat", "fiber", "water_goal_ml"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.DietPlanDayType, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: day_types row has %d columns, want %d", len(rec), len(want))
+		}
+		position, err := strconv.Atoi(rec[3])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: day_types row %q: parse position: %w", rec[0], err)
+		}
+		kcal, _ := parseFloat(rec[4])
+		protein, _ := parseFloat(rec[5])
+		carbs, _ := parseFloat(rec[6])
+		fat, _ := parseFloat(rec[7])
+		fiber, _ := parseFloat(rec[8])
+		waterGoalMl, err := strconv.Atoi(rec[9])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: day_types row %q: parse water_goal_ml: %w", rec[0], err)
+		}
+		out = append(out, types.DietPlanDayType{
+			ID: rec[0], PlanID: rec[1], Name: rec[2], Position: position,
+			Targets:     types.Macros{Calories: kcal, Protein: protein, Carbs: carbs, Fat: fat, Fiber: fiber},
+			WaterGoalMl: waterGoalMl,
+		})
+	}
+	return out, nil
+}
+
+// ReadSlotsCSV parses the format written by WriteSlotsCSV.
+func ReadSlotsCSV(r io.Reader) ([]types.DietPlanSlot, error) {
+	want := []string{"id", "day_type_id", "position", "time_of_day", "label"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.DietPlanSlot, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: slots row has %d columns, want %d", len(rec), len(want))
+		}
+		position, err := strconv.Atoi(rec[2])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: slots row %q: parse position: %w", rec[0], err)
+		}
+		out = append(out, types.DietPlanSlot{ID: rec[0], DayTypeID: rec[1], Position: position, TimeOfDay: rec[3], Label: rec[4]})
+	}
+	return out, nil
+}
+
+// ReadSlotOptionsCSV parses the format written by WriteSlotOptionsCSV.
+func ReadSlotOptionsCSV(r io.Reader) ([]types.DietPlanSlotOption, error) {
+	want := []string{"id", "slot_id", "position", "label", "template_id"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.DietPlanSlotOption, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: slot_options row has %d columns, want %d", len(rec), len(want))
+		}
+		position, err := strconv.Atoi(rec[2])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: slot_options row %q: parse position: %w", rec[0], err)
+		}
+		out = append(out, types.DietPlanSlotOption{ID: rec[0], SlotID: rec[1], Position: position, Label: rec[3], TemplateID: rec[4]})
+	}
+	return out, nil
+}
+
+// ReadDayOverridesCSV parses the format written by WriteDayOverridesCSV.
+// UserID is left zero-value; the restore caller sets it before calling the
+// store.
+func ReadDayOverridesCSV(r io.Reader) ([]types.DietPlanDayOverride, error) {
+	want := []string{"date", "day_type_id"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.DietPlanDayOverride, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: day_overrides row has %d columns, want %d", len(rec), len(want))
+		}
+		out = append(out, types.DietPlanDayOverride{Date: rec[0], DayTypeID: rec[1]})
+	}
+	return out, nil
+}
+
+// ReadTemplatesCSV parses the format written by WriteTemplatesCSV. UserID is
+// left zero-value; the restore caller sets it before calling the store.
+func ReadTemplatesCSV(r io.Reader) ([]types.MealTemplate, error) {
+	want := []string{"id", "name", "owner_kind", "created_at", "last_used", "items_json"}
+	rows, err := readAll(r, want)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.MealTemplate, 0, len(rows))
+	for _, rec := range rows {
+		if len(rec) != len(want) {
+			return nil, fmt.Errorf("exportfmt: templates row has %d columns, want %d", len(rec), len(want))
+		}
+		createdAt, err := time.Parse(time.RFC3339, rec[3])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: templates row %q: parse created_at: %w", rec[0], err)
+		}
+		lastUsed, err := time.Parse(time.RFC3339, rec[4])
+		if err != nil {
+			return nil, fmt.Errorf("exportfmt: templates row %q: parse last_used: %w", rec[0], err)
+		}
+		t := types.MealTemplate{ID: rec[0], Name: rec[1], OwnerKind: rec[2], CreatedAt: createdAt, LastUsed: lastUsed}
+		if rec[5] != "" {
+			if err := json.Unmarshal([]byte(rec[5]), &t.Items); err != nil {
+				return nil, fmt.Errorf("exportfmt: templates row %q: parse items_json: %w", rec[0], err)
+			}
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
 // ReadMealsCSV parses the format written by WriteMealsCSV.
 //
 // This reconstruction is inherently LOSSY: meals.csv only carries meal-level

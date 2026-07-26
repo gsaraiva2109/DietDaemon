@@ -54,6 +54,12 @@ type Store interface {
 	GetPhotosData(ctx context.Context, photoIDs []string) (map[string][]byte, error)
 	GetWaterInRange(ctx context.Context, userID, startDate, endDate string) ([]types.WaterLog, error)
 	GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
+
+	// Diet plans (and the meal_templates their slot options reference).
+	ListPlans(ctx context.Context, userID string) ([]types.DietPlan, error)
+	GetPlanBundle(ctx context.Context, planID string) (types.PlanBundle, error)
+	ListDayOverrides(ctx context.Context, userID string) ([]types.DietPlanDayOverride, error)
+	ListTemplatesForBackup(ctx context.Context, userID string) ([]types.MealTemplate, error)
 }
 
 // Destination abstracts where a backup file goes. cfg carries the per-user
@@ -225,6 +231,10 @@ func (r *Runner) runFor(ctx context.Context, userID string, cfg types.BackupConf
 		return err
 	}
 
+	if err := r.writePlanData(ctx, dst, cfg, userID); err != nil {
+		return err
+	}
+
 	if err := r.store.SetBackupLastRun(ctx, userID, now); err != nil {
 		return fmt.Errorf("backup: set last run: %w", err)
 	}
@@ -288,6 +298,63 @@ func (r *Runner) writePhotos(ctx context.Context, dst Destination, cfg types.Bac
 		}
 	}
 	return writeCSV(ctx, dst, cfg, "photos", "photos.csv", func() ([]types.ProgressPhoto, error) { return photos, nil }, exportfmt.WritePhotosCSV)
+}
+
+// writePlanData exports diet plans and everything they reference:
+// meal_templates first (diet_plan_slot_options.template_id has a foreign key
+// to it, so it must exist before options are restored), then plans,
+// day-types, slots, and options -- flattened from GetPlanBundle rather than
+// queried table-by-table, since a user has at most a handful of plans and
+// GetPlanBundle is already the N+1-safe way to load one -- and finally
+// per-date overrides.
+func (r *Runner) writePlanData(ctx context.Context, dst Destination, cfg types.BackupConfig, userID string) error {
+	templates, err := r.store.ListTemplatesForBackup(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("backup: load templates: %w", err)
+	}
+	if err := writeCSV(ctx, dst, cfg, "templates", "templates.csv", func() ([]types.MealTemplate, error) { return templates, nil }, exportfmt.WriteTemplatesCSV); err != nil {
+		return err
+	}
+
+	plans, err := r.store.ListPlans(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("backup: load plans: %w", err)
+	}
+	if err := writeCSV(ctx, dst, cfg, "plans", "plans.csv", func() ([]types.DietPlan, error) { return plans, nil }, exportfmt.WritePlansCSV); err != nil {
+		return err
+	}
+
+	var dayTypes []types.DietPlanDayType
+	var slots []types.DietPlanSlot
+	var options []types.DietPlanSlotOption
+	for _, p := range plans {
+		bundle, err := r.store.GetPlanBundle(ctx, p.ID)
+		if err != nil {
+			return fmt.Errorf("backup: load plan bundle %s: %w", p.ID, err)
+		}
+		for _, dt := range bundle.DayTypes {
+			dayTypes = append(dayTypes, dt.DietPlanDayType)
+			for _, sl := range dt.Slots {
+				slots = append(slots, sl.DietPlanSlot)
+				options = append(options, sl.Options...)
+			}
+		}
+	}
+	if err := writeCSV(ctx, dst, cfg, "day_types", "day_types.csv", func() ([]types.DietPlanDayType, error) { return dayTypes, nil }, exportfmt.WriteDayTypesCSV); err != nil {
+		return err
+	}
+	if err := writeCSV(ctx, dst, cfg, "slots", "slots.csv", func() ([]types.DietPlanSlot, error) { return slots, nil }, exportfmt.WriteSlotsCSV); err != nil {
+		return err
+	}
+	if err := writeCSV(ctx, dst, cfg, "slot_options", "slot_options.csv", func() ([]types.DietPlanSlotOption, error) { return options, nil }, exportfmt.WriteSlotOptionsCSV); err != nil {
+		return err
+	}
+
+	overrides, err := r.store.ListDayOverrides(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("backup: load day overrides: %w", err)
+	}
+	return writeCSV(ctx, dst, cfg, "day_overrides", "day_overrides.csv", func() ([]types.DietPlanDayOverride, error) { return overrides, nil }, exportfmt.WriteDayOverridesCSV)
 }
 
 func (r *Runner) destinationFor(cfg types.BackupConfig) (Destination, error) {

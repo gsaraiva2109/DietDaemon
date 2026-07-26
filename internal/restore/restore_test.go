@@ -47,6 +47,12 @@ type fakeStore struct {
 	water        []types.WaterLog
 	fasts        []types.Fast
 	photos       []types.ProgressPhoto
+	templates    []types.MealTemplate
+	plans        []types.DietPlan
+	dayTypes     []types.DietPlanDayType
+	slots        []types.DietPlanSlot
+	slotOptions  []types.DietPlanSlotOption
+	dayOverrides []types.DietPlanDayOverride
 }
 
 func (f *fakeStore) SaveMeal(_ context.Context, m types.Meal) error {
@@ -91,6 +97,36 @@ func (f *fakeStore) RestoreWater(_ context.Context, w types.WaterLog) error {
 
 func (f *fakeStore) RestoreFast(_ context.Context, fs types.Fast) error {
 	f.fasts = append(f.fasts, fs)
+	return nil
+}
+
+func (f *fakeStore) RestoreTemplate(_ context.Context, t types.MealTemplate) error {
+	f.templates = append(f.templates, t)
+	return nil
+}
+
+func (f *fakeStore) RestorePlan(_ context.Context, p types.DietPlan) error {
+	f.plans = append(f.plans, p)
+	return nil
+}
+
+func (f *fakeStore) RestoreDayType(_ context.Context, dt types.DietPlanDayType) error {
+	f.dayTypes = append(f.dayTypes, dt)
+	return nil
+}
+
+func (f *fakeStore) RestoreSlot(_ context.Context, sl types.DietPlanSlot) error {
+	f.slots = append(f.slots, sl)
+	return nil
+}
+
+func (f *fakeStore) RestoreSlotOption(_ context.Context, opt types.DietPlanSlotOption) error {
+	f.slotOptions = append(f.slotOptions, opt)
+	return nil
+}
+
+func (f *fakeStore) SetDayOverride(_ context.Context, o types.DietPlanDayOverride) error {
+	f.dayOverrides = append(f.dayOverrides, o)
 	return nil
 }
 
@@ -155,6 +191,44 @@ func buildBackupFiles() map[string][]byte {
 	files["photos.csv"] = photosBuf.Bytes()
 	files[exportfmt.PhotoFilename("p1")] = []byte("fake-jpeg-bytes")
 
+	var templatesBuf bytes.Buffer
+	_ = exportfmt.WriteTemplatesCSV(&templatesBuf, []types.MealTemplate{
+		{ID: "tmpl1", Name: "Café da manhã", OwnerKind: types.TemplateOwnerPlan,
+			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), LastUsed: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+	})
+	files["templates.csv"] = templatesBuf.Bytes()
+
+	var plansBuf bytes.Buffer
+	_ = exportfmt.WritePlansCSV(&plansBuf, []types.DietPlan{
+		{ID: "plan1", Name: "Cutting cycle", ValidFrom: "2026-01-01", CyclePattern: []string{"dt1"}, CycleAnchorDate: "2026-01-01",
+			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+	})
+	files["plans.csv"] = plansBuf.Bytes()
+
+	var dayTypesBuf bytes.Buffer
+	_ = exportfmt.WriteDayTypesCSV(&dayTypesBuf, []types.DietPlanDayType{
+		{ID: "dt1", PlanID: "plan1", Name: "Low-carb", Targets: types.Macros{Calories: 1800}, WaterGoalMl: 3000},
+	})
+	files["day_types.csv"] = dayTypesBuf.Bytes()
+
+	var slotsBuf bytes.Buffer
+	_ = exportfmt.WriteSlotsCSV(&slotsBuf, []types.DietPlanSlot{
+		{ID: "slot1", DayTypeID: "dt1", TimeOfDay: "07:00", Label: "Café da manhã"},
+	})
+	files["slots.csv"] = slotsBuf.Bytes()
+
+	var slotOptionsBuf bytes.Buffer
+	_ = exportfmt.WriteSlotOptionsCSV(&slotOptionsBuf, []types.DietPlanSlotOption{
+		{ID: "opt1", SlotID: "slot1", Label: "Opção 1", TemplateID: "tmpl1"},
+	})
+	files["slot_options.csv"] = slotOptionsBuf.Bytes()
+
+	var dayOverridesBuf bytes.Buffer
+	_ = exportfmt.WriteDayOverridesCSV(&dayOverridesBuf, []types.DietPlanDayOverride{
+		{Date: "2026-01-10", DayTypeID: "dt1"},
+	})
+	files["day_overrides.csv"] = dayOverridesBuf.Bytes()
+
 	return files
 }
 
@@ -162,6 +236,7 @@ func allFilenames() []string {
 	return []string{
 		"meals.csv", "rollups.csv", "weight.csv", "measurements.csv",
 		"sleep.csv", "workouts.csv", "water.csv", "fasts.csv", "photos.csv",
+		"templates.csv", "plans.csv", "day_types.csv", "slots.csv", "slot_options.csv", "day_overrides.csv",
 	}
 }
 
@@ -174,7 +249,10 @@ func TestRunOnce_FullRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	want := Summary{Meals: 1, Rollups: 1, Weight: 1, Measurements: 1, Sleep: 1, Workouts: 1, Water: 1, Fasts: 1, Photos: 1}
+	want := Summary{
+		Meals: 1, Rollups: 1, Weight: 1, Measurements: 1, Sleep: 1, Workouts: 1, Water: 1, Fasts: 1, Photos: 1,
+		Templates: 1, Plans: 1, DayTypes: 1, Slots: 1, SlotOptions: 1, DayOverrides: 1,
+	}
 	if !reflect.DeepEqual(sum, want) {
 		t.Fatalf("summary = %+v, want %+v", sum, want)
 	}
@@ -197,6 +275,16 @@ func TestRunOnce_FullRestore(t *testing.T) {
 	if string(store.photos[0].Data) != "fake-jpeg-bytes" {
 		t.Fatalf("expected photo blob restored, got %q", store.photos[0].Data)
 	}
+	// Templates, plans, and day overrides carry their own UserID; day-types,
+	// slots, and slot options are scoped by parent ID instead (see noSetUser).
+	if store.templates[0].UserID != "u1" || store.plans[0].UserID != "u1" || store.dayOverrides[0].UserID != "u1" {
+		t.Fatalf("expected UserID stamped on templates/plans/day overrides, got: templates=%q plans=%q dayOverrides=%q",
+			store.templates[0].UserID, store.plans[0].UserID, store.dayOverrides[0].UserID)
+	}
+	if store.dayTypes[0].ID != "dt1" || store.slots[0].ID != "slot1" || store.slotOptions[0].ID != "opt1" {
+		t.Fatalf("expected day-type/slot/slot-option rows restored intact, got dayTypes=%+v slots=%+v slotOptions=%+v",
+			store.dayTypes, store.slots, store.slotOptions)
+	}
 }
 
 func TestRunOnce_MissingFilesSkipped(t *testing.T) {
@@ -211,7 +299,10 @@ func TestRunOnce_MissingFilesSkipped(t *testing.T) {
 	if sum.Meals != 1 || sum.Rollups != 1 {
 		t.Fatalf("expected meals/rollups restored, got %+v", sum)
 	}
-	wantSkipped := []string{"weight.csv", "measurements.csv", "sleep.csv", "workouts.csv", "water.csv", "fasts.csv", "photos.csv"}
+	wantSkipped := []string{
+		"weight.csv", "measurements.csv", "sleep.csv", "workouts.csv", "water.csv", "fasts.csv", "photos.csv",
+		"templates.csv", "plans.csv", "day_types.csv", "slots.csv", "slot_options.csv", "day_overrides.csv",
+	}
 	for _, f := range wantSkipped {
 		found := false
 		for _, s := range sum.Skipped {

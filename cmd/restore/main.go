@@ -124,8 +124,10 @@ func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket
 	// so a non-nil error here can still carry a mostly-complete Summary,
 	// which is exactly the disaster-recovery-friendly behavior operators
 	// need to see (rather than silence on any failure at all).
-	fmt.Printf("restore: dry_run=false meals=%d rollups=%d weight=%d measurements=%d sleep=%d workouts=%d water=%d fasts=%d photos=%d skipped=%d\n",
-		sum.Meals, sum.Rollups, sum.Weight, sum.Measurements, sum.Sleep, sum.Workouts, sum.Water, sum.Fasts, sum.Photos, len(sum.Skipped))
+	fmt.Printf("restore: dry_run=false meals=%d rollups=%d weight=%d measurements=%d sleep=%d workouts=%d water=%d fasts=%d photos=%d "+
+		"templates=%d plans=%d day_types=%d slots=%d slot_options=%d day_overrides=%d skipped=%d\n",
+		sum.Meals, sum.Rollups, sum.Weight, sum.Measurements, sum.Sleep, sum.Workouts, sum.Water, sum.Fasts, sum.Photos,
+		sum.Templates, sum.Plans, sum.DayTypes, sum.Slots, sum.SlotOptions, sum.DayOverrides, len(sum.Skipped))
 
 	return rerr
 }

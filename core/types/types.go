@@ -353,12 +353,18 @@ type FoodAlias struct {
 
 // MealTemplate is a reusable meal with pre-resolved items.
 type MealTemplate struct {
-	ID        string         `json:"id"`
-	UserID    string         `json:"user_id"`
-	Name      string         `json:"name"`
-	Items     []ResolvedItem `json:"items"`
-	CreatedAt time.Time      `json:"created_at"`
-	LastUsed  time.Time      `json:"last_used"`
+	ID     string         `json:"id"`
+	UserID string         `json:"user_id"`
+	Name   string         `json:"name"`
+	Items  []ResolvedItem `json:"items"`
+	// OwnerKind is TemplateOwnerUser or TemplateOwnerPlan (meal_templates.owner_kind).
+	// Left "" by call sites that don't care (e.g. ordinary user-created
+	// templates rely on the column's DB default); populated explicitly by
+	// backup/restore, where a plan-owned template must round-trip correctly
+	// so it stays hidden from the user's own Templates list.
+	OwnerKind string    `json:"owner_kind,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	LastUsed  time.Time `json:"last_used"`
 }
 
 // TemplateLog records a template usage event.

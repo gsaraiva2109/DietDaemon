@@ -50,6 +50,12 @@ type UserDataExport struct {
 
 	Photos    []types.ProgressPhoto `json:"photos"`
 	Templates []types.MealTemplate  `json:"templates"`
+
+	// Plans holds the user's full diet plan history (transcribed
+	// prescriptions), each with its day-types/slots/options tree. This is the
+	// one piece of data in the app the user cannot reconstruct from memory,
+	// so it must never be silently missing from a "download my data" export.
+	Plans []types.PlanBundle `json:"plans"`
 }
 
 func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID string) {
@@ -73,6 +79,12 @@ func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 
+	plans, err := h.exportPlans(ctx, userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
 	export := UserDataExport{
 		ExportedAt:       time.Now().UTC(),
 		User:             user,
@@ -87,6 +99,7 @@ func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID
 		WaterDailyTotals: logs.WaterTotals,
 		Photos:           photos,
 		Templates:        logs.Templates,
+		Plans:            plans,
 	}
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=dietdaemon-export-%s.json", userID))
@@ -215,6 +228,25 @@ func (h *Handler) exportPhotos(ctx context.Context, userID string) ([]types.Prog
 		photos = append(photos, full)
 	}
 	return photos, nil
+}
+
+// exportPlans fetches every diet plan the user has ever had, each with its
+// full day-type/slot/option tree via GetPlanBundle (already the N+1-safe way
+// to load one plan; a user has at most a handful of plans in their history).
+func (h *Handler) exportPlans(ctx context.Context, userID string) ([]types.PlanBundle, error) {
+	list, err := h.store.ListPlans(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	plans := make([]types.PlanBundle, 0, len(list))
+	for _, p := range list {
+		bundle, err := h.store.GetPlanBundle(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, bundle)
+	}
+	return plans, nil
 }
 
 // deleteAccountRequest is the safety-guard body for account deletion: the
