@@ -38,6 +38,7 @@ import {
   useCatalogSearch,
 } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'
+import { ImportPlanCard } from './PlanImport'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, Button, Pill, Spinner, EmptyState, Toggle, Field } from '@/components/ui'
 import { GoalIcon, TrashIcon, CopyIcon, ChevronLeft, SearchIcon, CheckIcon } from '@/components/icons'
@@ -65,13 +66,13 @@ import type {
 
 const ZERO_MACROS: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
-function todayISO(): string {
+export function todayISO(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
 // The common case (a 7-day pattern) is anchored on a Monday; if today is
 // already Monday this returns today, otherwise the coming one.
-function nextMondayISO(): string {
+export function nextMondayISO(): string {
   const d = new Date()
   d.setDate(d.getDate() + ((1 - d.getDay() + 7) % 7))
   return d.toISOString().slice(0, 10)
@@ -124,7 +125,7 @@ function matchToFoodDetail(m: FoodMatch): FoodDetail {
 // (trap #11). LocalItem below tracks it as editor-only UI state and
 // collapses back to a zero amount at save time. id is a client-only, never
 // persisted, so item rows have a React key stable across reorders/edits.
-type LocalItem = SelectedFood & { adLibitum: boolean; id: string }
+export type LocalItem = SelectedFood & { adLibitum: boolean; id: string }
 
 function isAdLibitum(item: ResolvedItem): boolean {
   return item.Parsed.NormalizedGrams === 0
@@ -151,7 +152,7 @@ function fromResolvedItem(item: ResolvedItem): LocalItem {
   }
 }
 
-function toResolvedItem(li: LocalItem): ResolvedItem {
+export function toResolvedItem(li: LocalItem): ResolvedItem {
   const grams = li.adLibitum ? 0 : gramsFor(li)
   const unit = unitOptionsFor(li.food).find((u) => u.id === li.unitID)
   const namedUnit = unit && unit.id !== GRAMS_UNIT_ID ? unit.label : ''
@@ -294,6 +295,7 @@ function PlanList({
 }: Readonly<{ loading: boolean; plans: DietPlan[]; demo: boolean; onSelect: (id: string) => void }>) {
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
+      {!demo && <ImportPlanCard onCreated={onSelect} />}
       {!demo && <NewPlanCard onCreated={onSelect} />}
       <PlanListBody loading={loading} plans={plans} onSelect={onSelect} />
     </motion.div>
@@ -977,7 +979,7 @@ function OptionRow({
 // ItemSearchResults renders the catalog-search dropdown for OptionEditor:
 // loading, empty, or the match list, as plain if/else rather than a chain of
 // ternaries.
-function ItemSearchResults({
+export function ItemSearchResults({
   search,
   onPick,
 }: Readonly<{ search: ReturnType<typeof useCatalogSearch>; onPick: (food: FoodDetail) => void }>) {
@@ -1145,7 +1147,7 @@ function OptionEditor({
   )
 }
 
-function PlanItemRow({
+export function PlanItemRow({
   item,
   onChange,
   onRemove,

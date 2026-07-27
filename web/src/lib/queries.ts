@@ -676,6 +676,15 @@ export function useDeleteSlotOption(planID: string, dayTypeID: string, slotID: s
   })
 }
 
+// Extracts a plan draft from pasted text, for the caller to review and
+// resolve before anything saves. Nothing persists server-side, so no cache
+// to invalidate (mirrors useOcrExtractCustomFood).
+export function useExtractPlanFromText() {
+  return useMutation({
+    mutationFn: (text: string) => api.plans.extract.fromText(text),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Body Tracking
 // ---------------------------------------------------------------------------

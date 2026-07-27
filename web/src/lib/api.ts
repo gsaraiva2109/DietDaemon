@@ -46,6 +46,7 @@ import type {
   Passkey,
   PendingAlias,
   PlanBundle,
+  PlanDraft,
   PlanDayView,
   ProgressPhoto,
   ProvidersResponse,
@@ -563,6 +564,13 @@ export const api = {
       }),
     deleteOverride: (date: string) =>
       request<void>(`/plans/overrides/${encodeURIComponent(date)}`, { method: 'DELETE' }),
+    extract: {
+      // Plain text body (no JSON envelope), mirrors the backend handler's
+      // "raw pasted text in, PlanDraft JSON out" contract. Nothing persists
+      // server-side; the caller reviews the draft before anything saves.
+      fromText: (text: string) =>
+        request<PlanDraft>('/plans/extract/text', { method: 'POST', body: text }),
+    },
     dayTypes: {
       create: (planID: string, input: Omit<DietPlanDayType, 'id' | 'plan_id'>) =>
         request<DietPlanDayType>(`/plans/${encodeURIComponent(planID)}/day-types`, {
