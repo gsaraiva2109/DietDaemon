@@ -125,7 +125,7 @@ export function LogMeal() {
                 key={t.id}
                 type="button"
                 disabled={demo || logTemplate.isPending}
-                onClick={() => logTemplate.mutate(t.id)}
+                onClick={() => logTemplate.mutate({ id: t.id })}
                 className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-sm text-muted transition hover:text-ink disabled:opacity-50"
               >
                 <TemplateIcon width={15} height={15} /> {t.name}

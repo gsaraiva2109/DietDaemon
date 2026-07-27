@@ -146,15 +146,27 @@ func (h *Handler) handleLogTemplate(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 
+	// The slot/option link is optional: "registrar opção N" on the dashboard
+	// sends it to attribute the log to a plan slot explicitly (trap #12 --
+	// this is the only path allowed to write it; an empty/absent body just
+	// means an ordinary template log with no plan attribution).
+	var link struct {
+		PlanSlotID   string `json:"plan_slot_id"`
+		PlanOptionID string `json:"plan_option_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&link)
+
 	now := time.Now().UTC()
 	meal := types.Meal{
-		ID:         newHandlerID(),
-		UserID:     userID,
-		At:         now,
-		RawText:    t.Name,
-		Items:      t.Items,
-		Confidence: 1.0,
-		CreatedAt:  now,
+		ID:           newHandlerID(),
+		UserID:       userID,
+		At:           now,
+		RawText:      t.Name,
+		Items:        t.Items,
+		Confidence:   1.0,
+		CreatedAt:    now,
+		PlanSlotID:   link.PlanSlotID,
+		PlanOptionID: link.PlanOptionID,
 	}
 	if err := h.logger.LogMeal(r.Context(), meal); err != nil {
 		h.writeErr(w, err)

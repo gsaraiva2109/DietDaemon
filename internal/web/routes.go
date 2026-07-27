@@ -62,4 +62,5 @@ var spaRoutes = [][]string{
 	{"body"},
 	{"body", ":"},
 	{"goals"},
+	{"plan"},
 }

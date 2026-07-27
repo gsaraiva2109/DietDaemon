@@ -25,6 +25,17 @@ export interface FoodMatch {
   Source: string // "food_library" | "openfoodfacts" | "taco" | "usda" | ...
   Per100g: Macros
   MatchScore: number // 0..1
+  // The rest mirror core/types.FoodMatch too, but most call sites never set
+  // them (a plain manual correction has no brand/barcode/etc). The plan
+  // builder is the one caller that populates these, so a re-opened slot
+  // option can rebuild its serving-unit picker from a saved item.
+  Category?: string
+  Brand?: string
+  Barcode?: string
+  ImageURL?: string
+  ServingSize?: number
+  ServingUnit?: string
+  ServingUnits?: FoodServingUnit[]
 }
 
 export interface ResolvedItem {
@@ -45,6 +56,8 @@ export interface Meal {
   Confidence: number // 0..1
   ParserTier: ParserTier
   CreatedAt: string // RFC3339
+  PlanSlotID: string
+  PlanOptionID: string
 }
 
 export interface DailyRollup {
@@ -205,6 +218,94 @@ export interface MealTemplate {
   items: ResolvedItem[]
   created_at: string // RFC3339
   last_used: string // RFC3339
+}
+
+// ---------------------------------------------------------------------------
+// Diet plans (carb-cycling builder + dashboard surfaces). A slot option is
+// backed by a meal_templates row (owner_kind = "plan"); its items are edited
+// through /plans/.../options, which takes/returns the option row itself
+// (label/position/template_id) — items live on the template, fetched
+// separately via api.templates.get(template_id).
+// ---------------------------------------------------------------------------
+
+export interface DietPlan {
+  id: string
+  user_id: string
+  name: string
+  notes: string
+  valid_from: string // YYYY-MM-DD
+  valid_to: string // "" = open-ended (current plan)
+  cycle_pattern: string[] // ordered DietPlanDayType ids
+  cycle_anchor_date: string // YYYY-MM-DD; cycle_pattern[(date-anchor) mod len]
+  created_at: string
+  updated_at: string
+}
+
+export interface DietPlanDayType {
+  id: string
+  plan_id: string
+  name: string
+  position: number
+  targets: Macros
+  water_goal_ml: number
+}
+
+export interface DietPlanSlot {
+  id: string
+  day_type_id: string
+  position: number
+  time_of_day: string
+  label: string
+}
+
+export interface DietPlanSlotOption {
+  id: string
+  slot_id: string
+  position: number
+  label: string
+  template_id: string
+}
+
+// Request body for creating/updating a slot option: the backend saves items
+// straight onto the backing template, so this is the one write path that
+// carries full ResolvedItem[] rather than a template_id.
+export interface DietPlanSlotOptionInput {
+  label: string
+  position: number
+  items: ResolvedItem[]
+}
+
+export interface DietPlanSlotBundle extends DietPlanSlot {
+  options: DietPlanSlotOption[]
+}
+
+export interface DietPlanDayTypeBundle extends DietPlanDayType {
+  slots: DietPlanSlotBundle[]
+}
+
+// GET /plans/{planID}, the full plan tree in one shot.
+export interface PlanBundle {
+  plan: DietPlan
+  day_types: DietPlanDayTypeBundle[]
+}
+
+export interface DietPlanDayOverride {
+  user_id: string
+  date: string
+  day_type_id: string
+}
+
+// GET /plans/day/{date} — the resolved day-type, its slots, and the targets
+// in effect for one date. `targets` mirrors GET /targets: its value is Go's
+// DailyTargets, which carries no json tags of its own, so those nested keys
+// stay PascalCase even though the wrapping `targets` key is snake_case.
+export interface PlanDayView {
+  date: string
+  plan_active: boolean
+  overridden: boolean
+  day_type: DietPlanDayType | null
+  slots: DietPlanSlotBundle[]
+  targets: { UserID: string; Targets: Macros; WaterGoalMl: number }
 }
 
 export interface WeightEntry {

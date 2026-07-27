@@ -34,6 +34,10 @@ import {
 import type {
   BackupConfig,
   DailyRollup,
+  DietPlan,
+  DietPlanDayType,
+  DietPlanSlot,
+  DietPlanSlotOptionInput,
   FoodDetail,
   CustomFoodInput,
   Macros,
@@ -458,7 +462,13 @@ export function useDeleteTemplate() {
 export function useLogTemplate() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.templates.log(id),
+    mutationFn: (v: { id: string; planSlotID?: string; planOptionID?: string }) =>
+      v.planSlotID || v.planOptionID
+        ? api.templates.log(v.id, {
+            plan_slot_id: v.planSlotID ?? '',
+            plan_option_id: v.planOptionID ?? '',
+          })
+        : api.templates.log(v.id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['rollup'] })
@@ -487,6 +497,182 @@ export function useDuplicateMeal() {
       qc.invalidateQueries({ queryKey: ['rollup'] })
       qc.invalidateQueries({ queryKey: ['meals'] })
     },
+  })
+}
+
+// Fetches one template by id, used by the plan builder to load a slot
+// option's items (the option row itself only carries template_id).
+export function useTemplate(id: string | undefined) {
+  return useQuery({
+    queryKey: ['templates', 'detail', id ?? ''],
+    queryFn: () => api.templates.get(id as string),
+    enabled: Boolean(id),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Diet plans (carb-cycling builder + dashboard surfaces)
+//
+// Every mutation here can change what today resolves to (a new/edited plan,
+// day-type, or override), so all of them invalidate 'targets' and 'rollup'
+// alongside 'plan', mirroring useSetTargets above. A couple of these
+// (slot/option CRUD) never actually move today's targets on the backend, but
+// invalidating unconditionally keeps this list simple and the extra refetch
+// is cheap and harmless.
+// ---------------------------------------------------------------------------
+
+function invalidatePlan(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['plan'] })
+  qc.invalidateQueries({ queryKey: ['targets'] })
+  qc.invalidateQueries({ queryKey: ['rollup'] })
+}
+
+export function usePlans() {
+  return useQuery({ queryKey: ['plan', 'list'], queryFn: () => api.plans.list() })
+}
+
+// No active plan is a 404, not an error — same treatment as useToday.
+export function useActivePlan() {
+  return useQuery({
+    queryKey: ['plan', 'active'],
+    queryFn: () => emptyOn404(() => api.plans.active(), null),
+  })
+}
+
+export function usePlanBundle(planID: string | undefined) {
+  return useQuery({
+    queryKey: ['plan', 'bundle', planID ?? ''],
+    queryFn: () => api.plans.get(planID as string),
+    enabled: Boolean(planID),
+  })
+}
+
+export function usePlanDay(date: string) {
+  return useQuery({
+    queryKey: ['plan', 'day', date],
+    queryFn: () => api.plans.day(date),
+    enabled: Boolean(date),
+  })
+}
+
+export function useCreatePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      name: string
+      notes?: string
+      valid_from: string
+      valid_to?: string
+      cycle_anchor_date: string
+    }) => api.plans.create(input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useUpdatePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ planID, input }: { planID: string; input: DietPlan }) => api.plans.update(planID, input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useDeletePlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (planID: string) => api.plans.delete(planID),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useSetDayOverride() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ date, dayTypeID }: { date: string; dayTypeID: string }) =>
+      api.plans.setOverride(date, dayTypeID),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useDeleteDayOverride() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (date: string) => api.plans.deleteOverride(date),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useCreateDayType(planID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Omit<DietPlanDayType, 'id' | 'plan_id'>) => api.plans.dayTypes.create(planID, input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useUpdateDayType(planID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dt: DietPlanDayType) => api.plans.dayTypes.update(planID, dt.id, dt),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useDeleteDayType(planID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dayTypeID: string) => api.plans.dayTypes.delete(planID, dayTypeID),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useCreateSlot(planID: string, dayTypeID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Omit<DietPlanSlot, 'id' | 'day_type_id'>) =>
+      api.plans.slots.create(planID, dayTypeID, input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useUpdateSlot(planID: string, dayTypeID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slot: DietPlanSlot) => api.plans.slots.update(planID, dayTypeID, slot.id, slot),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useDeleteSlot(planID: string, dayTypeID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slotID: string) => api.plans.slots.delete(planID, dayTypeID, slotID),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useCreateSlotOption(planID: string, dayTypeID: string, slotID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: DietPlanSlotOptionInput) => api.plans.options.create(planID, dayTypeID, slotID, input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useUpdateSlotOption(planID: string, dayTypeID: string, slotID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ optionID, input }: { optionID: string; input: DietPlanSlotOptionInput }) =>
+      api.plans.options.update(planID, dayTypeID, slotID, optionID, input),
+    onSuccess: () => invalidatePlan(qc),
+  })
+}
+
+export function useDeleteSlotOption(planID: string, dayTypeID: string, slotID: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (optionID: string) => api.plans.options.delete(planID, dayTypeID, slotID, optionID),
+    onSuccess: () => invalidatePlan(qc),
   })
 }
 

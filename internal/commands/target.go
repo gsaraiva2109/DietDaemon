@@ -52,7 +52,14 @@ func (c *TargetCommand) Handle(ctx context.Context, msg types.InboundMessage, ar
 			ChannelMeta: msg.ChannelMeta,
 		}, nil
 	}
-	if err := c.store.SetTargets(ctx, types.DailyTargets{UserID: msg.UserID, Targets: macros}); err != nil {
+	// Preserve the existing stored water goal: SetTargets replaces the whole
+	// row, and /target only ever collects macros, so building the row without
+	// looking up the current one would silently zero water_goal_ml.
+	var waterGoalMl int
+	if existing, err := c.store.GetTargets(ctx, msg.UserID); err == nil {
+		waterGoalMl = existing.WaterGoalMl
+	}
+	if err := c.store.SetTargets(ctx, types.DailyTargets{UserID: msg.UserID, Targets: macros, WaterGoalMl: waterGoalMl}); err != nil {
 		return types.Reply{}, fmt.Errorf("set targets: %w", err)
 	}
 	text := fmt.Sprintf("Targets set: %.0f kcal | P %.0fg . C %.0fg . F %.0fg",

@@ -70,6 +70,9 @@ func (s *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTar
 	}
 	return types.DailyTargets{}, types.ErrNotFound
 }
+func (s *fakeStore) TargetsFor(ctx context.Context, userID, _ string) (types.DailyTargets, error) {
+	return s.GetTargets(ctx, userID)
+}
 func (s *fakeStore) SetTargets(_ context.Context, t types.DailyTargets) error {
 	s.targets[t.UserID] = t.Targets
 	return nil

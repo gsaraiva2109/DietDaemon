@@ -20,6 +20,11 @@ import type {
   ChatMessageRecord,
   ChatSession,
   DailyRollup,
+  DietPlan,
+  DietPlanDayType,
+  DietPlanSlot,
+  DietPlanSlotOption,
+  DietPlanSlotOptionInput,
   Fast,
   FoodDetail,
   FoodImportStatus,
@@ -40,6 +45,8 @@ import type {
   NutritionLabelDraft,
   Passkey,
   PendingAlias,
+  PlanBundle,
+  PlanDayView,
   ProgressPhoto,
   ProvidersResponse,
   RecoveryCodesResponse,
@@ -522,11 +529,97 @@ export const api = {
       }),
     delete: (id: string) =>
       request<void>(`/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    log: (id: string) =>
+    log: (id: string, link?: { plan_slot_id: string; plan_option_id: string }) =>
       request<{ status: string; meal_id: string }>(
         `/templates/${encodeURIComponent(id)}/log`,
-        { method: 'POST' },
+        link ? { method: 'POST', body: JSON.stringify(link) } : { method: 'POST' },
       ),
+  },
+
+  // --- Diet plans (carb-cycling builder) -------------------------
+  plans: {
+    list: () => request<DietPlan[]>('/plans'),
+    create: (input: {
+      name: string
+      notes?: string
+      valid_from: string
+      valid_to?: string
+      cycle_anchor_date: string
+    }) => request<DietPlan>('/plans', { method: 'POST', body: JSON.stringify(input) }),
+    active: () => request<DietPlan>('/plans/active'),
+    day: (date: string) => request<PlanDayView>(`/plans/day/${encodeURIComponent(date)}`),
+    get: (planID: string) => request<PlanBundle>(`/plans/${encodeURIComponent(planID)}`),
+    update: (planID: string, input: DietPlan) =>
+      request<DietPlan>(`/plans/${encodeURIComponent(planID)}`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    delete: (planID: string) =>
+      request<void>(`/plans/${encodeURIComponent(planID)}`, { method: 'DELETE' }),
+    setOverride: (date: string, dayTypeID: string) =>
+      request<{ status: string }>(`/plans/overrides/${encodeURIComponent(date)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ day_type_id: dayTypeID }),
+      }),
+    deleteOverride: (date: string) =>
+      request<void>(`/plans/overrides/${encodeURIComponent(date)}`, { method: 'DELETE' }),
+    dayTypes: {
+      create: (planID: string, input: Omit<DietPlanDayType, 'id' | 'plan_id'>) =>
+        request<DietPlanDayType>(`/plans/${encodeURIComponent(planID)}/day-types`, {
+          method: 'POST',
+          body: JSON.stringify(input),
+        }),
+      update: (planID: string, dayTypeID: string, input: DietPlanDayType) =>
+        request<DietPlanDayType>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        ),
+      delete: (planID: string, dayTypeID: string) =>
+        request<void>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}`,
+          { method: 'DELETE' },
+        ),
+    },
+    slots: {
+      create: (planID: string, dayTypeID: string, input: Omit<DietPlanSlot, 'id' | 'day_type_id'>) =>
+        request<DietPlanSlot>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots`,
+          { method: 'POST', body: JSON.stringify(input) },
+        ),
+      update: (planID: string, dayTypeID: string, slotID: string, input: DietPlanSlot) =>
+        request<DietPlanSlot>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots/${encodeURIComponent(slotID)}`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        ),
+      delete: (planID: string, dayTypeID: string, slotID: string) =>
+        request<void>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots/${encodeURIComponent(slotID)}`,
+          { method: 'DELETE' },
+        ),
+    },
+    options: {
+      create: (planID: string, dayTypeID: string, slotID: string, input: DietPlanSlotOptionInput) =>
+        request<DietPlanSlotOption>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots/${encodeURIComponent(slotID)}/options`,
+          { method: 'POST', body: JSON.stringify(input) },
+        ),
+      update: (
+        planID: string,
+        dayTypeID: string,
+        slotID: string,
+        optionID: string,
+        input: DietPlanSlotOptionInput,
+      ) =>
+        request<DietPlanSlotOption>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots/${encodeURIComponent(slotID)}/options/${encodeURIComponent(optionID)}`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        ),
+      delete: (planID: string, dayTypeID: string, slotID: string, optionID: string) =>
+        request<void>(
+          `/plans/${encodeURIComponent(planID)}/day-types/${encodeURIComponent(dayTypeID)}/slots/${encodeURIComponent(slotID)}/options/${encodeURIComponent(optionID)}`,
+          { method: 'DELETE' },
+        ),
+    },
   },
 
   // POST /meals/{id}/duplicate, clones a past meal as a fresh "today" meal.

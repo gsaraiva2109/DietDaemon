@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/jmoiron/sqlx"
@@ -98,4 +99,105 @@ func (s *Store) UpdateRollupTargets(ctx context.Context, userID, localDate strin
 	}
 	_, err = s.db.ExecContext(ctx, s.rewrite(query), args...)
 	return err
+}
+
+// TargetsFor resolves the targets in effect for userID on localDate: an
+// override for that date, else the active plan's cycle pattern indexed by
+// date, else the flat daily_targets fallback (users with no plan hit this
+// path and see behavior identical to before the diet-plan feature).
+func (s *Store) TargetsFor(ctx context.Context, userID, localDate string) (types.DailyTargets, error) {
+	dt, ok, err := s.resolveDayType(ctx, userID, localDate)
+	if err != nil {
+		return types.DailyTargets{}, err
+	}
+	if ok {
+		return types.DailyTargets{UserID: userID, Targets: dt.Targets, WaterGoalMl: dt.WaterGoalMl}, nil
+	}
+	return s.GetTargets(ctx, userID)
+}
+
+// RefreshTodayTargets mirrors today's resolved targets into the rollup when a
+// plan mutation, day-type edit, or override change could have moved them.
+// It is the single reusable helper for that write: handleSetTargets performs
+// its own direct write for the no-plan path (see handler_meals.go), and every
+// plan-mutating handler calls this instead of duplicating the resolution.
+// A no-op when no override or plan governs today, leaving the caller's own
+// (or no) write as the source of truth for today's rollup targets.
+func (s *Store) RefreshTodayTargets(ctx context.Context, userID string) error {
+	today := time.Now().In(s.userLoc(ctx, userID)).Format(dateLayout)
+	dt, ok, err := s.resolveDayType(ctx, userID, today)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return s.UpdateRollupTargets(ctx, userID, today, dt.Targets)
+}
+
+// ResolveDayType is the exported form of resolveDayType, for callers outside
+// this package (the bot's /plan command) that need the day-type itself --
+// its name and water goal, not just the macros TargetsFor already flattens
+// out. Do not duplicate the override/cycle-pattern precedence at a call
+// site; call this instead.
+func (s *Store) ResolveDayType(ctx context.Context, userID, date string) (types.DietPlanDayType, bool, error) {
+	return s.resolveDayType(ctx, userID, date)
+}
+
+// resolveDayType returns the day-type governing userID on date: an override
+// pinned to that exact date takes precedence, else the active plan's cycle
+// pattern indexed by date. ok is false when neither applies, telling the
+// caller to fall back to the flat daily_targets row.
+func (s *Store) resolveDayType(ctx context.Context, userID, date string) (types.DietPlanDayType, bool, error) {
+	if ov, err := s.GetDayOverride(ctx, userID, date); err == nil {
+		dt, err := s.GetDayType(ctx, ov.DayTypeID)
+		if err != nil {
+			return types.DietPlanDayType{}, false, fmt.Errorf("store: resolve day override: %w", err)
+		}
+		return dt, true, nil
+	} else if !errors.Is(err, types.ErrNotFound) {
+		return types.DietPlanDayType{}, false, err
+	}
+
+	plan, err := s.GetActivePlan(ctx, userID, date)
+	if err != nil {
+		if errors.Is(err, types.ErrNotFound) {
+			return types.DietPlanDayType{}, false, nil
+		}
+		return types.DietPlanDayType{}, false, err
+	}
+	if len(plan.CyclePattern) == 0 {
+		return types.DietPlanDayType{}, false, nil
+	}
+	idx, err := cycleIndex(plan.CycleAnchorDate, date, len(plan.CyclePattern))
+	if err != nil {
+		return types.DietPlanDayType{}, false, err
+	}
+	dt, err := s.GetDayType(ctx, plan.CyclePattern[idx])
+	if err != nil {
+		return types.DietPlanDayType{}, false, fmt.Errorf("store: resolve cycle day-type: %w", err)
+	}
+	return dt, true, nil
+}
+
+// cycleIndex returns the Euclidean-modulo index into a cycle pattern of
+// length n for date, counted in whole days from anchor. Go's % returns a
+// negative result for a negative dividend, so a date before anchor (a
+// negative day offset) needs the sign correction below — day -1 must land on
+// index n-1, not on -1.
+func cycleIndex(anchor, date string, n int) (int, error) {
+	a, err := time.Parse(dateLayout, anchor)
+	if err != nil {
+		return 0, fmt.Errorf("store: parse cycle_anchor_date %q: %w", anchor, err)
+	}
+	d, err := time.Parse(dateLayout, date)
+	if err != nil {
+		return 0, fmt.Errorf("store: parse date %q: %w", date, err)
+	}
+	offset := int(d.Sub(a).Hours() / 24)
+	idx := offset % n
+	if idx < 0 {
+		idx += n
+	}
+	return idx, nil
 }

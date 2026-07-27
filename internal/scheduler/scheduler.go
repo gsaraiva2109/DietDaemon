@@ -32,7 +32,7 @@ const dateLayout = "2006-01-02"
 // satisfies it once it gains ListUsers (its other methods already exist).
 type Store interface {
 	ListUsers(ctx context.Context) ([]types.User, error)
-	GetTargets(ctx context.Context, userID string) (types.DailyTargets, error)
+	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
 	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
 }
 
@@ -363,7 +363,7 @@ func (s *Scheduler) resolveOverrides(ctx context.Context, user types.User) map[s
 // instant. Users without daily targets set are skipped entirely (macro rules
 // need a target to compute progress against).
 func (s *Scheduler) evalMacroRules(ctx context.Context, local time.Time, date string, user types.User, overrides map[string]types.NudgeRuleConfig) {
-	targets, err := s.store.GetTargets(ctx, user.ID)
+	targets, err := s.store.TargetsFor(ctx, user.ID, date)
 	if err != nil {
 		return
 	}
@@ -877,7 +877,7 @@ func (s *Scheduler) evalWeeklyBudgetRule(ctx context.Context, user types.User, l
 	}
 	consumedPriorDays := sumConsumedBefore(rollups, date, r.Macro)
 
-	targets, err := s.store.GetTargets(ctx, user.ID)
+	targets, err := s.store.TargetsFor(ctx, user.ID, date)
 	if err != nil {
 		s.log.Error("scheduler: get targets for weekly budget", "rule", r.ID, "err", err)
 		return

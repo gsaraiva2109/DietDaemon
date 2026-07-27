@@ -17,6 +17,7 @@ import {
   BodyIcon,
   GoalIcon,
   ChatIcon,
+  RefreshIcon,
 } from './icons'
 import { UtilityBar, DemoBanner } from './UtilityBar'
 import { VerifyEmailBanner } from './VerifyEmailBanner'
@@ -53,6 +54,7 @@ const NAV_GROUPS: { headingKey?: string; items: NavItem[] }[] = [
     items: [
       { to: '/body', labelKey: 'body', Icon: BodyIcon, preload: () => import('@/routes/Body') },
       { to: '/goals', labelKey: 'goals', Icon: GoalIcon, preload: () => import('@/routes/Goals') },
+      { to: '/plan', labelKey: 'plan', Icon: RefreshIcon, preload: () => import('@/routes/Plan') },
       { to: '/trends', labelKey: 'trends', Icon: TrendsIcon, preload: () => import('@/routes/Trends') },
       { to: '/summary', labelKey: 'summary', Icon: SummaryIcon, preload: () => import('@/routes/Summary') },
     ],

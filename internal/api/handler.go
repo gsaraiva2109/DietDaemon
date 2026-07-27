@@ -283,6 +283,33 @@ type MealStore interface {
 	EndSleep(ctx context.Context, userID, id, wakeAt, quality string) error
 	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
 	DeleteSleep(ctx context.Context, userID, id string) error
+
+	// TargetsFor Diet plans — resolves the day-type in effect (override, then
+	// active plan's cycle pattern, then the flat daily_targets fallback) and
+	// RefreshTodayTargets mirrors today's rollup targets whenever a plan
+	// mutation, day-type edit, or override change could have moved them.
+	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
+	RefreshTodayTargets(ctx context.Context, userID string) error
+	CreatePlan(ctx context.Context, p types.DietPlan) (types.DietPlan, error)
+	GetPlan(ctx context.Context, planID string) (types.DietPlan, error)
+	ListPlans(ctx context.Context, userID string) ([]types.DietPlan, error)
+	GetActivePlan(ctx context.Context, userID, date string) (types.DietPlan, error)
+	UpdatePlan(ctx context.Context, p types.DietPlan) error
+	DeletePlan(ctx context.Context, userID, planID string) error
+	GetPlanBundle(ctx context.Context, planID string) (types.PlanBundle, error)
+	CreateDayType(ctx context.Context, dt types.DietPlanDayType) (types.DietPlanDayType, error)
+	GetDayType(ctx context.Context, dayTypeID string) (types.DietPlanDayType, error)
+	UpdateDayType(ctx context.Context, dt types.DietPlanDayType) error
+	DeleteDayType(ctx context.Context, dayTypeID string) error
+	CreateSlot(ctx context.Context, sl types.DietPlanSlot) (types.DietPlanSlot, error)
+	UpdateSlot(ctx context.Context, sl types.DietPlanSlot) error
+	DeleteSlot(ctx context.Context, slotID string) error
+	CreateSlotOption(ctx context.Context, opt types.DietPlanSlotOption) (types.DietPlanSlotOption, error)
+	UpdateSlotOption(ctx context.Context, opt types.DietPlanSlotOption) error
+	DeleteSlotOption(ctx context.Context, optionID string) error
+	SetDayOverride(ctx context.Context, o types.DietPlanDayOverride) error
+	GetDayOverride(ctx context.Context, userID, date string) (types.DietPlanDayOverride, error)
+	DeleteDayOverride(ctx context.Context, userID, date string) error
 }
 
 // MealLogger submits raw text through the parsing pipeline, and can also directly
@@ -661,6 +688,28 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/templates/{id}/log", h.wrap(h.handleLogTemplate))
 	mux.HandleFunc("POST /api/v1/meals/{mealID}/duplicate", h.wrap(h.handleDuplicateMeal))
 
+	// Diet plans — CRUD for plans, day-types, slots, slot options, day
+	// overrides, and the resolved day-type+slots+targets view the dashboard,
+	// week strip, and bot all read from.
+	mux.HandleFunc("GET /api/v1/plans", h.wrap(h.handleListPlans))
+	mux.HandleFunc("POST /api/v1/plans", h.wrap(h.handleCreatePlan))
+	mux.HandleFunc("GET /api/v1/plans/active", h.wrap(h.handleGetActivePlan))
+	mux.HandleFunc("GET /api/v1/plans/day/{date}", h.wrap(h.handleGetPlanDay))
+	mux.HandleFunc("PUT /api/v1/plans/overrides/{date}", h.wrap(h.handleSetDayOverride))
+	mux.HandleFunc("DELETE /api/v1/plans/overrides/{date}", h.wrap(h.handleDeleteDayOverride))
+	mux.HandleFunc("GET /api/v1/plans/{planID}", h.wrap(h.handleGetPlan))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}", h.wrap(h.handleUpdatePlan))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}", h.wrap(h.handleDeletePlan))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types", h.wrap(h.handleCreateDayType))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}", h.wrap(h.handleUpdateDayType))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}", h.wrap(h.handleDeleteDayType))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types/{dayTypeID}/slots", h.wrap(h.handleCreateSlot))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}", h.wrap(h.handleUpdateSlot))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}", h.wrap(h.handleDeleteSlot))
+	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options", h.wrap(h.handleCreateSlotOption))
+	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleUpdateSlotOption))
+	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleDeleteSlotOption))
+
 	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
 	mux.HandleFunc("POST /api/v1/body/weight", h.wrap(h.handleLogWeight))
@@ -823,6 +872,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/shared/{token}/budget/weekly", h.wrapReadOnly(h.handleGetBudgetWeekly))
 	mux.HandleFunc("GET /api/v1/shared/{token}/body/summary", h.wrapReadOnly(h.handleBodySummary))
 	mux.HandleFunc("GET /api/v1/shared/{token}/streak", h.wrapReadOnly(h.handleStreak))
+	// Day-type badge + targets only -- never the plan CRUD routes (~691-711),
+	// which return slot/option/item content a share token must never expose.
+	mux.HandleFunc("GET /api/v1/shared/{token}/day-type", h.wrapReadOnly(h.handleGetSharedDayType))
 	mux.HandleFunc("/api/v1/shared/{token}/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, ErrorMethodNotAllowed, "Method not allowed.")
@@ -907,6 +959,40 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 		}
 		next(w, r, u.ID)
 	}))
+}
+
+// sharedDayTypeResponse is the day-type badge + numeric targets exposed to a
+// shared read-only dashboard: enough to explain why today's numbers moved
+// (carb-cycling) without leaking the prescription behind them. DayTypeName is
+// empty when no override or active plan governs the date -- the viewer then
+// sees the flat-fallback targets, exactly as before diet plans existed.
+type sharedDayTypeResponse struct {
+	DayTypeName string       `json:"day_type_name,omitempty"`
+	Targets     types.Macros `json:"targets"`
+	WaterGoalMl int          `json:"water_goal_ml"`
+}
+
+// handleGetSharedDayType is mounted under wrapReadOnly only -- it is a
+// read-only-token peer of handleGetTargets, not a replacement for it.
+// handleGetTargets must keep returning the flat editable daily_targets row
+// unchanged -- Goals.tsx prefills its edit form from that value, and the
+// plan_active hint already tells the user it's not what's actually in
+// effect -- so this is a separate endpoint rather than added fields there.
+// It reuses TargetsFor and resolvedDayTypeName (handler_plan.go) so the
+// resolution can never drift from what handleGetPlanDay shows the plan's
+// own owner.
+func (h *Handler) handleGetSharedDayType(w http.ResponseWriter, r *http.Request, userID string) {
+	today := time.Now().In(h.loc).Format(dateLayout)
+	targets, err := h.store.TargetsFor(r.Context(), userID, today)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	resp := sharedDayTypeResponse{Targets: targets.Targets, WaterGoalMl: targets.WaterGoalMl}
+	if name, ok := h.resolvedDayTypeName(r.Context(), userID, today); ok {
+		resp.DayTypeName = name
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // wrapPublic sets JSON headers but performs no authentication.

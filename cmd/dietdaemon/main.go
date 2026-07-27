@@ -220,7 +220,7 @@ func registerCoreCommands(registry *commands.Registry, st *store.Store, pend *pe
 	commandsToRegister := []ports.Command{
 		commands.NewTargetCommand(st), commands.NewCancelCommand(pend), commands.NewTimezoneCommand(st), commands.NewHelpCommand(registry, bundle), commands.NewStartCommand(st),
 		commands.NewLinkCommand(st, st, cfg.MessagingAdapter), commands.NewStatusCommand(st, cfg.Location), commands.NewWeightCommand(st), commands.NewProfileCommand(st), commands.NewFoodCommand(st),
-		commands.NewWaterCommand(st), commands.NewWorkoutCommand(st), commands.NewSleepCommand(st), commands.NewFastCommand(st), commands.NewNudgeCommand(st),
+		commands.NewWaterCommand(st), commands.NewWorkoutCommand(st), commands.NewSleepCommand(st), commands.NewFastCommand(st), commands.NewNudgeCommand(st), commands.NewPlanCommand(st, cfg.Location),
 	}
 	for _, command := range commandsToRegister {
 		if err := registry.Register(command); err != nil {

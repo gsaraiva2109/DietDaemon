@@ -203,6 +203,82 @@ func TestPostgresSearchFoods(t *testing.T) {
 	}
 }
 
+// TestPostgresDietPlanSmoke exercises migration 014 and store_plan.go against
+// real Postgres: the dialect-specific column types (DOUBLE PRECISION vs
+// REAL), the CHECK constraints, the ON DELETE CASCADE chain, and the
+// dynamic-width WHERE ... IN (...) placeholders GetPlanBundle builds, which
+// on Postgres are $1, $2, ... rather than SQLite's repeated ?.
+func TestPostgresDietPlanSmoke(t *testing.T) {
+	s, cleanup := postgresDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "pg-plan-user", CreatedAt: time.Now().UTC()})
+
+	p, err := s.CreatePlan(ctx(), types.DietPlan{
+		UserID: "pg-plan-user", Name: "Carb cycle", ValidFrom: "2026-01-01",
+		CyclePattern: []string{"placeholder"}, CycleAnchorDate: "2026-01-01",
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+
+	dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{
+		PlanID: p.ID, Name: "Low-carb", Position: 0,
+		Targets: types.Macros{Calories: 1800.5, Protein: 150, Carbs: 100, Fat: 60, Fiber: 25}, WaterGoalMl: 3000,
+	})
+	if err != nil {
+		t.Fatalf("CreateDayType: %v", err)
+	}
+	if dt.Targets.Calories != 1800.5 {
+		t.Fatalf("day type kcal = %v, want 1800.5 (DOUBLE PRECISION round-trip)", dt.Targets.Calories)
+	}
+
+	if err := s.SaveTemplate(ctx(), types.MealTemplate{ID: "pg-tmpl-1", UserID: "pg-plan-user", Name: "Café"}); err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+	slot, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, Label: "Café da manhã"})
+	if err != nil {
+		t.Fatalf("CreateSlot: %v", err)
+	}
+	if _, err := s.CreateSlotOption(ctx(), types.DietPlanSlotOption{SlotID: slot.ID, Position: 0, Label: "Opção 1", TemplateID: "pg-tmpl-1"}); err != nil {
+		t.Fatalf("CreateSlotOption: %v", err)
+	}
+
+	// Invalid owner_kind must be rejected by the CHECK constraint added in
+	// migration 014.
+	if _, err := s.db.ExecContext(ctx(), s.rewrite(`UPDATE meal_templates SET owner_kind = ? WHERE id = ?`), "bogus", "pg-tmpl-1"); err == nil {
+		t.Fatal("owner_kind CHECK constraint did not reject an invalid value")
+	}
+
+	if err := s.SetDayOverride(ctx(), types.DietPlanDayOverride{UserID: "pg-plan-user", Date: "2026-01-10", DayTypeID: dt.ID}); err != nil {
+		t.Fatalf("SetDayOverride: %v", err)
+	}
+	if _, err := s.GetDayOverride(ctx(), "pg-plan-user", "2026-01-10"); err != nil {
+		t.Fatalf("GetDayOverride: %v", err)
+	}
+
+	// GetPlanBundle exercises the dynamic IN (...) placeholder building for
+	// both the day-type->slot and slot->option loads.
+	bundle, err := s.GetPlanBundle(ctx(), p.ID)
+	if err != nil {
+		t.Fatalf("GetPlanBundle: %v", err)
+	}
+	if len(bundle.DayTypes) != 1 || len(bundle.DayTypes[0].Slots) != 1 || len(bundle.DayTypes[0].Slots[0].Options) != 1 {
+		t.Fatalf("bundle shape = %+v", bundle)
+	}
+
+	// Deleting the plan cascades through day-type, slot, and option.
+	if err := s.DeletePlan(ctx(), "pg-plan-user", p.ID); err != nil {
+		t.Fatalf("DeletePlan: %v", err)
+	}
+	if _, err := s.GetDayType(ctx(), dt.ID); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("day type survived plan delete: err = %v", err)
+	}
+	if _, err := s.GetDayOverride(ctx(), "pg-plan-user", "2026-01-10"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("override survived day-type delete: err = %v", err)
+	}
+}
+
 func TestPostgresDualDriverSmoke(t *testing.T) {
 	drivers := map[string]func() (*Store, func()){
 		"sqlite":   func() (*Store, func()) { return tempDB(t) },
