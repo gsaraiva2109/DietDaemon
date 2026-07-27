@@ -7,8 +7,27 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useToday, useMeals, useRange, useBodySummary, useStreak, useWeeklyBudget } from '@/lib/queries'
-import { MACRO_META, type Macros, type MacroKey } from '@/lib/types'
+import {
+  useToday,
+  useMeals,
+  useRange,
+  useBodySummary,
+  useStreak,
+  useWeeklyBudget,
+  useActivePlan,
+  usePlanDay,
+  usePlanBundle,
+  useSetDayOverride,
+  useLogTemplate,
+} from '@/lib/queries'
+import {
+  MACRO_META,
+  type Macros,
+  type MacroKey,
+  type DietPlanSlotBundle,
+  type DietPlanSlotOption,
+  type DietPlanDayTypeBundle,
+} from '@/lib/types'
 import { MacroRing } from '@/components/MacroRing'
 import { Sparkline } from '@/components/Sparkline'
 import { MealCard } from '@/components/MealCard'
@@ -19,8 +38,8 @@ import { FastingCard } from '@/components/FastingCard'
 import { FrequentFoods } from '@/components/FrequentFoods'
 import { ShareCard } from '@/components/ShareCard'
 import { Card, Eyebrow, EmptyState, Pill, Spinner, Button } from '@/components/ui'
-import { FlameIcon, BodyIcon, ShareIcon } from '@/components/icons'
-import { cssVar, formatNumber, round } from '@/lib/format'
+import { FlameIcon, BodyIcon, ShareIcon, CheckIcon } from '@/components/icons'
+import { cssVar, formatNumber, round, sumMacros } from '@/lib/format'
 import { stagger, fadeUp } from '@/lib/motion'
 import { greeting, insights } from '@/lib/insights'
 
@@ -38,6 +57,59 @@ function isoDaysAgo(n: number): string {
   return d.toISOString().slice(0, 10)
 }
 
+// ---------------------------------------------------------------------------
+// Diet plan surfaces (issue #191): day-type badge/switcher, today's slot
+// checklist, and a 7-day week strip. All four gate on activePlan/planDay
+// existing so a user with no plan sees byte-identical output to before.
+// ---------------------------------------------------------------------------
+
+function byPosition<T extends { position: number }>(list: T[]): T[] {
+  return [...list].sort((a, b) => a.position - b.position)
+}
+
+// The 7 calendar dates (Mon..Sun) of the week containing `todayISO`, the
+// window the mockup's "Seg Ter Qua..." week strip shows. TargetsFor resolves
+// each date independently server-side, so this is just which dates to ask
+// GET /plans/day/{date} about -- no cycle-length math needed here.
+function weekDatesFor(todayISO: string): string[] {
+  const today = new Date(`${todayISO}T00:00:00`)
+  const mondayOffset = (today.getDay() + 6) % 7 // days since Monday (Sun=0 -> 6)
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - mondayOffset)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    return d.toISOString().slice(0, 10)
+  })
+}
+
+function timeToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':')
+  return (Number(h) || 0) * 60 + (Number(m) || 0)
+}
+
+// Bot-logged meals arrive with no slot/option link (trap #12: a wrong guess
+// must never persist), so which slot's checkmark lights up is inferred here,
+// at render time only, from the meal's clock time. "Nearest slot whose
+// window (the midpoint between adjacent slot times) contains the meal" is
+// exactly nearest-neighbour-by-absolute-time-distance on a 1-D line, cheaper
+// to compute directly than building the midpoint windows first.
+function nearestSlotID(slots: DietPlanSlotBundle[], mealAtISO: string): string | null {
+  if (!slots.length) return null
+  const meal = new Date(mealAtISO)
+  const mealMinutes = meal.getHours() * 60 + meal.getMinutes()
+  let best = slots[0]
+  let bestDiff = Infinity
+  for (const s of slots) {
+    const diff = Math.abs(timeToMinutes(s.time_of_day) - mealMinutes)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = s
+    }
+  }
+  return best.id
+}
+
 export function Dashboard() {
   const { t, i18n } = useTranslation()
   const today = useToday()
@@ -49,11 +121,46 @@ export function Dashboard() {
   const [view, setView] = useState<'day' | 'week'>('day')
   const [sharing, setSharing] = useState(false)
 
+  // Diet plan surfaces. activePlan is a cheap 404-tolerant check; the rest
+  // (planDay, planBundle) only fire once it resolves a real plan, via the
+  // `enabled: Boolean(...)` gating already built into these hooks -- so a
+  // user with no plan causes no extra plan-related requests either.
+  const activePlan = useActivePlan()
+  const planActive = Boolean(activePlan.data)
+  const todayISO = isoDaysAgo(0)
+  const planDay = usePlanDay(planActive ? todayISO : '')
+  const planBundle = usePlanBundle(activePlan.data?.id)
+  const setOverride = useSetDayOverride()
+  const dayType = planDay.data?.day_type ?? null
+  const weekDates = useMemo(() => weekDatesFor(todayISO), [todayISO])
+
   const consumed = today.data?.Consumed ?? ZERO
   const targets = today.data?.Targets ?? ZERO
   const tips = useMemo(() => insights(today.data ?? null, t), [today.data, t])
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
   const dayStreak = streakQuery.data?.current_days ?? 0
+
+  // Slot completion for today's checklist: sum each logged meal's kcal
+  // against its nearest-by-time slot (see nearestSlotID). Reuses the same
+  // 6-most-recent `meals` query the "today's meals" list already fetches --
+  // plenty for a handful of plan slots per day; bump the limit if a day-type
+  // ever needs more.
+  const slotKcal = useMemo(() => {
+    const map = new Map<string, number>()
+    const slots = planDay.data?.slots ?? []
+    if (!slots.length || !meals.data?.length) return map
+    const todayKey = new Date().toDateString()
+    for (const meal of meals.data) {
+      if (new Date(meal.At).toDateString() !== todayKey) continue
+      // An explicit "registrar opção" log carries the real slot id; only fall
+      // back to time-based inference for bot-logged meals (trap #12).
+      const slotID = meal.PlanSlotID || nearestSlotID(slots, meal.At)
+      if (!slotID) continue
+      const kcal = sumMacros(meal.Items.map((it) => it.Macros)).Calories
+      map.set(slotID, (map.get(slotID) ?? 0) + kcal)
+    }
+    return map
+  }, [planDay.data?.slots, meals.data])
 
   // Weekly budget: show effective target when it differs from plain target.
   const budgetDelta = budget.data
@@ -112,6 +219,28 @@ export function Dashboard() {
           {/* Hero ring + side stats */}
           <div className="grid gap-5 lg:grid-cols-3">
             <Card className="flex flex-col items-center gap-7 p-7 lg:col-span-2">
+              {dayType && (
+                <div className="flex w-full flex-wrap items-center justify-center gap-2 self-start">
+                  <Pill tone="primary">
+                    {t('dashboard.today')} · {dayType.name}
+                  </Pill>
+                  {planBundle.data && planBundle.data.day_types.length > 1 && (
+                    <select
+                      aria-label={t('plan.switchDayTypeAria')}
+                      value={dayType.id}
+                      disabled={setOverride.isPending}
+                      onChange={(e) => setOverride.mutate({ date: todayISO, dayTypeID: e.target.value })}
+                      className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink outline-none focus:border-primary"
+                    >
+                      {byPosition(planBundle.data.day_types).map((dt) => (
+                        <option key={dt.id} value={dt.id}>
+                          {dt.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
               <MacroRing
                 consumed={consumed.Calories}
                 target={targets.Calories}
@@ -188,6 +317,40 @@ export function Dashboard() {
               </Card>
             </div>
           </div>
+
+          {dayType && (
+            <Card className="p-5">
+              <Eyebrow>
+                {t('dashboard.today')} · {dayType.name}
+              </Eyebrow>
+              {planDay.data?.slots.length ? (
+                <ul className="mt-3 flex flex-col gap-2">
+                  {byPosition(planDay.data.slots).map((slot) => (
+                    <SlotRow key={slot.id} slot={slot} kcal={slotKcal.get(slot.id)} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-muted">{t('plan.noSlotsToday')}</p>
+              )}
+            </Card>
+          )}
+
+          {planActive && (
+            <Card className="p-5">
+              <Eyebrow>{t('plan.weekStripTitle')}</Eyebrow>
+              <div className="mt-3 grid grid-cols-7 gap-1.5">
+                {weekDates.map((date) => (
+                  <WeekStripDay
+                    key={date}
+                    date={date}
+                    isToday={date === todayISO}
+                    dayTypes={planBundle.data?.day_types ?? []}
+                    onPick={(dayTypeID) => setOverride.mutate({ date, dayTypeID })}
+                  />
+                ))}
+              </div>
+            </Card>
+          )}
 
           {view === 'week' ? (
             <Suspense fallback={null}>
@@ -312,5 +475,106 @@ function WeightMiniCard({ body }: { body?: import('@/lib/types').BodyComposition
         </div>
       </Card>
     </Link>
+  )
+}
+
+// One row of the today's-slot checklist: a checkmark + logged kcal once a
+// meal has been matched to this slot (explicit "registrar" tap, or a
+// bot-logged meal inferred by time -- see nearestSlotID), otherwise a
+// "registrar {option}" button per prescribed option.
+function SlotRow({ slot, kcal }: Readonly<{ slot: DietPlanSlotBundle; kcal: number | undefined }>) {
+  const done = kcal !== undefined
+  return (
+    <li className="flex flex-wrap items-center gap-3 rounded-lg border border-line px-3 py-2">
+      <span className={done ? 'text-primary' : 'text-muted'}>
+        {done ? <CheckIcon width={16} height={16} /> : <span className="block size-4 rounded-full border border-line" />}
+      </span>
+      <span className="w-12 shrink-0 text-xs text-muted tnum">{slot.time_of_day}</span>
+      <span className="flex-1 text-sm font-medium text-ink">{slot.label}</span>
+      {kcal !== undefined ? (
+        <span className="text-xs text-muted tnum">{formatNumber(round(kcal, 0))} kcal</span>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {byPosition(slot.options).map((opt) => (
+            <RegisterOptionButton key={opt.id} slotID={slot.id} option={opt} />
+          ))}
+        </div>
+      )}
+    </li>
+  )
+}
+
+// "registrar opção N": reuses the existing log-template path (a slot option
+// is backed by a meal_templates row), which is the one path allowed to
+// explicitly attribute a logged meal to this slot/option (trap #12 --
+// bot-logged meals never get that write, only ever an inferred display).
+function RegisterOptionButton({ slotID, option }: Readonly<{ slotID: string; option: DietPlanSlotOption }>) {
+  const { t } = useTranslation()
+  const log = useLogTemplate()
+  const [logged, setLogged] = useState(false)
+
+  function doLog() {
+    log.mutate(
+      { id: option.template_id, planSlotID: slotID, planOptionID: option.id },
+      {
+        onSuccess: () => {
+          setLogged(true)
+          window.setTimeout(() => setLogged(false), 2200)
+        },
+      },
+    )
+  }
+
+  if (logged) {
+    return (
+      <Pill tone="primary">
+        <CheckIcon width={12} height={12} /> {t('plan.optionLogged')}
+      </Pill>
+    )
+  }
+  return (
+    <Button variant="ghost" onClick={doLog} disabled={log.isPending} className="px-2.5 py-1 text-xs">
+      {log.isPending ? t('plan.registering') : t('plan.registerOption', { label: option.label })}
+    </Button>
+  )
+}
+
+// One column of the 7-day week strip. Tapping a different day-type writes an
+// override for that specific date via onPick -- works for future dates with
+// no extra plumbing since TargetsFor/plan-day resolution is read-time only.
+function WeekStripDay({
+  date,
+  isToday,
+  dayTypes,
+  onPick,
+}: Readonly<{
+  date: string
+  isToday: boolean
+  dayTypes: DietPlanDayTypeBundle[]
+  onPick: (dayTypeID: string) => void
+}>) {
+  const { t, i18n } = useTranslation()
+  const day = usePlanDay(date)
+  const weekdayLabel = new Date(`${date}T00:00:00`).toLocaleDateString(i18n.language, { weekday: 'short' })
+  const dayTypeID = day.data?.day_type?.id ?? ''
+
+  return (
+    <div className={`flex flex-col items-center gap-1 rounded-lg px-1 py-2 ${isToday ? 'bg-primary-soft' : ''}`}>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{weekdayLabel}</span>
+      <select
+        aria-label={t('plan.weekDayAria', { date })}
+        value={dayTypeID}
+        disabled={!dayTypes.length}
+        onChange={(e) => onPick(e.target.value)}
+        className="w-full rounded-md border border-line bg-surface px-1 py-1 text-center text-[10px] font-medium text-ink outline-none focus:border-primary"
+      >
+        {!dayTypeID && <option value="">–</option>}
+        {byPosition(dayTypes).map((dt) => (
+          <option key={dt.id} value={dt.id}>
+            {dt.name}
+          </option>
+        ))}
+      </select>
+    </div>
   )
 }

@@ -62,6 +62,7 @@
   "cmd.fast.status": "Jejum: {{.ElapsedHours}}h decorridos de {{.TargetHours}}h meta.",
   "cmd.fast.no_active": "Nenhum jejum ativo. Use /fast start para começar.",
   "cmd.fast.already_active": "Um jejum já está em andamento. Use /fast end ou /fast status.",
+  "cmd.plan.usage": "Uso: /plan — tipo do dia e horários de refeição do plano de hoje\n/plan next — a próxima refeição prescrita\n/plan <refeição, ex: almoço> — o que está prescrito para ela",
   "onboarding.step_language": "Escolha seu idioma / Choose your language:",
   "onboarding.step_profile": "Vamos configurar seu perfil.\nResponda com sua altura em cm (ex: 175):",
   "onboarding.step_birthdate": "Qual sua data de nascimento? (AAAA-MM-DD, ex: 1990-05-20):",

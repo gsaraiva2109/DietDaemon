@@ -486,19 +486,9 @@ func (h *Handler) handleGetPlanDay(w http.ResponseWriter, r *http.Request, userI
 	default:
 		if plan, err := h.store.GetActivePlan(r.Context(), userID, date); err == nil {
 			view.PlanActive = true
-			if len(plan.CyclePattern) > 0 {
-				// The plan ID is already known here (unlike the override
-				// case), so go straight to its bundle instead of round-
-				// tripping through GetDayType to discover it.
-				if idx, err := cycleIndex(plan.CycleAnchorDate, date, len(plan.CyclePattern)); err == nil {
-					dayTypeID := plan.CyclePattern[idx]
-					if bundle, err := h.store.GetPlanBundle(r.Context(), plan.ID); err == nil {
-						if dt, slots, ok := findDayTypeInBundle(bundle, dayTypeID); ok {
-							view.DayType = &dt
-							view.Slots = slots
-						}
-					}
-				}
+			if dt, slots, ok := h.resolveActivePlanDayType(r.Context(), plan, date); ok {
+				view.DayType = &dt
+				view.Slots = slots
 			}
 		} else if !errors.Is(err, types.ErrNotFound) {
 			h.writeErr(w, err)
@@ -534,6 +524,50 @@ func findDayTypeInBundle(bundle types.PlanBundle, dayTypeID string) (types.DietP
 		}
 	}
 	return types.DietPlanDayType{}, nil, false
+}
+
+// resolveActivePlanDayType resolves the day-type an active plan's cycle
+// pattern assigns to date (Euclidean mod against cycle_anchor_date), and its
+// slots. The plan ID is already known here (unlike the override case handled
+// by resolveDayTypeView), so this goes straight to its bundle instead of
+// round-tripping through GetDayType to discover it. Shared by the plan day
+// view and resolvedDayTypeName below -- callers that only need the name
+// discard the slots.
+func (h *Handler) resolveActivePlanDayType(ctx context.Context, plan types.DietPlan, date string) (types.DietPlanDayType, []types.DietPlanSlotBundle, bool) {
+	if len(plan.CyclePattern) == 0 {
+		return types.DietPlanDayType{}, nil, false
+	}
+	idx, err := cycleIndex(plan.CycleAnchorDate, date, len(plan.CyclePattern))
+	if err != nil {
+		return types.DietPlanDayType{}, nil, false
+	}
+	bundle, err := h.store.GetPlanBundle(ctx, plan.ID)
+	if err != nil {
+		return types.DietPlanDayType{}, nil, false
+	}
+	return findDayTypeInBundle(bundle, plan.CyclePattern[idx])
+}
+
+// resolvedDayTypeName returns the name of the day-type governing userID on
+// date -- an override, else the active plan's cycle pattern -- without
+// loading slots. Used by the shared dashboard's day-type badge (handler.go),
+// which must show the name driving today's numbers without leaking what's
+// prescribed inside it. ok is false when neither an override nor an active
+// plan governs date, telling the caller to fall back to the flat targets
+// with no badge.
+func (h *Handler) resolvedDayTypeName(ctx context.Context, userID, date string) (string, bool) {
+	if override, err := h.store.GetDayOverride(ctx, userID, date); err == nil {
+		if dt, _, ok := h.resolveDayTypeView(ctx, userID, override.DayTypeID); ok {
+			return dt.Name, true
+		}
+		return "", false
+	}
+	if plan, err := h.store.GetActivePlan(ctx, userID, date); err == nil {
+		if dt, _, ok := h.resolveActivePlanDayType(ctx, plan, date); ok {
+			return dt.Name, true
+		}
+	}
+	return "", false
 }
 
 // cycleIndex returns (date - anchor) mod patternLen as a Euclidean modulus,

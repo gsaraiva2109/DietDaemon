@@ -56,6 +56,7 @@ const HevyImport = lazy(() => import('@/routes/HevyImport').then(m => ({ default
 const Templates = lazy(() => import('@/routes/Templates').then(m => ({ default: m.Templates })))
 const Body = lazy(() => import('@/routes/Body').then(m => ({ default: m.Body })))
 const Goals = lazy(() => import('@/routes/Goals').then(m => ({ default: m.Goals })))
+const Plan = lazy(() => import('@/routes/Plan').then(m => ({ default: m.Plan })))
 const OnboardingWizard = lazy(() =>
   import('@/components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })),
 )
@@ -145,6 +146,7 @@ function AppRoutes() {
           <Route path="/body" element={<Body />} />
           <Route path="/body/:tab" element={<Body />} />
           <Route path="/goals" element={<Goals />} />
+          <Route path="/plan" element={<Plan />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFound />} />

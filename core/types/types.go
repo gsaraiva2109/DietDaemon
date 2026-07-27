@@ -194,6 +194,12 @@ type Meal struct {
 	ParserTier ParserTier
 	CreatedAt  time.Time
 	ExternalID *string // set for imported meals (e.g. MyFitnessPal); nil for normal logging
+
+	// PlanSlotID and PlanOptionID attribute this meal to a diet-plan slot/option.
+	// Empty unless an explicit "registrar opção" log set them; a bot-logged meal
+	// is matched to a slot by time at read time only and must never write these.
+	PlanSlotID   string
+	PlanOptionID string
 }
 
 // Total sums the macros across every resolved item in the meal.

@@ -14,7 +14,7 @@ export const DEMO_CONSUMED: Macros = m(1840, 132, 196, 51, 21)
 export const DEMO_MEALS: Meal[] = [
   {
     ID: 'demo-1', UserID: 'demo', At: hoursAgo(1), RawText: '200g frango grelhado, 150g arroz, salada',
-    Confidence: 0.94, ParserTier: 0, CreatedAt: hoursAgo(1),
+    Confidence: 0.94, ParserTier: 0, CreatedAt: hoursAgo(1), PlanSlotID: '', PlanOptionID: '',
     Items: [
       item('frango grelhado', 200, 'Chicken breast, grilled', 'taco', m(330, 62, 0, 7.2, 0)),
       item('arroz', 150, 'White rice, cooked', 'taco', m(195, 4, 42, 0.5, 0.6)),
@@ -23,7 +23,7 @@ export const DEMO_MEALS: Meal[] = [
   },
   {
     ID: 'demo-2', UserID: 'demo', At: hoursAgo(4), RawText: '3 eggs and a banana',
-    Confidence: 0.78, ParserTier: 1, CreatedAt: hoursAgo(4),
+    Confidence: 0.78, ParserTier: 1, CreatedAt: hoursAgo(4), PlanSlotID: '', PlanOptionID: '',
     Items: [
       item('3 eggs', 150, 'Egg, whole', 'openfoodfacts', m(214, 19, 1.6, 14, 0)),
       item('banana', 120, 'Banana', 'taco', m(107, 1.3, 27, 0.4, 3.1)),
@@ -31,7 +31,7 @@ export const DEMO_MEALS: Meal[] = [
   },
   {
     ID: 'demo-3', UserID: 'demo', At: hoursAgo(7), RawText: 'whey protein shake with oats',
-    Confidence: 0.55, ParserTier: 2, CreatedAt: hoursAgo(7),
+    Confidence: 0.55, ParserTier: 2, CreatedAt: hoursAgo(7), PlanSlotID: '', PlanOptionID: '',
     Items: [
       item('protein shake', 350, 'Whey protein shake', 'food_library', m(210, 31, 14, 3.5, 1.8)),
       item('oats', 60, 'Rolled oats', 'taco', m(233, 8, 40, 4.3, 6),),
@@ -39,7 +39,7 @@ export const DEMO_MEALS: Meal[] = [
   },
   {
     ID: 'demo-4', UserID: 'demo', At: hoursAgo(10), RawText: 'coffee with milk',
-    Confidence: 0.88, ParserTier: 0, CreatedAt: hoursAgo(10),
+    Confidence: 0.88, ParserTier: 0, CreatedAt: hoursAgo(10), PlanSlotID: '', PlanOptionID: '',
     Items: [item('coffee with milk', 200, 'Latte', 'openfoodfacts', m(96, 5, 9, 4, 0))],
   },
 ]

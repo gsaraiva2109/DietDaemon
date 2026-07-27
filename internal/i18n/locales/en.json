@@ -62,6 +62,7 @@
   "cmd.fast.status": "Fasting: {{.ElapsedHours}}h elapsed of {{.TargetHours}}h target.",
   "cmd.fast.no_active": "No active fast. Use /fast start to begin.",
   "cmd.fast.already_active": "A fast is already in progress. Use /fast end or /fast status.",
+  "cmd.plan.usage": "Usage: /plan — today's diet-plan day-type and meal schedule\n/plan next — the next prescribed meal\n/plan <meal, e.g. almoço> — what's prescribed for that meal",
   "onboarding.step_language": "Choose your language / Escolha seu idioma:",
   "onboarding.step_profile": "Let's set up your profile.\nReply with your height in cm (e.g. 175):",
   "onboarding.step_birthdate": "What's your birth date? (YYYY-MM-DD, e.g. 1990-05-20):",

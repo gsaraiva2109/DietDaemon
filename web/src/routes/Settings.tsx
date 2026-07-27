@@ -24,6 +24,7 @@ import {
   ClockIcon,
   TrashIcon,
   GlobeIcon,
+  RefreshIcon,
 } from '@/components/icons'
 import { MACRO_KEYS, MACRO_META, type Macros } from '@/lib/types'
 
@@ -158,6 +159,7 @@ export function Settings() {
         <RowLink to="/settings/security" Icon={SettingsIcon} label={t('settings.securityLabel')} hint={t('settings.securityHint')} />
         <RowLink to="/settings/link-bot" Icon={LinkIcon} label={t('settings.linkBotLabel')} hint={t('settings.linkBotHint')} />
         <RowLink to="/goals" Icon={GoalIcon} label={t('settings.bodyGoalsLabel')} hint={t('settings.bodyGoalsHint')} />
+        <RowLink to="/plan" Icon={RefreshIcon} label={t('settings.dietPlanLabel')} hint={t('settings.dietPlanHint')} />
         <RowLink to="/settings/aliases" Icon={FoodsIcon} label={t('settings.foodAliasesLabel')} hint={t('settings.foodAliasesHint')} />
         <RowLink
           to="/settings/aliases/pending"

@@ -165,7 +165,7 @@ function TemplateRow({ template, demo }: Readonly<{ template: MealTemplate; demo
 
   function doLog() {
     setConfirming(null)
-    log.mutate(template.id, {
+    log.mutate({ id: template.id }, {
       onSuccess: () => {
         setLogged(true)
         window.setTimeout(() => setLogged(false), 2200)

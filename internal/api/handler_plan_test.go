@@ -3,7 +3,9 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -1107,6 +1109,97 @@ func TestHandleGetPlanDayActivePlanBundleErr(t *testing.T) {
 	got := decodeJSON[planDayView](t, rec)
 	if !got.PlanActive || got.DayType != nil {
 		t.Errorf("expected plan active but no resolved day-type, got %+v", got)
+	}
+}
+
+// --- handleGetSharedDayType ---
+
+// sharedToken creates a share token for h's authenticated "test-user", the
+// same setup TestShareTokenReadOnlyFlow uses, and returns the raw token for
+// hitting the /shared/{token}/... prefix.
+func sharedToken(t *testing.T, h *Handler) string {
+	t.Helper()
+	rec := doRequest(h, "POST", "/api/v1/auth/share-tokens", map[string]string{"label": "test"}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create share token: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	return decodeJSON[types.NewShareTokenResponse](t, rec).Token
+}
+
+// TestHandleGetSharedDayTypeActivePlanCycle confirms the shared read-only
+// endpoint surfaces the day-type name driving today's numbers -- so a shared
+// dashboard doesn't show a stale flat target while a plan is active -- and
+// that the response never carries slot/option content.
+func TestHandleGetSharedDayTypeActivePlanCycle(t *testing.T) {
+	store := newFakeMealStore()
+	today := time.Now().UTC().Format(dateLayout)
+	store.activePlan = types.DietPlan{
+		ID: "p1", UserID: "test-user",
+		CyclePattern: []string{"dt-low"}, CycleAnchorDate: today,
+	}
+	store.planBundles = map[string]types.PlanBundle{
+		"p1": {Plan: types.DietPlan{ID: "p1", UserID: "test-user"}, DayTypes: []types.DietPlanDayTypeBundle{
+			{DietPlanDayType: types.DietPlanDayType{ID: "dt-low", PlanID: "p1", Name: "Low-carb"}, Slots: []types.DietPlanSlotBundle{
+				{DietPlanSlot: types.DietPlanSlot{ID: "sl-1", DayTypeID: "dt-low", Label: "Almoço"}},
+			}},
+		}},
+	}
+	store.targetsFor = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 1800, Protein: 160}, WaterGoalMl: 2500}
+	h := newHandler(store, &fakeMealLogger{})
+	token := sharedToken(t, h)
+
+	rec := doRequest(h, "GET", "/api/v1/shared/"+token+"/day-type", nil, map[string]string{"Authorization": ""})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[sharedDayTypeResponse](t, rec)
+	if got.DayTypeName != "Low-carb" {
+		t.Errorf("day_type_name = %q, want %q", got.DayTypeName, "Low-carb")
+	}
+	if got.Targets.Calories != 1800 || got.WaterGoalMl != 2500 {
+		t.Errorf("targets = %+v water = %d, want 1800 kcal / 2500 ml", got.Targets, got.WaterGoalMl)
+	}
+	// The prescription itself (the day-type's slot label) must never leak
+	// into the shared payload -- only the badge name and the numbers.
+	if strings.Contains(rec.Body.String(), "Almo") {
+		t.Errorf("shared day-type response leaked slot content: %s", rec.Body.String())
+	}
+}
+
+// TestHandleGetSharedDayTypeNoPlan confirms the no-plan fallback keeps
+// working unchanged: no day-type badge, just the flat targets -- the same
+// shape web/src/routes/SharedDashboard.tsx already handles.
+func TestHandleGetSharedDayTypeNoPlan(t *testing.T) {
+	store := newFakeMealStore()
+	store.activePlanErr = types.ErrNotFound
+	store.targetsFor = types.DailyTargets{UserID: "test-user", Targets: types.Macros{Calories: 2000}}
+	h := newHandler(store, &fakeMealLogger{})
+	token := sharedToken(t, h)
+
+	rec := doRequest(h, "GET", "/api/v1/shared/"+token+"/day-type", nil, map[string]string{"Authorization": ""})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[sharedDayTypeResponse](t, rec)
+	if got.DayTypeName != "" {
+		t.Errorf("expected no day-type badge without a plan, got %q", got.DayTypeName)
+	}
+	if got.Targets.Calories != 2000 {
+		t.Errorf("targets = %+v, want flat fallback 2000 kcal", got.Targets)
+	}
+}
+
+// TestHandleGetSharedDayTypeTargetsForErr confirms a TargetsFor failure fails
+// the request instead of silently returning zeroed targets.
+func TestHandleGetSharedDayTypeTargetsForErr(t *testing.T) {
+	store := newFakeMealStore()
+	store.targetsForErr = errors.New("db down")
+	h := newHandler(store, &fakeMealLogger{})
+	token := sharedToken(t, h)
+
+	rec := doRequest(h, "GET", "/api/v1/shared/"+token+"/day-type", nil, map[string]string{"Authorization": ""})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("TargetsFor failure expected 500, got %d", rec.Code)
 	}
 }
 

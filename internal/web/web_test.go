@@ -21,6 +21,7 @@ func TestHandlerServesSPA(t *testing.T) {
 		{"client route falls back to index", "/history/abc123"},
 		{"client route parameter may contain a dot", "/shared/token.example"},
 		{"body tab route", "/body/measurements"},
+		{"plan route", "/plan"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

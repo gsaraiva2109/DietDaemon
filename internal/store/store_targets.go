@@ -135,6 +135,15 @@ func (s *Store) RefreshTodayTargets(ctx context.Context, userID string) error {
 	return s.UpdateRollupTargets(ctx, userID, today, dt.Targets)
 }
 
+// ResolveDayType is the exported form of resolveDayType, for callers outside
+// this package (the bot's /plan command) that need the day-type itself --
+// its name and water goal, not just the macros TargetsFor already flattens
+// out. Do not duplicate the override/cycle-pattern precedence at a call
+// site; call this instead.
+func (s *Store) ResolveDayType(ctx context.Context, userID, date string) (types.DietPlanDayType, bool, error) {
+	return s.resolveDayType(ctx, userID, date)
+}
+
 // resolveDayType returns the day-type governing userID on date: an override
 // pinned to that exact date takes precedence, else the active plan's cycle
 // pattern indexed by date. ok is false when neither applies, telling the

@@ -32,19 +32,21 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	defer func() { _ = tx.Rollback() }()
 
 	const mealQ = `
-		INSERT INTO meals (id, user_id, at_utc, local_date, raw_text, confidence, parser_tier, created_at, external_id)
-		VALUES (:id, :user_id, :at_utc, :local_date, :raw_text, :confidence, :parser_tier, :created_at, :external_id)
+		INSERT INTO meals (id, user_id, at_utc, local_date, raw_text, confidence, parser_tier, created_at, external_id, plan_slot_id, plan_option_id)
+		VALUES (:id, :user_id, :at_utc, :local_date, :raw_text, :confidence, :parser_tier, :created_at, :external_id, :plan_slot_id, :plan_option_id)
 	`
 	mealQuery, mealArgs, err := sqlx.Named(mealQ, map[string]any{
-		"id":          m.ID,
-		"user_id":     m.UserID,
-		"at_utc":      utcStr(m.At),
-		"local_date":  localDate,
-		"raw_text":    m.RawText,
-		"confidence":  m.Confidence,
-		"parser_tier": int(m.ParserTier),
-		"created_at":  utcStr(m.CreatedAt),
-		"external_id": m.ExternalID,
+		"id":             m.ID,
+		"user_id":        m.UserID,
+		"at_utc":         utcStr(m.At),
+		"local_date":     localDate,
+		"raw_text":       m.RawText,
+		"confidence":     m.Confidence,
+		"parser_tier":    int(m.ParserTier),
+		"created_at":     utcStr(m.CreatedAt),
+		"external_id":    m.ExternalID,
+		"plan_slot_id":   m.PlanSlotID,
+		"plan_option_id": m.PlanOptionID,
 	})
 	if err != nil {
 		return fmt.Errorf("store: bind meal: %w", err)
@@ -110,7 +112,7 @@ func resolvedItemValues(id, mealID string, position int, it types.ResolvedItem) 
 // items populated. Meals are ordered newest-first.
 func (s *Store) RecentMeals(ctx context.Context, userID string, limit int) ([]types.Meal, error) {
 	const mealQ = `
-		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
+		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at, plan_slot_id, plan_option_id
 		FROM meals
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -163,7 +165,7 @@ func (s *Store) RecentMealTimes(ctx context.Context, userID string, since time.T
 // Returns types.ErrNotFound when the meal does not exist.
 func (s *Store) GetMeal(ctx context.Context, mealID string) (types.Meal, error) {
 	const q = `
-		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
+		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at, plan_slot_id, plan_option_id
 		FROM meals WHERE id = ?
 	`
 	var row mealRow
@@ -208,24 +210,28 @@ func (s *Store) GetRollups(ctx context.Context, userID, startDate, endDate strin
 // mealRow is the flat DB shape of the meals table; types.Meal additionally
 // carries a non-column Items slice populated by loadItems.
 type mealRow struct {
-	ID         string  `db:"id"`
-	UserID     string  `db:"user_id"`
-	AtUTC      string  `db:"at_utc"`
-	RawText    string  `db:"raw_text"`
-	Confidence float64 `db:"confidence"`
-	ParserTier int     `db:"parser_tier"`
-	CreatedAt  string  `db:"created_at"`
+	ID           string  `db:"id"`
+	UserID       string  `db:"user_id"`
+	AtUTC        string  `db:"at_utc"`
+	RawText      string  `db:"raw_text"`
+	Confidence   float64 `db:"confidence"`
+	ParserTier   int     `db:"parser_tier"`
+	CreatedAt    string  `db:"created_at"`
+	PlanSlotID   string  `db:"plan_slot_id"`
+	PlanOptionID string  `db:"plan_option_id"`
 }
 
 func (r mealRow) toMeal() types.Meal {
 	return types.Meal{
-		ID:         r.ID,
-		UserID:     r.UserID,
-		At:         parseUTC(r.AtUTC),
-		RawText:    r.RawText,
-		Confidence: r.Confidence,
-		ParserTier: types.ParserTier(r.ParserTier),
-		CreatedAt:  parseUTC(r.CreatedAt),
+		ID:           r.ID,
+		UserID:       r.UserID,
+		At:           parseUTC(r.AtUTC),
+		RawText:      r.RawText,
+		Confidence:   r.Confidence,
+		ParserTier:   types.ParserTier(r.ParserTier),
+		CreatedAt:    parseUTC(r.CreatedAt),
+		PlanSlotID:   r.PlanSlotID,
+		PlanOptionID: r.PlanOptionID,
 	}
 }
 
@@ -698,7 +704,7 @@ func (s *Store) LatestMealTime(ctx context.Context, userID string) (string, erro
 // GetMealsInRange returns meals for a user within a date range (inclusive).
 func (s *Store) GetMealsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Meal, error) {
 	const mealQ = `
-		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at
+		SELECT id, user_id, at_utc, raw_text, confidence, parser_tier, created_at, plan_slot_id, plan_option_id
 		FROM meals
 		WHERE user_id = ? AND local_date >= ? AND local_date <= ?
 		ORDER BY at_utc ASC

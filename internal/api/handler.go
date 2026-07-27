@@ -872,6 +872,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/shared/{token}/budget/weekly", h.wrapReadOnly(h.handleGetBudgetWeekly))
 	mux.HandleFunc("GET /api/v1/shared/{token}/body/summary", h.wrapReadOnly(h.handleBodySummary))
 	mux.HandleFunc("GET /api/v1/shared/{token}/streak", h.wrapReadOnly(h.handleStreak))
+	// Day-type badge + targets only -- never the plan CRUD routes (~691-711),
+	// which return slot/option/item content a share token must never expose.
+	mux.HandleFunc("GET /api/v1/shared/{token}/day-type", h.wrapReadOnly(h.handleGetSharedDayType))
 	mux.HandleFunc("/api/v1/shared/{token}/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, ErrorMethodNotAllowed, "Method not allowed.")
@@ -956,6 +959,40 @@ func (h *Handler) wrapReadOnly(next func(w http.ResponseWriter, r *http.Request,
 		}
 		next(w, r, u.ID)
 	}))
+}
+
+// sharedDayTypeResponse is the day-type badge + numeric targets exposed to a
+// shared read-only dashboard: enough to explain why today's numbers moved
+// (carb-cycling) without leaking the prescription behind them. DayTypeName is
+// empty when no override or active plan governs the date -- the viewer then
+// sees the flat-fallback targets, exactly as before diet plans existed.
+type sharedDayTypeResponse struct {
+	DayTypeName string       `json:"day_type_name,omitempty"`
+	Targets     types.Macros `json:"targets"`
+	WaterGoalMl int          `json:"water_goal_ml"`
+}
+
+// handleGetSharedDayType is mounted under wrapReadOnly only -- it is a
+// read-only-token peer of handleGetTargets, not a replacement for it.
+// handleGetTargets must keep returning the flat editable daily_targets row
+// unchanged -- Goals.tsx prefills its edit form from that value, and the
+// plan_active hint already tells the user it's not what's actually in
+// effect -- so this is a separate endpoint rather than added fields there.
+// It reuses TargetsFor and resolvedDayTypeName (handler_plan.go) so the
+// resolution can never drift from what handleGetPlanDay shows the plan's
+// own owner.
+func (h *Handler) handleGetSharedDayType(w http.ResponseWriter, r *http.Request, userID string) {
+	today := time.Now().In(h.loc).Format(dateLayout)
+	targets, err := h.store.TargetsFor(r.Context(), userID, today)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	resp := sharedDayTypeResponse{Targets: targets.Targets, WaterGoalMl: targets.WaterGoalMl}
+	if name, ok := h.resolvedDayTypeName(r.Context(), userID, today); ok {
+		resp.DayTypeName = name
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // wrapPublic sets JSON headers but performs no authentication.
