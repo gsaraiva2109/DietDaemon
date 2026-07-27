@@ -424,26 +424,7 @@ export function Dashboard() {
           {/* Frequent foods */}
           <FrequentFoods />
 
-          {/* Today's meals */}
-          <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">{t('dashboard.todaysMeals')}</h2>
-            {meals.isLoading ? (
-              <Spinner />
-            ) : !meals.data?.length ? (
-              <EmptyState
-                title={t('dashboard.emptyTitle')}
-                hint={t('dashboard.emptyHint')}
-              />
-            ) : (
-              <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2.5">
-                {meals.data.map((m) => (
-                  <motion.div key={m.ID} variants={fadeUp}>
-                    <MealCard meal={m} linkTo={`/history/${m.ID}`} />
-                  </motion.div>
-                ))}
-              </motion.div>
-            )}
-          </section>
+          <TodayMeals meals={meals} />
         </>
       )}
 
@@ -456,6 +437,28 @@ export function Dashboard() {
         />
       )}
     </div>
+  )
+}
+
+function TodayMeals({ meals }: Readonly<{ meals: ReturnType<typeof useMeals> }>) {
+  const { t } = useTranslation()
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">{t('dashboard.todaysMeals')}</h2>
+      {meals.isLoading ? (
+        <Spinner />
+      ) : !meals.data?.length ? (
+        <EmptyState title={t('dashboard.emptyTitle')} hint={t('dashboard.emptyHint')} />
+      ) : (
+        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2.5">
+          {meals.data.map((meal) => (
+            <motion.div key={meal.ID} variants={fadeUp}>
+              <MealCard meal={meal} linkTo={`/history/${meal.ID}`} />
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
+    </section>
   )
 }
 

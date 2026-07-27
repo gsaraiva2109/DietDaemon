@@ -20,6 +20,14 @@ func mkItem(phrase string, kcal float64) types.ResolvedItem {
 	}
 }
 
+func mealsByID(meals []types.Meal) map[string]types.Meal {
+	byID := make(map[string]types.Meal, len(meals))
+	for _, meal := range meals {
+		byID[meal.ID] = meal
+	}
+	return byID
+}
+
 func TestAddMealItem(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
@@ -291,10 +299,7 @@ func TestMealPlanAttributionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecentMeals: %v", err)
 	}
-	byID := map[string]types.Meal{}
-	for _, m := range recent {
-		byID[m.ID] = m
-	}
+	byID := mealsByID(recent)
 	if byID[attributed.ID].PlanSlotID != "slot-1" || byID[attributed.ID].PlanOptionID != "option-1" {
 		t.Fatalf("RecentMeals plan attribution = %+v", byID[attributed.ID])
 	}
@@ -306,10 +311,7 @@ func TestMealPlanAttributionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMealsInRange: %v", err)
 	}
-	byIDRanged := map[string]types.Meal{}
-	for _, m := range ranged {
-		byIDRanged[m.ID] = m
-	}
+	byIDRanged := mealsByID(ranged)
 	if byIDRanged[attributed.ID].PlanOptionID != "option-1" {
 		t.Fatalf("GetMealsInRange plan attribution = %+v", byIDRanged[attributed.ID])
 	}
