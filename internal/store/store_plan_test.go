@@ -14,45 +14,212 @@ func mustPlanUser(t *testing.T, s *Store, id string) {
 	mustUser(t, s, types.User{ID: id, CreatedAt: time.Now().UTC()})
 }
 
+// ---------------------------------------------------------------------------
+// must* helpers -- thin wrappers around the plan-tree CRUD/restore calls that
+// fail the test on error, so the tests below read as the sequence of
+// operations under test rather than a wall of repeated error checks (each of
+// which counts toward the cognitive-complexity budget the linter enforces on
+// the test functions themselves).
+// ---------------------------------------------------------------------------
+
+func mustCreatePlan(t *testing.T, s *Store, p types.DietPlan) types.DietPlan {
+	t.Helper()
+	created, err := s.CreatePlan(ctx(), p)
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	return created
+}
+
+func mustGetPlan(t *testing.T, s *Store, id string) types.DietPlan {
+	t.Helper()
+	got, err := s.GetPlan(ctx(), id)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	return got
+}
+
+func mustListPlans(t *testing.T, s *Store, userID string) []types.DietPlan {
+	t.Helper()
+	list, err := s.ListPlans(ctx(), userID)
+	if err != nil {
+		t.Fatalf("ListPlans: %v", err)
+	}
+	return list
+}
+
+func mustUpdatePlan(t *testing.T, s *Store, p types.DietPlan) {
+	t.Helper()
+	if err := s.UpdatePlan(ctx(), p); err != nil {
+		t.Fatalf("UpdatePlan: %v", err)
+	}
+}
+
+func mustDeletePlan(t *testing.T, s *Store, userID, id string) {
+	t.Helper()
+	if err := s.DeletePlan(ctx(), userID, id); err != nil {
+		t.Fatalf("DeletePlan: %v", err)
+	}
+}
+
+func mustCreateDayType(t *testing.T, s *Store, dt types.DietPlanDayType) types.DietPlanDayType {
+	t.Helper()
+	created, err := s.CreateDayType(ctx(), dt)
+	if err != nil {
+		t.Fatalf("CreateDayType: %v", err)
+	}
+	return created
+}
+
+func mustUpdateDayType(t *testing.T, s *Store, dt types.DietPlanDayType) {
+	t.Helper()
+	if err := s.UpdateDayType(ctx(), dt); err != nil {
+		t.Fatalf("UpdateDayType: %v", err)
+	}
+}
+
+func mustGetDayType(t *testing.T, s *Store, id string) types.DietPlanDayType {
+	t.Helper()
+	got, err := s.GetDayType(ctx(), id)
+	if err != nil {
+		t.Fatalf("GetDayType: %v", err)
+	}
+	return got
+}
+
+func mustDeleteDayType(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if err := s.DeleteDayType(ctx(), id); err != nil {
+		t.Fatalf("DeleteDayType: %v", err)
+	}
+}
+
+func mustCreateSlot(t *testing.T, s *Store, sl types.DietPlanSlot) types.DietPlanSlot {
+	t.Helper()
+	created, err := s.CreateSlot(ctx(), sl)
+	if err != nil {
+		t.Fatalf("CreateSlot: %v", err)
+	}
+	return created
+}
+
+func mustUpdateSlot(t *testing.T, s *Store, sl types.DietPlanSlot) {
+	t.Helper()
+	if err := s.UpdateSlot(ctx(), sl); err != nil {
+		t.Fatalf("UpdateSlot: %v", err)
+	}
+}
+
+func mustDeleteSlot(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if err := s.DeleteSlot(ctx(), id); err != nil {
+		t.Fatalf("DeleteSlot: %v", err)
+	}
+}
+
+func mustCreateSlotOption(t *testing.T, s *Store, opt types.DietPlanSlotOption) types.DietPlanSlotOption {
+	t.Helper()
+	created, err := s.CreateSlotOption(ctx(), opt)
+	if err != nil {
+		t.Fatalf("CreateSlotOption: %v", err)
+	}
+	return created
+}
+
+func mustUpdateSlotOption(t *testing.T, s *Store, opt types.DietPlanSlotOption) {
+	t.Helper()
+	if err := s.UpdateSlotOption(ctx(), opt); err != nil {
+		t.Fatalf("UpdateSlotOption: %v", err)
+	}
+}
+
+func mustDeleteSlotOption(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if err := s.DeleteSlotOption(ctx(), id); err != nil {
+		t.Fatalf("DeleteSlotOption: %v", err)
+	}
+}
+
+func mustSaveTemplate(t *testing.T, s *Store, tmpl types.MealTemplate) {
+	t.Helper()
+	if err := s.SaveTemplate(ctx(), tmpl); err != nil {
+		t.Fatalf("SaveTemplate: %v", err)
+	}
+}
+
+func mustGetPlanBundle(t *testing.T, s *Store, id string) types.PlanBundle {
+	t.Helper()
+	bundle, err := s.GetPlanBundle(ctx(), id)
+	if err != nil {
+		t.Fatalf("GetPlanBundle: %v", err)
+	}
+	return bundle
+}
+
+func mustRestorePlan(t *testing.T, s *Store, p types.DietPlan) {
+	t.Helper()
+	if err := s.RestorePlan(ctx(), p); err != nil {
+		t.Fatalf("RestorePlan: %v", err)
+	}
+}
+
+func mustRestoreDayType(t *testing.T, s *Store, dt types.DietPlanDayType) {
+	t.Helper()
+	if err := s.RestoreDayType(ctx(), dt); err != nil {
+		t.Fatalf("RestoreDayType: %v", err)
+	}
+}
+
+func mustRestoreSlot(t *testing.T, s *Store, sl types.DietPlanSlot) {
+	t.Helper()
+	if err := s.RestoreSlot(ctx(), sl); err != nil {
+		t.Fatalf("RestoreSlot: %v", err)
+	}
+}
+
+func mustRestoreSlotOption(t *testing.T, s *Store, opt types.DietPlanSlotOption) {
+	t.Helper()
+	if err := s.RestoreSlotOption(ctx(), opt); err != nil {
+		t.Fatalf("RestoreSlotOption: %v", err)
+	}
+}
+
+func mustRestoreTemplate(t *testing.T, s *Store, tmpl types.MealTemplate) {
+	t.Helper()
+	if err := s.RestoreTemplate(ctx(), tmpl); err != nil {
+		t.Fatalf("RestoreTemplate: %v", err)
+	}
+}
+
 func TestPlanCRUDRoundTrip(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 	mustPlanUser(t, s, "plan-owner")
 
-	created, err := s.CreatePlan(ctx(), types.DietPlan{
+	created := mustCreatePlan(t, s, types.DietPlan{
 		UserID: "plan-owner", Name: "Cutting cycle", Notes: "from Dra. Ana",
 		ValidFrom: "2026-01-05", ValidTo: "", CyclePattern: []string{"dt-low", "dt-high"},
 		CycleAnchorDate: "2026-01-05",
 	})
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
 	if created.ID == "" || created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Fatalf("created plan missing generated fields: %+v", created)
 	}
 
-	got, err := s.GetPlan(ctx(), created.ID)
-	if err != nil {
-		t.Fatalf("GetPlan: %v", err)
-	}
+	got := mustGetPlan(t, s, created.ID)
 	if got.Name != "Cutting cycle" || len(got.CyclePattern) != 2 || got.CyclePattern[0] != "dt-low" {
 		t.Fatalf("GetPlan round-trip = %+v", got)
 	}
 
-	list, err := s.ListPlans(ctx(), "plan-owner")
-	if err != nil || len(list) != 1 {
-		t.Fatalf("ListPlans = %+v, err = %v", list, err)
+	list := mustListPlans(t, s, "plan-owner")
+	if len(list) != 1 {
+		t.Fatalf("ListPlans = %+v", list)
 	}
 
 	got.Name = "Cutting cycle v2"
 	got.CyclePattern = []string{"dt-high", "dt-low", "dt-refeed"}
-	if err := s.UpdatePlan(ctx(), got); err != nil {
-		t.Fatalf("UpdatePlan: %v", err)
-	}
-	updated, err := s.GetPlan(ctx(), created.ID)
-	if err != nil {
-		t.Fatalf("GetPlan after update: %v", err)
-	}
+	mustUpdatePlan(t, s, got)
+	updated := mustGetPlan(t, s, created.ID)
 	if updated.Name != "Cutting cycle v2" || len(updated.CyclePattern) != 3 {
 		t.Fatalf("plan after update = %+v", updated)
 	}
@@ -61,9 +228,7 @@ func TestPlanCRUDRoundTrip(t *testing.T) {
 		t.Fatalf("updated_at not refreshed: created=%v updated=%v", created.UpdatedAt, updated.UpdatedAt)
 	}
 
-	if err := s.DeletePlan(ctx(), "plan-owner", created.ID); err != nil {
-		t.Fatalf("DeletePlan: %v", err)
-	}
+	mustDeletePlan(t, s, "plan-owner", created.ID)
 	if _, err := s.GetPlan(ctx(), created.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("GetPlan after delete = %v, want ErrNotFound", err)
 	}
@@ -202,71 +367,44 @@ func TestDayTypeSlotOptionCRUD(t *testing.T) {
 	defer cleanup()
 	mustPlanUser(t, s, "u1")
 
-	p, err := s.CreatePlan(ctx(), types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
+	p := mustCreatePlan(t, s, types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
 
-	dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{
+	dt := mustCreateDayType(t, s, types.DietPlanDayType{
 		PlanID: p.ID, Name: "Low-carb", Position: 0,
 		Targets: types.Macros{Calories: 1800, Protein: 150, Carbs: 100, Fat: 60, Fiber: 25}, WaterGoalMl: 3000,
 	})
-	if err != nil {
-		t.Fatalf("CreateDayType: %v", err)
-	}
 	if dt.ID == "" {
 		t.Fatal("CreateDayType did not assign an ID")
 	}
 
 	dt.Name = "Low-carb v2"
 	dt.WaterGoalMl = 3500
-	if err := s.UpdateDayType(ctx(), dt); err != nil {
-		t.Fatalf("UpdateDayType: %v", err)
-	}
-	got, err := s.GetDayType(ctx(), dt.ID)
-	if err != nil {
-		t.Fatalf("GetDayType: %v", err)
-	}
+	mustUpdateDayType(t, s, dt)
+	got := mustGetDayType(t, s, dt.ID)
 	if got.Name != "Low-carb v2" || got.WaterGoalMl != 3500 || got.Targets.Calories != 1800 {
 		t.Fatalf("day type after update = %+v", got)
 	}
 
 	// Slot for a template-less item is allowed by this table; template_id is
 	// required at the option level, backed by an existing meal_templates row.
-	if err := s.SaveTemplate(ctx(), types.MealTemplate{ID: "tmpl-1", UserID: "u1", Name: "Café", CreatedAt: time.Now(), LastUsed: time.Now()}); err != nil {
-		t.Fatalf("seed template: %v", err)
-	}
+	mustSaveTemplate(t, s, types.MealTemplate{ID: "tmpl-1", UserID: "u1", Name: "Café", CreatedAt: time.Now(), LastUsed: time.Now()})
 
-	slot, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, TimeOfDay: "07:00", Label: "Café da manhã"})
-	if err != nil {
-		t.Fatalf("CreateSlot: %v", err)
-	}
+	slot := mustCreateSlot(t, s, types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, TimeOfDay: "07:00", Label: "Café da manhã"})
 	if slot.ID == "" {
 		t.Fatal("CreateSlot did not assign an ID")
 	}
 
-	opt, err := s.CreateSlotOption(ctx(), types.DietPlanSlotOption{SlotID: slot.ID, Position: 0, Label: "Opção 1", TemplateID: "tmpl-1"})
-	if err != nil {
-		t.Fatalf("CreateSlotOption: %v", err)
-	}
+	opt := mustCreateSlotOption(t, s, types.DietPlanSlotOption{SlotID: slot.ID, Position: 0, Label: "Opção 1", TemplateID: "tmpl-1"})
 	opt.Label = "Opção 1 (revisada)"
-	if err := s.UpdateSlotOption(ctx(), opt); err != nil {
-		t.Fatalf("UpdateSlotOption: %v", err)
-	}
+	mustUpdateSlotOption(t, s, opt)
 
-	if err := s.DeleteSlotOption(ctx(), opt.ID); err != nil {
-		t.Fatalf("DeleteSlotOption: %v", err)
-	}
+	mustDeleteSlotOption(t, s, opt.ID)
 	if err := s.DeleteSlotOption(ctx(), opt.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("DeleteSlotOption twice = %v, want ErrNotFound", err)
 	}
 
-	if err := s.DeleteSlot(ctx(), slot.ID); err != nil {
-		t.Fatalf("DeleteSlot: %v", err)
-	}
-	if err := s.DeleteDayType(ctx(), dt.ID); err != nil {
-		t.Fatalf("DeleteDayType: %v", err)
-	}
+	mustDeleteSlot(t, s, slot.ID)
+	mustDeleteDayType(t, s, dt.ID)
 	if _, err := s.GetDayType(ctx(), dt.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("GetDayType after delete = %v, want ErrNotFound", err)
 	}
@@ -367,50 +505,24 @@ func TestGetPlanBundleShape(t *testing.T) {
 	defer cleanup()
 	mustPlanUser(t, s, "u1")
 
-	p, err := s.CreatePlan(ctx(), types.DietPlan{
+	p := mustCreatePlan(t, s, types.DietPlan{
 		UserID: "u1", Name: "Carb cycle", ValidFrom: "2026-01-01",
 		CyclePattern: []string{"placeholder"}, CycleAnchorDate: "2026-01-01",
 	})
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
-	if err := s.SaveTemplate(ctx(), types.MealTemplate{ID: "tmpl-a", UserID: "u1", Name: "A"}); err != nil {
-		t.Fatalf("seed template a: %v", err)
-	}
-	if err := s.SaveTemplate(ctx(), types.MealTemplate{ID: "tmpl-b", UserID: "u1", Name: "B"}); err != nil {
-		t.Fatalf("seed template b: %v", err)
-	}
+	mustSaveTemplate(t, s, types.MealTemplate{ID: "tmpl-a", UserID: "u1", Name: "A"})
+	mustSaveTemplate(t, s, types.MealTemplate{ID: "tmpl-b", UserID: "u1", Name: "B"})
 
-	dtHigh, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "High-carb", Position: 1, Targets: types.Macros{Calories: 2400}})
-	if err != nil {
-		t.Fatalf("CreateDayType high: %v", err)
-	}
-	dtLow, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "Low-carb", Position: 0, Targets: types.Macros{Calories: 1800}})
-	if err != nil {
-		t.Fatalf("CreateDayType low: %v", err)
-	}
+	dtHigh := mustCreateDayType(t, s, types.DietPlanDayType{PlanID: p.ID, Name: "High-carb", Position: 1, Targets: types.Macros{Calories: 2400}})
+	dtLow := mustCreateDayType(t, s, types.DietPlanDayType{PlanID: p.ID, Name: "Low-carb", Position: 0, Targets: types.Macros{Calories: 1800}})
 
-	slotBreakfast, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dtLow.ID, Position: 0, Label: "Café da manhã"})
-	if err != nil {
-		t.Fatalf("CreateSlot breakfast: %v", err)
-	}
-	slotLunch, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dtLow.ID, Position: 1, Label: "Almoço"})
-	if err != nil {
-		t.Fatalf("CreateSlot lunch: %v", err)
-	}
-	if _, err := s.CreateSlotOption(ctx(), types.DietPlanSlotOption{SlotID: slotBreakfast.ID, Position: 0, Label: "Opção 1", TemplateID: "tmpl-a"}); err != nil {
-		t.Fatalf("CreateSlotOption 1: %v", err)
-	}
-	if _, err := s.CreateSlotOption(ctx(), types.DietPlanSlotOption{SlotID: slotBreakfast.ID, Position: 1, Label: "Opção 2", TemplateID: "tmpl-b"}); err != nil {
-		t.Fatalf("CreateSlotOption 2: %v", err)
-	}
+	slotBreakfast := mustCreateSlot(t, s, types.DietPlanSlot{DayTypeID: dtLow.ID, Position: 0, Label: "Café da manhã"})
+	slotLunch := mustCreateSlot(t, s, types.DietPlanSlot{DayTypeID: dtLow.ID, Position: 1, Label: "Almoço"})
+	mustCreateSlotOption(t, s, types.DietPlanSlotOption{SlotID: slotBreakfast.ID, Position: 0, Label: "Opção 1", TemplateID: "tmpl-a"})
+	mustCreateSlotOption(t, s, types.DietPlanSlotOption{SlotID: slotBreakfast.ID, Position: 1, Label: "Opção 2", TemplateID: "tmpl-b"})
 	// dtHigh and slotLunch intentionally have no options, to confirm the
 	// bundle still emits an empty (not nil) slice for them.
 
-	bundle, err := s.GetPlanBundle(ctx(), p.ID)
-	if err != nil {
-		t.Fatalf("GetPlanBundle: %v", err)
-	}
+	bundle := mustGetPlanBundle(t, s, p.ID)
 	if bundle.Plan.ID != p.ID {
 		t.Fatalf("bundle.Plan.ID = %s, want %s", bundle.Plan.ID, p.ID)
 	}
@@ -441,30 +553,16 @@ func TestUpdateSlot(t *testing.T) {
 	defer cleanup()
 	mustPlanUser(t, s, "u1")
 
-	p, err := s.CreatePlan(ctx(), types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
-	dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "DT", Targets: types.Macros{Calories: 2000}})
-	if err != nil {
-		t.Fatalf("CreateDayType: %v", err)
-	}
-	slot, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, TimeOfDay: "07:00", Label: "Café"})
-	if err != nil {
-		t.Fatalf("CreateSlot: %v", err)
-	}
+	p := mustCreatePlan(t, s, types.DietPlan{UserID: "u1", Name: "P", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
+	dt := mustCreateDayType(t, s, types.DietPlanDayType{PlanID: p.ID, Name: "DT", Targets: types.Macros{Calories: 2000}})
+	slot := mustCreateSlot(t, s, types.DietPlanSlot{DayTypeID: dt.ID, Position: 0, TimeOfDay: "07:00", Label: "Café"})
 
 	slot.Position = 1
 	slot.TimeOfDay = "08:00"
 	slot.Label = "Café revisado"
-	if err := s.UpdateSlot(ctx(), slot); err != nil {
-		t.Fatalf("UpdateSlot: %v", err)
-	}
+	mustUpdateSlot(t, s, slot)
 
-	bundle, err := s.GetPlanBundle(ctx(), p.ID)
-	if err != nil {
-		t.Fatalf("GetPlanBundle: %v", err)
-	}
+	bundle := mustGetPlanBundle(t, s, p.ID)
 	if len(bundle.DayTypes) != 1 || len(bundle.DayTypes[0].Slots) != 1 {
 		t.Fatalf("bundle = %+v", bundle)
 	}
@@ -540,35 +638,23 @@ func TestRestorePlanFullChainIdempotent(t *testing.T) {
 		ValidFrom: "2026-01-01", ValidTo: "", CyclePattern: []string{"restored-dt"},
 		CycleAnchorDate: "2026-01-01", CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.RestorePlan(ctx(), plan); err != nil {
-		t.Fatalf("RestorePlan: %v", err)
-	}
+	mustRestorePlan(t, s, plan)
 
 	dt := types.DietPlanDayType{
 		ID: "restored-dt", PlanID: "restored-plan", Name: "Low-carb", Position: 0,
 		Targets: types.Macros{Calories: 1800, Protein: 150, Carbs: 100, Fat: 60, Fiber: 25}, WaterGoalMl: 3000,
 	}
-	if err := s.RestoreDayType(ctx(), dt); err != nil {
-		t.Fatalf("RestoreDayType: %v", err)
-	}
+	mustRestoreDayType(t, s, dt)
 
 	slot := types.DietPlanSlot{ID: "restored-slot", DayTypeID: "restored-dt", Position: 0, TimeOfDay: "07:00", Label: "Café"}
-	if err := s.RestoreSlot(ctx(), slot); err != nil {
-		t.Fatalf("RestoreSlot: %v", err)
-	}
+	mustRestoreSlot(t, s, slot)
 
-	if err := s.RestoreTemplate(ctx(), types.MealTemplate{ID: "restored-tmpl", UserID: "u1", Name: "Opção 1", OwnerKind: types.TemplateOwnerPlan, CreatedAt: now, LastUsed: now}); err != nil {
-		t.Fatalf("RestoreTemplate (dependency for slot option FK): %v", err)
-	}
+	// RestoreTemplate is a dependency for the slot option's FK.
+	mustRestoreTemplate(t, s, types.MealTemplate{ID: "restored-tmpl", UserID: "u1", Name: "Opção 1", OwnerKind: types.TemplateOwnerPlan, CreatedAt: now, LastUsed: now})
 	opt := types.DietPlanSlotOption{ID: "restored-opt", SlotID: "restored-slot", Position: 0, Label: "Opção 1", TemplateID: "restored-tmpl"}
-	if err := s.RestoreSlotOption(ctx(), opt); err != nil {
-		t.Fatalf("RestoreSlotOption: %v", err)
-	}
+	mustRestoreSlotOption(t, s, opt)
 
-	bundle, err := s.GetPlanBundle(ctx(), "restored-plan")
-	if err != nil {
-		t.Fatalf("GetPlanBundle: %v", err)
-	}
+	bundle := mustGetPlanBundle(t, s, "restored-plan")
 	if bundle.Plan.ID != "restored-plan" || bundle.Plan.Name != "Restored" || len(bundle.Plan.CyclePattern) != 1 {
 		t.Fatalf("restored bundle.Plan = %+v", bundle.Plan)
 	}
@@ -584,24 +670,30 @@ func TestRestorePlanFullChainIdempotent(t *testing.T) {
 
 	// Replaying the entire chain again is a safe no-op, not an error, and
 	// doesn't duplicate rows.
-	if err := s.RestorePlan(ctx(), plan); err != nil {
-		t.Fatalf("RestorePlan (duplicate): %v", err)
-	}
-	if err := s.RestoreDayType(ctx(), dt); err != nil {
-		t.Fatalf("RestoreDayType (duplicate): %v", err)
-	}
-	if err := s.RestoreSlot(ctx(), slot); err != nil {
-		t.Fatalf("RestoreSlot (duplicate): %v", err)
-	}
-	if err := s.RestoreSlotOption(ctx(), opt); err != nil {
-		t.Fatalf("RestoreSlotOption (duplicate): %v", err)
-	}
-	bundleAgain, err := s.GetPlanBundle(ctx(), "restored-plan")
-	if err != nil {
-		t.Fatalf("GetPlanBundle after duplicate restore: %v", err)
-	}
+	mustRestorePlan(t, s, plan)
+	mustRestoreDayType(t, s, dt)
+	mustRestoreSlot(t, s, slot)
+	mustRestoreSlotOption(t, s, opt)
+	bundleAgain := mustGetPlanBundle(t, s, "restored-plan")
 	if len(bundleAgain.DayTypes) != 1 || len(bundleAgain.DayTypes[0].Slots) != 1 || len(bundleAgain.DayTypes[0].Slots[0].Options) != 1 {
 		t.Fatalf("duplicate restore changed row counts: %+v", bundleAgain)
+	}
+}
+
+// mustCreatePlanBundleDayType seeds one day-type under planID with
+// nSlots slots, each with nOptions slot options (and their backing
+// templates) -- the per-day-type fan-out TestGetPlanBundleManyChildren
+// repeats to build a plan tree of the requested size.
+func mustCreatePlanBundleDayType(t *testing.T, s *Store, planID string, position, nSlots, nOptions int) {
+	t.Helper()
+	dt := mustCreateDayType(t, s, types.DietPlanDayType{PlanID: planID, Name: "DT", Position: position, Targets: types.Macros{Calories: 2000}})
+	for slI := range nSlots {
+		slot := mustCreateSlot(t, s, types.DietPlanSlot{DayTypeID: dt.ID, Position: slI, Label: "Slot"})
+		for optI := range nOptions {
+			tmplID := "tmpl-" + newID()
+			mustSaveTemplate(t, s, types.MealTemplate{ID: tmplID, UserID: "u1", Name: "T"})
+			mustCreateSlotOption(t, s, types.DietPlanSlotOption{SlotID: slot.ID, Position: optI, Label: "Opt", TemplateID: tmplID})
+		}
 	}
 }
 
@@ -619,40 +711,16 @@ func TestGetPlanBundleManyChildren(t *testing.T) {
 	defer cleanup()
 	mustPlanUser(t, s, "u1")
 
-	p, err := s.CreatePlan(ctx(), types.DietPlan{UserID: "u1", Name: "Big", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
+	p := mustCreatePlan(t, s, types.DietPlan{UserID: "u1", Name: "Big", ValidFrom: "2026-01-01", CyclePattern: []string{"a"}, CycleAnchorDate: "2026-01-01"})
 	const nDayTypes, nSlotsPerDayType, nOptionsPerSlot = 5, 4, 3
 	wantSlots := nDayTypes * nSlotsPerDayType
 	wantOptions := wantSlots * nOptionsPerSlot
 
 	for dtI := range nDayTypes {
-		dt, err := s.CreateDayType(ctx(), types.DietPlanDayType{PlanID: p.ID, Name: "DT", Position: dtI, Targets: types.Macros{Calories: 2000}})
-		if err != nil {
-			t.Fatalf("CreateDayType %d: %v", dtI, err)
-		}
-		for slI := range nSlotsPerDayType {
-			slot, err := s.CreateSlot(ctx(), types.DietPlanSlot{DayTypeID: dt.ID, Position: slI, Label: "Slot"})
-			if err != nil {
-				t.Fatalf("CreateSlot: %v", err)
-			}
-			for optI := range nOptionsPerSlot {
-				tmplID := "tmpl-" + newID()
-				if err := s.SaveTemplate(ctx(), types.MealTemplate{ID: tmplID, UserID: "u1", Name: "T"}); err != nil {
-					t.Fatalf("seed template: %v", err)
-				}
-				if _, err := s.CreateSlotOption(ctx(), types.DietPlanSlotOption{SlotID: slot.ID, Position: optI, Label: "Opt", TemplateID: tmplID}); err != nil {
-					t.Fatalf("CreateSlotOption: %v", err)
-				}
-			}
-		}
+		mustCreatePlanBundleDayType(t, s, p.ID, dtI, nSlotsPerDayType, nOptionsPerSlot)
 	}
 
-	bundle, err := s.GetPlanBundle(ctx(), p.ID)
-	if err != nil {
-		t.Fatalf("GetPlanBundle: %v", err)
-	}
+	bundle := mustGetPlanBundle(t, s, p.ID)
 	if len(bundle.DayTypes) != nDayTypes {
 		t.Fatalf("day types = %d, want %d", len(bundle.DayTypes), nDayTypes)
 	}

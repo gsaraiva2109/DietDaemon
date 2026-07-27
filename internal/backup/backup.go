@@ -324,21 +324,9 @@ func (r *Runner) writePlanData(ctx context.Context, dst Destination, cfg types.B
 		return err
 	}
 
-	var dayTypes []types.DietPlanDayType
-	var slots []types.DietPlanSlot
-	var options []types.DietPlanSlotOption
-	for _, p := range plans {
-		bundle, err := r.store.GetPlanBundle(ctx, p.ID)
-		if err != nil {
-			return fmt.Errorf("backup: load plan bundle %s: %w", p.ID, err)
-		}
-		for _, dt := range bundle.DayTypes {
-			dayTypes = append(dayTypes, dt.DietPlanDayType)
-			for _, sl := range dt.Slots {
-				slots = append(slots, sl.DietPlanSlot)
-				options = append(options, sl.Options...)
-			}
-		}
+	dayTypes, slots, options, err := r.flattenPlanBundles(ctx, plans)
+	if err != nil {
+		return err
 	}
 	if err := writeCSV(ctx, dst, cfg, "day_types", "day_types.csv", func() ([]types.DietPlanDayType, error) { return dayTypes, nil }, exportfmt.WriteDayTypesCSV); err != nil {
 		return err
@@ -355,6 +343,29 @@ func (r *Runner) writePlanData(ctx context.Context, dst Destination, cfg types.B
 		return fmt.Errorf("backup: load day overrides: %w", err)
 	}
 	return writeCSV(ctx, dst, cfg, "day_overrides", "day_overrides.csv", func() ([]types.DietPlanDayOverride, error) { return overrides, nil }, exportfmt.WriteDayOverridesCSV)
+}
+
+// flattenPlanBundles loads each plan's bundle (day-types, slots, options) and
+// flattens them into the parallel CSV-ready slices writePlanData exports,
+// keeping the nested-loop bundle walk out of that function's own branching.
+func (r *Runner) flattenPlanBundles(ctx context.Context, plans []types.DietPlan) ([]types.DietPlanDayType, []types.DietPlanSlot, []types.DietPlanSlotOption, error) {
+	var dayTypes []types.DietPlanDayType
+	var slots []types.DietPlanSlot
+	var options []types.DietPlanSlotOption
+	for _, p := range plans {
+		bundle, err := r.store.GetPlanBundle(ctx, p.ID)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("backup: load plan bundle %s: %w", p.ID, err)
+		}
+		for _, dt := range bundle.DayTypes {
+			dayTypes = append(dayTypes, dt.DietPlanDayType)
+			for _, sl := range dt.Slots {
+				slots = append(slots, sl.DietPlanSlot)
+				options = append(options, sl.Options...)
+			}
+		}
+	}
+	return dayTypes, slots, options, nil
 }
 
 func (r *Runner) destinationFor(cfg types.BackupConfig) (Destination, error) {

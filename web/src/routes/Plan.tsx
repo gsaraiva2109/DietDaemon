@@ -122,8 +122,9 @@ function matchToFoodDetail(m: FoodMatch): FoodDetail {
 
 // Ad libitum ("à vontade") is purely quantity/grams === 0 — no stored flag
 // (trap #11). LocalItem below tracks it as editor-only UI state and
-// collapses back to a zero amount at save time.
-type LocalItem = SelectedFood & { adLibitum: boolean }
+// collapses back to a zero amount at save time. id is a client-only, never
+// persisted, so item rows have a React key stable across reorders/edits.
+type LocalItem = SelectedFood & { adLibitum: boolean; id: string }
 
 function isAdLibitum(item: ResolvedItem): boolean {
   return item.Parsed.NormalizedGrams === 0
@@ -133,11 +134,20 @@ function fromResolvedItem(item: ResolvedItem): LocalItem {
   const adLibitum = isAdLibitum(item)
   const food = matchToFoodDetail(item.Match)
   const matchedUnit = (food.serving_units ?? []).find((u) => u.label === item.Parsed.Unit)
+  let quantity: number
+  if (adLibitum) {
+    quantity = 1
+  } else if (matchedUnit) {
+    quantity = item.Parsed.Quantity
+  } else {
+    quantity = item.Parsed.NormalizedGrams
+  }
   return {
     food,
     unitID: matchedUnit ? matchedUnit.id : GRAMS_UNIT_ID,
-    quantity: adLibitum ? 1 : matchedUnit ? item.Parsed.Quantity : item.Parsed.NormalizedGrams,
+    quantity,
     adLibitum,
+    id: crypto.randomUUID(),
   }
 }
 
@@ -282,41 +292,48 @@ function PlanList({
   demo,
   onSelect,
 }: Readonly<{ loading: boolean; plans: DietPlan[]; demo: boolean; onSelect: (id: string) => void }>) {
-  const { t } = useTranslation()
-  const active = useActivePlan()
-
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
       {!demo && <NewPlanCard onCreated={onSelect} />}
-
-      {loading ? (
-        <Spinner label={t('plan.loading')} />
-      ) : plans.length === 0 ? (
-        <EmptyState icon={<GoalIcon width={28} height={28} />} title={t('plan.noPlansTitle')} hint={t('plan.noPlansHint')} />
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {plans.map((p) => (
-            <Card key={p.id} className="p-4">
-              <button
-                type="button"
-                onClick={() => onSelect(p.id)}
-                className="flex w-full items-center justify-between gap-3 text-left"
-              >
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 truncate font-semibold text-ink">
-                    {p.name}
-                    {active.data?.id === p.id && <Pill tone="primary">{t('plan.activePill')}</Pill>}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm text-muted">
-                    {p.valid_from} → {p.valid_to || t('plan.openEnded')}
-                  </p>
-                </div>
-              </button>
-            </Card>
-          ))}
-        </div>
-      )}
+      <PlanListBody loading={loading} plans={plans} onSelect={onSelect} />
     </motion.div>
+  )
+}
+
+function PlanListBody({
+  loading,
+  plans,
+  onSelect,
+}: Readonly<{ loading: boolean; plans: DietPlan[]; onSelect: (id: string) => void }>) {
+  const { t } = useTranslation()
+  const active = useActivePlan()
+
+  if (loading) return <Spinner label={t('plan.loading')} />
+  if (plans.length === 0) {
+    return <EmptyState icon={<GoalIcon width={28} height={28} />} title={t('plan.noPlansTitle')} hint={t('plan.noPlansHint')} />
+  }
+  return (
+    <div className="flex flex-col gap-2.5">
+      {plans.map((p) => (
+        <Card key={p.id} className="p-4">
+          <button
+            type="button"
+            onClick={() => onSelect(p.id)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+          >
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 truncate font-semibold text-ink">
+                {p.name}
+                {active.data?.id === p.id && <Pill tone="primary">{t('plan.activePill')}</Pill>}
+              </p>
+              <p className="mt-0.5 truncate text-sm text-muted">
+                {p.valid_from} → {p.valid_to || t('plan.openEnded')}
+              </p>
+            </div>
+          </button>
+        </Card>
+      ))}
+    </div>
   )
 }
 
@@ -449,6 +466,12 @@ function CycleEditor({
 }: Readonly<{ plan: DietPlan; dayTypes: DietPlanDayTypeBundle[] }>) {
   const { t } = useTranslation()
   const update = useUpdatePlan()
+  // cycle_pattern is a plain string[] that can repeat the same day-type id at
+  // multiple positions, so it has no natural per-row id; rowKeys tracks a
+  // synthetic one per position, kept in lockstep with every mutation below,
+  // so list rows get a React key stable across reorders instead of the
+  // array index.
+  const [rowKeys, setRowKeys] = useState<string[]>(() => plan.cycle_pattern.map(() => crypto.randomUUID()))
 
   function apply(patch: Partial<DietPlan>) {
     update.mutate({ planID: plan.id, input: { ...plan, ...patch } })
@@ -462,14 +485,18 @@ function CycleEditor({
 
   function addPosition() {
     apply({ cycle_pattern: [...plan.cycle_pattern, dayTypes[0]?.id ?? ''] })
+    setRowKeys((keys) => [...keys, crypto.randomUUID()])
   }
 
   function removeAt(i: number) {
     apply({ cycle_pattern: plan.cycle_pattern.filter((_, idx) => idx !== i) })
+    setRowKeys((keys) => keys.filter((_, idx) => idx !== i))
   }
 
   function seedWeek() {
-    apply({ cycle_pattern: Array(7).fill(dayTypes[0]?.id ?? ''), cycle_anchor_date: nextMondayISO() })
+    const pattern = new Array(7).fill(dayTypes[0]?.id ?? '')
+    apply({ cycle_pattern: pattern, cycle_anchor_date: nextMondayISO() })
+    setRowKeys(pattern.map(() => crypto.randomUUID()))
   }
 
   return (
@@ -499,8 +526,9 @@ function CycleEditor({
           <ol className="flex flex-col gap-2">
             {plan.cycle_pattern.map((dayTypeID, i) => (
               // Position in the array is the identity here (cycle_pattern
-              // can repeat the same day-type id at multiple positions).
-              <li key={i} className="flex items-center gap-2">
+              // can repeat the same day-type id at multiple positions), so
+              // the key is the synthetic per-position id in rowKeys, not i.
+              <li key={rowKeys[i]} className="flex items-center gap-2">
                 <span className="w-6 shrink-0 text-xs font-semibold text-muted tnum">{i + 1}</span>
                 <select
                   value={dayTypeID}
@@ -853,6 +881,15 @@ function OptionsSection({
   )
 }
 
+// optionSummaryText builds the "3 items · 420 kcal · ad libitum" line below
+// an option's label, flattened into named intermediates so neither ternary
+// nor template literal ends up nested inside another.
+function optionSummaryText(t: (key: string) => string, itemCount: number, kcal: number, hasAdLibitum: boolean): string {
+  const itemWord = itemCount === 1 ? t('templates.item') : t('templates.items')
+  const adLibitumSuffix = hasAdLibitum ? ` · ${t('plan.adLibitum')}` : ''
+  return `${itemCount} ${itemWord} · ${formatNumber(kcal)} kcal${adLibitumSuffix}`
+}
+
 function OptionRow({
   planID,
   dayTypeID,
@@ -897,9 +934,7 @@ function OptionRow({
       <button type="button" onClick={() => setEditing(true)} className="min-w-0 flex-1 text-left">
         <p className="truncate text-sm font-medium text-ink">{option.label}</p>
         <p className="text-xs text-muted">
-          {tmpl.isLoading
-            ? t('plan.loading')
-            : `${items.length} ${items.length === 1 ? t('templates.item') : t('templates.items')} · ${formatNumber(kcal)} kcal${hasAdLibitum ? ` · ${t('plan.adLibitum')}` : ''}`}
+          {tmpl.isLoading ? t('plan.loading') : optionSummaryText(t, items.length, kcal, hasAdLibitum)}
         </p>
       </button>
       <button
@@ -939,6 +974,38 @@ function OptionRow({
 // item list built from catalog search, portions entered in serving units
 // (falls back to grams for foods with none), and an ad libitum toggle per
 // item.
+// ItemSearchResults renders the catalog-search dropdown for OptionEditor:
+// loading, empty, or the match list, as plain if/else rather than a chain of
+// ternaries.
+function ItemSearchResults({
+  search,
+  onPick,
+}: Readonly<{ search: ReturnType<typeof useCatalogSearch>; onPick: (food: FoodDetail) => void }>) {
+  const { t } = useTranslation()
+
+  if (search.isLoading) return <li className="px-3 py-2 text-sm text-muted">{t('plan.itemSearching')}</li>
+  if (!search.data?.length) return <li className="px-3 py-2 text-sm text-muted">{t('plan.itemNoMatches')}</li>
+
+  return (
+    <>
+      {search.data.map((f) => (
+        <li key={f.food_id}>
+          <button
+            type="button"
+            onClick={() => onPick(f)}
+            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-ink hover:bg-surface-2"
+          >
+            <span className="truncate">{f.name}</span>
+            <span className="shrink-0 text-xs text-muted">
+              {sourceLabel(f.source, t)} · {formatNumber(f.per_100g.Calories)} kcal/100g
+            </span>
+          </button>
+        </li>
+      ))}
+    </>
+  )
+}
+
 function OptionEditor({
   planID,
   dayTypeID,
@@ -985,7 +1052,7 @@ function OptionEditor({
   const total = sumMacros(items.filter((it) => !it.adLibitum).map((it) => scaleMacros(it.food.per_100g, gramsFor(it))))
 
   function addFood(food: FoodDetail) {
-    setItems((cur) => [...cur, { food, unitID: GRAMS_UNIT_ID, quantity: 100, adLibitum: false }])
+    setItems((cur) => [...cur, { food, unitID: GRAMS_UNIT_ID, quantity: 100, adLibitum: false, id: crypto.randomUUID() }])
     setRawQuery('')
     setQuery('')
   }
@@ -1032,35 +1099,16 @@ function OptionEditor({
 
       {query.length > 0 && (
         <ul className="mb-3 max-h-40 divide-y divide-line overflow-y-auto rounded-lg border border-line">
-          {search.isLoading ? (
-            <li className="px-3 py-2 text-sm text-muted">{t('plan.itemSearching')}</li>
-          ) : !search.data?.length ? (
-            <li className="px-3 py-2 text-sm text-muted">{t('plan.itemNoMatches')}</li>
-          ) : (
-            search.data.map((f) => (
-              <li key={f.food_id}>
-                <button
-                  type="button"
-                  onClick={() => addFood(f)}
-                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-ink hover:bg-surface-2"
-                >
-                  <span className="truncate">{f.name}</span>
-                  <span className="shrink-0 text-xs text-muted">
-                    {sourceLabel(f.source, t)} · {formatNumber(f.per_100g.Calories)} kcal/100g
-                  </span>
-                </button>
-              </li>
-            ))
-          )}
+          <ItemSearchResults search={search} onPick={addFood} />
         </ul>
       )}
 
       <ul className="mb-3 flex flex-col gap-2">
         {items.map((it, i) => (
           <PlanItemRow
-            // food_id is stable per pick even though two items can share a
-            // food; index is fine here since rows aren't reordered.
-            key={i}
+            // id is a client-only UUID assigned once per item (see LocalItem),
+            // stable across edits/reorders unlike the array index.
+            key={it.id}
             item={it}
             onChange={(patch) => updateItem(i, patch)}
             onRemove={() => removeItem(i)}

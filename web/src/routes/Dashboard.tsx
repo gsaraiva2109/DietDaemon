@@ -27,6 +27,7 @@ import {
   type DietPlanSlotBundle,
   type DietPlanSlotOption,
   type DietPlanDayTypeBundle,
+  type Meal,
 } from '@/lib/types'
 import { MacroRing } from '@/components/MacroRing'
 import { Sparkline } from '@/components/Sparkline'
@@ -110,6 +111,26 @@ function nearestSlotID(slots: DietPlanSlotBundle[], mealAtISO: string): string |
   return best.id
 }
 
+// computeSlotKcal sums each of today's logged meals' kcal against its
+// nearest-by-time slot (see nearestSlotID above), for the slot-completion
+// checklist. Pulled out of Dashboard's useMemo so its loop/branches count
+// against this function's own complexity budget, not the component's.
+function computeSlotKcal(slots: DietPlanSlotBundle[], meals: Meal[] | undefined): Map<string, number> {
+  const map = new Map<string, number>()
+  if (!slots.length || !meals?.length) return map
+  const todayKey = new Date().toDateString()
+  for (const meal of meals) {
+    if (new Date(meal.At).toDateString() !== todayKey) continue
+    // An explicit "registrar opção" log carries the real slot id; only fall
+    // back to time-based inference for bot-logged meals (trap #12).
+    const slotID = meal.PlanSlotID || nearestSlotID(slots, meal.At)
+    if (!slotID) continue
+    const kcal = sumMacros(meal.Items.map((it) => it.Macros)).Calories
+    map.set(slotID, (map.get(slotID) ?? 0) + kcal)
+  }
+  return map
+}
+
 export function Dashboard() {
   const { t, i18n } = useTranslation()
   const today = useToday()
@@ -140,27 +161,14 @@ export function Dashboard() {
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
   const dayStreak = streakQuery.data?.current_days ?? 0
 
-  // Slot completion for today's checklist: sum each logged meal's kcal
-  // against its nearest-by-time slot (see nearestSlotID). Reuses the same
-  // 6-most-recent `meals` query the "today's meals" list already fetches --
-  // plenty for a handful of plan slots per day; bump the limit if a day-type
-  // ever needs more.
-  const slotKcal = useMemo(() => {
-    const map = new Map<string, number>()
-    const slots = planDay.data?.slots ?? []
-    if (!slots.length || !meals.data?.length) return map
-    const todayKey = new Date().toDateString()
-    for (const meal of meals.data) {
-      if (new Date(meal.At).toDateString() !== todayKey) continue
-      // An explicit "registrar opção" log carries the real slot id; only fall
-      // back to time-based inference for bot-logged meals (trap #12).
-      const slotID = meal.PlanSlotID || nearestSlotID(slots, meal.At)
-      if (!slotID) continue
-      const kcal = sumMacros(meal.Items.map((it) => it.Macros)).Calories
-      map.set(slotID, (map.get(slotID) ?? 0) + kcal)
-    }
-    return map
-  }, [planDay.data?.slots, meals.data])
+  // Slot completion for today's checklist. Reuses the same 6-most-recent
+  // `meals` query the "today's meals" list already fetches -- plenty for a
+  // handful of plan slots per day; bump the limit if a day-type ever needs
+  // more.
+  const slotKcal = useMemo(
+    () => computeSlotKcal(planDay.data?.slots ?? [], meals.data),
+    [planDay.data?.slots, meals.data],
+  )
 
   // Weekly budget: show effective target when it differs from plain target.
   const budgetDelta = budget.data

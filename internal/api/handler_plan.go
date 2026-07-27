@@ -23,6 +23,10 @@ import (
 // TargetsFor for the fallback invariant this maintains.
 // ---------------------------------------------------------------------------
 
+// errPlanDateFormat is the shared validation message for the several plan
+// endpoints keyed by a YYYY-MM-DD path date (day view, set/clear override).
+const errPlanDateFormat = "date must be YYYY-MM-DD"
+
 // ---------------------------------------------------------------------------
 // Plans
 // ---------------------------------------------------------------------------
@@ -42,7 +46,7 @@ func (h *Handler) handleListPlans(w http.ResponseWriter, r *http.Request, userID
 func (h *Handler) handleCreatePlan(w http.ResponseWriter, r *http.Request, userID string) {
 	var body types.DietPlan
 	if err := decodeRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if body.Name == "" {
@@ -109,7 +113,7 @@ func (h *Handler) handleUpdatePlan(w http.ResponseWriter, r *http.Request, userI
 
 	var body types.DietPlan
 	if err := decodeRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if body.Name == "" {
@@ -120,22 +124,8 @@ func (h *Handler) handleUpdatePlan(w http.ResponseWriter, r *http.Request, userI
 		writeValidationError(w, "valid_from and cycle_anchor_date are required YYYY-MM-DD dates; valid_to must be empty or a YYYY-MM-DD date on/after valid_from")
 		return
 	}
-	if len(body.CyclePattern) > 0 {
-		bundle, err := h.store.GetPlanBundle(r.Context(), planID)
-		if err != nil {
-			h.writeErr(w, err)
-			return
-		}
-		known := make(map[string]bool, len(bundle.DayTypes))
-		for _, dt := range bundle.DayTypes {
-			known[dt.ID] = true
-		}
-		for _, id := range body.CyclePattern {
-			if !known[id] {
-				writeValidationError(w, "cycle_pattern references a day-type that does not belong to this plan: "+id)
-				return
-			}
-		}
+	if !h.validateCyclePatternOwnership(w, r, planID, body.CyclePattern) {
+		return
 	}
 
 	body.ID = plan.ID
@@ -149,6 +139,32 @@ func (h *Handler) handleUpdatePlan(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// validateCyclePatternOwnership checks that every day-type ID in pattern
+// belongs to planID, writing the appropriate error response and returning
+// false if the check can't be completed or fails. A no-op (true) for an
+// empty pattern, since update allows clearing the pattern.
+func (h *Handler) validateCyclePatternOwnership(w http.ResponseWriter, r *http.Request, planID string, pattern []string) bool {
+	if len(pattern) == 0 {
+		return true
+	}
+	bundle, err := h.store.GetPlanBundle(r.Context(), planID)
+	if err != nil {
+		h.writeErr(w, err)
+		return false
+	}
+	known := make(map[string]bool, len(bundle.DayTypes))
+	for _, dt := range bundle.DayTypes {
+		known[dt.ID] = true
+	}
+	for _, id := range pattern {
+		if !known[id] {
+			writeValidationError(w, "cycle_pattern references a day-type that does not belong to this plan: "+id)
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) handleDeletePlan(w http.ResponseWriter, r *http.Request, userID string) {
@@ -176,7 +192,7 @@ func (h *Handler) handleCreateDayType(w http.ResponseWriter, r *http.Request, us
 	}
 	var dt types.DietPlanDayType
 	if err := decodeRequestJSON(r, &dt); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validDayType(dt) {
@@ -203,7 +219,7 @@ func (h *Handler) handleUpdateDayType(w http.ResponseWriter, r *http.Request, us
 	}
 	var dt types.DietPlanDayType
 	if err := decodeRequestJSON(r, &dt); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validDayType(dt) {
@@ -256,7 +272,7 @@ func (h *Handler) handleCreateSlot(w http.ResponseWriter, r *http.Request, userI
 	}
 	var sl types.DietPlanSlot
 	if err := decodeRequestJSON(r, &sl); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validSlot(sl) {
@@ -284,7 +300,7 @@ func (h *Handler) handleUpdateSlot(w http.ResponseWriter, r *http.Request, userI
 	}
 	var sl types.DietPlanSlot
 	if err := decodeRequestJSON(r, &sl); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validSlot(sl) {
@@ -342,7 +358,7 @@ func (h *Handler) handleCreateSlotOption(w http.ResponseWriter, r *http.Request,
 	}
 	var body slotOptionBody
 	if err := decodeRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validSlotOptionBody(body) {
@@ -388,7 +404,7 @@ func (h *Handler) handleUpdateSlotOption(w http.ResponseWriter, r *http.Request,
 	}
 	var body slotOptionBody
 	if err := decodeRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if !validSlotOptionBody(body) {
@@ -460,7 +476,7 @@ type planDayView struct {
 func (h *Handler) handleGetPlanDay(w http.ResponseWriter, r *http.Request, userID string) {
 	date := r.PathValue("date")
 	if !isPlanDate(date) {
-		writeValidationError(w, "date must be YYYY-MM-DD")
+		writeValidationError(w, errPlanDateFormat)
 		return
 	}
 
@@ -597,12 +613,12 @@ type dayOverrideBody struct {
 func (h *Handler) handleSetDayOverride(w http.ResponseWriter, r *http.Request, userID string) {
 	date := r.PathValue("date")
 	if !isPlanDate(date) {
-		writeValidationError(w, "date must be YYYY-MM-DD")
+		writeValidationError(w, errPlanDateFormat)
 		return
 	}
 	var body dayOverrideBody
 	if err := decodeRequestJSON(r, &body); err != nil {
-		writeValidationError(w, "invalid JSON body")
+		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
 	if body.DayTypeID == "" {
@@ -638,7 +654,7 @@ func (h *Handler) handleSetDayOverride(w http.ResponseWriter, r *http.Request, u
 func (h *Handler) handleDeleteDayOverride(w http.ResponseWriter, r *http.Request, userID string) {
 	date := r.PathValue("date")
 	if !isPlanDate(date) {
-		writeValidationError(w, "date must be YYYY-MM-DD")
+		writeValidationError(w, errPlanDateFormat)
 		return
 	}
 	if err := h.store.DeleteDayOverride(r.Context(), userID, date); err != nil {
@@ -720,18 +736,27 @@ func (h *Handler) ownedOption(ctx context.Context, userID, planID, dayTypeID, sl
 		if dt.ID != dayTypeID {
 			continue
 		}
-		for _, sl := range dt.Slots {
-			if sl.ID != slotID {
-				continue
-			}
-			for _, opt := range sl.Options {
-				if opt.ID == optionID {
-					return opt, nil
-				}
-			}
+		if opt, ok := findOptionInDayType(dt, slotID, optionID); ok {
+			return opt, nil
 		}
 	}
 	return types.DietPlanSlotOption{}, types.ErrNotFound
+}
+
+// findOptionInDayType looks up a slot option by slot+option ID within an
+// already-loaded day-type's slots.
+func findOptionInDayType(dt types.DietPlanDayTypeBundle, slotID, optionID string) (types.DietPlanSlotOption, bool) {
+	for _, sl := range dt.Slots {
+		if sl.ID != slotID {
+			continue
+		}
+		for _, opt := range sl.Options {
+			if opt.ID == optionID {
+				return opt, true
+			}
+		}
+	}
+	return types.DietPlanSlotOption{}, false
 }
 
 // ---------------------------------------------------------------------------
