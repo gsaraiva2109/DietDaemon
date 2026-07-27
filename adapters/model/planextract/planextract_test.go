@@ -3,6 +3,8 @@ package planextract
 import (
 	"strings"
 	"testing"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
 func TestParseResponse(t *testing.T) {
@@ -78,6 +80,19 @@ func TestParseResponseFieldValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	assertPlanFields(t, got)
+
+	dt := got.DayTypes[0]
+	assertDayTypeFields(t, dt)
+
+	slot := dt.Slots[0]
+	assertSlotFields(t, slot)
+
+	assertOptionFields(t, slot.Options[0])
+}
+
+func assertPlanFields(t *testing.T, got types.PlanDraft) {
+	t.Helper()
 	if got.PlanName == nil || *got.PlanName != "Plano de treino" {
 		t.Errorf("PlanName = %v, want Plano de treino", got.PlanName)
 	}
@@ -90,8 +105,10 @@ func TestParseResponseFieldValues(t *testing.T) {
 	if len(got.DayTypes) != 1 {
 		t.Fatalf("DayTypes len = %d, want 1", len(got.DayTypes))
 	}
+}
 
-	dt := got.DayTypes[0]
+func assertDayTypeFields(t *testing.T, dt types.PlanDraftDayType) {
+	t.Helper()
 	if dt.Name != "Dia normal" {
 		t.Errorf("DayType.Name = %q, want Dia normal", dt.Name)
 	}
@@ -107,8 +124,10 @@ func TestParseResponseFieldValues(t *testing.T) {
 	if len(dt.Slots) != 1 {
 		t.Fatalf("Slots len = %d, want 1", len(dt.Slots))
 	}
+}
 
-	slot := dt.Slots[0]
+func assertSlotFields(t *testing.T, slot types.PlanDraftSlot) {
+	t.Helper()
 	if slot.Label != "Café da manhã" {
 		t.Errorf("Slot.Label = %q, want Café da manhã", slot.Label)
 	}
@@ -118,8 +137,10 @@ func TestParseResponseFieldValues(t *testing.T) {
 	if len(slot.Options) != 1 {
 		t.Fatalf("Options len = %d, want 1", len(slot.Options))
 	}
+}
 
-	opt := slot.Options[0]
+func assertOptionFields(t *testing.T, opt types.PlanDraftOption) {
+	t.Helper()
 	if len(opt.Items) != 2 {
 		t.Fatalf("Items len = %d, want 2", len(opt.Items))
 	}

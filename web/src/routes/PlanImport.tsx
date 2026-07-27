@@ -16,6 +16,7 @@ import { Card, Button, Pill, Field } from '@/components/ui'
 import { MACRO_KEYS } from '@/lib/types'
 import type {
   FoodDetail,
+  FoodServingUnit,
   PlanDraft,
   PlanDraftDayType,
   PlanDraftItem,
@@ -152,24 +153,33 @@ function itemKey(dtIdx: number, slotIdx: number, optIdx: number, itemIdx: number
 }
 
 function allItemsResolved(draft: PlanDraft, resolved: Record<string, LocalItem>): boolean {
-  return draft.day_types.every((dt, dtIdx) =>
-    dt.slots.every((slot, slotIdx) =>
-      slot.options.every((opt, optIdx) =>
-        opt.items.every((_, itemIdx) => Boolean(resolved[itemKey(dtIdx, slotIdx, optIdx, itemIdx)])),
-      ),
-    ),
-  )
+  for (const [dtIdx, dt] of draft.day_types.entries()) {
+    for (const [slotIdx, slot] of dt.slots.entries()) {
+      for (const [optIdx, opt] of slot.options.entries()) {
+        for (let itemIdx = 0; itemIdx < opt.items.length; itemIdx++) {
+          if (!resolved[itemKey(dtIdx, slotIdx, optIdx, itemIdx)]) return false
+        }
+      }
+    }
+  }
+  return true
 }
 
 // A resolved catalog food seeds quantity/unit from the draft's guess: the
 // matched serving unit's label if the model named one the food actually has,
 // grams otherwise. ad_libitum always wins (mirrors the manual builder's
 // quantity===0 convention, applied at save time by toResolvedItem).
+function draftItemQuantity(draftItem: PlanDraftItem, matchedUnit: FoodServingUnit | undefined): number {
+  if (draftItem.ad_libitum) return 1
+  if (draftItem.quantity != null) return draftItem.quantity
+  return matchedUnit ? 1 : 100
+}
+
 function fromDraftItem(draftItem: PlanDraftItem, food: FoodDetail): LocalItem {
   const matchedUnit = draftItem.unit
     ? (food.serving_units ?? []).find((u) => u.label === draftItem.unit)
     : undefined
-  const quantity = draftItem.ad_libitum ? 1 : (draftItem.quantity ?? (matchedUnit ? 1 : 100))
+  const quantity = draftItemQuantity(draftItem, matchedUnit)
   return {
     food,
     unitID: matchedUnit ? matchedUnit.id : GRAMS_UNIT_ID,
@@ -302,7 +312,7 @@ function DraftSlotCard({
       <div className="space-y-2">
         {slot.options.map((opt, optIdx) => (
           <DraftOptionCard
-            key={optIdx}
+            key={opt.label}
             option={opt}
             dtIdx={dtIdx}
             slotIdx={slotIdx}
@@ -341,13 +351,16 @@ function DraftDayTypeCard({
         <LowConfidenceBadge fields={dayType.low_confidence_fields} />
       </div>
       <p className="mb-3 text-xs text-muted tnum">
-        {MACRO_KEYS.map((k) => `${dayType.targets[k]} ${t(`common.macro.${k}`)}`).join(' · ')}
+        {MACRO_KEYS.map((k) => {
+          const macroLabel = t(`common.macro.${k}`)
+          return `${dayType.targets[k]} ${macroLabel}`
+        }).join(' · ')}
         {dayType.water_goal_ml != null && ` · ${dayType.water_goal_ml} ml`}
       </p>
       <div className="space-y-2">
         {dayType.slots.map((slot, slotIdx) => (
           <DraftSlotCard
-            key={slotIdx}
+            key={slot.label}
             slot={slot}
             dtIdx={dtIdx}
             slotIdx={slotIdx}
@@ -467,7 +480,7 @@ function DraftReview({
       <div className="space-y-3">
         {draft.day_types.map((dt, dtIdx) => (
           <DraftDayTypeCard
-            key={dtIdx}
+            key={dt.name}
             dayType={dt}
             dtIdx={dtIdx}
             resolved={resolved}
