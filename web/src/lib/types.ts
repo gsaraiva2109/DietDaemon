@@ -295,6 +295,47 @@ export interface DietPlanDayOverride {
   day_type_id: string
 }
 
+// ---------------------------------------------------------------------------
+// Diet plan import drafts (paste-text / photo extraction, #193/#194). A model
+// call best-effort fills this tree from a nutritionist's prescription; the
+// SPA holds it as local state through a review screen and never persists it
+// server-side until the user explicitly confirms (see PlanImport.tsx).
+// ---------------------------------------------------------------------------
+
+export interface PlanDraftItem {
+  raw_name: string
+  quantity: number | null
+  unit: string | null
+  ad_libitum: boolean
+}
+
+export interface PlanDraftOption {
+  label: string
+  items: PlanDraftItem[]
+  low_confidence_fields?: string[]
+}
+
+export interface PlanDraftSlot {
+  label: string
+  time_of_day: string | null
+  options: PlanDraftOption[]
+}
+
+export interface PlanDraftDayType {
+  name: string
+  targets: Macros
+  water_goal_ml: number | null
+  slots: PlanDraftSlot[]
+  low_confidence_fields?: string[]
+}
+
+export interface PlanDraft {
+  plan_name: string | null
+  day_types: PlanDraftDayType[]
+  unreadable: boolean
+  notes: string | null
+}
+
 // GET /plans/day/{date} — the resolved day-type, its slots, and the targets
 // in effect for one date. `targets` mirrors GET /targets: its value is Go's
 // DailyTargets, which carries no json tags of its own, so those nested keys

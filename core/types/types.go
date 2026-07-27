@@ -825,3 +825,53 @@ type PlanBundle struct {
 	Plan     DietPlan                `json:"plan"`
 	DayTypes []DietPlanDayTypeBundle `json:"day_types"`
 }
+
+// PlanDraftItem is one extracted food line within a PlanDraftOption, mirroring
+// NutritionLabelDraft's nullable, reviewable style (#193). RawName is
+// preserved exactly as written by the model — never normalized or translated
+// — since catalog matching against RawName happens downstream, after user
+// review.
+type PlanDraftItem struct {
+	RawName   string   `json:"raw_name"`
+	Quantity  *float64 `json:"quantity"`
+	Unit      *string  `json:"unit"`
+	AdLibitum bool     `json:"ad_libitum"`
+}
+
+// PlanDraftOption is one extracted alternative for a slot ("Opção 1 /
+// Opção 2"), mirroring DietPlanSlotOption.
+type PlanDraftOption struct {
+	Label               string          `json:"label"`
+	Items               []PlanDraftItem `json:"items"`
+	LowConfidenceFields []string        `json:"low_confidence_fields,omitempty"`
+}
+
+// PlanDraftSlot is one extracted meal slot within a day-type, mirroring
+// DietPlanSlot.
+type PlanDraftSlot struct {
+	Label     string            `json:"label"`
+	TimeOfDay *string           `json:"time_of_day"`
+	Options   []PlanDraftOption `json:"options"`
+}
+
+// PlanDraftDayType is one extracted day-type ("training day", "rest day"),
+// mirroring DietPlanDayType.
+type PlanDraftDayType struct {
+	Name                string          `json:"name"`
+	Targets             Macros          `json:"targets"`
+	WaterGoalMl         *int            `json:"water_goal_ml"`
+	Slots               []PlanDraftSlot `json:"slots"`
+	LowConfidenceFields []string        `json:"low_confidence_fields,omitempty"`
+}
+
+// PlanDraft is the full extracted-plan tree returned by the paste-text
+// (#193) and photo/PDF (#194) import paths for the user to review and
+// correct before anything saves — nothing here is persisted directly; the
+// SPA walks it and calls the existing plan-creation endpoints once the user
+// confirms.
+type PlanDraft struct {
+	PlanName   *string            `json:"plan_name"`
+	DayTypes   []PlanDraftDayType `json:"day_types"`
+	Unreadable bool               `json:"unreadable"`
+	Notes      *string            `json:"notes"`
+}

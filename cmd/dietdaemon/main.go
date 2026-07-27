@@ -123,15 +123,16 @@ func runWithConfig(cfg *config.Config) error {
 }
 
 type appRuntime struct {
-	message  ports.MessagingAdapter
-	engine   *pipeline.Engine
-	notifier ports.Notifier
-	embedder resolver.Embedder
-	chat     ports.ChatAdapter
-	vision   ports.VisionAdapter
-	registry *commands.Registry
-	i18n     *i18n.Bundle
-	suggest  *suggest.Engine
+	message    ports.MessagingAdapter
+	engine     *pipeline.Engine
+	notifier   ports.Notifier
+	embedder   resolver.Embedder
+	chat       ports.ChatAdapter
+	vision     ports.VisionAdapter
+	completion ports.ModelAdapter
+	registry   *commands.Registry
+	i18n       *i18n.Bundle
+	suggest    *suggest.Engine
 }
 
 func openStore(cfg *config.Config) (*store.Store, error) {
@@ -196,7 +197,7 @@ func buildRuntime(cfg *config.Config, st *store.Store) (*appRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &appRuntime{message: message, engine: engine, notifier: notifier, embedder: embedder, chat: chat, vision: vision, registry: registry, i18n: i18nBundle, suggest: suggestEngine}, nil
+	return &appRuntime{message: message, engine: engine, notifier: notifier, embedder: embedder, chat: chat, vision: vision, completion: completion, registry: registry, i18n: i18nBundle, suggest: suggestEngine}, nil
 }
 
 func newTranscriber(cfg *config.Config) pipeline.Transcriber {
@@ -345,7 +346,7 @@ func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, ru
 	assistantRouter, toolDescs := newAssistantRouter(runtime.chat, runtime.registry, runtime.i18n)
 	handler := api.New(st, runtime.engine, cfg.Location, runtime.suggest, cfg,
 		api.WithAuth(st, api.AuthRepos{Sessions: st, LoginAttempts: st, TOTP: st, MFAChallenges: st, RecoveryCodes: st}, cfg.TOTPEncKey, cfg.TOTPIssuer, authCfg), api.WithOIDC(oidcRegistry), api.WithMailer(m, cfg.EmailProvider), api.WithPublicBaseURL(cfg.PublicBaseURL),
-		api.WithWebAuthn(wa), api.WithBackupRunner(backupRunner), api.WithFoodImportRunner(&foodImportAdmin{store: st, cfg: cfg}), api.WithChat(runtime.chat, assistantRouter, runtime.registry.List(), toolDescs, st), api.WithI18n(runtime.i18n), api.WithOCR(runtime.vision),
+		api.WithWebAuthn(wa), api.WithBackupRunner(backupRunner), api.WithFoodImportRunner(&foodImportAdmin{store: st, cfg: cfg}), api.WithChat(runtime.chat, assistantRouter, runtime.registry.List(), toolDescs, st), api.WithI18n(runtime.i18n), api.WithOCR(runtime.vision), api.WithPlanExtract(runtime.completion),
 	)
 	handler.StartRateLimiterCleanup(ctx)
 	mux := http.NewServeMux()

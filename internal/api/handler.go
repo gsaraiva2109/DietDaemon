@@ -402,6 +402,9 @@ type Handler struct {
 	// Vision adapter for OCR nutrition-label capture (nil when OCR_ADAPTER unset).
 	visionAdapter ports.VisionAdapter
 
+	// Completion adapter for diet-plan paste-text extraction (issue #193).
+	completionAdapter ports.ModelAdapter
+
 	// Assistant router for the chat endpoint (nil when unsupported).
 	assistantRouter *assistant.Router
 
@@ -543,6 +546,12 @@ func WithI18n(bundle *i18n.Bundle) Option {
 // (issue #87). When not passed, the scan endpoint returns 501.
 func WithOCR(adapter ports.VisionAdapter) Option {
 	return func(h *Handler) { h.visionAdapter = adapter }
+}
+
+// WithPlanExtract attaches the completion adapter used for diet-plan
+// paste-text extraction (issue #193).
+func WithPlanExtract(adapter ports.ModelAdapter) Option {
+	return func(h *Handler) { h.completionAdapter = adapter }
 }
 
 // New returns a ready API Handler. store, logger, loc, suggester, and c are
@@ -709,6 +718,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options", h.wrap(h.handleCreateSlotOption))
 	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleUpdateSlotOption))
 	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleDeleteSlotOption))
+	mux.HandleFunc("POST /api/v1/plans/extract/text", h.wrap(h.handleExtractPlanFromText))
 
 	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
@@ -927,6 +937,7 @@ func isExpensiveRequest(r *http.Request) bool {
 		path == "/api/v1/suggest/ingredients" ||
 		path == "/api/v1/goals/suggestions" ||
 		path == "/api/v1/foods/custom/ocr" ||
+		path == "/api/v1/plans/extract/text" ||
 		path == "/api/v1/settings/backup/run"
 }
 
