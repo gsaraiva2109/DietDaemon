@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,5 +105,87 @@ func TestHandleExtractPlanFromTextUnparseableResponse(t *testing.T) {
 	rec := doExtractPlanFromText(h, "some plan text")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleExtractPlanFromImage (issue #194)
+// ---------------------------------------------------------------------------
+
+func doExtractPlanFromImage(h *Handler, fileContent []byte, fileName string) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	if fileName != "" {
+		part, _ := w.CreateFormFile("file", fileName)
+		_, _ = part.Write(fileContent)
+	}
+	_ = w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/plans/extract/image", &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer test-api-key")
+
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandleExtractPlanFromImageDisabled(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	// h.visionAdapter left nil: plan photo extraction not configured.
+
+	rec := doExtractPlanFromImage(h, testPNGBytes, "plan.png")
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageOversized(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	rec := doExtractPlanFromImage(h, bytes.Repeat([]byte("a"), 6<<20), "plan.png")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageAdapterError(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{err: context.DeadlineExceeded}
+
+	rec := doExtractPlanFromImage(h, testPNGBytes, "plan.png")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImage(t *testing.T) {
+	planName := "Plano"
+	adapter := &fakeVisionAdapter{planDraft: types.PlanDraft{
+		PlanName: &planName,
+		DayTypes: []types.PlanDraftDayType{{Name: "Dia único"}},
+	}}
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = adapter
+
+	rec := doExtractPlanFromImage(h, testPNGBytes, "plan.png")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.PlanDraft](t, rec)
+	if got.PlanName == nil || *got.PlanName != "Plano" {
+		t.Errorf("PlanName = %v, want Plano", got.PlanName)
+	}
+	if len(got.DayTypes) != 1 || got.DayTypes[0].Name != "Dia único" {
+		t.Errorf("DayTypes = %+v, want one day type named Dia único", got.DayTypes)
+	}
+	if adapter.calledMime != "image/png" {
+		t.Errorf("ExtractPlan mimeType = %q, want image/png", adapter.calledMime)
+	}
+	if adapter.calledLen != len(testPNGBytes) {
+		t.Errorf("ExtractPlan image len = %d, want %d", adapter.calledLen, len(testPNGBytes))
 	}
 }

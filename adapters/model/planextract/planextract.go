@@ -75,6 +75,66 @@ Respond with ONLY this JSON object, no markdown fences, no commentary:
   "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above)
 }`
 
+// PhotoPrompt instructs the model to read a photographed or scanned
+// diet-plan page and return the JSON contract ParseResponse expects. It
+// mirrors Prompt's structure and field contract exactly; the only
+// difference is the input framing (an image instead of pasted text) and an
+// explicit call-out for multi-column carb-cycling tables (e.g. a table with
+// "Training day" / "Rest day" as columns and meals as rows), a known hard
+// case for photographed layouts — the model must not guess which column a
+// value belongs to.
+const PhotoPrompt = `You are reading a photographed or scanned page describing a diet/nutrition plan written by a nutritionist. The text on the page may be in any language (e.g. Portuguese, English) — read it natively, no locale branching is needed.
+
+A plan may prescribe different day types with different targets (for example a carb-cycling plan may prescribe a "training day" and a "rest day", each with its own macro targets). Each day type has:
+- a name (e.g. "Dia de treino" / "Training day", "Dia de descanso" / "Rest day")
+- macro targets: calories, protein, carbs, fat, fiber
+- an optional daily water goal in milliliters
+- one or more slots (meals), each with a label (e.g. "Café da manhã" / "Breakfast") and an optional time of day
+
+Each slot may offer one or more interchangeable options ("Opção 1" / "Option 1", "Opção 2" / "Option 2") the person can pick between. Each option has one or more food items. Each item has:
+- raw_name: the food name EXACTLY as written on the page. Do NOT normalize, translate, correct spelling, or otherwise rewrite it. Preserve it verbatim, including its original language and any brand names — catalog matching against this exact string happens in a later step.
+- an optional quantity and unit (e.g. quantity 100, unit "g"; or quantity 1, unit "unidade"/"unit")
+- ad_libitum: true if the page says the item is free-quantity ("a vontade", "à vontade", "ad libitum", "as much as needed") instead of giving a quantity/unit. Use ad_libitum true for this case — never report it as quantity 0.
+
+Known hard case: multi-column carb-cycling tables, where columns are day types (e.g. "Training day" / "Rest day") and rows are meals, with a food item or quantity written per column. Photographed tables like this are prone to column misalignment. If you cannot reliably tell which column a value belongs to — due to skew, glare, cropping, or ambiguous column boundaries — do NOT guess. Set unreadable to true instead of producing a plausible-looking but potentially wrong assignment.
+
+Apply this three-tier confidence rule to every field:
+1. Confident: report the value.
+2. Present but uncertain (unclear phrasing, ambiguous abbreviation, illegible fragment, partial glare or blur): still report your best-effort reading, but add that field's key to the low_confidence_fields array at its level (each day type has its own low_confidence_fields for its own fields such as "name", "water_goal_ml", "targets.calories", "targets.protein", "targets.carbs", "targets.fat", "targets.fiber"; each option has its own low_confidence_fields for its items' fields).
+3. Not present on the page: the value must be JSON null. NEVER invent, guess, or estimate a value.
+
+If the photographed page is not a diet plan, or is too garbled, blurry, or incomplete to extract anything meaningful from — including the multi-column ambiguity case above — set unreadable to true and leave every other field null or empty.
+
+Respond with ONLY this JSON object, no markdown fences, no commentary:
+{
+  "plan_name": string or null,
+  "day_types": [
+    {
+      "name": string,
+      "targets": {"Calories": number or null, "Protein": number or null, "Carbs": number or null, "Fat": number or null, "Fiber": number or null},
+      "water_goal_ml": number or null,
+      "slots": [
+        {
+          "label": string,
+          "time_of_day": string or null,
+          "options": [
+            {
+              "label": string,
+              "items": [
+                {"raw_name": string, "quantity": number or null, "unit": string or null, "ad_libitum": boolean}
+              ],
+              "low_confidence_fields": array of field name strings (may be empty)
+            }
+          ]
+        }
+      ],
+      "low_confidence_fields": array of field name strings (may be empty)
+    }
+  ],
+  "unreadable": boolean,
+  "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above)
+}`
+
 type wireItem struct {
 	RawName   string   `json:"raw_name"`
 	Quantity  *float64 `json:"quantity"`

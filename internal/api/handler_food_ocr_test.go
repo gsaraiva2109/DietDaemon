@@ -12,10 +12,13 @@ import (
 )
 
 // fakeVisionAdapter returns a pre-programmed draft/error, mirroring
-// fakeChatAdapter in internal/assistant/assistant_test.go.
+// fakeChatAdapter in internal/assistant/assistant_test.go. Both ExtractLabel
+// and ExtractPlan share err/calledMime/calledLen since tests only ever
+// program one method per case.
 type fakeVisionAdapter struct {
-	draft types.NutritionLabelDraft
-	err   error
+	draft     types.NutritionLabelDraft
+	planDraft types.PlanDraft
+	err       error
 
 	calledMime string
 	calledLen  int
@@ -28,6 +31,15 @@ func (f *fakeVisionAdapter) ExtractLabel(_ context.Context, image []byte, mimeTy
 		return types.NutritionLabelDraft{}, f.err
 	}
 	return f.draft, nil
+}
+
+func (f *fakeVisionAdapter) ExtractPlan(_ context.Context, image []byte, mimeType string) (types.PlanDraft, error) {
+	f.calledMime = mimeType
+	f.calledLen = len(image)
+	if f.err != nil {
+		return types.PlanDraft{}, f.err
+	}
+	return f.planDraft, nil
 }
 
 // tiny 1x1 PNG, enough for http.DetectContentType to report image/png.

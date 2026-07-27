@@ -11,7 +11,8 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { useExtractPlanFromText, useCatalogSearch } from '@/lib/queries'
+import { useExtractPlanFromText, useExtractPlanFromImage, useCatalogSearch } from '@/lib/queries'
+import { pdfToImages } from '@/lib/pdfToImages'
 import { Card, Button, Pill, Field } from '@/components/ui'
 import { MACRO_KEYS } from '@/lib/types'
 import type {
@@ -31,6 +32,7 @@ const MAX_PASTE_CHARS = 20_000
 type Stage =
   | { kind: 'collapsed' }
   | { kind: 'paste' }
+  | { kind: 'photo' }
   | { kind: 'error'; message: string }
   | { kind: 'review'; draft: PlanDraft }
 
@@ -38,20 +40,21 @@ export function ImportPlanCard({ onCreated }: Readonly<{ onCreated: (id: string)
   const { t } = useTranslation()
   const [stage, setStage] = useState<Stage>({ kind: 'collapsed' })
 
-  if (stage.kind === 'paste') {
-    return (
-      <PasteTextCard
-        onCancel={() => setStage({ kind: 'collapsed' })}
-        onExtracted={(draft) =>
-          setStage(
-            draft.unreadable
-              ? { kind: 'error', message: t('plan.extractUnreadable') }
-              : { kind: 'review', draft },
-          )
-        }
-        onFailed={(message) => setStage({ kind: 'error', message })}
-      />
+  function onExtracted(draft: PlanDraft) {
+    setStage(
+      draft.unreadable ? { kind: 'error', message: t('plan.extractUnreadable') } : { kind: 'review', draft },
     )
+  }
+  function onFailed(message: string) {
+    setStage({ kind: 'error', message })
+  }
+
+  if (stage.kind === 'paste') {
+    return <PasteTextCard onCancel={() => setStage({ kind: 'collapsed' })} onExtracted={onExtracted} onFailed={onFailed} />
+  }
+
+  if (stage.kind === 'photo') {
+    return <PhotoImportCard onCancel={() => setStage({ kind: 'collapsed' })} onExtracted={onExtracted} onFailed={onFailed} />
   }
 
   if (stage.kind === 'error') {
@@ -83,9 +86,14 @@ export function ImportPlanCard({ onCreated }: Readonly<{ onCreated: (id: string)
           <p className="font-semibold text-ink">{t('plan.importTitle')}</p>
           <p className="text-sm text-muted">{t('plan.importHint')}</p>
         </div>
-        <Button variant="ghost" onClick={() => setStage({ kind: 'paste' })}>
-          {t('plan.importFromText')}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => setStage({ kind: 'paste' })}>
+            {t('plan.importFromText')}
+          </Button>
+          <Button variant="ghost" onClick={() => setStage({ kind: 'photo' })}>
+            {t('plan.importFromPhoto')}
+          </Button>
+        </div>
       </div>
     </Card>
   )
@@ -136,6 +144,88 @@ function PasteTextCard({
         </Button>
         <Button onClick={submit} disabled={!text.trim() || extract.isPending} className="px-3 py-1.5 text-sm">
           {extract.isPending ? t('plan.extracting') : t('plan.extractButton')}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+}
+
+function PhotoImportCard({
+  onExtracted,
+  onFailed,
+  onCancel,
+}: Readonly<{
+  onExtracted: (draft: PlanDraft) => void
+  onFailed: (message: string) => void
+  onCancel: () => void
+}>) {
+  const { t } = useTranslation()
+  const extract = useExtractPlanFromImage()
+  const [rendering, setRendering] = useState(false)
+  const [multiPage, setMultiPage] = useState(false)
+
+  async function handleFile(file: File) {
+    setMultiPage(false)
+    let imageFile = file
+    if (isPdfFile(file)) {
+      setRendering(true)
+      let pages: Blob[]
+      try {
+        pages = await pdfToImages(file)
+      } catch (err) {
+        setRendering(false)
+        onFailed(err instanceof Error ? err.message : t('plan.extractFailed'))
+        return
+      }
+      setRendering(false)
+      if (pages.length === 0) {
+        onFailed(t('plan.extractFailed'))
+        return
+      }
+      // Multi-page merging into one extraction call is out of scope: use the
+      // first page and tell the user, rather than silently dropping the rest.
+      if (pages.length > 1) setMultiPage(true)
+      imageFile = new File([pages[0]], 'plan-page.png', { type: 'image/png' })
+    }
+    extract.mutate(imageFile, {
+      onSuccess: onExtracted,
+      onError: (err) => onFailed(err instanceof Error ? err.message : t('plan.extractFailed')),
+    })
+  }
+
+  const busy = rendering || extract.isPending
+
+  return (
+    <Card className="p-5">
+      <p className="mb-1 font-semibold text-ink">{t('plan.importFromPhoto')}</p>
+      <p className="mb-3 text-sm text-muted">{t('plan.importPhotoHint')}</p>
+      {multiPage && (
+        <p className="mb-3 text-sm font-medium text-accent" role="status">
+          {t('plan.pdfMultiPageNotice')}
+        </p>
+      )}
+      <label htmlFor="plan-import-photo" className="mb-1.5 block text-sm font-medium text-ink">
+        {t('plan.choosePhotoFile')}
+      </label>
+      <input
+        id="plan-import-photo"
+        type="file"
+        accept="image/jpeg,image/png,application/pdf"
+        disabled={busy}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) void handleFile(file)
+        }}
+        className="block w-full text-sm text-ink"
+      />
+      {busy && <p className="mt-2 text-sm text-muted">{rendering ? t('plan.renderingPdf') : t('plan.extracting')}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel} disabled={busy} className="px-3 py-1.5 text-sm">
+          {t('plan.cancel')}
         </Button>
       </div>
     </Card>

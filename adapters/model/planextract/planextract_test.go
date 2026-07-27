@@ -176,3 +176,12 @@ func TestParseResponseUnreadable(t *testing.T) {
 		t.Errorf("DayTypes = %v, want empty", got.DayTypes)
 	}
 }
+
+func TestPhotoPromptCallsOutMultiColumnCarbCycling(t *testing.T) {
+	if !strings.Contains(PhotoPrompt, "carb-cycling") {
+		t.Error("PhotoPrompt does not mention the multi-column carb-cycling hard case")
+	}
+	if !strings.Contains(PhotoPrompt, "unreadable") {
+		t.Error("PhotoPrompt does not instruct the model to set unreadable when the layout defeats extraction")
+	}
+}

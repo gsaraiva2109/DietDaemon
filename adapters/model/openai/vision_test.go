@@ -63,6 +63,50 @@ func TestExtractLabel(t *testing.T) {
 	}
 }
 
+func TestExtractPlan(t *testing.T) {
+	img := []byte("fake-jpeg-bytes")
+	wantDataURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(img)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req visionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+			t.Fatalf("unexpected message shape: %+v", req.Messages)
+		}
+		textPart := req.Messages[0].Content[0]
+		if textPart.Type != "text" || !strings.Contains(textPart.Text, "carb-cycling") {
+			t.Errorf("content[0] = %+v, want the planextract photo prompt", textPart)
+		}
+		imgPart := req.Messages[0].Content[1]
+		if imgPart.Type != "image_url" || imgPart.ImageURL == nil || imgPart.ImageURL.URL != wantDataURI {
+			t.Errorf("content[1] = %+v, want image_url %q", imgPart, wantDataURI)
+		}
+
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+			Message chatMessage `json:"message"`
+		}{{Message: chatMessage{Role: "assistant", Content: `{"plan_name":"Plano","day_types":[{"name":"Dia único","targets":{"Calories":2000,"Protein":150,"Carbs":200,"Fat":60,"Fiber":25},"water_goal_ml":2500,"slots":[],"low_confidence_fields":[]}],"unreadable":false,"notes":null}`}}}})
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "sk-test", "gpt-4o-mini", 30*time.Second)
+	draft, err := a.ExtractPlan(t.Context(), img, "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractPlan: %v", err)
+	}
+	if draft.PlanName == nil || *draft.PlanName != "Plano" {
+		t.Errorf("PlanName = %v, want Plano", draft.PlanName)
+	}
+	if len(draft.DayTypes) != 1 || draft.DayTypes[0].Name != "Dia único" {
+		t.Errorf("DayTypes = %+v, want one day type named Dia único", draft.DayTypes)
+	}
+}
+
 func TestExtractLabelHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

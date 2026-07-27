@@ -59,3 +59,56 @@ func (h *Handler) handleExtractPlanFromText(w http.ResponseWriter, r *http.Reque
 	}
 	_ = json.NewEncoder(w).Encode(draft)
 }
+
+// ---------------------------------------------------------------------------
+// Diet-plan import, photo/PDF path (issue #194) — extracts a draft from a
+// photographed or scanned plan page for the user to review and correct
+// before anything saves via the existing plan-creation endpoints. The
+// uploaded image is never persisted or passed to h.store: it is read into
+// memory, handed to the vision adapter, and discarded once this handler
+// returns.
+// ---------------------------------------------------------------------------
+
+func (h *Handler) handleExtractPlanFromImage(w http.ResponseWriter, r *http.Request, userID string) {
+	if h.visionAdapter == nil {
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "plan photo extraction is not configured on this server"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(file, 5<<20))
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	mimeType := http.DetectContentType(data)
+	if len(mimeType) < 6 || mimeType[:6] != "image/" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "uploaded file is not an image"})
+		return
+	}
+
+	draft, err := h.visionAdapter.ExtractPlan(r.Context(), data, mimeType)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(draft)
+}

@@ -685,6 +685,14 @@ export function useExtractPlanFromText() {
   })
 }
 
+// Same as useExtractPlanFromText, but from a photo or rendered PDF page.
+// Nothing persists server-side, so no cache to invalidate here either.
+export function useExtractPlanFromImage() {
+  return useMutation({
+    mutationFn: (file: File) => api.plans.extract.fromImage(file),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Body Tracking
 // ---------------------------------------------------------------------------

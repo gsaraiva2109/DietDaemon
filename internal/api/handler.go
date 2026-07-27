@@ -719,6 +719,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleUpdateSlotOption))
 	mux.HandleFunc("DELETE /api/v1/plans/{planID}/day-types/{dayTypeID}/slots/{slotID}/options/{optID}", h.wrap(h.handleDeleteSlotOption))
 	mux.HandleFunc("POST /api/v1/plans/extract/text", h.wrap(h.handleExtractPlanFromText))
+	mux.HandleFunc("POST /api/v1/plans/extract/image", h.wrap(h.handleExtractPlanFromImage))
 
 	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
@@ -938,6 +939,7 @@ func isExpensiveRequest(r *http.Request) bool {
 		path == "/api/v1/goals/suggestions" ||
 		path == "/api/v1/foods/custom/ocr" ||
 		path == "/api/v1/plans/extract/text" ||
+		path == "/api/v1/plans/extract/image" ||
 		path == "/api/v1/settings/backup/run"
 }
 

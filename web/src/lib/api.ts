@@ -570,6 +570,12 @@ export const api = {
       // server-side; the caller reviews the draft before anything saves.
       fromText: (text: string) =>
         request<PlanDraft>('/plans/extract/text', { method: 'POST', body: text }),
+      // Multipart upload, mirrors ocrScan's shape. Same PlanDraft contract.
+      fromImage: (file: File) => {
+        const fd = new FormData()
+        fd.append('file', file)
+        return multipart<PlanDraft>('/plans/extract/image', fd)
+      },
     },
     dayTypes: {
       create: (planID: string, input: Omit<DietPlanDayType, 'id' | 'plan_id'>) =>
