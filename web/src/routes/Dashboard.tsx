@@ -46,6 +46,7 @@ import { greeting, insights } from '@/lib/insights'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 const SATELLITES: MacroKey[] = ['Protein', 'Carbs', 'Fat', 'Fiber']
+const INSIGHT_TONE_CLASS = { good: 'bg-primary', warn: 'bg-accent', info: 'bg-muted' } as const
 const MacroDonut = lazy(() => import('@/components/MacroDonut').then(m => ({ default: m.MacroDonut })))
 const SleepCard = lazy(() => import('@/components/SleepCard').then(m => ({ default: m.SleepCard })))
 const WeeklyDashboard = lazy(() =>
@@ -157,7 +158,7 @@ export function Dashboard() {
 
   const consumed = today.data?.Consumed ?? ZERO
   const targets = today.data?.Targets ?? ZERO
-  const tips = useMemo(() => insights(today.data ?? null, t), [today.data, t])
+  const tips = useMemo(() => insights(today.data ?? null, t), [t])
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
   const dayStreak = streakQuery.data?.current_days ?? 0
 
@@ -379,14 +380,12 @@ export function Dashboard() {
                 <Card className="p-5 lg:col-span-2">
                   <Eyebrow>{t('dashboard.insights')}</Eyebrow>
                   <ul className="mt-3 flex flex-col gap-2.5">
-                    {tips.map((t, i) => (
-                      <li key={i} className="flex items-start gap-2.5 text-sm">
+                    {tips.map((tip) => (
+                      <li key={tip.text} className="flex items-start gap-2.5 text-sm">
                         <span
-                          className={`mt-1.5 size-2 shrink-0 rounded-full ${
-                            t.tone === 'good' ? 'bg-primary' : t.tone === 'warn' ? 'bg-accent' : 'bg-muted'
-                          }`}
+                          className={`mt-1.5 size-2 shrink-0 rounded-full ${INSIGHT_TONE_CLASS[tip.tone]}`}
                         />
-                        <span className="text-ink">{t.text}</span>
+                        <span className="text-ink">{tip.text}</span>
                       </li>
                     ))}
                   </ul>
@@ -442,14 +441,12 @@ export function Dashboard() {
 
 function TodayMeals({ meals }: Readonly<{ meals: ReturnType<typeof useMeals> }>) {
   const { t } = useTranslation()
-  return (
-    <section>
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">{t('dashboard.todaysMeals')}</h2>
-      {meals.isLoading ? (
-        <Spinner />
-      ) : !meals.data?.length ? (
-        <EmptyState title={t('dashboard.emptyTitle')} hint={t('dashboard.emptyHint')} />
-      ) : (
+  let content = <Spinner />
+  if (!meals.isLoading) {
+    if (!meals.data?.length) {
+      content = <EmptyState title={t('dashboard.emptyTitle')} hint={t('dashboard.emptyHint')} />
+    } else {
+      content = (
         <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2.5">
           {meals.data.map((meal) => (
             <motion.div key={meal.ID} variants={fadeUp}>
@@ -457,17 +454,33 @@ function TodayMeals({ meals }: Readonly<{ meals: ReturnType<typeof useMeals> }>)
             </motion.div>
           ))}
         </motion.div>
-      )}
+      )
+    }
+  }
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-muted">{t('dashboard.todaysMeals')}</h2>
+      {content}
     </section>
   )
 }
 
 // WeightMiniCard shows the latest weight + recent change, linking to /body.
-function WeightMiniCard({ body }: { body?: import('@/lib/types').BodyCompositionSummary }) {
+function WeightMiniCard({ body }: Readonly<{ body?: import('@/lib/types').BodyCompositionSummary }>) {
   const { t } = useTranslation()
   if (!body || body.current_weight_kg <= 0) return null
-  const arrow = body.trend_direction === 'up' ? '↑' : body.trend_direction === 'down' ? '↓' : '→'
-  const tone = body.trend_direction === 'down' ? 'text-primary' : body.trend_direction === 'up' ? 'text-accent' : 'text-muted'
+  let arrow = '→'
+  let tone = 'text-muted'
+  switch (body.trend_direction) {
+    case 'up':
+      arrow = '↑'
+      tone = 'text-accent'
+      break
+    case 'down':
+      arrow = '↓'
+      tone = 'text-primary'
+      break
+  }
   return (
     <Link to="/body" className="block">
       <Card className="p-5 transition hover:shadow-lift">
