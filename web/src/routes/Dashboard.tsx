@@ -158,7 +158,7 @@ export function Dashboard() {
 
   const consumed = today.data?.Consumed ?? ZERO
   const targets = today.data?.Targets ?? ZERO
-  const tips = useMemo(() => insights(today.data ?? null, t), [t])
+  const tips = useMemo(() => insights(today.data ?? null, t), [t, today.data])
   const calorieSeries = useMemo(() => (week.data ?? []).map((d) => d.Consumed.Calories), [week.data])
   const dayStreak = streakQuery.data?.current_days ?? 0
 

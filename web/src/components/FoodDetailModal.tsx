@@ -105,7 +105,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
     if (activeBasis === PER_100G_BASIS) return f.per_100g
     const unit = servingUnits.find((u) => u.id === activeBasis)
     return unit ? scaleMacros(f.per_100g, unit.grams) : f.per_100g
-  }, [f, servingUnits])
+  }, [f, servingUnits, activeBasis])
 
   return (
     <AnimatePresence>

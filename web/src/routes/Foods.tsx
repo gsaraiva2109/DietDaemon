@@ -159,7 +159,7 @@ export function Foods() {
   const foods = useMemo(() => {
     if (tab === 'catalog') return catalog.data ?? []
     return (searching ? search.data : browse.data) ?? []
-  }, [tab, catalog.data, search.data, browse.data])
+  }, [tab, searching, catalog.data, search.data, browse.data])
 
   function selectTab(tb: FoodsTab) {
     setTab(tb)
