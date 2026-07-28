@@ -84,7 +84,7 @@ export function CommandPalette() {
           ]
         : []),
     ]
-  }, [navigate, theme, toggle, demo, setDemo, t])
+  }, [navigate, demo, setDemo, t])
 
   const results = useMemo(() => {
     const n = q.trim().toLowerCase()

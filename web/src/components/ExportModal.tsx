@@ -98,8 +98,8 @@ export function ExportModal({ onClose }: Readonly<{ onClose: () => void }>) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
-          role="button"
+        <input
+          type="button"
           tabIndex={0}
           aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"

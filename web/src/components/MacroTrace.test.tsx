@@ -77,7 +77,8 @@ describe('MacroTrace', () => {
 
   it('backdrop is a native, focusable button that closes on click (a11y regression test)', () => {
     const { onClose } = renderModal([])
-    const overlay = getBackdropButton()
+    let overlay: HTMLElement;
+    overlay = getBackdropButton();
     expect(overlay.tagName).toBe('BUTTON')
     expect(overlay).toHaveAttribute('type', 'button')
     overlay.focus()

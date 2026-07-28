@@ -1,11 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import {describe, expect, it, vi} from 'vitest'
+import {fireEvent, render, screen} from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
-import { MemoryRouter } from 'react-router-dom'
+import {MemoryRouter} from 'react-router-dom'
 import '@/lib/i18n'
-import { ThemeProvider } from '@/lib/theme'
-import { DemoProvider } from '@/lib/demo'
-import { CommandPalette } from './CommandPalette'
+import {ThemeProvider} from '@/lib/theme'
+import {DemoProvider} from '@/lib/demo'
+import {CommandPalette} from './CommandPalette'
+import * as React from "react";
 
 vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }))
 

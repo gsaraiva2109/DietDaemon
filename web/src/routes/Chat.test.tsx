@@ -71,6 +71,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 })
 
 import { api } from '@/lib/api'
+import * as React from "react";
 
 const listSessions = vi.mocked(api.chat.listSessions)
 const listDeletedSessions = vi.mocked(api.chat.listDeletedSessions)

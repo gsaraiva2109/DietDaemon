@@ -25,8 +25,7 @@ export function VerifyEmailBanner() {
   }
 
   return (
-    <div
-      role="status"
+    <output
       className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/10 px-4 py-3"
     >
       <p className="text-sm text-ink">
@@ -41,6 +40,6 @@ export function VerifyEmailBanner() {
       >
         {resend.isPending ? t('verifyEmailBanner.sending') : t('verifyEmailBanner.resend')}
       </button>
-    </div>
+    </output>
   )
 }

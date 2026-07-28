@@ -493,18 +493,21 @@ function AssistantMessage() {
 // Split into a header match plus a loose token scan rather than one regex
 // with three adjacent `(?:\D+...)?` blocks: that shape had super-linear
 // worst-case backtracking (non-digit runs with nothing to anchor them apart)
-// and tripped Sonar's complexity ceiling. Two small, unambiguous regexes
+// and tripped Sonar's complexity ceiling. A header match plus a token scan
 // parse the same fixed-order backend format with no backtracking risk.
 const LOGMEAL_HEADER_RE = /^Logged: (.+)\n([\d.]+) kcal/
-const LOGMEAL_NUTRIENT_RE = /([\d.]+)g (protein|carbs|fat)/g
 
 export function parseLogMealResult(result: string) {
   const header = LOGMEAL_HEADER_RE.exec(result)
   if (!header) return null
   const [, rawText, kcal] = header
   const nutrients: Partial<Record<'protein' | 'carbs' | 'fat', string>> = {}
-  for (const [, value, name] of result.matchAll(LOGMEAL_NUTRIENT_RE)) {
-    nutrients[name as 'protein' | 'carbs' | 'fat'] = value
+  const tokens = result.replaceAll('\n', ' ').split(' ')
+  for (let index = 0; index < tokens.length - 1; index++) {
+    const value = tokens[index].endsWith('g') ? tokens[index].slice(0, -1) : ''
+    if (!value || !Number.isFinite(Number(value))) continue
+    const name = tokens[index + 1]
+    if (name === 'protein' || name === 'carbs' || name === 'fat') nutrients[name] = value
   }
   return { rawText, kcal, protein: nutrients.protein, carbs: nutrients.carbs, fat: nutrients.fat }
 }

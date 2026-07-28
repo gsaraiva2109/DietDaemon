@@ -35,9 +35,8 @@ export function MacroBar({ consumed, target, label, unit, color, confidence }: R
           / {Math.round(target)} {unit}
         </span>
       </div>
-      <div
+      <progress
         className="h-2.5 w-full overflow-hidden rounded-full bg-primary-soft"
-        role="progressbar"
         aria-valuenow={Math.round(p * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
@@ -50,7 +49,7 @@ export function MacroBar({ consumed, target, label, unit, color, confidence }: R
           animate={{ width: `${p * 100}%` }}
           transition={{ duration: 0.9, ease: easeOut }}
         />
-      </div>
+      </progress>
       <div className="mt-1 text-xs text-muted">
         {over ? (
           <span className="font-medium text-accent">{Math.round(consumed - target)} {unit} {t('macroBar.over')}</span>

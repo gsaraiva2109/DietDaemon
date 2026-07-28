@@ -176,7 +176,7 @@ function NudgeRuleRow({ view, demo }: Readonly<{ view: NudgeRuleView; demo: bool
         <div className="mt-3 flex flex-wrap items-end gap-3">
           {fields.map((f) => (
             <label key={f.key} className="block">
-              <span className="mb-1 block text-xs uppercase tracking-[0.1em] text-muted">
+              <span className="mb-1 block text-xs uppercase tracking-widest text-muted">
                 {t(`nudgeSettings.fields.${f.labelKey}`)}
               </span>
               <input

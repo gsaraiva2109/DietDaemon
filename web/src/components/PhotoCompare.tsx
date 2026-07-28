@@ -47,7 +47,7 @@ function PhotoPane({
           </option>
         ))}
       </select>
-      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-line bg-surface-2">
+      <div className="relative aspect-3/4 overflow-hidden rounded-xl border border-line bg-surface-2">
         {photo && (
           <AuthedImage
             id={photo.id}
@@ -99,8 +99,8 @@ export function PhotoCompare({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
-          role="button"
+        <input
+          type="button"
           tabIndex={0}
           aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"

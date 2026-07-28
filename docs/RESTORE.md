@@ -58,32 +58,32 @@ the store isn't touched, so `-db` doesn't even need to point to a real file.
 
 ### Flags
 
-| Flag            | Required | Description                                                            |
-|-----------------|----------|--------------------------------------------------------------------------|
-| `-user`         | yes      | User ID to restore into.                                                 |
-| `-db`           | yes      | SQLite database path for the target store.                               |
-| `-destination`  | yes      | `local` or `s3`.                                                         |
-| `-dir`          | local    | Local disk base directory holding the backup (`localdisk.New`'s baseDir). |
-| `-subdir`       | local    | Backup subdirectory the user's files live under (`BackupConfig.LocalSubdir`). |
-| `-s3-bucket`    | s3       | S3 bucket holding the backup.                                            |
-| `-s3-prefix`    | s3       | S3 key prefix the user's files live under.                               |
-| `-s3-region`    | s3       | S3 region override.                                                      |
-| `-s3-endpoint`  | s3       | S3-compatible endpoint override (e.g. MinIO).                            |
-| `-dry-run`      | no       | List backup files found without touching the store.                      |
+| Flag           | Required | Description                                                                   |
+|----------------|----------|-------------------------------------------------------------------------------|
+| `-user`        | yes      | User ID to restore into.                                                      |
+| `-db`          | yes      | SQLite database path for the target store.                                    |
+| `-destination` | yes      | `local` or `s3`.                                                              |
+| `-dir`         | local    | Local disk base directory holding the backup (`localdisk.New`'s baseDir).     |
+| `-subdir`      | local    | Backup subdirectory the user's files live under (`BackupConfig.LocalSubdir`). |
+| `-s3-bucket`   | s3       | S3 bucket holding the backup.                                                 |
+| `-s3-prefix`   | s3       | S3 key prefix the user's files live under.                                    |
+| `-s3-region`   | s3       | S3 region override.                                                           |
+| `-s3-endpoint` | s3       | S3-compatible endpoint override (e.g. MinIO).                                 |
+| `-dry-run`     | no       | List backup files found without touching the store.                           |
 
 ## What's preserved
 
-| Entity            | Preserved? | Notes |
-|--------------------|------------|-------|
-| Meals              | **Lossy**  | `meals.csv` only carries meal-level macro totals and a date, not the per-item breakdown or time-of-day. Each restored meal becomes a single synthetic line-item whose macros equal the row's totals, timestamped at midnight UTC on the recorded date. This is a limitation of the existing `meals.csv` export format (already used by production backups), not something this restore path can fix without breaking already-taken backups. |
-| Daily rollups      | Fully preserved | Consumed and target macros round-trip exactly. |
-| Weight             | Fully preserved | ID, date, weight, note round-trip exactly. |
-| Body measurements  | Fully preserved | ID, date, and all measurement fields round-trip exactly. |
-| Sleep              | Fully preserved | Including `wake_at` for completed sleep sessions. |
-| Workouts           | Fully preserved | Including individual exercises (sets/reps/weight), round-tripped via the `exercises_json` column. |
-| Water              | Fully preserved | Amount, timestamp, note round-trip exactly. |
-| Fasting            | Fully preserved | Including end time and completion state for closed fasts. |
-| Progress photos    | Fully preserved | Blob data plus metadata (date, view, mime type). |
+| Entity            | Preserved?      | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|-------------------|-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Meals             | **Lossy**       | `meals.csv` only carries meal-level macro totals and a date, not the per-item breakdown or time-of-day. Each restored meal becomes a single synthetic line-item whose macros equal the row's totals, timestamped at midnight UTC on the recorded date. This is a limitation of the existing `meals.csv` export format (already used by production backups), not something this restore path can fix without breaking already-taken backups. |
+| Daily rollups     | Fully preserved | Consumed and target macros round-trip exactly.                                                                                                                                                                                                                                                                                                                                                                                              |
+| Weight            | Fully preserved | ID, date, weight, note round-trip exactly.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Body measurements | Fully preserved | ID, date, and all measurement fields round-trip exactly.                                                                                                                                                                                                                                                                                                                                                                                    |
+| Sleep             | Fully preserved | Including `wake_at` for completed sleep sessions.                                                                                                                                                                                                                                                                                                                                                                                           |
+| Workouts          | Fully preserved | Including individual exercises (sets/reps/weight), round-tripped via the `exercises_json` column.                                                                                                                                                                                                                                                                                                                                           |
+| Water             | Fully preserved | Amount, timestamp, note round-trip exactly.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Fasting           | Fully preserved | Including end time and completion state for closed fasts.                                                                                                                                                                                                                                                                                                                                                                                   |
+| Progress photos   | Fully preserved | Blob data plus metadata (date, view, mime type).                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ## Idempotency
 

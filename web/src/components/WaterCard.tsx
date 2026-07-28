@@ -54,9 +54,8 @@ export function WaterCard() {
           </div>
 
           {goalMl > 0 ? (
-            <div
+            <progress
               className="h-1.5 w-full rounded-full bg-surface-2"
-              role="progressbar"
               aria-valuenow={pct}
               aria-valuemin={0}
               aria-valuemax={100}
@@ -66,7 +65,7 @@ export function WaterCard() {
                 className="h-full rounded-full transition-[width] duration-500"
                 style={{ width: `${pct}%`, background: BLUE }}
               />
-            </div>
+            </progress>
           ) : (
             <p className="text-sm text-muted">{t('waterCard.empty')}</p>
           )}
