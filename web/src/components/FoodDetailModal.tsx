@@ -96,7 +96,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
     )
   }
 
-  const servingUnits = useMemo(() => f?.serving_units ?? [], [f])
+  const servingUnits = useMemo(() => f?.serving_units ?? [], [f?.serving_units])
   // Basis resets whenever the selected unit no longer exists (e.g. it was
   // just deleted) rather than silently showing stale scaled macros.
   const activeBasis = basis === PER_100G_BASIS || servingUnits.some((u) => u.id === basis) ? basis : PER_100G_BASIS
@@ -105,7 +105,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
     if (activeBasis === PER_100G_BASIS) return f.per_100g
     const unit = servingUnits.find((u) => u.id === activeBasis)
     return unit ? scaleMacros(f.per_100g, unit.grams) : f.per_100g
-  }, [f, activeBasis, servingUnits])
+  }, [f, servingUnits, activeBasis])
 
   return (
     <AnimatePresence>
@@ -116,10 +116,16 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <input
+          type="button"
+          tabIndex={0}
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
           onClick={onClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onClose()
+          }}
         />
         <motion.div
           role="dialog"
@@ -156,7 +162,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
 
               {servingUnits.length > 0 && (
                 <div className="mt-4 flex items-center gap-2">
-                  <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted">
+                  <label className="text-[11px] font-medium uppercase tracking-widest text-muted">
                     {t('foodDetailModal.macroBasis')}
                   </label>
                   <select
@@ -177,7 +183,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
               <dl className="mt-3 grid grid-cols-5 gap-2 border-t border-line pt-4">
                 {MACRO_KEYS.map((k) => (
                   <div key={k}>
-                    <dt className="text-[10px] uppercase tracking-[0.1em] text-muted">
+                    <dt className="text-[10px] uppercase tracking-widest text-muted">
                       {t(`common.macro.${k}`)}
                     </dt>
                     <dd className="font-semibold text-ink tnum">

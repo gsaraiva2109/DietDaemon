@@ -100,7 +100,7 @@ export function Toggle({
     >
       <span
         className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-soft transition-transform ${
-          checked ? 'translate-x-[20px]' : 'translate-x-0'
+          checked ? 'translate-x-5' : 'translate-x-0'
         }`}
       />
     </button>
@@ -128,10 +128,10 @@ export function EmptyState({
 export function Spinner({ label }: Readonly<{ label?: string }>) {
   const { t } = useTranslation()
   return (
-    <div className="flex items-center gap-3 text-sm text-muted" role="status">
+    <output className="flex items-center gap-3 text-sm text-muted">
       <span className="size-4 animate-spin rounded-full border-2 border-line border-t-primary" />
       {label ?? t('common.loading')}…
-    </div>
+    </output>
   )
 }
 

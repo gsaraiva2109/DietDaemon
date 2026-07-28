@@ -75,6 +75,34 @@ export function CorrectItemModal({ meal, index, onClose }: Readonly<Props>) {
     setCatalogQuery('')
   }
 
+  function catalogResults() {
+    if (catalog.isLoading) return <Spinner label={t('foods.loadingLabel')} />
+    if (!catalog.data?.length) return <p className="py-2 text-sm text-muted">{t('correctItemModal.catalogNoResults')}</p>
+    return (
+      <div className="max-h-40 space-y-1 overflow-y-auto">
+        {catalog.data.map((r: FoodDetail) => (
+          <button
+            key={r.food_id}
+            type="button"
+            onClick={() => setPreview(r)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface"
+          >
+            <span className="min-w-0 truncate text-ink">{r.name}</span>
+            <span className="shrink-0 text-xs text-muted">
+              {sourceLabel(r.source, t)} · {round(r.per_100g.Calories)} kcal
+            </span>
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  function submitLabel(): string {
+    if (pending) return t('correctItemModal.saving')
+    if (isAdd) return t('correctItemModal.addItemButton')
+    return t('correctItemModal.saveCorrection')
+  }
+
   function submit() {
     const result: ResolvedItem = {
       ...base,
@@ -95,7 +123,13 @@ export function CorrectItemModal({ meal, index, onClose }: Readonly<Props>) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" style={{ zIndex: 1200 }} onClick={onClose} />
+        <button
+          type="button"
+          aria-label={t('common.dismiss')}
+          className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
+          style={{ zIndex: 1200 }}
+          onClick={onClose}
+        />
         <motion.div
           role="dialog"
           aria-modal="true"
@@ -147,27 +181,7 @@ export function CorrectItemModal({ meal, index, onClose }: Readonly<Props>) {
                 className="mb-2 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-primary"
               />
 
-              {catalog.isLoading ? (
-                <Spinner label={t('foods.loadingLabel')} />
-              ) : !catalog.data?.length ? (
-                <p className="py-2 text-sm text-muted">{t('correctItemModal.catalogNoResults')}</p>
-              ) : (
-                <div className="max-h-40 space-y-1 overflow-y-auto">
-                  {catalog.data.map((r: FoodDetail) => (
-                    <button
-                      key={r.food_id}
-                      type="button"
-                      onClick={() => setPreview(r)}
-                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface"
-                    >
-                      <span className="min-w-0 truncate text-ink">{r.name}</span>
-                      <span className="shrink-0 text-xs text-muted">
-                        {sourceLabel(r.source, t)} · {round(r.per_100g.Calories)} kcal
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {catalogResults()}
 
               {preview && (
                 <div className="mt-3 rounded-lg border border-primary/30 bg-bg p-3">
@@ -233,7 +247,7 @@ export function CorrectItemModal({ meal, index, onClose }: Readonly<Props>) {
               {t('correctItemModal.cancel')}
             </Button>
             <Button onClick={submit} disabled={pending || (isAdd && !name.trim())}>
-              {pending ? t('correctItemModal.saving') : isAdd ? t('correctItemModal.addItemButton') : t('correctItemModal.saveCorrection')}
+              {submitLabel()}
             </Button>
           </div>
         </motion.div>

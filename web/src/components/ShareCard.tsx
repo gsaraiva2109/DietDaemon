@@ -35,7 +35,9 @@ interface MacroChip {
 /** dataURL -> Blob, so we can both download and copy a real PNG. */
 function dataUrlToBlob(dataUrl: string): Blob {
   const [meta, b64] = dataUrl.split(',')
-  const mime = /:(.*?);/.exec(meta)?.[1] ?? 'image/png'
+  const colon = meta.indexOf(':')
+  const semicolon = meta.indexOf(';', colon + 1)
+  const mime = colon >= 0 && semicolon > colon ? meta.slice(colon + 1, semicolon) : 'image/png'
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.codePointAt(i) as number
@@ -127,7 +129,9 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Readonly<Pro
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <button
+          type="button"
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
           onClick={onClose}
@@ -140,7 +144,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Readonly<Pro
           initial="hidden"
           animate="show"
           exit="hidden"
-          className="relative w-full max-w-[460px] rounded-xl border border-line bg-surface p-6 shadow-lift"
+          className="relative w-full max-w-115 rounded-xl border border-line bg-surface p-6 shadow-lift"
           style={{ zIndex: 1500 }}
         >
           <div className="mb-5 flex items-start justify-between">

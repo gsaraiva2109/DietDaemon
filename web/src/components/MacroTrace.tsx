@@ -35,10 +35,12 @@ export function MacroTrace({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <button
+          type="button"
+          aria-label={t('common.dismiss')}
+          onClick={onClose}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
-          onClick={onClose}
         />
         <motion.div
           role="dialog"
@@ -62,10 +64,13 @@ export function MacroTrace({
             {items.length === 0 && (
               <p className="py-6 text-center text-sm text-muted">{t('macroTrace.noItems')}</p>
             )}
-            {items.map((item, i) => {
+            {items.map((item) => {
               const tier = confidenceTier(item.Match.MatchScore)
               return (
-                <div key={i} className="rounded-lg border border-line p-4">
+                <div
+                  key={`${item.Match.FoodID}-${item.Parsed.RawPhrase}`}
+                  className="rounded-lg border border-line p-4"
+                >
                   <p className="truncate font-semibold text-ink">{item.Match.Name}</p>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                     <Pill tone="neutral">{item.Match.Source}</Pill>

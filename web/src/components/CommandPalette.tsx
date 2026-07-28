@@ -31,6 +31,13 @@ interface Command {
   run: () => void
 }
 
+// Focus the input on the next tick so it happens after the open animation's
+// render, not fighting it. Module-level so it doesn't add a nesting level
+// inside the effect that schedules it.
+function focusSoon(ref: React.RefObject<HTMLInputElement | null>) {
+  setTimeout(() => ref.current?.focus(), 20)
+}
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -77,12 +84,20 @@ export function CommandPalette() {
           ]
         : []),
     ]
-  }, [navigate, theme, toggle, demo, setDemo, t])
+  }, [navigate, demo, setDemo, t, theme, toggle])
 
   const results = useMemo(() => {
     const n = q.trim().toLowerCase()
     return n ? commands.filter((c) => c.label.toLowerCase().includes(n)) : commands
   }, [q, commands])
+
+  // Reset search state when opening; called from the setOpen updater below
+  // so it's a sibling call rather than another nested function definition.
+  function resetSearchState() {
+    setQ('')
+    setActive(0)
+    focusSoon(inputRef)
+  }
 
   // Global ⌘K / Ctrl-K toggle.
   useEffect(() => {
@@ -90,13 +105,7 @@ export function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setOpen((o) => {
-          if (!o) {
-            // Reset search state when opening, fire-and-forget
-            // updates in the same render batch, no cascading effects.
-            setQ('')
-            setActive(0)
-            setTimeout(() => inputRef.current?.focus(), 20)
-          }
+          if (!o) resetSearchState()
           return !o
         })
       }
@@ -129,7 +138,18 @@ export function CommandPalette() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" onClick={() => setOpen(false)} />
+          <button
+            type="button"
+            aria-label="Close command palette"
+            className="absolute inset-0 cursor-default bg-ink/30 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setOpen(false)
+              }
+            }}
+          />
           <motion.div
             role="dialog"
             aria-modal="true"

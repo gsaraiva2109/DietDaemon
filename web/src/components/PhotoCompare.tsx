@@ -11,7 +11,7 @@ import type { ProgressPhoto } from '@/lib/types'
 
 function relativeCaption(t: (key: string, opts?: Record<string, unknown>) => string, date: string): string {
   const then = new Date(date + 'T00:00:00').getTime()
-  const days = Math.round((Date.now() - then) / 86_400_000)
+  const days = Math.floor((Date.now() - then) / 86_400_000)
   if (days <= 0) return t('photoCompare.today')
   if (days < 7) return t('photoCompare.daysAgo', { count: days })
   const weeks = Math.round(days / 7)
@@ -47,7 +47,7 @@ function PhotoPane({
           </option>
         ))}
       </select>
-      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-line bg-surface-2">
+      <div className="relative aspect-3/4 overflow-hidden rounded-xl border border-line bg-surface-2">
         {photo && (
           <AuthedImage
             id={photo.id}
@@ -99,10 +99,16 @@ export function PhotoCompare({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <input
+          type="button"
+          tabIndex={0}
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1200 }}
           onClick={onClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onClose()
+          }}
         />
         <motion.div
           role="dialog"

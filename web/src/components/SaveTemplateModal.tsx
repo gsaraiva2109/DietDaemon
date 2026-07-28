@@ -46,7 +46,9 @@ export function SaveTemplateModal({ items, onClose }: Readonly<Props>) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <button
+          type="button"
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
           onClick={onClose}
@@ -90,8 +92,11 @@ export function SaveTemplateModal({ items, onClose }: Readonly<Props>) {
             {items.length} {items.length === 1 ? t('saveTemplateModal.item') : t('saveTemplateModal.items')}
           </div>
           <ul className="mb-2 max-h-56 divide-y divide-line overflow-y-auto rounded-lg border border-line">
-            {items.map((it, i) => (
-              <li key={i} className="flex items-center justify-between gap-3 px-3 py-2">
+            {items.map((it) => (
+              <li
+                key={`${it.Match.FoodID}-${it.Parsed.RawPhrase}-${it.Parsed.NormalizedGrams}`}
+                className="flex items-center justify-between gap-3 px-3 py-2"
+              >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">
                     {it.Match.Name || it.Parsed.RawPhrase}
