@@ -12,7 +12,7 @@ import { fadeUp } from '@/lib/motion'
 import { clockTime, confidenceLabel, confidenceColor, confidenceTier, formatNumber, tierLabel } from '@/lib/format'
 import { MacroTrace } from './MacroTrace'
 
-export function MealCard({ meal, linkTo }: { meal: Meal; linkTo?: string }) {
+export function MealCard({ meal, linkTo }: Readonly<{ meal: Meal; linkTo?: string }>) {
   const { t, i18n } = useTranslation()
   const [traceOpen, setTraceOpen] = useState(false)
   const total = meal.Items.reduce((s, it) => s + (it.Macros?.Calories ?? 0), 0)

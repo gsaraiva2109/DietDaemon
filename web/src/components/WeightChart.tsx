@@ -26,10 +26,10 @@ interface IntakePoint {
 export function WeightChart({
   trend,
   intake,
-}: {
+}: Readonly<{
   trend: WeightTrend[]
   intake?: IntakePoint[]
-}) {
+}>) {
   const { t } = useTranslation()
   const data = useMemo(() => {
     const kcalByDate = new Map<string, number>(

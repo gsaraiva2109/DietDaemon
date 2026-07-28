@@ -12,11 +12,11 @@ export function Card({
   children,
   className = '',
   as: Tag = 'div',
-}: {
+}: Readonly<{
   children: ReactNode
   className?: string
   as?: 'div' | 'section' | 'article' | 'li'
-}) {
+}>) {
   return (
     <Tag
       className={`rounded-xl border border-line bg-surface shadow-soft ${className}`}
@@ -26,7 +26,7 @@ export function Card({
   )
 }
 
-export function Eyebrow({ children }: { children: ReactNode }) {
+export function Eyebrow({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
       {children}
@@ -37,10 +37,10 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 export function Pill({
   children,
   tone = 'neutral',
-}: {
+}: Readonly<{
   children: ReactNode
   tone?: 'neutral' | 'primary' | 'accent' | 'muted'
-}) {
+}>) {
   const tones: Record<string, string> = {
     neutral: 'bg-surface-2 text-ink border-line',
     primary: 'bg-primary-soft text-primary border-transparent',
@@ -80,12 +80,12 @@ export function Toggle({
   onChange,
   disabled,
   label,
-}: {
+}: Readonly<{
   checked: boolean
   onChange: (next: boolean) => void
   disabled?: boolean
   label: string
-}) {
+}>) {
   return (
     <button
       type="button"
@@ -111,11 +111,11 @@ export function EmptyState({
   title,
   hint,
   icon,
-}: {
+}: Readonly<{
   title: string
   hint?: string
   icon?: ReactNode
-}) {
+}>) {
   return (
     <div className="grid place-items-center rounded-xl border border-dashed border-line bg-surface/50 px-6 py-16 text-center">
       {icon && <div className="mb-3 text-muted">{icon}</div>}
@@ -125,7 +125,7 @@ export function EmptyState({
   )
 }
 
-export function Spinner({ label }: { label?: string }) {
+export function Spinner({ label }: Readonly<{ label?: string }>) {
   const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 text-sm text-muted" role="status">
@@ -137,7 +137,7 @@ export function Spinner({ label }: { label?: string }) {
 
 // Input, the calm bordered field, extracted from the old TokenGate so every
 // auth form shares one focus/disabled treatment. No parallel styling.
-export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className = '', ...rest }: Readonly<InputHTMLAttributes<HTMLInputElement>>) {
   return (
     <input
       className={`w-full rounded-xl border border-line bg-surface px-4 py-3 text-ink outline-none transition placeholder:text-muted/70 focus:border-primary disabled:opacity-60 ${className}`}
@@ -191,7 +191,7 @@ export function Field({
 
 // FormError, a single form-level error line (generic auth copy). role=alert so
 // it's announced; colour is never the only signal (it always carries text).
-export function FormError({ children }: { children: ReactNode }) {
+export function FormError({ children }: Readonly<{ children: ReactNode }>) {
   if (!children) return null
   return (
     <p className="text-sm font-medium text-accent" role="alert">

@@ -5,11 +5,11 @@ export function PageHeader({
   eyebrow,
   title,
   children,
-}: {
+}: Readonly<{
   eyebrow?: string
   title: string
   children?: ReactNode
-}) {
+}>) {
   return (
     <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>

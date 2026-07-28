@@ -45,7 +45,7 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null)
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const { demo } = useDemo()
   const navigate = useNavigate()
   const [status, setStatus] = useState<AuthStatus>('checking')

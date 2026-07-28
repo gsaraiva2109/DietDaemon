@@ -8,7 +8,7 @@ import { useOcrExtractCustomFood } from '@/lib/queries'
 import type { NutritionLabelDraft } from '@/lib/types'
 import { Button, FormError } from './ui'
 
-export function OcrLabelUpload({ onExtracted }: { onExtracted: (draft: NutritionLabelDraft) => void }) {
+export function OcrLabelUpload({ onExtracted }: Readonly<{ onExtracted: (draft: NutritionLabelDraft) => void }>) {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const scan = useOcrExtractCustomFood()

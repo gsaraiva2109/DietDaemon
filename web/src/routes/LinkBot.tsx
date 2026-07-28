@@ -169,10 +169,10 @@ export function LinkBot() {
 function SuccessPanel({
   platformLabel,
   onLinkAnother,
-}: {
+}: Readonly<{
   platformLabel: string
   onLinkAnother: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   return (
     <div>
@@ -198,14 +198,14 @@ function CodePanel({
   platformLabel,
   onRegenerate,
   regenerating,
-}: {
+}: Readonly<{
   code: string
   expired: boolean
   remaining: number
   platformLabel: string
   onRegenerate: () => void
   regenerating: boolean
-}) {
+}>) {
   const { t } = useTranslation()
   const mm = Math.floor(remaining / 60)
   const ss = String(remaining % 60).padStart(2, '0')

@@ -40,7 +40,7 @@ function niceDate(iso: string, locale: string): string {
 
 // up arrow = accent (intake rising), down arrow = primary (good on a cut),
 // flat = muted. Glyphs kept text-only and tasteful.
-function TrendArrow({ dir }: { dir: TrendDirection }) {
+function TrendArrow({ dir }: Readonly<{ dir: TrendDirection }>) {
   const { t } = useTranslation()
   const map: Record<TrendDirection, { glyph: string; cls: string; labelKey: string }> = {
     up: { glyph: '▲', cls: 'text-accent', labelKey: 'weeklyDashboard.trend.up' },
@@ -61,12 +61,12 @@ function StatTile({
   value,
   unit,
   trend,
-}: {
-  label: string
-  value: number
-  unit?: string
-  trend?: TrendDirection
-}) {
+}: Readonly<{
+    label: string
+    value: number
+    unit?: string
+    trend?: TrendDirection
+}>) {
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between gap-2">
@@ -83,7 +83,7 @@ function StatTile({
   )
 }
 
-function DayCard({ title, day, locale }: { title: string; day: DailyRollup; locale: string }) {
+function DayCard({ title, day, locale }: Readonly<{ title: string; day: DailyRollup; locale: string }>) {
   const consumed = Math.round(day.Consumed.Calories)
   const target = Math.round(day.Targets.Calories)
   return (

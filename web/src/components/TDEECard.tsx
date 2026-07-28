@@ -16,7 +16,12 @@ const GOAL_CAL: Record<string, keyof Pick<TDEEResult, 'cut_cal' | 'maintain_cal'
   bulk: 'bulk_cal',
 }
 
-function Bar({ label, value, max, tone }: { label: string; value: number; max: number; tone: 'muted' | 'primary' }) {
+function Bar({ label, value, max, tone }: Readonly<{
+    label: string;
+    value: number;
+    max: number;
+    tone: 'muted' | 'primary'
+}>) {
   const ratio = max > 0 ? Math.min(1, value / max) : 0
   return (
     <div>
@@ -36,7 +41,7 @@ function Bar({ label, value, max, tone }: { label: string; value: number; max: n
   )
 }
 
-export function TDEECard({ result, goal }: { result: TDEEResult; goal?: string }) {
+export function TDEECard({ result, goal }: Readonly<{ result: TDEEResult; goal?: string }>) {
   const { t } = useTranslation()
   const goalCals: Array<{ value: string; label: string; cal: number }> = GOALS.map((g) => ({
     value: g.value,

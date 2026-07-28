@@ -204,9 +204,9 @@ function PhotoImportCard({
       <p className="mb-1 font-semibold text-ink">{t('plan.importFromPhoto')}</p>
       <p className="mb-3 text-sm text-muted">{t('plan.importPhotoHint')}</p>
       {multiPage && (
-        <p className="mb-3 text-sm font-medium text-accent" role="status">
+        <output className="mb-3 block text-sm font-medium text-accent">
           {t('plan.pdfMultiPageNotice')}
-        </p>
+        </output>
       )}
       <label htmlFor="plan-import-photo" className="mb-1.5 block text-sm font-medium text-ink">
         {t('plan.choosePhotoFile')}

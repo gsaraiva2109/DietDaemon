@@ -109,7 +109,7 @@ export function Summary() {
   )
 }
 
-function Tile({ label, value, unit }: { label: string; value: string; unit: string }) {
+function Tile({ label, value, unit }: Readonly<{ label: string; value: string; unit: string }>) {
   return (
     <motion.div variants={fadeUp}>
       <Card className="p-5">
@@ -155,7 +155,9 @@ function compute(rollups: DailyRollup[], locale: string): Stats | null {
     Fat: sum.Fat / n,
     Fiber: sum.Fiber / n,
   }
-  const target = logged[logged.length - 1].Targets
+  const lastLogged = logged.at(-1)
+  if (!lastLogged) return null
+  const target = lastLogged.Targets
 
   // On-target = within ±10% of the calorie target.
   let onTarget = 0
@@ -185,6 +187,6 @@ function compute(rollups: DailyRollup[], locale: string): Stats | null {
     onTarget,
     adherence,
     best: scored[0],
-    worst: scored[scored.length - 1],
+    worst: scored.at(-1),
   }
 }

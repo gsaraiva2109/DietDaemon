@@ -63,12 +63,12 @@ function NumberField({
   value,
   unit,
   onChange,
-}: {
+}: Readonly<{
   label: string
   value: number
   unit: string
   onChange: (v: number) => void
-}) {
+}>) {
   const [text, setText] = useState(() => (value ? String(value) : ''))
 
   // Resync from the prop only when it changes externally (e.g. edit-mode
@@ -77,7 +77,7 @@ function NumberField({
   const [prevValue, setPrevValue] = useState(value)
   if (value !== prevValue) {
     setPrevValue(value)
-    const parsed = parseFloat(text)
+    const parsed = Number.parseFloat(text)
     const current = Number.isNaN(parsed) ? 0 : parsed
     if (current !== value) setText(value ? String(value) : '')
   }
@@ -86,7 +86,7 @@ function NumberField({
     // Allow only digits and a single decimal point (incl. partial "0." / ".5").
     if (!/^\d*\.?\d*$/.test(raw)) return
     setText(raw)
-    const parsed = parseFloat(raw)
+    const parsed = Number.parseFloat(raw)
     onChange(Number.isNaN(parsed) ? 0 : parsed)
   }
 

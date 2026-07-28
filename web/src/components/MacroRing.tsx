@@ -32,7 +32,7 @@ export function MacroRing({
   size = 200,
   thickness = 14,
   center = 'remaining',
-}: Props) {
+}: Readonly<Props>) {
   const { t } = useTranslation()
   const r = (size - thickness) / 2
   const circ = 2 * Math.PI * r

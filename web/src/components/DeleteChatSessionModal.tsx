@@ -14,7 +14,7 @@ interface Props {
   onConfirm: () => void
 }
 
-export function DeleteChatSessionModal({ onCancel, onConfirm }: Props) {
+export function DeleteChatSessionModal({ onCancel, onConfirm }: Readonly<Props>) {
   const { t } = useTranslation()
   return (
     <motion.div

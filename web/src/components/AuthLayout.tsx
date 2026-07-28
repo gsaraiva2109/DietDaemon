@@ -14,12 +14,12 @@ export function AuthLayout({
   subtitle,
   children,
   footer,
-}: {
+}: Readonly<{
   title: string
   subtitle?: string
   children: ReactNode
   footer?: ReactNode
-}) {
+}>) {
   return (
     <div className="relative grid min-h-[100dvh] place-items-center px-6">
       <div className="absolute right-5 top-5">

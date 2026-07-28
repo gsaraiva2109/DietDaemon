@@ -124,7 +124,7 @@ export function weeklyStats(range: DailyRollup[]): WeeklyStats {
   }
   const sorted = [...logged].sort((a, b) => dist(a) - dist(b))
   const bestDay = sorted[0] ?? null
-  const worstDay = sorted[sorted.length - 1] ?? null
+  const worstDay = sorted.at(-1) ?? null
 
   return {
     days: range,

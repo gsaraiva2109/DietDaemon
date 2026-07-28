@@ -38,11 +38,11 @@ function dataUrlToBlob(dataUrl: string): Blob {
   const mime = /:(.*?);/.exec(meta)?.[1] ?? 'image/png'
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.codePointAt(i) as number
   return new Blob([bytes], { type: mime })
 }
 
-export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
+export function ShareCard({ heading, subtitle, consumed, onClose }: Readonly<Props>) {
   const { t } = useTranslation()
   const captureRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
@@ -101,7 +101,7 @@ export function ShareCard({ heading, subtitle, consumed, onClose }: Props) {
       const canClip =
         typeof navigator !== 'undefined' &&
         'clipboard' in navigator &&
-        typeof window.ClipboardItem !== 'undefined' &&
+          window.ClipboardItem !== undefined &&
         typeof navigator.clipboard.write === 'function'
       if (canClip) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])

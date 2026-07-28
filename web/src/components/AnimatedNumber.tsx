@@ -13,7 +13,7 @@ interface Props {
   className?: string
 }
 
-export function AnimatedNumber({ value, decimals = 0, className }: Props) {
+export function AnimatedNumber({ value, decimals = 0, className }: Readonly<Props>) {
   const mv = useMotionValue(value)
   const text = useTransform(mv, (v) =>
     new Intl.NumberFormat(undefined, {

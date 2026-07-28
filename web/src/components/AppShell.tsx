@@ -83,7 +83,7 @@ function Brand() {
   )
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const { t } = useTranslation()
   return (
     <div className="relative min-h-[100dvh]">

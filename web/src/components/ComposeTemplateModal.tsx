@@ -21,7 +21,7 @@ interface Picked {
   grams: number
 }
 
-export function ComposeTemplateModal({ onClose }: Props) {
+export function ComposeTemplateModal({ onClose }: Readonly<Props>) {
   const { t } = useTranslation()
   const compose = useComposeTemplate()
   const [name, setName] = useState('')

@@ -73,7 +73,7 @@ export function PasskeyManager() {
   )
 }
 
-function PasskeyRow({ passkey }: { passkey: Passkey }) {
+function PasskeyRow({ passkey }: Readonly<{ passkey: Passkey }>) {
   const { t, i18n } = useTranslation()
   const rename = useRenamePasskey()
   const remove = useDeletePasskey()

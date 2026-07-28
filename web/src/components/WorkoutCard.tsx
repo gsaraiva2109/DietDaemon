@@ -28,7 +28,7 @@ export function WorkoutCard() {
 
   function submit() {
     const mins = Number(minutes)
-    if (!name.trim() || !(mins > 0)) return
+    if (!name.trim() || mins <= 0) return
     logWorkout.mutate(
       { name: name.trim(), duration_min: mins, intensity },
       {

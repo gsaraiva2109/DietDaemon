@@ -65,7 +65,7 @@ function startOIDC(id: string, verb: Verb) {
   window.location.assign(api.auth.oidcStartUrl(id))
 }
 
-export function ProviderButtons({ verb = 'continue' }: { verb?: Verb }) {
+export function ProviderButtons({ verb = 'continue' }: Readonly<{ verb?: Verb }>) {
   const { t } = useTranslation()
   const providers = useProviders()
   const list = providers.data?.providers ?? []
