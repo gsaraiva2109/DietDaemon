@@ -24,7 +24,6 @@ import {
   BranchPickerPrimitive,
   useLocalRuntime,
   useRemoteThreadListRuntime,
-  useThreadListItemRuntime,
   useMessageTiming,
   useAui,
   useAuiState,
@@ -164,9 +163,14 @@ function ChatApp({ railOpen, onCloseRail }: Readonly<{ railOpen: boolean; onClos
 // triggers chatThreadListAdapter.initialize() — the ChatModelAdapter reads it
 // lazily at send-time via getSessionID, so this instance doesn't need to
 // remount when that happens.
+//
+// Uses `useAui().threadListItem()` rather than the deprecated
+// useThreadListItemRuntime() (assistant-ui v0-12 migration guide) — same
+// scope resolution (nearest ThreadListItemRuntimeProvider), just reached via
+// the generic client instead of a dedicated hook.
 function useChatThreadRuntime() {
-  const itemRuntime = useThreadListItemRuntime()
-  const remoteId = itemRuntime.getState().remoteId ?? null
+  const aui = useAui()
+  const remoteId = aui.threadListItem().getState().remoteId ?? null
 
   const { data } = useSuspenseQuery({
     queryKey: ['chat', 'messages', remoteId],
@@ -175,8 +179,8 @@ function useChatThreadRuntime() {
   const initialMessages = useMemo(() => toInitialMessages(data), [data])
 
   const adapters = useMemo(
-    () => createChatAdapters(() => itemRuntime.getState().remoteId ?? null),
-    [itemRuntime],
+    () => createChatAdapters(() => aui.threadListItem().getState().remoteId ?? null),
+    [aui],
   )
 
   return useLocalRuntime(adapters.modelAdapter, {
@@ -220,7 +224,14 @@ function SessionRail({ open, onClose }: Readonly<{ open: boolean; onClose: () =>
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" onClick={onClose} />
+            {/* Native button (not a div+onClick) for keyboard/AA support; hardcoded
+                label rather than a new i18n key — this fix is scoped to this file only. */}
+            <button
+              type="button"
+              aria-label="Close"
+              className="absolute inset-0 cursor-default bg-ink/30 backdrop-blur-sm"
+              onClick={onClose}
+            />
             <motion.div
               className="absolute inset-y-0 left-0 w-72 max-w-[80vw] p-2"
               initial={{ x: '-100%' }}
@@ -346,16 +357,20 @@ function ChatEmptyState() {
 // store scope in this assistant-ui version, not `thread.suggestions` (the one
 // SuggestionAdapter.generate() populates), so there's no ready-made trigger
 // for this particular data.
-function Suggestions() {
+// Exported (alongside parseLogMealResult/LogMealToolCard below) so
+// Chat.test.tsx can exercise these specific fixes directly, without having
+// to drive the full nested remote-thread-list runtime + SSE stream through
+// the composer just to reach them.
+export function Suggestions() {
   const suggestions = useAuiState((s) => s.thread.suggestions)
   const aui = useAui()
   if (!suggestions.length) return null
 
   return (
     <div className="flex flex-wrap gap-2 border-t border-line bg-surface px-3 pt-3">
-      {suggestions.map((s, i) => (
+      {suggestions.map((s) => (
         <button
-          key={i}
+          key={s.prompt}
           type="button"
           onClick={() => aui.thread().append(s.prompt)}
           className="rounded-full border border-line bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
@@ -474,17 +489,34 @@ function AssistantMessage() {
 // <c>g carbs · <f>g fat"). Falls back to the generic ToolCallChip if the
 // backend's wording doesn't match — the format isn't a public contract, this
 // is a best-effort upgrade, not something that should ever break the message.
-const LOGMEAL_RESULT_RE =
-  /^Logged: (.+)\n([\d.]+) kcal(?:\D+([\d.]+)g protein)?(?:\D+([\d.]+)g carbs)?(?:\D+([\d.]+)g fat)?/
+//
+// Split into a header match plus a loose token scan rather than one regex
+// with three adjacent `(?:\D+...)?` blocks: that shape had super-linear
+// worst-case backtracking (non-digit runs with nothing to anchor them apart)
+// and tripped Sonar's complexity ceiling. Two small, unambiguous regexes
+// parse the same fixed-order backend format with no backtracking risk.
+const LOGMEAL_HEADER_RE = /^Logged: (.+)\n([\d.]+) kcal/
+const LOGMEAL_NUTRIENT_RE = /([\d.]+)g (protein|carbs|fat)/g
 
-function LogMealToolCard(props: ToolCallMessagePartProps) {
+export function parseLogMealResult(result: string) {
+  const header = LOGMEAL_HEADER_RE.exec(result)
+  if (!header) return null
+  const [, rawText, kcal] = header
+  const nutrients: Partial<Record<'protein' | 'carbs' | 'fat', string>> = {}
+  for (const [, value, name] of result.matchAll(LOGMEAL_NUTRIENT_RE)) {
+    nutrients[name as 'protein' | 'carbs' | 'fat'] = value
+  }
+  return { rawText, kcal, protein: nutrients.protein, carbs: nutrients.carbs, fat: nutrients.fat }
+}
+
+export function LogMealToolCard(props: ToolCallMessagePartProps) {
   const { t } = useTranslation()
   const { result } = props
-  const parsed = typeof result === 'string' ? LOGMEAL_RESULT_RE.exec(result) : null
+  const parsed = typeof result === 'string' ? parseLogMealResult(result) : null
   const aui = useAui()
 
   if (!parsed) return <ToolCallChip {...props} />
-  const [, rawText, kcal, protein, carbs, fat] = parsed
+  const { rawText, kcal, protein, carbs, fat } = parsed
 
   return (
     <motion.div

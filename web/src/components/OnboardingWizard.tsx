@@ -31,7 +31,10 @@ interface Draft {
   weekly_rate: number
 }
 
-const TOTAL_STEPS = 4
+// Fixed, named steps (not just a count) so the progress dots below can key
+// off a stable id instead of their array index.
+const STEP_IDS = ['bodyStats', 'activity', 'goal', 'plan'] as const
+const TOTAL_STEPS = STEP_IDS.length
 
 function ageFrom(birth: string): number {
   if (!birth) return 0
@@ -84,7 +87,9 @@ function NumberField({
 
   function handle(raw: string) {
     // Allow only digits and a single decimal point (incl. partial "0." / ".5").
-    if (!/^\d*\.?\d*$/.test(raw)) return
+    // The dot is nested inside its own group so the trailing \d* only ever
+    // starts right after it — one unambiguous parse, no backtracking.
+    if (!/^\d*(?:\.\d*)?$/.test(raw)) return
     setText(raw)
     const parsed = Number.parseFloat(raw)
     onChange(Number.isNaN(parsed) ? 0 : parsed)
@@ -163,9 +168,12 @@ export function OnboardingWizard() {
 
   const recommended: Macros | null = useMemo(() => {
     if (!tdee) return null
-    const cal =
-      draft.goal === 'cut' ? tdee.cut_cal : draft.goal === 'bulk' ? tdee.bulk_cal : tdee.maintain_cal
-    return { Calories: cal, Protein: tdee.protein_g, Carbs: tdee.carbs_g, Fat: tdee.fat_g, Fiber: 30 }
+    const calByGoal: Record<Draft['goal'], number> = {
+      cut: tdee.cut_cal,
+      bulk: tdee.bulk_cal,
+      maintain: tdee.maintain_cal,
+    }
+    return { Calories: calByGoal[draft.goal], Protein: tdee.protein_g, Carbs: tdee.carbs_g, Fat: tdee.fat_g, Fiber: 30 }
   }, [tdee, draft.goal])
 
   const stepValid = (() => {
@@ -268,9 +276,9 @@ export function OnboardingWizard() {
 
           {/* progress dots */}
           <div className="mb-6 flex items-center gap-1.5">
-            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+            {STEP_IDS.map((id, i) => (
               <span
-                key={i}
+                key={id}
                 className={`h-1.5 flex-1 rounded-full transition-colors ${
                   i <= step ? 'bg-primary' : 'bg-surface-2'
                 }`}

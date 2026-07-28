@@ -22,6 +22,7 @@ const en = {
   },
   common: {
     loading: 'Loading', justNow: 'just now', minutesAgo: '{{count}}m ago', hoursAgo: '{{count}}h ago',
+    dismiss: 'Dismiss',
     macro: { Calories: 'Calories', Protein: 'Protein', Carbs: 'Carbs', Fat: 'Fat', Fiber: 'Fiber' },
     measurement: { waist_cm: 'Waist', hips_cm: 'Hips', chest_cm: 'Chest', left_arm_cm: 'Left arm', right_arm_cm: 'Right arm', left_thigh_cm: 'Left thigh', right_thigh_cm: 'Right thigh' },
   },
@@ -1269,6 +1270,7 @@ const ptBR: typeof en = {
   },
   common: {
     loading: 'Carregando', justNow: 'agora mesmo', minutesAgo: 'há {{count}} min', hoursAgo: 'há {{count}} h',
+    dismiss: 'Descartar',
     macro: { Calories: 'Calorias', Protein: 'Proteína', Carbs: 'Carboidratos', Fat: 'Gordura', Fiber: 'Fibras' },
     measurement: { waist_cm: 'Cintura', hips_cm: 'Quadril', chest_cm: 'Peito', left_arm_cm: 'Braço esquerdo', right_arm_cm: 'Braço direito', left_thigh_cm: 'Coxa esquerda', right_thigh_cm: 'Coxa direita' },
   },

@@ -70,6 +70,69 @@ export function DuplicateMealModal({ onClose }: Readonly<Props>) {
     duplicate.mutate(meal.ID, { onSuccess: onClose })
   }
 
+  function renderBody() {
+    if (meals.isLoading) {
+      return <Spinner label={t('duplicateMealModal.loadingMeals')} />
+    }
+    if (!groups.length) {
+      return (
+        <EmptyState
+          title={t('duplicateMealModal.noMealsTitle')}
+          hint={t('duplicateMealModal.noMealsHint')}
+          icon={<CopyIcon />}
+        />
+      )
+    }
+    if (!day) {
+      return (
+        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2">
+          {groups.map(([k, dayMeals]) => (
+            <motion.button
+              key={k}
+              variants={fadeUp}
+              onClick={() => setDay(k)}
+              className="group flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left shadow-soft transition hover:shadow-lift"
+            >
+              <div className="min-w-0">
+                <p className="font-semibold text-ink">{dayLabel(dayMeals[0].At, t, i18n.language)}</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  {t('duplicateMealModal.mealCount', { count: dayMeals.length })}
+                </p>
+              </div>
+              <span className="text-muted transition group-hover:translate-x-0.5 group-hover:text-ink">
+                <ChevronRight />
+              </span>
+            </motion.button>
+          ))}
+        </motion.div>
+      )
+    }
+    return (
+      <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2">
+        {selectedMeals.map((m) => (
+          <motion.button
+            key={m.ID}
+            variants={fadeUp}
+            onClick={() => pick(m)}
+            disabled={demo || duplicate.isPending}
+            className="flex items-center gap-4 rounded-xl border border-line bg-surface px-4 py-3 text-left shadow-soft transition hover:shadow-lift disabled:opacity-50"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-semibold text-ink">
+                {m.RawText || t('duplicateMealModal.loggedMealFallback')}
+              </p>
+              <p className="mt-0.5 text-xs text-muted">{clockTime(m.At, i18n.language)}</p>
+            </div>
+            <div className="text-right">
+              <div className="text-base font-bold text-ink tnum">{formatNumber(mealKcal(m))}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] text-muted">kcal</div>
+            </div>
+          </motion.button>
+        ))}
+      </motion.div>
+    )
+  }
+
   return (
     <AnimatePresence>
       <motion.div
@@ -80,9 +143,15 @@ export function DuplicateMealModal({ onClose }: Readonly<Props>) {
         exit={{ opacity: 0 }}
       >
         <div
+          role="button"
+          tabIndex={0}
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
           onClick={onClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onClose()
+          }}
         />
         <motion.div
           role="dialog"
@@ -122,73 +191,7 @@ export function DuplicateMealModal({ onClose }: Readonly<Props>) {
             <p className="mb-3 text-xs text-muted">{t('duplicateMealModal.demoUnavailable')}</p>
           )}
 
-          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
-            {meals.isLoading ? (
-              <Spinner label={t('duplicateMealModal.loadingMeals')} />
-            ) : !groups.length ? (
-              <EmptyState
-                title={t('duplicateMealModal.noMealsTitle')}
-                hint={t('duplicateMealModal.noMealsHint')}
-                icon={<CopyIcon />}
-              />
-            ) : !day ? (
-              <motion.div
-                variants={stagger}
-                initial="hidden"
-                animate="show"
-                className="flex flex-col gap-2"
-              >
-                {groups.map(([k, dayMeals]) => (
-                  <motion.button
-                    key={k}
-                    variants={fadeUp}
-                    onClick={() => setDay(k)}
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left shadow-soft transition hover:shadow-lift"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-semibold text-ink">{dayLabel(dayMeals[0].At, t, i18n.language)}</p>
-                      <p className="mt-0.5 text-xs text-muted">
-                        {t('duplicateMealModal.mealCount', { count: dayMeals.length })}
-                      </p>
-                    </div>
-                    <span className="text-muted transition group-hover:translate-x-0.5 group-hover:text-ink">
-                      <ChevronRight />
-                    </span>
-                  </motion.button>
-                ))}
-              </motion.div>
-            ) : (
-              <motion.div
-                variants={stagger}
-                initial="hidden"
-                animate="show"
-                className="flex flex-col gap-2"
-              >
-                {selectedMeals.map((m) => (
-                  <motion.button
-                    key={m.ID}
-                    variants={fadeUp}
-                    onClick={() => pick(m)}
-                    disabled={demo || duplicate.isPending}
-                    className="flex items-center gap-4 rounded-xl border border-line bg-surface px-4 py-3 text-left shadow-soft transition hover:shadow-lift disabled:opacity-50"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold text-ink">
-                        {m.RawText || t('duplicateMealModal.loggedMealFallback')}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted">{clockTime(m.At, i18n.language)}</p>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-base font-bold text-ink tnum">
-                        {formatNumber(mealKcal(m))}
-                      </div>
-                      <div className="text-[10px] uppercase tracking-[0.12em] text-muted">kcal</div>
-                    </div>
-                  </motion.button>
-                ))}
-              </motion.div>
-            )}
-          </div>
+          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">{renderBody()}</div>
 
           {duplicate.isError && (
             <p className="mt-3 text-sm font-medium text-accent" role="alert">

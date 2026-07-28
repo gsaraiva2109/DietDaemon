@@ -24,10 +24,12 @@ export function DeleteChatSessionModal({ onCancel, onConfirm }: Readonly<Props>)
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <div
+      <button
+        type="button"
+        aria-label={t('common.dismiss')}
+        onClick={onCancel}
         className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
         style={{ zIndex: 1400 }}
-        onClick={onCancel}
       />
       <motion.div
         role="dialog"

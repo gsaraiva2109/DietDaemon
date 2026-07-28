@@ -117,9 +117,15 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
         exit={{ opacity: 0 }}
       >
         <div
+          role="button"
+          tabIndex={0}
+          aria-label={t('common.dismiss')}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
           onClick={onClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onClose()
+          }}
         />
         <motion.div
           role="dialog"

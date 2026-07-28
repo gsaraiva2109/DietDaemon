@@ -2,7 +2,7 @@
 // personal library, no prior meal log required. Mirrors SaveTemplateModal's
 // shell; the food-search-and-pick pattern mirrors Aliases.tsx.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import type { FoodDetail } from '@/lib/types'
@@ -75,6 +75,27 @@ export function ComposeTemplateModal({ onClose }: Readonly<Props>) {
     )
   }
 
+  let searchResults: ReactNode
+  if (search.isLoading) {
+    searchResults = <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.searching')}</li>
+  } else if (results.length === 0) {
+    searchResults = <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.noMatches')}</li>
+  } else {
+    searchResults = results.map((f) => (
+      <li key={f.food_id}>
+        <button
+          onClick={() => addFood(f)}
+          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-ink transition hover:bg-surface-2"
+        >
+          <span className="truncate">{f.name}</span>
+          <span className="shrink-0 text-xs text-muted">
+            {formatNumber(f.per_100g.Calories)} kcal/100g
+          </span>
+        </button>
+      </li>
+    ))
+  }
+
   return (
     <AnimatePresence>
       <motion.div
@@ -84,10 +105,12 @@ export function ComposeTemplateModal({ onClose }: Readonly<Props>) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div
+        <button
+          type="button"
+          aria-label={t('common.dismiss')}
+          onClick={onClose}
           className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
           style={{ zIndex: 1400 }}
-          onClick={onClose}
         />
         <motion.div
           role="dialog"
@@ -138,25 +161,7 @@ export function ComposeTemplateModal({ onClose }: Readonly<Props>) {
 
           {query.length > 0 && (
             <ul className="mb-3 max-h-40 divide-y divide-line overflow-y-auto rounded-lg border border-line">
-              {search.isLoading ? (
-                <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.searching')}</li>
-              ) : results.length === 0 ? (
-                <li className="px-3 py-2 text-sm text-muted">{t('composeTemplateModal.noMatches')}</li>
-              ) : (
-                results.map((f) => (
-                  <li key={f.food_id}>
-                    <button
-                      onClick={() => addFood(f)}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-ink transition hover:bg-surface-2"
-                    >
-                      <span className="truncate">{f.name}</span>
-                      <span className="shrink-0 text-xs text-muted">
-                        {formatNumber(f.per_100g.Calories)} kcal/100g
-                      </span>
-                    </button>
-                  </li>
-                ))
-              )}
+              {searchResults}
             </ul>
           )}
 
