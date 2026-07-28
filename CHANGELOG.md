@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0-alpha.5](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.4...v0.2.0-alpha.5) (2026-07-28)
+
+
+### Features
+
+* **plan:** diet plan import via photo/PDF extraction ([#194](https://github.com/gsaraiva2109/DietDaemon/issues/194)) ([#197](https://github.com/gsaraiva2109/DietDaemon/issues/197)) ([f169b04](https://github.com/gsaraiva2109/DietDaemon/commit/f169b046f84160222c5bd11d436e9f8275449a65))
+
+
+### Performance
+
+* **store:** fix N+1 queries, Postgres unique-violation bug, missing indexes ([#183](https://github.com/gsaraiva2109/DietDaemon/issues/183)) ([c065ef2](https://github.com/gsaraiva2109/DietDaemon/commit/c065ef2b921d1daecb2e3e7ae660509e4053c258))
+
 ## [0.2.0-alpha.4](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.3...v0.2.0-alpha.4) (2026-07-24)
 
 
