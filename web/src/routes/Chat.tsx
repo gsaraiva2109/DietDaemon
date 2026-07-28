@@ -502,7 +502,7 @@ export function parseLogMealResult(result: string) {
   if (!header) return null
   const [, rawText, kcal] = header
   const nutrients: Partial<Record<'protein' | 'carbs' | 'fat', string>> = {}
-  const tokens = result.replaceAll('\n', ' ').split(' ')
+  const tokens = result.replaceAll('\n', ' ').replaceAll(',', ' ').split(' ')
   for (let index = 0; index < tokens.length - 1; index++) {
     const value = tokens[index].endsWith('g') ? tokens[index].slice(0, -1) : ''
     if (!value || !Number.isFinite(Number(value))) continue
