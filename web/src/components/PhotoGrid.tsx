@@ -13,11 +13,11 @@ export function AuthedImage({
   id,
   alt = '',
   className = '',
-}: {
+}: Readonly<{
   id: string
   alt?: string
   className?: string
-}) {
+}>) {
   const [src, setSrc] = useState<string | null>(null)
 
   useEffect(() => {
@@ -59,10 +59,10 @@ function groupByDate(photos: ProgressPhoto[]): [string, ProgressPhoto[]][] {
 export function PhotoGrid({
   photos,
   onSelect,
-}: {
+}: Readonly<{
   photos: ProgressPhoto[]
   onSelect?: (p: ProgressPhoto) => void
-}) {
+}>) {
   const { t } = useTranslation()
   const groups = useMemo(() => groupByDate(photos), [photos])
 

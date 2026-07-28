@@ -12,10 +12,10 @@ import { scaleIn } from '@/lib/motion'
 export function RecoveryCodes({
   codes,
   onDone,
-}: {
+}: Readonly<{
   codes: string[]
   onDone: () => void
-}) {
+}>) {
   const { t } = useTranslation()
 
   async function copy() {

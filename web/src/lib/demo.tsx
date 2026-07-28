@@ -21,7 +21,7 @@ interface DemoValue {
 }
 const DemoContext = createContext<DemoValue | null>(null)
 
-export function DemoProvider({ children }: { children: ReactNode }) {
+export function DemoProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [demo, set] = useState<boolean>(() =>
     demoAvailable() ? localStorage.getItem(KEY) === '1' : false,
   )

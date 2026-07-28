@@ -20,7 +20,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         active: vi.fn(),
         get: vi.fn(),
         create: vi.fn(),
-        extract: { fromText: vi.fn() },
+        extract: { fromText: vi.fn(), fromImage: vi.fn() },
         dayTypes: { ...actual.api.plans.dayTypes, create: vi.fn() },
         slots: { ...actual.api.plans.slots, create: vi.fn() },
         options: { ...actual.api.plans.options, create: vi.fn() },
@@ -33,17 +33,27 @@ vi.mock('@/lib/api', async (importOriginal) => {
   }
 })
 
+// Real PDF-canvas rendering is unreliable under jsdom, so the PDF-selection
+// UI path is tested against a canned Blob[] instead of exercising pdfjs-dist
+// for real (see pdfToImages.ts's comment; that path needs manual verification).
+vi.mock('@/lib/pdfToImages', () => ({
+  pdfToImages: vi.fn(),
+}))
+
 import { api, ApiError } from '@/lib/api'
+import { pdfToImages } from '@/lib/pdfToImages'
 
 const list = vi.mocked(api.plans.list)
 const active = vi.mocked(api.plans.active)
 const getBundle = vi.mocked(api.plans.get)
 const createPlan = vi.mocked(api.plans.create)
 const extractFromText = vi.mocked(api.plans.extract.fromText)
+const extractFromImage = vi.mocked(api.plans.extract.fromImage)
 const createDayType = vi.mocked(api.plans.dayTypes.create)
 const createSlot = vi.mocked(api.plans.slots.create)
 const createOption = vi.mocked(api.plans.options.create)
 const searchCatalog = vi.mocked(api.foods.searchCatalog)
+const pdfToImagesMock = vi.mocked(pdfToImages)
 
 const TARGETS = { Calories: 1800, Protein: 140, Carbs: 150, Fat: 55, Fiber: 20 }
 
@@ -138,6 +148,8 @@ beforeEach(() => {
   getBundle.mockReset().mockResolvedValue(bundle(plan()))
   createPlan.mockReset().mockResolvedValue(plan())
   extractFromText.mockReset()
+  extractFromImage.mockReset()
+  pdfToImagesMock.mockReset()
   createDayType.mockReset()
   createSlot.mockReset()
   createOption.mockReset()
@@ -265,3 +277,86 @@ async function extractAndUnreadable() {
   fireEvent.click(screen.getByText('Extract'))
   await screen.findByRole('alert')
 }
+
+async function openPhotoForm() {
+  renderPlan()
+  fireEvent.click(await screen.findByRole('button', { name: 'Import from photo/PDF' }))
+}
+
+function pngFile(name = 'plan.png'): File {
+  return new File(['fake-image-bytes'], name, { type: 'image/png' })
+}
+
+function pdfFile(name = 'plan.pdf'): File {
+  return new File(['fake-pdf-bytes'], name, { type: 'application/pdf' })
+}
+
+function selectPhotoFile(file: File) {
+  fireEvent.change(screen.getByLabelText('Choose a photo or PDF'), { target: { files: [file] } })
+}
+
+// Reuses the same DraftReview screen the text-import path already covers in
+// depth above; these mainly prove the new photo/PDF entry point reaches it.
+describe('Plan import from photo/PDF', () => {
+  it('uploads a photo directly, without touching pdfToImages', async () => {
+    extractFromImage.mockResolvedValue(draft())
+    await openPhotoForm()
+    selectPhotoFile(pngFile())
+
+    await screen.findByText('Review the extracted plan')
+    expect(extractFromImage).toHaveBeenCalledWith(expect.any(File))
+    expect(pdfToImagesMock).not.toHaveBeenCalled()
+  })
+
+  it('renders a PDF to an image via pdfToImages before extracting', async () => {
+    pdfToImagesMock.mockResolvedValue([new Blob(['page-1'], { type: 'image/png' })])
+    extractFromImage.mockResolvedValue(draft())
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    await screen.findByText('Review the extracted plan')
+    expect(pdfToImagesMock).toHaveBeenCalledWith(expect.any(File))
+    expect(extractFromImage).toHaveBeenCalledWith(expect.any(File))
+  })
+
+  it('warns and uses only the first page for a multi-page PDF, without merging pages', async () => {
+    pdfToImagesMock.mockResolvedValue([
+      new Blob(['page-1'], { type: 'image/png' }),
+      new Blob(['page-2'], { type: 'image/png' }),
+    ])
+    extractFromImage.mockReturnValue(new Promise(() => {})) // stay on this screen so the notice is observable
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText(/only the first page was used/)).toBeInTheDocument()
+    expect(extractFromImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows an error with a working manual-builder fallback when image extraction fails', async () => {
+    extractFromImage.mockRejectedValue(new Error('boom'))
+    await openPhotoForm()
+    selectPhotoFile(pngFile())
+
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Build it by hand instead'))
+    expect(await screen.findByText('New plan')).toBeInTheDocument()
+  })
+
+  it('shows an error when the PDF fails to render, without calling extract', async () => {
+    pdfToImagesMock.mockRejectedValue(new Error('corrupt pdf'))
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText('corrupt pdf')).toBeInTheDocument()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
+
+  it('shows an error when the PDF has no pages, without calling extract', async () => {
+    pdfToImagesMock.mockResolvedValue([])
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText('Could not extract a plan from that text. Please try again.')).toBeInTheDocument()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
+})

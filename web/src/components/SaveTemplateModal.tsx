@@ -16,7 +16,7 @@ interface Props {
   onClose: () => void
 }
 
-export function SaveTemplateModal({ items, onClose }: Props) {
+export function SaveTemplateModal({ items, onClose }: Readonly<Props>) {
   const { t } = useTranslation()
   const create = useCreateTemplate()
   const [name, setName] = useState('')

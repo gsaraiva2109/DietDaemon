@@ -223,12 +223,12 @@ function RowLink({
   Icon,
   label,
   hint,
-}: {
+}: Readonly<{
   to: string
   Icon: typeof FoodsIcon
   label: string
   hint: string
-}) {
+}>) {
   return (
     <Link
       to={to}

@@ -13,10 +13,10 @@ import { easeOut } from '@/lib/motion'
 export function MacroTrace({
   items,
   onClose,
-}: {
+}: Readonly<{
   items: ResolvedItem[]
   onClose: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

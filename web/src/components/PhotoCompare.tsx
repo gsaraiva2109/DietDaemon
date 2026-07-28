@@ -25,12 +25,12 @@ function PhotoPane({
   value,
   onChange,
   label,
-}: {
+}: Readonly<{
   photos: ProgressPhoto[]
   value: string
   onChange: (id: string) => void
   label: string
-}) {
+}>) {
   const { t } = useTranslation()
   const photo = photos.find((p) => p.id === value)
   return (
@@ -69,10 +69,10 @@ function PhotoPane({
 export function PhotoCompare({
   photos,
   onClose,
-}: {
+}: Readonly<{
   photos: ProgressPhoto[]
   onClose: () => void
-}) {
+}>) {
   const { t } = useTranslation()
   // Oldest -> newest for sensible "before" / "after" defaults.
   const ordered = useMemo(
@@ -80,7 +80,7 @@ export function PhotoCompare({
     [photos],
   )
   const [beforeId, setBeforeId] = useState(() => ordered[0]?.id ?? '')
-  const [afterId, setAfterId] = useState(() => ordered[ordered.length - 1]?.id ?? '')
+  const [afterId, setAfterId] = useState(() => ordered.at(-1)?.id ?? '')
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

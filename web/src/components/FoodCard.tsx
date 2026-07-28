@@ -29,7 +29,7 @@ const MINI: { key: 'Protein' | 'Carbs' | 'Fat'; labelKey: string }[] = [
   { key: 'Fat', labelKey: 'foodCard.macroFat' },
 ]
 
-export function FoodCard({ food, onClick }: { food: FoodDetail; onClick?: () => void }) {
+export function FoodCard({ food, onClick }: Readonly<{ food: FoodDetail; onClick?: () => void }>) {
   const { t, i18n } = useTranslation()
   const per = food.per_100g
   return (

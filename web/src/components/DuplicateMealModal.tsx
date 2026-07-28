@@ -34,7 +34,7 @@ function mealKcal(meal: Meal): number {
   return meal.Items.reduce((s, it) => s + (it.Macros?.Calories ?? 0), 0)
 }
 
-export function DuplicateMealModal({ onClose }: Props) {
+export function DuplicateMealModal({ onClose }: Readonly<Props>) {
   const { t, i18n } = useTranslation()
   const meals = useMeals(50)
   const duplicate = useDuplicateMeal()

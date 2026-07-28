@@ -3,8 +3,8 @@
 
 import { useId } from 'react'
 
-export function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const id = `spark-${useId().replace(/:/g, '')}`
+export function Sparkline({ data, color }: Readonly<{ data: number[]; color: string }>) {
+  const id = `spark-${useId().replaceAll(':', '')}`
   const min = Math.min(...data)
   const range = Math.max(...data) - min || 1
   const points = data

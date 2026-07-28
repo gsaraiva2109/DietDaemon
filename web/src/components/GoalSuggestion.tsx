@@ -14,7 +14,12 @@ import { SparkleIcon, CheckIcon } from './icons'
 
 const ZERO: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
-function Stat({ label, current, target, unit }: { label: string; current: number; target: number; unit: string }) {
+function Stat({ label, current, target, unit }: Readonly<{
+  label: string;
+  current: number;
+  target: number;
+  unit: string
+}>) {
   return (
     <div className="rounded-xl border border-line bg-surface-2 px-3 py-2.5">
       <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{label}</div>

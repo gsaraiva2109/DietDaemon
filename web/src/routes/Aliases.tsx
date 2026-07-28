@@ -85,7 +85,7 @@ export function Aliases() {
   )
 }
 
-function AliasRow({ food, demo }: { food: FoodDetail; demo: boolean }) {
+function AliasRow({ food, demo }: Readonly<{ food: FoodDetail; demo: boolean }>) {
   const { t } = useTranslation()
   const add = useAddAlias(food.food_id)
   const del = useDeleteAlias(food.food_id)

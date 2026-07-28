@@ -26,12 +26,12 @@ function SegmentedPills<T extends string>({
   value,
   onChange,
   label,
-}: {
+}: Readonly<{
   options: { value: T; label: string }[]
   value: T
   onChange: (v: T) => void
   label: string
-}) {
+}>) {
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex gap-1 rounded-full bg-surface-2 p-1">
       {options.map((o) => {
@@ -54,7 +54,7 @@ function SegmentedPills<T extends string>({
   )
 }
 
-export function ExportModal({ onClose }: { onClose: () => void }) {
+export function ExportModal({ onClose }: Readonly<{ onClose: () => void }>) {
   const { t } = useTranslation()
   const { demo } = useDemo()
   const [dataType, setDataType] = useState<DataType>('meals')

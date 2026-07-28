@@ -838,6 +838,12 @@ const en = {
     confirmImport: 'Confirm import',
     tryImportAgain: 'Try again',
     fallbackToManual: 'Build it by hand instead',
+    // Import from photo/PDF (#194)
+    importFromPhoto: 'Import from photo/PDF',
+    importPhotoHint: 'Upload a photo of the prescription, or a PDF of it, and review a draft before anything saves.',
+    choosePhotoFile: 'Choose a photo or PDF',
+    renderingPdf: 'Rendering PDF…',
+    pdfMultiPageNotice: 'This PDF has more than one page — only the first page was used. Run import again for the other pages, then merge the day types manually below.',
   },
   trends: {
     eyebrow: 'Trends',
@@ -2074,6 +2080,12 @@ const ptBR: typeof en = {
     confirmImport: 'Confirmar importação',
     tryImportAgain: 'Tentar novamente',
     fallbackToManual: 'Montar manualmente em vez disso',
+    // Importar de foto/PDF (#194)
+    importFromPhoto: 'Importar de foto/PDF',
+    importPhotoHint: 'Envie uma foto da prescrição, ou um PDF dela, e revise um rascunho antes de salvar qualquer coisa.',
+    choosePhotoFile: 'Escolher uma foto ou PDF',
+    renderingPdf: 'Renderizando o PDF…',
+    pdfMultiPageNotice: 'Este PDF tem mais de uma página — apenas a primeira foi usada. Rode a importação novamente para as outras páginas e depois combine os tipos de dia manualmente abaixo.',
   },
   trends: {
     eyebrow: 'Tendências',

@@ -41,11 +41,11 @@ const scaleInDialog: Variants = {
   show: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.4, ease: easeOut } },
 }
 
-export function FoodDetailModal({ foodID, onClose, onEditCustom }: {
+export function FoodDetailModal({ foodID, onClose, onEditCustom }: Readonly<{
   foodID: string
   onClose: () => void
   onEditCustom?: (food: FoodDetail) => void
-}) {
+}>) {
   const { t } = useTranslation()
   const { demo } = useDemo()
   const food = useFood(foodID)
@@ -89,7 +89,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: {
 
   function submitUnit() {
     const grams = Number(unitGrams)
-    if (!unitLabel.trim() || !(grams > 0) || demo) return
+    if (!unitLabel.trim() || grams <= 0 || demo) return
     addServingUnit.mutate(
       { label: unitLabel.trim(), grams },
       { onSuccess: () => { setUnitLabel(''); setUnitGrams('') } },
@@ -265,7 +265,7 @@ export function FoodDetailModal({ foodID, onClose, onEditCustom }: {
                     />
                     <Button
                       onClick={submitUnit}
-                      disabled={!unitLabel.trim() || !(Number(unitGrams) > 0) || addServingUnit.isPending}
+                      disabled={!unitLabel.trim() || Number(unitGrams) <= 0 || addServingUnit.isPending}
                       className="px-4 py-2 text-sm"
                     >
                       {t('foodDetailModal.addUnitSave')}

@@ -26,7 +26,7 @@ const BLANK: ResolvedItem = {
   Macros: { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 },
 }
 
-export function CorrectItemModal({ meal, index, onClose }: Props) {
+export function CorrectItemModal({ meal, index, onClose }: Readonly<Props>) {
   const { t } = useTranslation()
   const isAdd = index === undefined
   const base = isAdd ? BLANK : meal.Items[index]

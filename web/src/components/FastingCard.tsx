@@ -81,13 +81,13 @@ function ActiveFast({
   now,
   onEnd,
   ending,
-}: {
+}: Readonly<{
   startMs: number
   targetHours: number
   now: number
   onEnd: () => void
   ending: boolean
-}) {
+}>) {
   const { t } = useTranslation()
   const elapsedMs = Math.max(0, now - startMs)
   const elapsedH = elapsedMs / 3_600_000
@@ -130,13 +130,13 @@ function Idle({
   lastDurationH,
   onStart,
   starting,
-}: {
+}: Readonly<{
   target: number
   setTarget: (h: number) => void
   lastDurationH: number | null
   onStart: () => void
   starting: boolean
-}) {
+}>) {
   const { t } = useTranslation()
   return (
     <>
@@ -181,7 +181,7 @@ function Idle({
 }
 
 // Sage progress arc, matching MacroRing's geometry/feel at a smaller size.
-function Ring({ pct, children }: { pct: number; children: React.ReactNode }) {
+function Ring({ pct, children }: Readonly<{ pct: number; children: React.ReactNode }>) {
   const r = (SIZE - THICK) / 2
   const circ = 2 * Math.PI * r
   const color = cssVar('--color-primary')

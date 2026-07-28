@@ -27,7 +27,7 @@ const COLOR_VARS = [
   '--color-accent',
 ] as const
 
-export function MeasurementChart({ data }: { data: MeasurementEntry[] }) {
+export function MeasurementChart({ data }: Readonly<{ data: MeasurementEntry[] }>) {
   const { t } = useTranslation()
   const [visible, setVisible] = useState<Set<MeasurementField>>(
     () => new Set(MEASUREMENT_FIELDS.map((f) => f.key)),

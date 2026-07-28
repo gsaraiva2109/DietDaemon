@@ -105,7 +105,7 @@ export function NudgeSettings() {
   )
 }
 
-function RuleGroup({ title, rules, demo }: { title: string; rules: NudgeRuleView[]; demo: boolean }) {
+function RuleGroup({ title, rules, demo }: Readonly<{ title: string; rules: NudgeRuleView[]; demo: boolean }>) {
   if (!rules.length) return null
   return (
     <section>
@@ -121,7 +121,7 @@ function RuleGroup({ title, rules, demo }: { title: string; rules: NudgeRuleView
   )
 }
 
-function NudgeRuleRow({ view, demo }: { view: NudgeRuleView; demo: boolean }) {
+function NudgeRuleRow({ view, demo }: Readonly<{ view: NudgeRuleView; demo: boolean }>) {
   const { t } = useTranslation()
   const setRule = useSetNudgeRule()
   const resetRule = useResetNudgeRule()

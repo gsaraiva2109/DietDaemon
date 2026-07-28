@@ -14,7 +14,7 @@ interface ToolCallGroupProps {
   children: ReactNode
 }
 
-export function ToolCallGroup({ running, count, children }: ToolCallGroupProps) {
+export function ToolCallGroup({ running, count, children }: Readonly<ToolCallGroupProps>) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(running)
   const [prevRunning, setPrevRunning] = useState(running)

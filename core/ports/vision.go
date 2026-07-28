@@ -16,4 +16,10 @@ type VisionAdapter interface {
 	// and returns the nutrition values it can find. It must never invent or
 	// estimate a value: unreadable fields are nil, not guessed.
 	ExtractLabel(ctx context.Context, image []byte, mimeType string) (types.NutritionLabelDraft, error)
+
+	// ExtractPlan reads image (raw bytes, given mimeType e.g. "image/jpeg")
+	// — a photographed or scanned diet-plan page — and returns the plan
+	// draft it can find. It must never invent or estimate a value:
+	// unreadable fields are nil, not guessed.
+	ExtractPlan(ctx context.Context, image []byte, mimeType string) (types.PlanDraft, error)
 }

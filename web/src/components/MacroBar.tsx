@@ -16,7 +16,7 @@ interface Props {
   confidence?: number
 }
 
-export function MacroBar({ consumed, target, label, unit, color, confidence }: Props) {
+export function MacroBar({ consumed, target, label, unit, color, confidence }: Readonly<Props>) {
   const { t } = useTranslation()
   const p = progress(consumed, target)
   const over = isOverTarget(consumed, target)

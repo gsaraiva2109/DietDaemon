@@ -62,7 +62,7 @@ export function PendingAliases() {
   )
 }
 
-function PendingAliasRow({ alias, demo }: { alias: PendingAlias; demo: boolean }) {
+function PendingAliasRow({ alias, demo }: Readonly<{ alias: PendingAlias; demo: boolean }>) {
   const { t } = useTranslation()
   const confirm = useConfirmPendingAlias()
   const reject = useRejectPendingAlias()

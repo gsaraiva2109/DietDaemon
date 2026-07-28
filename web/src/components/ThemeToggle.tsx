@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/lib/theme'
 import { SunIcon, MoonIcon } from './icons'
 
-export function ThemeToggle({ className = '' }: { className?: string }) {
+export function ThemeToggle({ className = '' }: Readonly<{ className?: string }>) {
   const { theme, toggle } = useTheme()
   const { t } = useTranslation()
 
