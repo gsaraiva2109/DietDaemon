@@ -11,7 +11,7 @@ import type { ProgressPhoto } from '@/lib/types'
 
 function relativeCaption(t: (key: string, opts?: Record<string, unknown>) => string, date: string): string {
   const then = new Date(date + 'T00:00:00').getTime()
-  const days = Math.round((Date.now() - then) / 86_400_000)
+  const days = Math.floor((Date.now() - then) / 86_400_000)
   if (days <= 0) return t('photoCompare.today')
   if (days < 7) return t('photoCompare.daysAgo', { count: days })
   const weeks = Math.round(days / 7)

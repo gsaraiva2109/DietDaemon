@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
-import '@/lib/i18n'
+import i18n from '@/lib/i18n'
 import { PhotoCompare } from './PhotoCompare'
 import type { ProgressPhoto } from '@/lib/types'
 
@@ -80,7 +80,8 @@ describe('PhotoCompare', () => {
   it('shows the monthsAgo and today captions for the default before/after', () => {
     renderCompare()
     expect(screen.getByText(MONTHS.date)).toBeInTheDocument()
-    expect(screen.getByText('today')).toBeInTheDocument()
+    expect(screen.getByText(i18n.t('photoCompare.monthsAgo', { count: 7 }))).toBeInTheDocument()
+    expect(screen.getByText(i18n.t('photoCompare.today'))).toBeInTheDocument()
   })
 
   it('shows the daysAgo and weeksAgo captions when those photos are selected', () => {
@@ -88,10 +89,10 @@ describe('PhotoCompare', () => {
 
     const [beforeSelect, afterSelect] = screen.getAllByRole('combobox')
     fireEvent.change(beforeSelect, { target: { value: RECENT.id } })
-    expect(screen.getByText('3 days ago')).toBeInTheDocument()
+    expect(screen.getByText(i18n.t('photoCompare.daysAgo', { count: 3 }))).toBeInTheDocument()
 
     fireEvent.change(afterSelect, { target: { value: WEEKS.id } })
-    expect(screen.getByText('3 weeks ago')).toBeInTheDocument()
+    expect(screen.getByText(i18n.t('photoCompare.weeksAgo', { count: 3 }))).toBeInTheDocument()
   })
 
   it('lets the user pick a different before/after photo', () => {
