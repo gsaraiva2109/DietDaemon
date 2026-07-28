@@ -33,16 +33,19 @@ export function WaterCard() {
         {hit && <Pill tone="primary">{t('waterCard.goalMet')}</Pill>}
       </header>
 
-      {water.isLoading ? (
-        <Spinner />
-      ) : water.isError ? (
-        <button
-          onClick={() => water.refetch()}
-          className="self-start text-sm font-medium text-accent hover:underline"
-        >
-          {t('waterCard.retry')}
-        </button>
-      ) : (
+      {(() => {
+        if (water.isLoading) return <Spinner />
+        if (water.isError) {
+          return (
+            <button
+              onClick={() => water.refetch()}
+              className="self-start text-sm font-medium text-accent hover:underline"
+            >
+              {t('waterCard.retry')}
+            </button>
+          )
+        }
+        return (
         <>
           <div className="flex items-baseline gap-1.5">
             <span className="text-3xl font-bold text-ink tnum">
@@ -88,7 +91,8 @@ export function WaterCard() {
             </p>
           )}
         </>
-      )}
+        )
+      })()}
     </Card>
   )
 }
