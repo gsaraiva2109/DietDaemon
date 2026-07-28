@@ -84,6 +84,22 @@ func TestExtractLabelUnreadable(t *testing.T) {
 	}
 }
 
+func checkExtractPlanRequest(t *testing.T, req visionRequest, wantB64 string) {
+	t.Helper()
+	if req.Model != "llava" {
+		t.Errorf("model = %q, want llava", req.Model)
+	}
+	if !strings.Contains(req.Prompt, "carb-cycling") {
+		t.Errorf("prompt missing planextract photo prompt: %q", req.Prompt)
+	}
+	if len(req.Images) != 1 || req.Images[0] != wantB64 {
+		t.Errorf("images = %v, want [%s]", req.Images, wantB64)
+	}
+	if req.Format != "json" {
+		t.Errorf("format = %q, want json", req.Format)
+	}
+}
+
 func TestExtractPlan(t *testing.T) {
 	img := []byte("fake-jpeg-bytes")
 	wantB64 := base64.StdEncoding.EncodeToString(img)
@@ -97,18 +113,7 @@ func TestExtractPlan(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != "llava" {
-			t.Errorf("model = %q, want llava", req.Model)
-		}
-		if !strings.Contains(req.Prompt, "carb-cycling") {
-			t.Errorf("prompt missing planextract photo prompt: %q", req.Prompt)
-		}
-		if len(req.Images) != 1 || req.Images[0] != wantB64 {
-			t.Errorf("images = %v, want [%s]", req.Images, wantB64)
-		}
-		if req.Format != "json" {
-			t.Errorf("format = %q, want json", req.Format)
-		}
+		checkExtractPlanRequest(t, req, wantB64)
 
 		_ = json.NewEncoder(w).Encode(generateResponse{
 			Response: `{"plan_name":"Plano","day_types":[{"name":"Dia único","targets":{"Calories":2000,"Protein":150,"Carbs":200,"Fat":60,"Fiber":25},"water_goal_ml":2500,"slots":[],"low_confidence_fields":[]}],"unreadable":false,"notes":null}`,
@@ -127,6 +132,19 @@ func TestExtractPlan(t *testing.T) {
 	}
 	if len(draft.DayTypes) != 1 || draft.DayTypes[0].Name != "Dia único" {
 		t.Errorf("DayTypes = %+v, want one day type named Dia único", draft.DayTypes)
+	}
+}
+
+func TestExtractPlanHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "", "", 30*time.Second)
+	a.SetVisionModel("llava")
+	if _, err := a.ExtractPlan(t.Context(), []byte("img"), "image/jpeg"); err == nil {
+		t.Error("expected error on 503, got nil")
 	}
 }
 

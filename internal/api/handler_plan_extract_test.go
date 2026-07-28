@@ -142,6 +142,26 @@ func TestHandleExtractPlanFromImageDisabled(t *testing.T) {
 	}
 }
 
+func TestHandleExtractPlanFromImageMissingFile(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	rec := doExtractPlanFromImage(h, nil, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageNotAnImage(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	rec := doExtractPlanFromImage(h, []byte("plain text, not an image"), "plan.txt")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleExtractPlanFromImageOversized(t *testing.T) {
 	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
 	h.visionAdapter = &fakeVisionAdapter{}

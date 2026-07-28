@@ -341,4 +341,22 @@ describe('Plan import from photo/PDF', () => {
     fireEvent.click(screen.getByText('Build it by hand instead'))
     expect(await screen.findByText('New plan')).toBeInTheDocument()
   })
+
+  it('shows an error when the PDF fails to render, without calling extract', async () => {
+    pdfToImagesMock.mockRejectedValue(new Error('corrupt pdf'))
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText('corrupt pdf')).toBeInTheDocument()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
+
+  it('shows an error when the PDF has no pages, without calling extract', async () => {
+    pdfToImagesMock.mockResolvedValue([])
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText('Could not extract a plan from that text. Please try again.')).toBeInTheDocument()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
 })
