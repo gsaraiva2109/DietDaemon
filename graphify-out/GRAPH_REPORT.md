@@ -1,11 +1,11 @@
-# Graph Report - DietDaemon  (2026-07-28)
+# Graph Report - DietDaemon  (2026-07-30)
 
 ## Corpus Check
-- 478 files · ~647,431 words
+- 478 files · ~647,616 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5215 nodes · 11900 edges · 69 communities detected
+- 5216 nodes · 11901 edges · 69 communities detected
 - Extraction: 62% EXTRACTED · 38% INFERRED · 0% AMBIGUOUS · INFERRED: 4485 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -53,7 +53,7 @@
 - [[_COMMUNITY_Community 40|Community 40]]
 - [[_COMMUNITY_Community 41|Community 41]]
 - [[_COMMUNITY_Community 42|Community 42]]
-- [[_COMMUNITY_Community 43|Community 43]]
+- [[_COMMUNITY_Community 44|Community 44]]
 - [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
@@ -112,175 +112,175 @@ Nodes (489): accountRepos, TestBYOKKeyAbsenceRetainsSharedAdapterFallback(), fak
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
-Nodes (377): buildNudgeRuleView(), buildNudgeRuleViewWeeklyBudget(), nudgeRuleView, targetsResponse, assertDoneEvent(), assertTextDeltaEvent(), assertToolCallEvent(), assertToolResultEvent() (+369 more)
+Nodes (340): buildNudgeRuleView(), buildNudgeRuleViewWeeklyBudget(), nudgeRuleView, targetsResponse, NewWebAuthn(), open(), pendingInMemory(), pendingSQLite() (+332 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.01
-Nodes (129): chatStreamState, credCreateConfig, credRevokeConfig, customFoodRequest, dayOverrideBody, deleteAccountRequest, ErrorCode, errorEnvelope (+121 more)
+Nodes (119): chatStreamState, credCreateConfig, credRevokeConfig, customFoodRequest, dayOverrideBody, deleteAccountRequest, ErrorCode, errorEnvelope (+111 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.01
 Nodes (52): FS(), Normalize(), TestNormalize(), unaccent(), backupConfigRow, catalogRow, credRow, dayTypeRow (+44 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.02
-Nodes (206): TestComplete(), TestCompleteHTTPError(), TestEmbedNotSupported(), checkExtractPlanRequest(), TestExtractLabel(), TestExtractLabelHTTPError(), TestExtractPlan(), TestExtractPlanHTTPError() (+198 more)
+Cohesion: 0.01
+Nodes (153): Adapter, contentBlock, message, messagesRequest, messagesResponse, allEntitiesFakeStore, New(), newFakeStore() (+145 more)
 
 ### Community 5 - "Community 5"
+Cohesion: 0.02
+Nodes (198): TestComplete(), TestCompleteHTTPError(), TestEmbedNotSupported(), checkExtractPlanRequest(), TestExtractLabel(), TestExtractLabelHTTPError(), TestExtractPlan(), TestExtractPlanHTTPError() (+190 more)
+
+### Community 6 - "Community 6"
 Cohesion: 0.01
 Nodes (7): authHandlerTestStore, fakeAuthStore, fakeMealStore, mfaEmailTestStore, passkeyTestStore, totpTestStore, Store
 
-### Community 6 - "Community 6"
-Cohesion: 0.02
-Nodes (126): Adapter, contentBlock, message, messagesRequest, messagesResponse, writeCSV(), Destination, Runner (+118 more)
-
 ### Community 7 - "Community 7"
-Cohesion: 0.02
-Nodes (135): extractArgs(), NewChatAdapter(), parseSSEEvent(), sendEvent(), sendProviderError(), drainReadStream(), TestExtractArgsEmptyValue(), TestReadStreamContextCancelledMidStream() (+127 more)
+Cohesion: 0.04
+Nodes (185): fakePurgeStore, NewPurgeRunner(), TestPurgeRunnerContextCancel(), TestPurgeRunnerTicksAndPurges(), TestPurgeRunnerZeroPurged(), PurgeRunner, PurgeStore, IPRateLimiter (+177 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.04
-Nodes (178): IPRateLimiter, TestPendingStoreContract(), postgresDB(), TestFoodImportFingerprintStore(), TestPostgresDietPlanSmoke(), TestPostgresDualDriverSmoke(), TestPostgresMealLifecycle(), TestPostgresSearchFoods() (+170 more)
+Cohesion: 0.02
+Nodes (120): extractArgs(), NewChatAdapter(), parseSSEEvent(), sendEvent(), sendProviderError(), drainReadStream(), TestExtractArgsEmptyValue(), TestReadStreamContextCancelledMidStream() (+112 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.01
-Nodes (77): formatDurationShort(), NewFastCommand(), FastCommand, FastStore, Registry, addFood(), renderModal(), typeSearch() (+69 more)
-
-### Community 10 - "Community 10"
 Cohesion: 0.02
 Nodes (57): ProtectedRoute(), ApiError, blobRequest(), buildRequestHeaders(), handleUnauthorized(), multipart(), parseErrorBody(), RateLimitError (+49 more)
 
+### Community 10 - "Community 10"
+Cohesion: 0.02
+Nodes (71): addFood(), renderModal(), typeSearch(), confirmReplace(), scaledMacros(), sourceLabel(), renderModal(), renderModal() (+63 more)
+
 ### Community 11 - "Community 11"
 Cohesion: 0.02
-Nodes (104): AccountStore, APIKeyStore, AuditStore, AuthConfig, AuthRepos, AuthStore, BackupRunner, ChatStore (+96 more)
+Nodes (97): AccountStore, APIKeyStore, AuditStore, AuthConfig, AuthRepos, AuthStore, BackupRunner, ChatStore (+89 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.02
-Nodes (89): Stat(), Config, addProblem(), parseProxyEntry(), validateBulkFile(), TestRunStopsCleanlyWithCanceledContext(), Embedder, fingerprintStore (+81 more)
+Nodes (86): Stat(), Config, addProblem(), parseProxyEntry(), validateBulkFile(), Embedder, fingerprintStore, localFingerprint() (+78 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.02
-Nodes (58): CorrectCommand, CorrectResolver, CorrectStore, fakeMealStore, MealStore, parsePositiveFloat(), setProfileField(), ProfileCommand (+50 more)
+Cohesion: 0.03
+Nodes (58): NewCorrectCommand(), TestCorrectCommand_BadGramsFormat(), TestCorrectCommand_ConflictOffersReplacement(), TestCorrectCommand_HappyPath(), TestCorrectCommand_NoRecentMeal(), CorrectCommand, CorrectResolver, CorrectStore (+50 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.03
-Nodes (61): NewWebAuthnHandle(), randomID(), calcSleepHours(), computeSleepDuration(), formatDuration(), parseQualityAndNote(), TestCalcSleepHours_NilWake(), TestCalcSleepHours_Overnight() (+53 more)
-
-### Community 15 - "Community 15"
 Cohesion: 0.04
 Nodes (81): authTestStore, emailTestAuthStore, emailToken, fakeMailer, TestHandleRegisterCreateEmailTokenFailure(), TestHandleRegisterSendsVerificationEmailWhenMailerConfigured(), TestHandleTOTPChallengeLockout(), containsStr() (+73 more)
 
+### Community 15 - "Community 15"
+Cohesion: 0.04
+Nodes (57): fakeCmd, fakeMealStore, NewHelpCommand(), buildTestBundle(), mustRegister(), TestHelpCommand_Detail(), TestHelpCommand_FallbackLocale(), TestHelpCommand_HTMLEscape() (+49 more)
+
 ### Community 16 - "Community 16"
+Cohesion: 0.04
+Nodes (65): cors(), corsOriginAllowed(), limitRequestBody(), newHTTPHandler(), newHTTPServer(), newRequestID(), observeRequests(), recoverPanics() (+57 more)
+
+### Community 17 - "Community 17"
 Cohesion: 0.07
 Nodes (83): credAuthStore, erroringCountAuthStore, buildCredHandler(), TestCheckLoginLockoutLocked(), TestCheckLoginLockoutStoreError(), TestHandleChangePasswordInvalidJSON(), TestHandleChangePasswordMissingFields(), TestHandleChangePasswordNewPasswordTooShort() (+75 more)
 
-### Community 17 - "Community 17"
-Cohesion: 0.03
-Nodes (73): adminTempStore(), TestFoodImportAdmin_ImportSource_MaxRowsCap(), TestFoodImportAdmin_ImportSource_TACO(), TestFoodImportAdmin_ImportSource_UnknownSource(), TestFoodImportAdmin_RepairSource(), bulkUpserter, main(), run() (+65 more)
-
 ### Community 18 - "Community 18"
-Cohesion: 0.04
-Nodes (53): Parser, consumeUnit(), parseNumber(), parseSegment(), refineColher(), stripConnector(), stripLeadingFiller(), llmItem (+45 more)
+Cohesion: 0.03
+Nodes (74): adminTempStore(), TestFoodImportAdmin_ImportSource_MaxRowsCap(), TestFoodImportAdmin_ImportSource_TACO(), TestFoodImportAdmin_ImportSource_UnknownSource(), TestFoodImportAdmin_RepairSource(), bulkUpserter, main(), run() (+66 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.04
-Nodes (45): fakePlanStore, findSlotByLabel(), NewPlanCommand(), nextSlotID(), optionSummary(), parseTimeOfDay(), slotsForDayType(), bundleWithSlots() (+37 more)
+Nodes (53): Parser, consumeUnit(), parseNumber(), parseSegment(), refineColher(), stripConnector(), stripLeadingFiller(), llmItem (+45 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.04
 Nodes (37): appendedChatMessage, buildAdapterForProvider(), buildChatAdapterForProvider(), decryptAIKey(), assertBYOKFailure(), TestBuildBYOKAdaptersRejectUnsupportedProvider(), TestBYOKChatOverrideUsedInsteadOfSharedAdapter(), TestBYOKFailuresDoNotFallBackToSharedAdapters() (+29 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.13
-Nodes (61): TestHandleLoginHasConfirmedTOTPErrorFallsThroughToNormalLogin(), TestHandleLoginMFAStepUp(), TestHandleLoginMFAStepUpChallengeCreationFails(), buildTOTPHandler(), defaultTOTPMeals(), enrollTOTPSecret(), newTOTPTestStore(), TestHandleRegenerateRecoveryHasConfirmedError() (+53 more)
+Cohesion: 0.05
+Nodes (36): fakePlanStore, findSlotByLabel(), NewPlanCommand(), nextSlotID(), optionSummary(), parseTimeOfDay(), slotsForDayType(), bundleWithSlots() (+28 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.04
-Nodes (26): allEntitiesFakeStore, New(), newFakeStore(), TestRun_ChecksImmediatelyBeforeCancelledContextReturns(), TestRunFor_ExportsAllEntities(), TestRunFor_LoadErrorAbortsRemainingEntities(), TestRunFor_MissingDestinationErrors(), TestRunFor_PhotoBlobWrittenBeforeIndex() (+18 more)
+Cohesion: 0.13
+Nodes (61): TestHandleLoginHasConfirmedTOTPErrorFallsThroughToNormalLogin(), TestHandleLoginMFAStepUp(), TestHandleLoginMFAStepUpChallengeCreationFails(), buildTOTPHandler(), defaultTOTPMeals(), enrollTOTPSecret(), newTOTPTestStore(), TestHandleRegenerateRecoveryHasConfirmedError() (+53 more)
 
 ### Community 23 - "Community 23"
 Cohesion: 0.06
 Nodes (46): actionRow, Adapter, buttonComponent, mustMarshal(), readGatewayPayload(), readWSFrame(), buildServerFrame(), genSelfSignedCert() (+38 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.07
-Nodes (49): AppleIcon(), Auth0Icon(), AuthentikIcon(), base(), BodyIcon(), brand(), CameraIcon(), ChatIcon() (+41 more)
+Cohesion: 0.05
+Nodes (23): formatDurationShort(), NewFastCommand(), FastCommand, FastStore, randomID(), calcSleepHours(), computeSleepDuration(), formatDuration() (+15 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.06
-Nodes (30): food, foodCategory, foodNutrient, foodPortion, searchResponse, Source, bulkDataTypes(), emitMatchedFood() (+22 more)
+Cohesion: 0.07
+Nodes (49): AppleIcon(), Auth0Icon(), AuthentikIcon(), base(), BodyIcon(), brand(), CameraIcon(), ChatIcon() (+41 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.12
 Nodes (46): doPasskeyLoginFinish(), mfaPasskeyBeginExpiredChallenge(), mfaPasskeyBeginInvalidJSON(), mfaPasskeyBeginMissingToken(), mfaPasskeyBeginNoPasskeysRegistered(), mfaPasskeyBeginSuccess(), mfaPasskeyBeginUnknownChallenge(), mfaPasskeyFinishCeremonyConsumeFails() (+38 more)
 
 ### Community 27 - "Community 27"
-Cohesion: 0.09
-Nodes (28): cors(), corsOriginAllowed(), limitRequestBody(), newHTTPHandler(), newHTTPServer(), newRequestID(), observeRequests(), recoverPanics() (+20 more)
+Cohesion: 0.06
+Nodes (30): food, foodCategory, foodNutrient, foodPortion, searchResponse, Source, bulkDataTypes(), emitMatchedFood() (+22 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.14
-Nodes (20): isMutating(), fakeSessionRepo, Session, CreateSession(), RotateSession(), cfg(), newFakeSessionRepo(), TestCreateSession() (+12 more)
+Cohesion: 0.07
+Nodes (32): sendOut(), sendSuggestions(), assertDoneEvent(), assertTextDeltaEvent(), assertToolCallEvent(), assertToolResultEvent(), collectEvents(), TestRouterContextCancellation() (+24 more)
 
 ### Community 29 - "Community 29"
-Cohesion: 0.08
-Nodes (16): Client, NewClient(), listResponse, Config, Mailer, New(), smtpPortOrDefault(), Message (+8 more)
+Cohesion: 0.14
+Nodes (20): isMutating(), fakeSessionRepo, Session, CreateSession(), RotateSession(), cfg(), newFakeSessionRepo(), TestCreateSession() (+12 more)
 
 ### Community 30 - "Community 30"
 Cohesion: 0.11
 Nodes (16): scaleMacros(), gramsFor(), unitOptionsFor(), addPosition(), apply(), formatNumber(), fromResolvedItem(), isAdLibitum() (+8 more)
 
 ### Community 31 - "Community 31"
+Cohesion: 0.09
+Nodes (14): Client, NewClient(), listResponse, Config, Mailer, New(), smtpPortOrDefault(), Message (+6 more)
+
+### Community 32 - "Community 32"
 Cohesion: 0.21
 Nodes (17): fakeFoodImportRunner, doAdminRequest(), newAdminTestHandler(), TestAdminFoodImport_BackfillEmbeddings200(), TestAdminFoodImport_BackfillEmbeddingsError(), TestAdminFoodImport_MissingToken401(), TestAdminFoodImport_Repair200(), TestAdminFoodImport_RepairError() (+9 more)
 
-### Community 32 - "Community 32"
+### Community 33 - "Community 33"
 Cohesion: 0.13
 Nodes (12): isPrevDay(), Streak(), TestStreak_AboveCeilStops(), TestStreak_AllInBand(), TestStreak_DateGap(), TestStreak_Empty(), TestStreak_ExactBoundary(), TestStreak_MissingTarget() (+4 more)
 
-### Community 33 - "Community 33"
+### Community 34 - "Community 34"
 Cohesion: 0.16
 Nodes (11): isLockedOut(), issueMagic(), issueResetToken(), issueVerifyToken(), now(), parseCookies(), recordFailure(), seed() (+3 more)
 
-### Community 34 - "Community 34"
+### Community 35 - "Community 35"
 Cohesion: 0.27
 Nodes (11): addSortIndicators(), enableUI(), getNthColumn(), getTable(), getTableBody(), getTableHeader(), loadColumns(), loadData() (+3 more)
-
-### Community 35 - "Community 35"
-Cohesion: 0.18
-Nodes (7): fakePurgeStore, NewPurgeRunner(), TestPurgeRunnerContextCancel(), TestPurgeRunnerTicksAndPurges(), TestPurgeRunnerZeroPurged(), PurgeRunner, PurgeStore
 
 ### Community 36 - "Community 36"
 Cohesion: 0.26
 Nodes (7): appendDelta(), appendToolCall(), applyStreamEvent(), applySuggestions(), applyToolResult(), raiseStreamError(), stripSuggestionsFence()
 
 ### Community 37 - "Community 37"
-Cohesion: 0.18
-Nodes (1): fakeStore
-
-### Community 38 - "Community 38"
 Cohesion: 0.17
 Nodes (11): BulkFilter, BulkSource, Command, MessagingAdapter, ModelAdapter, Notifier, NutritionSource, Parser (+3 more)
 
-### Community 39 - "Community 39"
+### Community 38 - "Community 38"
 Cohesion: 0.36
 Nodes (9): bundle(), bundleWithOption(), bundleWithSlot(), dayType(), mealTemplate(), option(), plan(), resolvedItem() (+1 more)
 
-### Community 40 - "Community 40"
+### Community 39 - "Community 39"
 Cohesion: 0.35
 Nodes (8): a(), B(), D(), g(), i(), k(), Q(), y()
 
-### Community 41 - "Community 41"
+### Community 40 - "Community 40"
 Cohesion: 0.24
 Nodes (5): writeCandidates(), writeOtherOptions(), SuggestCommand, SuggestEngine, SuggestFoodSearcher
 
-### Community 42 - "Community 42"
+### Community 41 - "Community 41"
 Cohesion: 0.24
 Nodes (4): demoRange(), fd(), hoursAgo(), m()
 
-### Community 43 - "Community 43"
+### Community 42 - "Community 42"
 Cohesion: 0.31
 Nodes (7): loadPdfjs(), pdfToImages(), renderPage(), handleFile(), onExtracted(), onFailed(), t()
+
+### Community 44 - "Community 44"
+Cohesion: 0.31
+Nodes (8): cryptoRand5Digits(), GenerateRecoveryCodes(), TestGenerateRecoveryCodesCount(), TestGenerateRecoveryCodesFormat(), TestGenerateRecoveryCodesHashRoundtrip(), TestGenerateRecoveryCodesInvalidCount(), TestGenerateRecoveryCodesUniqueness(), RecoveryCodeRepo
 
 ### Community 45 - "Community 45"
 Cohesion: 0.31
@@ -385,8 +385,6 @@ Nodes (1): VisionAdapter
 ## Knowledge Gaps
 - **351 isolated node(s):** `appRuntime`, `phraseEntry`, `bulkUpserter`, `mealSaver`, `Row` (+346 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 37`** (12 nodes): `fakeStore`, `.GetRollup()`, `.GetTargets()`, `.GetUser()`, `.GetUserIDByChannel()`, `.MapChannelUser()`, `.SaveMeal()`, `.SetTargets()`, `.TargetsFor()`, `.UpsertChatRoute()`, `.UpsertRollup()`, `.UpsertUser()`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 46`** (10 nodes): `blockingStore`, `.GetRollup()`, `.GetTargets()`, `.ListUsers()`, `.TargetsFor()`, `fakeStore`, `.GetRollup()`, `.GetTargets()`, `.ListUsers()`, `.TargetsFor()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 47`** (8 nodes): `pendingstore.go`, `New()`, `Store`, `.Delete()`, `.deleteRow()`, `.expired()`, `.Get()`, `.Save()`
@@ -421,12 +419,12 @@ Nodes (1): VisionAdapter
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `New()` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 11`, `Community 12`, `Community 13`, `Community 14`, `Community 15`, `Community 16`, `Community 17`, `Community 19`, `Community 20`, `Community 21`, `Community 22`, `Community 23`, `Community 25`, `Community 26`, `Community 27`, `Community 31`, `Community 45`?**
-  _High betweenness centrality (0.424) - this node is a cross-community bridge._
-- **Why does `Handler` connect `Community 2` to `Community 32`, `Community 1`, `Community 4`, `Community 6`, `Community 11`, `Community 14`, `Community 20`, `Community 28`?**
-  _High betweenness centrality (0.102) - this node is a cross-community bridge._
-- **Why does `contains()` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 6`, `Community 7`, `Community 11`, `Community 12`, `Community 13`, `Community 16`, `Community 17`, `Community 18`, `Community 19`, `Community 20`, `Community 22`, `Community 23`, `Community 27`?**
-  _High betweenness centrality (0.100) - this node is a cross-community bridge._
+- **Why does `New()` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 10`, `Community 11`, `Community 13`, `Community 14`, `Community 15`, `Community 16`, `Community 17`, `Community 18`, `Community 20`, `Community 22`, `Community 23`, `Community 26`, `Community 27`, `Community 28`, `Community 32`, `Community 45`?**
+  _High betweenness centrality (0.405) - this node is a cross-community bridge._
+- **Why does `Handler` connect `Community 2` to `Community 33`, `Community 1`, `Community 4`, `Community 5`, `Community 11`, `Community 16`, `Community 20`, `Community 29`?**
+  _High betweenness centrality (0.113) - this node is a cross-community bridge._
+- **Why does `contains()` connect `Community 5` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 8`, `Community 11`, `Community 12`, `Community 13`, `Community 15`, `Community 16`, `Community 17`, `Community 18`, `Community 19`, `Community 20`, `Community 21`, `Community 23`, `Community 28`?**
+  _High betweenness centrality (0.096) - this node is a cross-community bridge._
 - **Are the 449 inferred relationships involving `doRequest()` (e.g. with `TestMeasurementsRoutesRequireAuth()` and `TestListMeasurementsStoreError()`) actually correct?**
   _`doRequest()` has 449 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 509 inferred relationships involving `New()` (e.g. with `TestRunReturnsConfigLoadError()` and `adminTempStore()`) actually correct?**
