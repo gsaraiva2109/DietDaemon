@@ -119,3 +119,115 @@ func TestDeleteAccount(t *testing.T) {
 		t.Fatalf("audit row account_id/user_id = (%v, %v); want both NULL", accountID, userID)
 	}
 }
+
+// TestRequestAccountDeletion verifies that requesting deletion revokes every
+// session and API key for every user under the account (not just the one
+// whose ID was passed in), and leaves the account row and its data intact.
+func TestRequestAccountDeletion(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u1, err := s.CreateUserWithPassword(ctx(), "acct-req-del", "user-req-del-1", "reqdel1@example.com", "User One", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword u1: %v", err)
+	}
+	u2, err := s.CreateUserWithPassword(ctx(), "acct-req-del", "user-req-del-2", "reqdel2@example.com", "User Two", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword u2: %v", err)
+	}
+
+	for _, u := range []types.User{u1, u2} {
+		sess := auth.Session{
+			ID:                "sess-" + u.ID,
+			UserID:            u.ID,
+			CSRFToken:         "csrf",
+			CreatedAt:         time.Now().UTC(),
+			LastSeenAt:        time.Now().UTC(),
+			IdleExpiresAt:     time.Now().UTC().Add(time.Hour),
+			AbsoluteExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		}
+		if err := s.CreateSession(ctx(), sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", u.ID, err)
+		}
+		if err := s.CreateAPIKey(ctx(), "key-"+u.ID, u.ID, "hashed-"+u.ID, "label"); err != nil {
+			t.Fatalf("CreateAPIKey(%s): %v", u.ID, err)
+		}
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("RequestAccountDeletion(missing user) = %v; want types.ErrNotFound", err)
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), u1.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	for _, u := range []types.User{u1, u2} {
+		if _, err := s.GetSession(ctx(), "sess-"+u.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("GetSession(%s) after deletion request = %v; want sql.ErrNoRows", u.ID, err)
+		}
+		keys, err := s.ListAPIKeys(ctx(), u.ID)
+		if err != nil {
+			t.Fatalf("ListAPIKeys(%s): %v", u.ID, err)
+		}
+		if len(keys) != 0 {
+			t.Fatalf("ListAPIKeys(%s) after deletion request = %d non-revoked keys; want 0", u.ID, len(keys))
+		}
+	}
+
+	// The account and its users still exist (soft delete, not a hard delete).
+	if _, err := s.GetUser(ctx(), u1.ID); err != nil {
+		t.Fatalf("GetUser(u1) after deletion request: %v", err)
+	}
+
+	status, err := s.AccountDeletionStatus(ctx(), u1.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt == nil {
+		t.Fatalf("AccountDeletionStatus.DeletedAt = nil; want set")
+	}
+	if status.PhotosPurgedAt != nil {
+		t.Fatalf("AccountDeletionStatus.PhotosPurgedAt = %v; want nil", status.PhotosPurgedAt)
+	}
+}
+
+// TestReactivateAccount verifies that reactivation clears deleted_at only,
+// leaving a previously-set photos_purged_at untouched.
+func TestReactivateAccount(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-reactivate", "user-reactivate", "reactivate@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	// Simulate the day-30 photo purge job having already run.
+	if _, err := s.db.Exec(`UPDATE accounts SET photos_purged_at = ? WHERE id = ?`, utcNow(), u.AccountID); err != nil {
+		t.Fatalf("simulate photo purge: %v", err)
+	}
+
+	if err := s.ReactivateAccount(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("ReactivateAccount(missing user) = %v; want types.ErrNotFound", err)
+	}
+
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("ReactivateAccount: %v", err)
+	}
+
+	status, err := s.AccountDeletionStatus(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt != nil {
+		t.Fatalf("AccountDeletionStatus.DeletedAt = %v; want nil after reactivation", status.DeletedAt)
+	}
+	if status.PhotosPurgedAt == nil {
+		t.Fatalf("AccountDeletionStatus.PhotosPurgedAt = nil; want untouched (still set) after reactivation")
+	}
+}
