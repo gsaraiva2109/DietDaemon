@@ -127,4 +127,24 @@ describe('queries.ts hook sweep (every use* hook reaches the network)', () => {
 
     await waitFor(() => expect(result.current.status).not.toBe('pending'))
   })
+
+  it('stops polling after a terminal query error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 500 })))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>
+        <DemoProvider>{children}</DemoProvider>
+      </QueryClientProvider>
+    )
+
+    const { result } = renderHook(() => queries.useMeals(), { wrapper })
+
+    await waitFor(() => expect(result.current.status).toBe('error'))
+
+    const query = qc.getQueryCache().find({ queryKey: queries.keys.meals(20, false) })
+    expect(query).toBeDefined()
+    const { refetchInterval } = query!.observers[0].options
+    if (typeof refetchInterval !== 'function') throw new Error('Expected a polling callback')
+    expect(refetchInterval(query!)).toBe(false)
+  })
 })

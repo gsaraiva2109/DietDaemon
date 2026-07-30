@@ -53,6 +53,8 @@ import type {
 
 const POLL_MS = 30_000
 
+const pollingInterval = (query: { state: { status: string } }) => (query.state.status === 'error' ? false : POLL_MS)
+
 // Reads for domains whose backend may not exist yet: a 404 (route not
 // registered) is "no data", not an error. Mirrors useToday's fallback.
 async function emptyOn404<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
@@ -85,7 +87,7 @@ export function useToday(): UseQueryResult<DailyRollup | null> {
         throw err
       }
     },
-    refetchInterval: demo ? false : POLL_MS,
+    refetchInterval: demo ? false : pollingInterval,
   })
 }
 
@@ -103,7 +105,7 @@ export function useMeals(limit = 20) {
   return useQuery({
     queryKey: keys.meals(limit, demo),
     queryFn: () => (demo ? DEMO_MEALS.slice(0, limit) : api.meals(limit)),
-    refetchInterval: demo ? false : POLL_MS,
+    refetchInterval: demo ? false : pollingInterval,
   })
 }
 
@@ -796,7 +798,7 @@ export function useWaterToday() {
   return useQuery({
     queryKey: ['water', 'today', demo],
     queryFn: () => (demo ? null : emptyOn404(() => api.body.water.today(), null)),
-    refetchInterval: demo ? false : POLL_MS,
+    refetchInterval: demo ? false : pollingInterval,
   })
 }
 
@@ -852,7 +854,7 @@ export function useActiveFast() {
   return useQuery({
     queryKey: ['fasting', 'active', demo],
     queryFn: () => (demo ? null : emptyOn404(() => api.fasting.active(), null)),
-    refetchInterval: demo ? false : POLL_MS,
+    refetchInterval: demo ? false : pollingInterval,
   })
 }
 
