@@ -221,7 +221,7 @@ func (h *Handler) exportPhotos(ctx context.Context, userID string) ([]types.Prog
 	}
 	photos := make([]types.ProgressPhoto, 0, len(photoMeta))
 	for _, meta := range photoMeta {
-		full, err := h.store.GetPhotoData(ctx, meta.ID)
+		full, err := h.store.GetPhotoData(ctx, userID, meta.ID)
 		if err != nil {
 			return nil, err
 		}

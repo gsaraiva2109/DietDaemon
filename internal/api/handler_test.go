@@ -512,7 +512,7 @@ func (s *fakeMealStore) DeleteMeasurement(_ context.Context, _, _ string) error 
 func (s *fakeMealStore) ListPhotoMetadata(_ context.Context, _ string) ([]types.ProgressPhoto, error) {
 	return s.photoMetadata, s.photoMetadataErr
 }
-func (s *fakeMealStore) GetPhotoData(_ context.Context, _ string) (types.ProgressPhoto, error) {
+func (s *fakeMealStore) GetPhotoData(_ context.Context, _, _ string) (types.ProgressPhoto, error) {
 	return s.photoData, s.photoDataErr
 }
 func (s *fakeMealStore) UploadPhoto(_ context.Context, _ types.ProgressPhoto) error {

@@ -27,11 +27,14 @@ func (h *Handler) handleListPhotos(w http.ResponseWriter, r *http.Request, userI
 
 func (h *Handler) handlePhotoData(w http.ResponseWriter, r *http.Request, userID string) {
 	photoID := r.PathValue("id")
-	photo, err := h.store.GetPhotoData(r.Context(), photoID)
+	photo, err := h.store.GetPhotoData(r.Context(), userID, photoID)
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
+	// Defense in depth: the store query is already scoped by user_id, so this
+	// is redundant in the real store, but keeps the handler safe even if it's
+	// ever called against a store implementation that isn't scoped correctly.
 	if photo.UserID != userID {
 		h.writeErr(w, types.ErrNotFound)
 		return
@@ -101,5 +104,7 @@ func (h *Handler) handleDeletePhoto(w http.ResponseWriter, r *http.Request, user
 		h.writeErr(w, err)
 		return
 	}
+	meta, _ := json.Marshal(map[string]string{"photo_id": photoID})
+	h.writeAudit(r.Context(), "", userID, "photo.delete", h.clientIP(r), r.UserAgent(), string(meta))
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -312,7 +312,7 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	if len(photos) != 1 {
 		t.Fatalf("restored photos = %d, want 1", len(photos))
 	}
-	full, err := assertStore.GetPhotoData(ctx, photos[0].ID)
+	full, err := assertStore.GetPhotoData(ctx, testUserID, photos[0].ID)
 	if err != nil {
 		t.Fatalf("GetPhotoData: %v", err)
 	}

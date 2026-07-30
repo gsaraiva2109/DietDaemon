@@ -53,14 +53,16 @@ func (r photoRow) toProgressPhoto() types.ProgressPhoto {
 	}
 }
 
-// GetPhotoData returns a single progress photo including BLOB data.
-func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error) {
+// GetPhotoData returns a single progress photo including BLOB data. Scoped to
+// userID at the SQL layer: a photoID belonging to another user returns
+// ErrNotFound, the same as a photoID that doesn't exist.
+func (s *Store) GetPhotoData(ctx context.Context, userID, photoID string) (types.ProgressPhoto, error) {
 	const q = `
 		SELECT id, user_id, date, view, mime_type, data, created_at
-		FROM progress_photos WHERE id = ?
+		FROM progress_photos WHERE id = ? AND user_id = ?
 	`
 	var row photoRow
-	if err := s.db.GetContext(ctx, &row, s.rewrite(q), photoID); err != nil {
+	if err := s.db.GetContext(ctx, &row, s.rewrite(q), photoID, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.ProgressPhoto{}, types.ErrNotFound
 		}
@@ -70,24 +72,27 @@ func (s *Store) GetPhotoData(ctx context.Context, photoID string) (types.Progres
 }
 
 // GetPhotosData batch-fetches BLOB data for multiple photo IDs in a single
-// query, returning a map keyed by photo ID. IDs with no matching row are
+// query, returning a map keyed by photo ID. Scoped to userID at the SQL
+// layer: IDs belonging to another user are treated the same as unknown IDs —
 // simply absent from the map (no error). Returns an empty map for an empty
 // input, without touching the DB.
-func (s *Store) GetPhotosData(ctx context.Context, photoIDs []string) (map[string][]byte, error) {
+func (s *Store) GetPhotosData(ctx context.Context, userID string, photoIDs []string) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(photoIDs))
 	if len(photoIDs) == 0 {
 		return out, nil
 	}
 
 	placeholders := make([]string, len(photoIDs))
-	args := make([]any, len(photoIDs))
+	args := make([]any, 0, len(photoIDs)+1)
 	for i, id := range photoIDs {
 		placeholders[i] = s.dialect.Placeholder(i + 1)
-		args[i] = id
+		args = append(args, id)
 	}
+	args = append(args, userID)
 
 	// #nosec G201 -- placeholder expansion is ? only, values are args
-	q := fmt.Sprintf(`SELECT id, data FROM progress_photos WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	q := fmt.Sprintf(`SELECT id, data FROM progress_photos WHERE id IN (%s) AND user_id = %s`,
+		strings.Join(placeholders, ","), s.dialect.Placeholder(len(photoIDs)+1))
 
 	var rows []photoDataRow
 	if err := s.db.SelectContext(ctx, &rows, s.rewrite(q), args...); err != nil {

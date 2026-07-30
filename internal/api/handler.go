@@ -250,7 +250,7 @@ type MealStore interface {
 
 	// ListPhotoMetadata Body tracking — photos.
 	ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error)
-	GetPhotoData(ctx context.Context, photoID string) (types.ProgressPhoto, error)
+	GetPhotoData(ctx context.Context, userID, photoID string) (types.ProgressPhoto, error)
 	UploadPhoto(ctx context.Context, p types.ProgressPhoto) error
 	DeletePhoto(ctx context.Context, userID, photoID string) error
 

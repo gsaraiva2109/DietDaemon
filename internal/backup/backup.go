@@ -51,7 +51,7 @@ type Store interface {
 	ListSleep(ctx context.Context, userID string, limit int) ([]types.SleepLog, error)
 	ListFasts(ctx context.Context, userID string, limit int) ([]types.Fast, error)
 	ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error)
-	GetPhotosData(ctx context.Context, photoIDs []string) (map[string][]byte, error)
+	GetPhotosData(ctx context.Context, userID string, photoIDs []string) (map[string][]byte, error)
 	GetWaterInRange(ctx context.Context, userID, startDate, endDate string) ([]types.WaterLog, error)
 	GetWorkoutsInRangeWithExercises(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
 
@@ -285,7 +285,7 @@ func (r *Runner) writePhotos(ctx context.Context, dst Destination, cfg types.Bac
 	for i, p := range photos {
 		ids[i] = p.ID
 	}
-	data, err := r.store.GetPhotosData(ctx, ids)
+	data, err := r.store.GetPhotosData(ctx, userID, ids)
 	if err != nil {
 		return fmt.Errorf("backup: load photo data: %w", err)
 	}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -26,7 +27,7 @@ func TestGetPhotosData_BatchReturnsCorrectData(t *testing.T) {
 		}
 	}
 
-	got, err := s.GetPhotosData(ctx(), []string{"photo1", "photo2", "photo3"})
+	got, err := s.GetPhotosData(ctx(), uid, []string{"photo1", "photo2", "photo3"})
 	if err != nil {
 		t.Fatalf("GetPhotosData: %v", err)
 	}
@@ -44,7 +45,7 @@ func TestGetPhotosData_EmptyInput(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
-	got, err := s.GetPhotosData(ctx(), nil)
+	got, err := s.GetPhotosData(ctx(), "any-user", nil)
 	if err != nil {
 		t.Fatalf("GetPhotosData(nil): %v", err)
 	}
@@ -65,7 +66,7 @@ func TestGetPhotosData_MissingIDIgnored(t *testing.T) {
 		t.Fatalf("UploadPhoto: %v", err)
 	}
 
-	got, err := s.GetPhotosData(ctx(), []string{"photo1", "no-such-id"})
+	got, err := s.GetPhotosData(ctx(), uid, []string{"photo1", "no-such-id"})
 	if err != nil {
 		t.Fatalf("GetPhotosData: %v", err)
 	}
@@ -77,6 +78,76 @@ func TestGetPhotosData_MissingIDIgnored(t *testing.T) {
 	}
 	if _, ok := got["no-such-id"]; ok {
 		t.Fatalf("expected no-such-id absent from result map")
+	}
+}
+
+// TestGetPhotoData_CrossUserAccessDenied pins the security fix: the SQL
+// query itself is scoped by user_id, so a photoID owned by a different user
+// returns ErrNotFound at the store layer — not just a handler-level check.
+func TestGetPhotoData_CrossUserAccessDenied(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	owner := "u-owner"
+	attacker := "u-attacker"
+	mustUser(t, s, types.User{ID: owner})
+	mustUser(t, s, types.User{ID: attacker})
+
+	if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+		ID: "owner-photo", UserID: owner, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("secret"),
+	}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+
+	// Owner can fetch their own photo.
+	got, err := s.GetPhotoData(ctx(), owner, "owner-photo")
+	if err != nil {
+		t.Fatalf("GetPhotoData(owner): %v", err)
+	}
+	if string(got.Data) != "secret" {
+		t.Fatalf("GetPhotoData(owner).Data = %q, want %q", got.Data, "secret")
+	}
+
+	// A different user requesting the same photo ID gets ErrNotFound, not the data.
+	if _, err := s.GetPhotoData(ctx(), attacker, "owner-photo"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("GetPhotoData(attacker, owner's photo) = %v, want types.ErrNotFound", err)
+	}
+}
+
+// TestGetPhotosData_CrossUserAccessDenied is the batch-fetch counterpart:
+// a photo ID owned by a different user must be silently excluded from the
+// result map (same as an unknown ID), not returned.
+func TestGetPhotosData_CrossUserAccessDenied(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	owner := "u-owner-batch"
+	attacker := "u-attacker-batch"
+	mustUser(t, s, types.User{ID: owner})
+	mustUser(t, s, types.User{ID: attacker})
+
+	if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+		ID: "owner-photo-2", UserID: owner, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("secret2"),
+	}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+
+	got, err := s.GetPhotosData(ctx(), attacker, []string{"owner-photo-2"})
+	if err != nil {
+		t.Fatalf("GetPhotosData(attacker): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("GetPhotosData(attacker) = %v, want empty (owner's photo must not leak)", got)
+	}
+
+	// Confirm the owner can still fetch it — proves the empty result above is
+	// due to user scoping, not the row being missing.
+	got, err = s.GetPhotosData(ctx(), owner, []string{"owner-photo-2"})
+	if err != nil {
+		t.Fatalf("GetPhotosData(owner): %v", err)
+	}
+	if string(got["owner-photo-2"]) != "secret2" {
+		t.Fatalf("GetPhotosData(owner)[owner-photo-2] = %q, want %q", got["owner-photo-2"], "secret2")
 	}
 }
 
