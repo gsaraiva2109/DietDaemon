@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -39,11 +40,25 @@ type fakePurgeStore struct {
 	auditEvents   []fakeAuditEvent
 	photoPurges   []string // account IDs passed to PurgeAccountPhotos
 	accountPurges []string // account IDs passed to PurgeAccount
+
+	// Error-injection fields, one per PurgeStore method, so tests can drive
+	// purge.go's error-handling branches (slog.Error + return/continue)
+	// without a real failing DB driver.
+	listPendingPhotoPurgeErr error
+	purgeAccountPhotosErr    error
+	listPastDeletionErr      error
+	purgeAccountErr          error
+	hasAuditEventErr         error
+	accountEmailsErr         error
+	writeAuditEventErr       error
 }
 
 func (f *fakePurgeStore) ListAccountsPendingPhotoPurge(_ context.Context, deletedBefore time.Time) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listPendingPhotoPurgeErr != nil {
+		return nil, f.listPendingPhotoPurgeErr
+	}
 	var ids []string
 	for id, a := range f.accounts {
 		if a.photosPurgedAt == nil && !a.deletedAt.After(deletedBefore) {
@@ -57,6 +72,9 @@ func (f *fakePurgeStore) ListAccountsPendingPhotoPurge(_ context.Context, delete
 func (f *fakePurgeStore) PurgeAccountPhotos(_ context.Context, accountID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.purgeAccountPhotosErr != nil {
+		return f.purgeAccountPhotosErr
+	}
 	a, ok := f.accounts[accountID]
 	if !ok {
 		return fmt.Errorf("fake: unknown account %s", accountID)
@@ -71,6 +89,9 @@ func (f *fakePurgeStore) PurgeAccountPhotos(_ context.Context, accountID string)
 func (f *fakePurgeStore) ListAccountsPastDeletion(_ context.Context, deletedBefore time.Time) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listPastDeletionErr != nil {
+		return nil, f.listPastDeletionErr
+	}
 	var ids []string
 	for id, a := range f.accounts {
 		if !a.deletedAt.After(deletedBefore) {
@@ -89,6 +110,9 @@ func (f *fakePurgeStore) ListAccountsPastDeletion(_ context.Context, deletedBefo
 func (f *fakePurgeStore) PurgeAccount(_ context.Context, accountID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.purgeAccountErr != nil {
+		return f.purgeAccountErr
+	}
 	if _, ok := f.accounts[accountID]; !ok {
 		return fmt.Errorf("fake: unknown account %s", accountID)
 	}
@@ -101,6 +125,9 @@ func (f *fakePurgeStore) PurgeAccount(_ context.Context, accountID string) error
 func (f *fakePurgeStore) HasAuditEvent(_ context.Context, accountID, event string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.hasAuditEventErr != nil {
+		return false, f.hasAuditEventErr
+	}
 	for _, e := range f.auditEvents {
 		if e.accountID == accountID && e.event == event {
 			return true, nil
@@ -112,6 +139,9 @@ func (f *fakePurgeStore) HasAuditEvent(_ context.Context, accountID, event strin
 func (f *fakePurgeStore) AccountEmails(_ context.Context, accountID string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.accountEmailsErr != nil {
+		return nil, f.accountEmailsErr
+	}
 	a, ok := f.accounts[accountID]
 	if !ok {
 		return nil, nil
@@ -122,21 +152,25 @@ func (f *fakePurgeStore) AccountEmails(_ context.Context, accountID string) ([]s
 func (f *fakePurgeStore) WriteAuditEvent(_ context.Context, ev types.AuditEvent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.writeAuditEventErr != nil {
+		return f.writeAuditEventErr
+	}
 	f.auditEvents = append(f.auditEvents, fakeAuditEvent{accountID: ev.AccountID, event: ev.Event})
 	return nil
 }
 
 // fakeMailer is a test double for mailer.Mailer.
 type fakeMailer struct {
-	mu   sync.Mutex
-	sent []string // "to" addresses, one entry per Send call
+	mu      sync.Mutex
+	sent    []string // "to" addresses, one entry per Send call
+	sendErr error
 }
 
 func (m *fakeMailer) Send(_ context.Context, to string, _ mailer.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sent = append(m.sent, to)
-	return nil
+	return m.sendErr
 }
 
 func (f *fakePurgeStore) PurgeLoginAttempts(_ context.Context, olderThan time.Time) (int, error) {
@@ -415,5 +449,146 @@ func TestPurgeRunnerNoMailerSkipsReminders(t *testing.T) {
 		if e.event == photoPurgeReminderEvent {
 			t.Fatal("reminder audit event written despite no mailer configured")
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Error-path coverage: purgeAccountPhotos, purgeAccounts, sendReminders,
+// remindAccount, sendReminderEmails. These call the unexported step methods
+// directly instead of going through Run's ticker, so each error branch fires
+// deterministically on the first call.
+// ---------------------------------------------------------------------------
+
+func TestPurgeAccountPhotosListError(t *testing.T) {
+	store := &fakePurgeStore{listPendingPhotoPurgeErr: errors.New("list failed")}
+	runner := NewPurgeRunner(store, time.Hour)
+
+	runner.purgeAccountPhotos(context.Background(), time.Now())
+
+	if len(store.photoPurges) != 0 {
+		t.Fatalf("expected no photo purges when listing fails, got %v", store.photoPurges)
+	}
+}
+
+func TestPurgeAccountPhotosPerAccountErrorContinues(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-bad": {deletedAt: now.AddDate(0, 0, -31)},
+		},
+		purgeAccountPhotosErr: errors.New("purge failed"),
+	}
+	runner := NewPurgeRunner(store, time.Hour)
+
+	runner.purgeAccountPhotos(context.Background(), now)
+
+	if store.accounts["acct-bad"].photosPurgedAt != nil {
+		t.Fatal("photosPurgedAt should remain nil when the purge call fails")
+	}
+}
+
+func TestPurgeAccountsListError(t *testing.T) {
+	store := &fakePurgeStore{listPastDeletionErr: errors.New("list failed")}
+	runner := NewPurgeRunner(store, time.Hour)
+
+	runner.purgeAccounts(context.Background(), time.Now())
+
+	if len(store.accountPurges) != 0 {
+		t.Fatalf("expected no account purges when listing fails, got %v", store.accountPurges)
+	}
+}
+
+func TestPurgeAccountsPerAccountErrorContinues(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-bad": {deletedAt: now.AddDate(0, 0, -91)},
+		},
+		purgeAccountErr: errors.New("purge failed"),
+	}
+	runner := NewPurgeRunner(store, time.Hour)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if _, ok := store.accounts["acct-bad"]; !ok {
+		t.Fatal("account should still be present when the purge call fails")
+	}
+}
+
+func TestSendRemindersListErrors(t *testing.T) {
+	store := &fakePurgeStore{
+		listPendingPhotoPurgeErr: errors.New("photo list failed"),
+		listPastDeletionErr:      errors.New("final list failed"),
+	}
+	mail := &fakeMailer{}
+	runner := NewPurgeRunner(store, time.Hour).WithMailer(mail)
+
+	runner.sendReminders(context.Background(), time.Now())
+
+	if len(mail.sent) != 0 {
+		t.Fatalf("expected no reminder sends when both list calls fail, got %v", mail.sent)
+	}
+}
+
+func TestRemindAccountHasAuditEventError(t *testing.T) {
+	store := &fakePurgeStore{hasAuditEventErr: errors.New("audit check failed")}
+	mail := &fakeMailer{}
+	runner := NewPurgeRunner(store, time.Hour).WithMailer(mail)
+
+	runner.remindAccount(context.Background(), "acct-1", photoPurgeReminderEvent, photoPurgeReminderMessage)
+
+	if len(mail.sent) != 0 {
+		t.Fatalf("expected no send when HasAuditEvent errors, got %v", mail.sent)
+	}
+}
+
+func TestRemindAccountAccountEmailsError(t *testing.T) {
+	store := &fakePurgeStore{accountEmailsErr: errors.New("emails lookup failed")}
+	mail := &fakeMailer{}
+	runner := NewPurgeRunner(store, time.Hour).WithMailer(mail)
+
+	runner.remindAccount(context.Background(), "acct-1", photoPurgeReminderEvent, photoPurgeReminderMessage)
+
+	if len(mail.sent) != 0 {
+		t.Fatalf("expected no send when AccountEmails errors, got %v", mail.sent)
+	}
+}
+
+// TestRemindAccountSendFailureSkipsAuditWrite covers sendReminderEmails'
+// per-address error log plus remindAccount's "don't write the idempotency
+// audit event on a failed send" branch, in one pass.
+func TestRemindAccountSendFailureSkipsAuditWrite(t *testing.T) {
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {emails: []string{"a@example.com"}},
+		},
+	}
+	mail := &fakeMailer{sendErr: errors.New("smtp down")}
+	runner := NewPurgeRunner(store, time.Hour).WithMailer(mail)
+
+	runner.remindAccount(context.Background(), "acct-1", photoPurgeReminderEvent, photoPurgeReminderMessage)
+
+	for _, e := range store.auditEvents {
+		if e.accountID == "acct-1" && e.event == photoPurgeReminderEvent {
+			t.Fatal("audit event must not be written when the reminder send failed")
+		}
+	}
+}
+
+func TestRemindAccountWriteAuditEventError(t *testing.T) {
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {emails: []string{"a@example.com"}},
+		},
+		writeAuditEventErr: errors.New("write failed"),
+	}
+	mail := &fakeMailer{}
+	runner := NewPurgeRunner(store, time.Hour).WithMailer(mail)
+
+	// Must not panic despite the audit write failing after a successful send.
+	runner.remindAccount(context.Background(), "acct-1", photoPurgeReminderEvent, photoPurgeReminderMessage)
+
+	if len(mail.sent) != 1 {
+		t.Fatalf("expected the reminder to still be sent, got %v", mail.sent)
 	}
 }

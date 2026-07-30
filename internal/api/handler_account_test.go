@@ -173,6 +173,31 @@ func TestHandleExportAllStoreErrors(t *testing.T) {
 	}
 }
 
+// TestHandleExportAllPhotosPurgedNote covers the branch where
+// AccountDeletionStatus reports the day-30 photo-purge tier has already run:
+// the export must carry photos_purged_at/photos_note instead of silently
+// returning an empty Photos slice.
+func TestHandleExportAllPhotosPurgedNote(t *testing.T) {
+	authStore := newFakeAuthStore()
+	purgedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{PhotosPurgedAt: &purgedAt}
+	ms := newFakeMealStore()
+	ms.user = types.User{ID: "test-user"}
+	h := newHandlerWithAccountStore(ms, authStore)
+
+	rec := doRequest(h, "GET", "/api/v1/export/all", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	export := decodeJSON[UserDataExport](t, rec)
+	if export.PhotosPurgedAt == nil {
+		t.Fatal("expected photos_purged_at to be set")
+	}
+	if export.PhotosNote == "" {
+		t.Error("expected photos_note to be set")
+	}
+}
+
 func TestHandleExportAllPhotoDataError(t *testing.T) {
 	store := newFakeMealStore()
 	store.user = types.User{ID: "test-user"}
@@ -260,6 +285,89 @@ func TestHandleDeleteAccountClearsSessionCookie(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// TestHandleDeleteAccountSendsEmail covers the best-effort deletion-requested
+// email: with a mailer configured and the user having an address on file,
+// handleDeleteAccount must send it after RequestAccountDeletion succeeds.
+func TestHandleDeleteAccountSendsEmail(t *testing.T) {
+	authStore := newFakeAuthStore()
+	ms := newFakeMealStore()
+	ms.user = types.User{ID: "test-user", Email: "test-user@example.com"}
+	fm := &fakeMailer{}
+	h := deleteAccountTestHandler(authStore, ms, fm)
+
+	rec := doRequest(h, "DELETE", "/api/v1/account", map[string]string{"confirm": "DELETE"}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fm.sent) != 1 || fm.sent[0].to != "test-user@example.com" {
+		t.Fatalf("sent = %v; want one email to test-user@example.com", fm.sent)
+	}
+}
+
+// TestHandleDeleteAccountEmailSkippedOnUserLookupFailure covers
+// sendAccountDeletionEmail's early return when h.store.GetUser fails or
+// returns a user with no email on file: deletion must still succeed (email
+// is best-effort), just with nothing sent.
+func TestHandleDeleteAccountEmailSkippedOnUserLookupFailure(t *testing.T) {
+	for name, setup := range map[string]func(*fakeMealStore){
+		"getUserErr": func(s *fakeMealStore) { s.getUserErr = errors.New("db down") },
+		"emptyEmail": func(s *fakeMealStore) { s.user = types.User{ID: "test-user", Email: ""} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			authStore := newFakeAuthStore()
+			ms := newFakeMealStore()
+			setup(ms)
+			fm := &fakeMailer{}
+			h := deleteAccountTestHandler(authStore, ms, fm)
+
+			rec := doRequest(h, "DELETE", "/api/v1/account", map[string]string{"confirm": "DELETE"}, nil)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if len(fm.sent) != 0 {
+				t.Errorf("expected no email sent, got %v", fm.sent)
+			}
+		})
+	}
+}
+
+// TestHandleDeleteAccountEmailSendFailureStillSucceeds covers
+// sendAccountDeletionEmail's slog.Error branch when the mailer itself fails:
+// deletion has already committed, so a send failure must not surface as a
+// non-204 response.
+func TestHandleDeleteAccountEmailSendFailureStillSucceeds(t *testing.T) {
+	authStore := newFakeAuthStore()
+	ms := newFakeMealStore()
+	ms.user = types.User{ID: "test-user", Email: "test-user@example.com"}
+	fm := &fakeMailer{sendErr: errors.New("smtp down")}
+	h := deleteAccountTestHandler(authStore, ms, fm)
+
+	rec := doRequest(h, "DELETE", "/api/v1/account", map[string]string{"confirm": "DELETE"}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 (best-effort send), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// deleteAccountTestHandler builds a handler wired for the delete-account
+// email tests: an "smtp" provider (unlike buildAuthTestHandler's "none") so
+// sendAccountDeletionEmail's mailer branch actually runs, matching
+// TestHandleDeleteAccountSendsEmail's setup.
+func deleteAccountTestHandler(authStore accountRepos, ms MealStore, m *fakeMailer) *Handler {
+	return New(ms, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       auth.DefaultLockoutConfig(),
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+		WithMailer(m, "smtp"),
+	)
 }
 
 func TestHandleDeleteAccountNotFound(t *testing.T) {
@@ -383,6 +491,47 @@ func TestHandleReactivateAccountRestoresAccess(t *testing.T) {
 	after := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
 	if after.Code == http.StatusForbidden {
 		t.Fatalf("expected normal access restored after reactivation, still got 403: %s", after.Body.String())
+	}
+}
+
+// TestHandleReactivateAccountSendsEmail covers the best-effort
+// reactivation-confirmed email: with a mailer configured and the user having
+// an address on file, handleReactivateAccount must send it after
+// ReactivateAccount succeeds.
+func TestHandleReactivateAccountSendsEmail(t *testing.T) {
+	authStore := newFakeAuthStore()
+	deletedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+	ms := newFakeMealStore()
+	ms.user = types.User{ID: "test-user", Email: "test-user@example.com"}
+	fm := &fakeMailer{}
+	h := deleteAccountTestHandler(authStore, ms, fm)
+
+	rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fm.sent) != 1 || fm.sent[0].to != "test-user@example.com" {
+		t.Fatalf("sent = %v; want one email to test-user@example.com", fm.sent)
+	}
+}
+
+// TestHandleReactivateAccountEmailSendFailureStillSucceeds covers
+// handleReactivateAccount's slog.Error branch when the mailer fails:
+// reactivation has already committed, so a send failure must not surface as
+// a non-200 response.
+func TestHandleReactivateAccountEmailSendFailureStillSucceeds(t *testing.T) {
+	authStore := newFakeAuthStore()
+	deletedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+	ms := newFakeMealStore()
+	ms.user = types.User{ID: "test-user", Email: "test-user@example.com"}
+	fm := &fakeMailer{sendErr: errors.New("smtp down")}
+	h := deleteAccountTestHandler(authStore, ms, fm)
+
+	rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (best-effort send), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
