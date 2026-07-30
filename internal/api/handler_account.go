@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,6 +52,13 @@ type UserDataExport struct {
 
 	Photos    []types.ProgressPhoto `json:"photos"`
 	Templates []types.MealTemplate  `json:"templates"`
+
+	// PhotosPurgedAt and PhotosNote are set when the retention purge job has
+	// already hard-deleted this account's progress photos (day-30 tier of
+	// the tiered deletion plan): Photos above is then an empty slice, and
+	// these fields explain why instead of leaving that silent.
+	PhotosPurgedAt *time.Time `json:"photos_purged_at,omitempty"`
+	PhotosNote     string     `json:"photos_note,omitempty"`
 
 	// Plans holds the user's full diet plan history (transcribed
 	// prescriptions), each with its day-types/slots/options tree. This is the
@@ -100,6 +109,10 @@ func (h *Handler) handleExportAll(w http.ResponseWriter, r *http.Request, userID
 		Photos:           photos,
 		Templates:        logs.Templates,
 		Plans:            plans,
+	}
+	if status, err := h.authStore.AccountDeletionStatus(ctx, userID); err == nil && status.PhotosPurgedAt != nil {
+		export.PhotosPurgedAt = status.PhotosPurgedAt
+		export.PhotosNote = "progress photos were permanently deleted per retention policy"
 	}
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=dietdaemon-export-%s.json", userID))
@@ -264,18 +277,63 @@ func (h *Handler) handleDeleteAccount(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 
-	if err := h.authStore.DeleteAccount(r.Context(), userID); err != nil {
+	ctx := r.Context()
+	if err := h.authStore.RequestAccountDeletion(ctx, userID); err != nil {
 		h.writeErr(w, err)
 		return
 	}
 
-	// Best-effort: the account (and its sessions row, via cascade) is already
-	// gone, but also drop the caller's own session cache entry and cookies so
-	// this response doesn't leave a stale authenticated cookie behind.
+	// Best-effort: sessions/API keys are already revoked by
+	// RequestAccountDeletion, but also drop the caller's own session cache
+	// entry and cookies so this response doesn't leave a stale authenticated
+	// cookie behind.
 	if c, err := r.Cookie("dd_session"); err == nil && c.Value != "" {
-		_ = h.sessions.DeleteSession(r.Context(), auth.HashToken(c.Value))
+		_ = h.sessions.DeleteSession(ctx, auth.HashToken(c.Value))
 	}
 	h.clearSessionCookies(w)
 
+	h.sendAccountDeletionEmail(ctx, userID)
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sendAccountDeletionEmail best-effort notifies the user their deletion
+// request was received. Errors are logged, not surfaced -- deletion has
+// already committed by the time this runs, and a mailer outage shouldn't
+// turn that into a failed response. No-op when no mailer is configured,
+// matching finishRegistrationEmail/handleMFAEmailSend's convention.
+func (h *Handler) sendAccountDeletionEmail(ctx context.Context, userID string) {
+	if h.mailer == nil || h.emailProvider == "none" {
+		return
+	}
+	u, err := h.store.GetUser(ctx, userID)
+	if err != nil || u.Email == "" {
+		return
+	}
+	msg := mailer.AccountDeletionRequestedEmail(h.publicBaseURL)
+	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
+		slog.Error("send account deletion email failed", "err", err)
+	}
+}
+
+// handleReactivateAccount cancels a pending account deletion (see the tiered
+// retention plan): it's the one mutating route wrap() still lets a
+// pending-deletion account reach. Progress photos already purged by the
+// day-30 tier are not restored -- ReactivateAccount only clears deleted_at.
+func (h *Handler) handleReactivateAccount(w http.ResponseWriter, r *http.Request, userID string) {
+	ctx := r.Context()
+	if err := h.authStore.ReactivateAccount(ctx, userID); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+
+	if h.mailer != nil && h.emailProvider != "none" {
+		if u, err := h.store.GetUser(ctx, userID); err == nil && u.Email != "" {
+			if err := h.mailer.Send(ctx, u.Email, mailer.AccountReactivatedEmail()); err != nil {
+				slog.Error("send account reactivated email failed", "err", err)
+			}
+		}
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 }

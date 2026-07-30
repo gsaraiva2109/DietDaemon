@@ -10,6 +10,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // accountRepos is the set of auth.*Repo interfaces WithAuth needs alongside
@@ -42,13 +43,13 @@ func newHandlerWithAccountStore(store MealStore, authStore accountRepos) *Handle
 	)
 }
 
-// notFoundAccountStore wraps *fakeAuthStore and overrides DeleteAccount to
-// simulate the store reporting the account doesn't exist.
+// notFoundAccountStore wraps *fakeAuthStore and overrides RequestAccountDeletion
+// to simulate the store reporting the account doesn't exist.
 type notFoundAccountStore struct {
 	*fakeAuthStore
 }
 
-func (s *notFoundAccountStore) DeleteAccount(_ context.Context, _ string) error {
+func (s *notFoundAccountStore) RequestAccountDeletion(_ context.Context, _ string) error {
 	return types.ErrNotFound
 }
 
@@ -220,8 +221,17 @@ func TestHandleDeleteAccountSuccess(t *testing.T) {
 		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if _, ok := authStore.users["test-user"]; ok {
-		t.Errorf("expected DeleteAccount to be called with the authenticated userID (test-user), but it's still present")
+	// RequestAccountDeletion soft-deletes: the user row stays, but
+	// deleted_at is now set for the authenticated userID (test-user).
+	if _, ok := authStore.users["test-user"]; !ok {
+		t.Errorf("expected RequestAccountDeletion to soft-delete, not remove, the user row")
+	}
+	status, err := authStore.AccountDeletionStatus(context.Background(), "test-user")
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt == nil {
+		t.Errorf("expected RequestAccountDeletion to be called with the authenticated userID (test-user), but deleted_at is unset")
 	}
 
 	// Session cookie must be cleared.
@@ -260,4 +270,138 @@ func TestHandleDeleteAccountNotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// ---------------------------------------------------------------------------
+// wrap()'s pending-deletion gate, and POST /api/v1/account/reactivate
+// ---------------------------------------------------------------------------
+
+// pendingDeletionResponse mirrors the flat 403 body writePendingDeletionError
+// (handler.go) produces -- deliberately not the standard {error:{code,
+// message}} envelope, since the frontend needs deleted_at/photos_purged to
+// pick tier-1 vs tier-2 reactivation copy without a second round trip.
+type pendingDeletionResponse struct {
+	Error        string     `json:"error"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	PhotosPurged bool       `json:"photos_purged"`
+}
+
+func TestWrapBlocksPendingDeletionDay0To30(t *testing.T) {
+	authStore := newFakeAuthStore()
+	deletedAt := time.Now().UTC().Add(-10 * 24 * time.Hour) // day 10: within the 30-day full-recovery window.
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+	h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeJSON[pendingDeletionResponse](t, rec)
+	if body.Error != "pending_deletion" {
+		t.Errorf("error = %q, want pending_deletion", body.Error)
+	}
+	if body.PhotosPurged {
+		t.Errorf("photos_purged = true, want false (day 0-30 tier)")
+	}
+	if body.DeletedAt == nil {
+		t.Errorf("deleted_at missing from response")
+	}
+}
+
+func TestWrapBlocksPendingDeletionDay30To90(t *testing.T) {
+	authStore := newFakeAuthStore()
+	deletedAt := time.Now().UTC().Add(-45 * 24 * time.Hour) // day 45: past the photo-purge tier.
+	purgedAt := time.Now().UTC().Add(-15 * 24 * time.Hour)
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt, PhotosPurgedAt: &purgedAt}
+	h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+	rec := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeJSON[pendingDeletionResponse](t, rec)
+	if body.Error != "pending_deletion" {
+		t.Errorf("error = %q, want pending_deletion", body.Error)
+	}
+	if !body.PhotosPurged {
+		t.Errorf("photos_purged = false, want true (day 30-90 tier)")
+	}
+}
+
+func TestWrapAllowsReactivateAndLogoutWhilePending(t *testing.T) {
+	deletedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
+
+	t.Run("reactivate", func(t *testing.T) {
+		authStore := newFakeAuthStore()
+		authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+		h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+		rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("reactivate route must stay reachable while pending deletion, got 403: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("logout", func(t *testing.T) {
+		authStore := newFakeAuthStore()
+		authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+		h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+		rec := doRequest(h, "POST", "/api/v1/auth/logout", nil, nil)
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("logout route must stay reachable while pending deletion, got 403: %s", rec.Body.String())
+		}
+	})
+}
+
+func TestHandleReactivateAccountRestoresAccess(t *testing.T) {
+	authStore := newFakeAuthStore()
+	deletedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
+	authStore.deletionStatus["test-user"] = store.AccountDeletionStatus{DeletedAt: &deletedAt}
+	h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+	// Confirm the gate is actually active before reactivating.
+	blocked := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("test setup: expected 403 before reactivation, got %d", blocked.Code)
+	}
+
+	rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	status, err := authStore.AccountDeletionStatus(context.Background(), "test-user")
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt != nil {
+		t.Errorf("expected deleted_at cleared after reactivation, got %v", status.DeletedAt)
+	}
+
+	// A subsequent authenticated request must now succeed instead of 403.
+	after := doRequest(h, "GET", "/api/v1/rollups/today", nil, nil)
+	if after.Code == http.StatusForbidden {
+		t.Fatalf("expected normal access restored after reactivation, still got 403: %s", after.Body.String())
+	}
+}
+
+func TestHandleReactivateAccountNotFound(t *testing.T) {
+	authStore := &notFoundReactivateStore{fakeAuthStore: newFakeAuthStore()}
+	h := newHandlerWithAccountStore(newFakeMealStore(), authStore)
+
+	rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// notFoundReactivateStore wraps *fakeAuthStore and overrides ReactivateAccount
+// to simulate the store reporting the account doesn't exist.
+type notFoundReactivateStore struct {
+	*fakeAuthStore
+}
+
+func (s *notFoundReactivateStore) ReactivateAccount(_ context.Context, _ string) error {
+	return types.ErrNotFound
 }

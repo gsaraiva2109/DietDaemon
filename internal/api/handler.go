@@ -25,6 +25,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 	"github.com/gsaraiva2109/dietdaemon/internal/oidc"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 const (
@@ -44,6 +45,14 @@ type AccountStore interface {
 	SetPasswordHash(ctx context.Context, userID, phcHash string) error
 	CountUsers(ctx context.Context) (int, error)
 	DeleteAccount(ctx context.Context, userID string) error
+
+	// RequestAccountDeletion soft-deletes the account owning userID (see the
+	// tiered retention plan). ReactivateAccount reverses it. AccountDeletionStatus
+	// reports the current tier (deleted_at / photos_purged_at) so the wrap gate
+	// and data export can branch on it.
+	RequestAccountDeletion(ctx context.Context, userID string) error
+	ReactivateAccount(ctx context.Context, userID string) error
+	AccountDeletionStatus(ctx context.Context, userID string) (store.AccountDeletionStatus, error)
 }
 
 // APIKeyStore covers long-lived API key issuance and revocation.
@@ -776,8 +785,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/export/rollups", h.wrap(h.handleExportRollups))
 	mux.HandleFunc("GET /api/v1/export/all", h.wrap(h.handleExportAll))
 
-	// Account deletion.
+	// Account deletion / reactivation.
 	mux.HandleFunc("DELETE /api/v1/account", h.wrap(h.handleDeleteAccount))
+	mux.HandleFunc("POST /api/v1/account/reactivate", h.wrap(h.handleReactivateAccount))
 
 	// Scheduled backup settings.
 	mux.HandleFunc("GET /api/v1/settings/backup", h.wrap(h.handleGetBackupConfig))
@@ -917,8 +927,56 @@ func (h *Handler) wrap(next func(w http.ResponseWriter, r *http.Request, userID 
 			WriteError(w, http.StatusTooManyRequests, ErrorRateLimited, msgTooManyRequests)
 			return
 		}
+		if !isReactivationExemptRoute(r) {
+			if status, statusErr := h.authStore.AccountDeletionStatus(r.Context(), userID); statusErr == nil && status.DeletedAt != nil {
+				writePendingDeletionError(w, status)
+				return
+			}
+		}
 		next(w, r, userID)
 	}))
+}
+
+// reactivateRoute and logoutRoute are the only routes a pending-deletion
+// account may still reach — everything else is blocked by wrap's
+// AccountDeletionStatus check above until the account is reactivated.
+const (
+	reactivateRoute = "/api/v1/account/reactivate"
+	logoutRoute     = "/api/v1/auth/logout"
+)
+
+func isReactivationExemptRoute(r *http.Request) bool {
+	return r.Method == http.MethodPost && (r.URL.Path == reactivateRoute || r.URL.Path == logoutRoute)
+}
+
+// writePendingDeletionError writes the 403 body a pending-deletion account
+// gets for any route besides reactivate/logout: {"error":"pending_deletion",
+// "deleted_at":..., "photos_purged":...}. It bypasses withAPIErrorEnvelope's
+// {error:{code,message}} normalization (errors.go) by marking the wrapping
+// errorEnvelopeWriter as already handled — this response carries extra
+// fields the standard error envelope has no room for, and the frontend needs
+// them to render tier-1 ("nothing lost") vs tier-2 ("photos are gone")
+// reactivation copy without a second round trip.
+func writePendingDeletionError(w http.ResponseWriter, status store.AccountDeletionStatus) {
+	body := struct {
+		Error        string     `json:"error"`
+		DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+		PhotosPurged bool       `json:"photos_purged"`
+	}{
+		Error:        "pending_deletion",
+		DeletedAt:    status.DeletedAt,
+		PhotosPurged: status.PhotosPurgedAt != nil,
+	}
+
+	target := w
+	if ew, ok := w.(*errorEnvelopeWriter); ok {
+		ew.status = http.StatusForbidden
+		ew.passthrough = true
+		target = ew.ResponseWriter
+	}
+	target.Header().Set(contentTypeHeader, contentTypeJSON)
+	target.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(target).Encode(body)
 }
 
 func (h *Handler) authLimiter(r *http.Request) *auth.IPRateLimiter {
