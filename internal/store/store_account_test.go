@@ -120,6 +120,44 @@ func TestDeleteAccount(t *testing.T) {
 	}
 }
 
+// createSessionAndAPIKey seeds a session and API key for u, used by
+// TestRequestAccountDeletion to set up revocation fixtures for each user.
+func createSessionAndAPIKey(t *testing.T, s *Store, u types.User) {
+	t.Helper()
+	sess := auth.Session{
+		ID:                "sess-" + u.ID,
+		UserID:            u.ID,
+		CSRFToken:         "csrf",
+		CreatedAt:         time.Now().UTC(),
+		LastSeenAt:        time.Now().UTC(),
+		IdleExpiresAt:     time.Now().UTC().Add(time.Hour),
+		AbsoluteExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := s.CreateSession(ctx(), sess); err != nil {
+		t.Fatalf("CreateSession(%s): %v", u.ID, err)
+	}
+	if err := s.CreateAPIKey(ctx(), "key-"+u.ID, u.ID, "hashed-"+u.ID, "label"); err != nil {
+		t.Fatalf("CreateAPIKey(%s): %v", u.ID, err)
+	}
+}
+
+// assertSessionAndKeysRevoked checks that u's session is gone and it has no
+// non-revoked API keys, used by TestRequestAccountDeletion to verify
+// revocation happened for every user under the account.
+func assertSessionAndKeysRevoked(t *testing.T, s *Store, u types.User) {
+	t.Helper()
+	if _, err := s.GetSession(ctx(), "sess-"+u.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetSession(%s) after deletion request = %v; want sql.ErrNoRows", u.ID, err)
+	}
+	keys, err := s.ListAPIKeys(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("ListAPIKeys(%s): %v", u.ID, err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("ListAPIKeys(%s) after deletion request = %d non-revoked keys; want 0", u.ID, len(keys))
+	}
+}
+
 // TestRequestAccountDeletion verifies that requesting deletion revokes every
 // session and API key for every user under the account (not just the one
 // whose ID was passed in), and leaves the account row and its data intact.
@@ -137,21 +175,7 @@ func TestRequestAccountDeletion(t *testing.T) {
 	}
 
 	for _, u := range []types.User{u1, u2} {
-		sess := auth.Session{
-			ID:                "sess-" + u.ID,
-			UserID:            u.ID,
-			CSRFToken:         "csrf",
-			CreatedAt:         time.Now().UTC(),
-			LastSeenAt:        time.Now().UTC(),
-			IdleExpiresAt:     time.Now().UTC().Add(time.Hour),
-			AbsoluteExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-		}
-		if err := s.CreateSession(ctx(), sess); err != nil {
-			t.Fatalf("CreateSession(%s): %v", u.ID, err)
-		}
-		if err := s.CreateAPIKey(ctx(), "key-"+u.ID, u.ID, "hashed-"+u.ID, "label"); err != nil {
-			t.Fatalf("CreateAPIKey(%s): %v", u.ID, err)
-		}
+		createSessionAndAPIKey(t, s, u)
 	}
 
 	if err := s.RequestAccountDeletion(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
@@ -163,16 +187,7 @@ func TestRequestAccountDeletion(t *testing.T) {
 	}
 
 	for _, u := range []types.User{u1, u2} {
-		if _, err := s.GetSession(ctx(), "sess-"+u.ID); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("GetSession(%s) after deletion request = %v; want sql.ErrNoRows", u.ID, err)
-		}
-		keys, err := s.ListAPIKeys(ctx(), u.ID)
-		if err != nil {
-			t.Fatalf("ListAPIKeys(%s): %v", u.ID, err)
-		}
-		if len(keys) != 0 {
-			t.Fatalf("ListAPIKeys(%s) after deletion request = %d non-revoked keys; want 0", u.ID, len(keys))
-		}
+		assertSessionAndKeysRevoked(t, s, u)
 	}
 
 	// The account and its users still exist (soft delete, not a hard delete).

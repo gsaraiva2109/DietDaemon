@@ -17,7 +17,7 @@ type PurgeStore interface {
 	PurgeLoginAttempts(ctx context.Context, olderThan time.Time) (int, error)
 	PurgeAuthAuditEvents(ctx context.Context, olderThan time.Time) (int, error)
 
-	// Tiered account-deletion retention (progress-photo purge at day 30,
+	// ListAccountsPendingPhotoPurge Tiered account-deletion retention (progress-photo purge at day 30,
 	// full account purge at day 90, plus reminder emails ~5 days before
 	// each). See the tiered deletion model this extends.
 	ListAccountsPendingPhotoPurge(ctx context.Context, deletedBefore time.Time) ([]string, error)
@@ -178,37 +178,51 @@ func (r *PurgeRunner) sendReminders(ctx context.Context, now time.Time) {
 // retried on the next tick rather than silently marked as reminded.
 func (r *PurgeRunner) remind(ctx context.Context, ids []string, event string, msg mailer.Message) {
 	for _, id := range ids {
-		sent, err := r.store.HasAuditEvent(ctx, id, event)
-		if err != nil {
-			slog.Error("check reminder audit event", "account_id", id, "event", event, "err", err)
-			continue
-		}
-		if sent {
-			continue
-		}
+		r.remindAccount(ctx, id, event, msg)
+	}
+}
 
-		emails, err := r.store.AccountEmails(ctx, id)
-		if err != nil {
-			slog.Error("list account emails", "account_id", id, "err", err)
-			continue
-		}
+// remindAccount sends msg to every email under account id if it hasn't
+// already received event, then records event in auth_audit_log. Split out
+// of remind to keep both under the cognitive-complexity limit.
+func (r *PurgeRunner) remindAccount(ctx context.Context, id, event string, msg mailer.Message) {
+	sent, err := r.store.HasAuditEvent(ctx, id, event)
+	if err != nil {
+		slog.Error("check reminder audit event", "account_id", id, "event", event, "err", err)
+		return
+	}
+	if sent {
+		return
+	}
 
-		allSent := true
-		for _, email := range emails {
-			if err := r.mailer.Send(ctx, email, msg); err != nil {
-				slog.Error("send retention reminder email", "account_id", id, "event", event, "err", err)
-				allSent = false
-			}
-		}
-		if !allSent {
-			continue
-		}
+	emails, err := r.store.AccountEmails(ctx, id)
+	if err != nil {
+		slog.Error("list account emails", "account_id", id, "err", err)
+		return
+	}
 
-		ev := types.AuditEvent{ID: newAuditID(), AccountID: id, Event: event, CreatedAt: time.Now()}
-		if err := r.store.WriteAuditEvent(ctx, ev); err != nil {
-			slog.Error("write reminder audit event", "account_id", id, "event", event, "err", err)
+	if !r.sendReminderEmails(ctx, id, event, msg, emails) {
+		return
+	}
+
+	ev := types.AuditEvent{ID: newAuditID(), AccountID: id, Event: event, CreatedAt: time.Now()}
+	if err := r.store.WriteAuditEvent(ctx, ev); err != nil {
+		slog.Error("write reminder audit event", "account_id", id, "event", event, "err", err)
+	}
+}
+
+// sendReminderEmails sends msg to every address in emails, logging any
+// per-address failure. Returns false if any send failed, so the caller
+// skips the audit write and retries the whole account on the next tick.
+func (r *PurgeRunner) sendReminderEmails(ctx context.Context, id, event string, msg mailer.Message, emails []string) bool {
+	allSent := true
+	for _, email := range emails {
+		if err := r.mailer.Send(ctx, email, msg); err != nil {
+			slog.Error("send retention reminder email", "account_id", id, "event", event, "err", err)
+			allSent = false
 		}
 	}
+	return allSent
 }
 
 // newAuditID returns a short random hex ID for audit rows written from this
