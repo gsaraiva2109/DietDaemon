@@ -14,12 +14,32 @@ func TestDeleteAccount(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
+	u, sess := seedAccountForDeletion(t, s)
+
+	// Not-found case first: deleting a nonexistent user must error.
+	if err := s.DeleteAccount(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("DeleteAccount(missing user) = %v; want types.ErrNotFound", err)
+	}
+
+	if err := s.DeleteAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+
+	assertAccountDataDeleted(t, s, u, sess)
+	assertAuditRowSurvivesDeletion(t, s, "audit1")
+}
+
+// seedAccountForDeletion creates a user with data across several per-user
+// tables (weight, meals, sessions, photos, audit log), used by
+// TestDeleteAccount to verify DeleteAccount cascades across all of them.
+func seedAccountForDeletion(t *testing.T, s *Store) (types.User, auth.Session) {
+	t.Helper()
+
 	u, err := s.CreateUserWithPassword(ctx(), "acct-del", "user-del", "del@example.com", "Del User", "$argon2id$dummy")
 	if err != nil {
 		t.Fatalf("CreateUserWithPassword: %v", err)
 	}
 
-	// Log data across several per-user tables.
 	if _, err := s.LogWeight(ctx(), types.WeightEntry{ID: "w1", UserID: u.ID, Date: "2026-07-01", WeightKg: 80}); err != nil {
 		t.Fatalf("LogWeight: %v", err)
 	}
@@ -62,14 +82,13 @@ func TestDeleteAccount(t *testing.T) {
 		t.Fatalf("WriteAuditEvent: %v", err)
 	}
 
-	// Not-found case first: deleting a nonexistent user must error.
-	if err := s.DeleteAccount(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
-		t.Fatalf("DeleteAccount(missing user) = %v; want types.ErrNotFound", err)
-	}
+	return u, sess
+}
 
-	if err := s.DeleteAccount(ctx(), u.ID); err != nil {
-		t.Fatalf("DeleteAccount: %v", err)
-	}
+// assertAccountDataDeleted checks that DeleteAccount cascaded across every
+// per-user table seeded by seedAccountForDeletion.
+func assertAccountDataDeleted(t *testing.T, s *Store, u types.User, sess auth.Session) {
+	t.Helper()
 
 	if _, err := s.GetUser(ctx(), u.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("GetUser after delete = %v; want types.ErrNotFound", err)
@@ -102,12 +121,17 @@ func TestDeleteAccount(t *testing.T) {
 	if len(photos) != 0 {
 		t.Fatalf("ListPhotoMetadata after delete = %d; want 0", len(photos))
 	}
+}
 
-	// The audit row must survive (ON DELETE SET NULL, by design), with
-	// account_id/user_id cleared rather than the row being cascaded away.
+// assertAuditRowSurvivesDeletion checks that the audit row identified by
+// auditID survives DeleteAccount (ON DELETE SET NULL, by design), with
+// account_id/user_id cleared rather than the row being cascaded away.
+func assertAuditRowSurvivesDeletion(t *testing.T, s *Store, auditID string) {
+	t.Helper()
+
 	var event string
 	var accountID, userID sql.NullString
-	err = s.db.QueryRow(`SELECT event, account_id, user_id FROM auth_audit_log WHERE id = ?`, "audit1").
+	err := s.db.QueryRow(`SELECT event, account_id, user_id FROM auth_audit_log WHERE id = ?`, auditID).
 		Scan(&event, &accountID, &userID)
 	if err != nil {
 		t.Fatalf("query audit row: %v", err)
