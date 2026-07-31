@@ -195,6 +195,47 @@ func TestListPhotoMetadata_ExcludesBlobAndReturnsCorrectResults(t *testing.T) {
 	}
 }
 
+// TestDeletePhoto covers the SQL-layer delete used by handleDeletePhoto:
+// a successful delete removes the row (and it's gone from later reads), a
+// missing photo ID returns ErrNotFound, and deletion is scoped to the
+// requesting user the same way reads are.
+func TestDeletePhoto(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	uid := "u-photo-delete"
+	other := "u-photo-delete-other"
+	mustUser(t, s, types.User{ID: uid})
+	mustUser(t, s, types.User{ID: other})
+
+	if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+		ID: "del-1", UserID: uid, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("bytes"),
+	}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+
+	// Wrong user for an existing photo ID: not found, and the row survives.
+	if err := s.DeletePhoto(ctx(), other, "del-1"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("DeletePhoto(other user, del-1) = %v, want types.ErrNotFound", err)
+	}
+	if _, err := s.GetPhotoData(ctx(), uid, "del-1"); err != nil {
+		t.Fatalf("photo deleted by wrong user's request: GetPhotoData: %v", err)
+	}
+
+	// Unknown photo ID: not found.
+	if err := s.DeletePhoto(ctx(), uid, "no-such-photo"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("DeletePhoto(unknown id) = %v, want types.ErrNotFound", err)
+	}
+
+	// Owner deleting their own photo: succeeds, and the row is actually gone.
+	if err := s.DeletePhoto(ctx(), uid, "del-1"); err != nil {
+		t.Fatalf("DeletePhoto(owner): %v", err)
+	}
+	if _, err := s.GetPhotoData(ctx(), uid, "del-1"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("GetPhotoData after delete = %v, want types.ErrNotFound", err)
+	}
+}
+
 func TestCountPhotos(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()

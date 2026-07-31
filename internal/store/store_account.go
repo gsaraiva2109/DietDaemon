@@ -206,12 +206,30 @@ func (s *Store) ListAccountsPendingPhotoPurge(ctx context.Context, deletedBefore
 // transaction. Writes an account.photos_purged audit event. Callers filter
 // candidates via ListAccountsPendingPhotoPurge (photos_purged_at IS NULL),
 // so re-running this on an already-purged account is a harmless no-op.
+//
+// The photos_purged_at UPDATE is guarded (deleted_at IS NOT NULL AND
+// photos_purged_at IS NULL) and runs before the destructive DELETE, closing a
+// TOCTOU window: if the account was reactivated concurrently (e.g. a job
+// picked it up from ListAccountsPendingPhotoPurge, then the owner reactivated
+// before this ran), the guard matches zero rows and the function skips the
+// delete entirely rather than destroying photos for an account that's no
+// longer marked deleted.
 func (s *Store) PurgeAccountPhotos(ctx context.Context, accountID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: purge account photos tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, s.rewrite(
+		`UPDATE accounts SET photos_purged_at = ? WHERE id = ? AND deleted_at IS NOT NULL AND photos_purged_at IS NULL`),
+		utcNow(), accountID)
+	if err != nil {
+		return fmt.Errorf("store: set photos_purged_at: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil // reactivated or already purged concurrently: skip, no photos deleted
+	}
 
 	userIDs, err := accountUserIDs(ctx, tx, s.rewrite, accountID)
 	if err != nil {
@@ -221,10 +239,6 @@ func (s *Store) PurgeAccountPhotos(ctx context.Context, accountID string) error 
 		if _, err := tx.ExecContext(ctx, s.rewrite(`DELETE FROM progress_photos WHERE user_id = ?`), uid); err != nil {
 			return fmt.Errorf("store: delete progress photos: %w", err)
 		}
-	}
-
-	if _, err := tx.ExecContext(ctx, s.rewrite(`UPDATE accounts SET photos_purged_at = ? WHERE id = ?`), utcNow(), accountID); err != nil {
-		return fmt.Errorf("store: set photos_purged_at: %w", err)
 	}
 
 	if err := insertAuditEventTx(ctx, tx, s.rewrite, types.AuditEvent{
@@ -256,19 +270,33 @@ func (s *Store) ListAccountsPastDeletion(ctx context.Context, deletedBefore time
 	return scanAccountIDs(rows)
 }
 
-// PurgeAccount permanently deletes accountID: within one transaction it
-// writes an account.delete.purged audit event first (while account_id is
-// still a valid FK target), then hard-deletes the accounts row. The
-// auth_audit_log.account_id FK is ON DELETE SET NULL, so the DELETE nulls
-// the just-written audit row's account_id as part of the same statement —
-// the event survives, and the account plus everything under it cascades
-// away for good.
+// PurgeAccount permanently deletes accountID: within one transaction it first
+// atomically claims the row with a guarded no-op UPDATE (deleted_at IS NOT
+// NULL), skipping entirely if a concurrent reactivation already cleared it;
+// then, with the claim held for the rest of the transaction, writes the
+// account.delete.purged audit event while account_id is still a valid FK
+// target, and only then hard-deletes the accounts row. The
+// auth_audit_log.account_id FK is ON DELETE SET NULL, so the DELETE nulls the
+// just-written audit row's account_id as part of the same statement -- the
+// event survives, and the account plus everything under it cascades away for
+// good. The audit insert must precede the physical DELETE: inserting it after
+// would reference an account_id no longer present in accounts, violating the
+// FK.
 func (s *Store) PurgeAccount(ctx context.Context, accountID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: purge account tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, s.rewrite(
+		`UPDATE accounts SET deleted_at = deleted_at WHERE id = ? AND deleted_at IS NOT NULL`), accountID)
+	if err != nil {
+		return fmt.Errorf("store: claim account for purge: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil // reactivated concurrently: skip
+	}
 
 	if err := insertAuditEventTx(ctx, tx, s.rewrite, types.AuditEvent{
 		ID:        newID(),

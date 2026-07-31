@@ -14,12 +14,32 @@ func TestDeleteAccount(t *testing.T) {
 	s, cleanup := tempDB(t)
 	defer cleanup()
 
+	u, sess := seedAccountForDeletion(t, s)
+
+	// Not-found case first: deleting a nonexistent user must error.
+	if err := s.DeleteAccount(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("DeleteAccount(missing user) = %v; want types.ErrNotFound", err)
+	}
+
+	if err := s.DeleteAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+
+	assertAccountDataDeleted(t, s, u, sess)
+	assertAuditRowSurvivesDeletion(t, s, "audit1")
+}
+
+// seedAccountForDeletion creates a user with data across several per-user
+// tables (weight, meals, sessions, photos, audit log), used by
+// TestDeleteAccount to verify DeleteAccount cascades across all of them.
+func seedAccountForDeletion(t *testing.T, s *Store) (types.User, auth.Session) {
+	t.Helper()
+
 	u, err := s.CreateUserWithPassword(ctx(), "acct-del", "user-del", "del@example.com", "Del User", "$argon2id$dummy")
 	if err != nil {
 		t.Fatalf("CreateUserWithPassword: %v", err)
 	}
 
-	// Log data across several per-user tables.
 	if _, err := s.LogWeight(ctx(), types.WeightEntry{ID: "w1", UserID: u.ID, Date: "2026-07-01", WeightKg: 80}); err != nil {
 		t.Fatalf("LogWeight: %v", err)
 	}
@@ -62,14 +82,13 @@ func TestDeleteAccount(t *testing.T) {
 		t.Fatalf("WriteAuditEvent: %v", err)
 	}
 
-	// Not-found case first: deleting a nonexistent user must error.
-	if err := s.DeleteAccount(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
-		t.Fatalf("DeleteAccount(missing user) = %v; want types.ErrNotFound", err)
-	}
+	return u, sess
+}
 
-	if err := s.DeleteAccount(ctx(), u.ID); err != nil {
-		t.Fatalf("DeleteAccount: %v", err)
-	}
+// assertAccountDataDeleted checks that DeleteAccount cascaded across every
+// per-user table seeded by seedAccountForDeletion.
+func assertAccountDataDeleted(t *testing.T, s *Store, u types.User, sess auth.Session) {
+	t.Helper()
 
 	if _, err := s.GetUser(ctx(), u.ID); !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("GetUser after delete = %v; want types.ErrNotFound", err)
@@ -102,12 +121,17 @@ func TestDeleteAccount(t *testing.T) {
 	if len(photos) != 0 {
 		t.Fatalf("ListPhotoMetadata after delete = %d; want 0", len(photos))
 	}
+}
 
-	// The audit row must survive (ON DELETE SET NULL, by design), with
-	// account_id/user_id cleared rather than the row being cascaded away.
+// assertAuditRowSurvivesDeletion checks that the audit row identified by
+// auditID survives DeleteAccount (ON DELETE SET NULL, by design), with
+// account_id/user_id cleared rather than the row being cascaded away.
+func assertAuditRowSurvivesDeletion(t *testing.T, s *Store, auditID string) {
+	t.Helper()
+
 	var event string
 	var accountID, userID sql.NullString
-	err = s.db.QueryRow(`SELECT event, account_id, user_id FROM auth_audit_log WHERE id = ?`, "audit1").
+	err := s.db.QueryRow(`SELECT event, account_id, user_id FROM auth_audit_log WHERE id = ?`, auditID).
 		Scan(&event, &accountID, &userID)
 	if err != nil {
 		t.Fatalf("query audit row: %v", err)
@@ -247,6 +271,102 @@ func TestReactivateAccount(t *testing.T) {
 	}
 }
 
+// TestReactivateAccountNeverDeletedIsNoOp pins down ReactivateAccount's
+// documented behavior on an account that was never soft-deleted: it's a
+// deliberate no-op on deleted_at (stays NULL), but it still unconditionally
+// writes the account.reactivated audit event -- ReactivateAccount does not
+// check whether the account was actually pending deletion before acting.
+func TestReactivateAccountNeverDeletedIsNoOp(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-never-deleted", "user-never-deleted", "neverdeleted@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("ReactivateAccount: %v", err)
+	}
+
+	status, err := s.AccountDeletionStatus(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt != nil {
+		t.Fatalf("AccountDeletionStatus.DeletedAt = %v; want nil (was never deleted)", status.DeletedAt)
+	}
+
+	has, err := s.HasAuditEvent(ctx(), u.AccountID, "account.reactivated")
+	if err != nil {
+		t.Fatalf("HasAuditEvent: %v", err)
+	}
+	if !has {
+		t.Fatal("HasAuditEvent(account.reactivated) = false; want true even on a no-op reactivation")
+	}
+}
+
+// TestReactivateAccountDoubleCallIsIdempotent pins down that calling
+// ReactivateAccount twice in a row succeeds both times with deleted_at left
+// cleared -- the second call is a no-op like
+// TestReactivateAccountNeverDeletedIsNoOp above, just reached via a real
+// soft-delete instead of an account that was never deleted.
+func TestReactivateAccountDoubleCallIsIdempotent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-double-reactivate", "user-double-reactivate", "doublereactivate@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("first ReactivateAccount: %v", err)
+	}
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("second ReactivateAccount: %v", err)
+	}
+
+	status, err := s.AccountDeletionStatus(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.DeletedAt != nil {
+		t.Fatalf("AccountDeletionStatus.DeletedAt = %v; want nil after two reactivations", status.DeletedAt)
+	}
+}
+
+// TestReactivateAccountAfterHardPurgeReturnsNotFound is a regression test for
+// the day-90 tier cascading away the users row: once PurgeAccount has run,
+// the account owning userID no longer exists, so a later ReactivateAccount
+// call must hit the same types.ErrNotFound path as any other missing user --
+// no code change is needed for this to pass, it's here to pin the behavior
+// down against a future change.
+func TestReactivateAccountAfterHardPurgeReturnsNotFound(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-reactivate-after-purge", "user-reactivate-after-purge", "reactivateafterpurge@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	if err := s.PurgeAccount(ctx(), u.AccountID); err != nil {
+		t.Fatalf("PurgeAccount: %v", err)
+	}
+
+	if err := s.ReactivateAccount(ctx(), u.ID); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("ReactivateAccount after hard purge = %v; want types.ErrNotFound", err)
+	}
+}
+
 // backdateDeletedAt rewrites accounts.deleted_at directly, simulating an
 // account soft-deleted longer ago than "now" (the purge job's cutoffs are
 // relative to real time, so tests can't just wait 30/90 days).
@@ -323,6 +443,62 @@ func TestPurgeAccountPhotos(t *testing.T) {
 	}
 }
 
+// TestPurgeAccountPhotosSkipsReactivatedAccount is a regression test for the
+// TOCTOU race: if a job lists an account as pending photo purge, the owner
+// reactivates before the job runs, and the job then calls PurgeAccountPhotos
+// anyway, the guarded UPDATE (deleted_at IS NOT NULL) must match zero rows
+// and the whole call must be a no-op -- photos untouched, no audit event.
+func TestPurgeAccountPhotosSkipsReactivatedAccount(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-photo-purge-race", "user-photo-purge-race", "photopurgerace@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+	if err := s.UploadPhoto(ctx(), types.ProgressPhoto{ID: "pp-race", UserID: u.ID, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("fake")}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	backdateDeletedAt(t, s, u.AccountID, time.Now().UTC().AddDate(0, 0, -31))
+
+	// Owner reactivates in the interim, clearing deleted_at, before the purge
+	// job's call reaches the store.
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("ReactivateAccount: %v", err)
+	}
+
+	if err := s.PurgeAccountPhotos(ctx(), u.AccountID); err != nil {
+		t.Fatalf("PurgeAccountPhotos: %v", err)
+	}
+
+	photos, err := s.ListPhotoMetadata(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("ListPhotoMetadata: %v", err)
+	}
+	if len(photos) != 1 {
+		t.Fatalf("ListPhotoMetadata after skipped purge = %d; want 1 (untouched)", len(photos))
+	}
+
+	status, err := s.AccountDeletionStatus(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletionStatus: %v", err)
+	}
+	if status.PhotosPurgedAt != nil {
+		t.Fatalf("AccountDeletionStatus.PhotosPurgedAt = %v; want nil (purge skipped)", status.PhotosPurgedAt)
+	}
+
+	has, err := s.HasAuditEvent(ctx(), u.AccountID, "account.photos_purged")
+	if err != nil {
+		t.Fatalf("HasAuditEvent: %v", err)
+	}
+	if has {
+		t.Fatal("HasAuditEvent(account.photos_purged) = true; want false, purge was skipped")
+	}
+}
+
 // TestPurgeAccount verifies the day-90 full-purge tier: an account past the
 // cutoff shows up in ListAccountsPastDeletion, PurgeAccount hard-deletes it,
 // and the purge event survives in auth_audit_log with account_id nulled.
@@ -366,6 +542,48 @@ func TestPurgeAccount(t *testing.T) {
 	}
 	if accountID.Valid {
 		t.Fatalf("purge audit row account_id = %v; want NULL", accountID)
+	}
+}
+
+// TestPurgeAccountSkipsReactivatedAccount is a regression test for the same
+// TOCTOU race as TestPurgeAccountPhotosSkipsReactivatedAccount, at the
+// day-90 hard-purge tier: if the owner reactivates before a queued
+// PurgeAccount call reaches the store, the guarded claim (deleted_at IS NOT
+// NULL) must match zero rows, leaving the account row (and its data) intact
+// with no spurious account.delete.purged audit event.
+func TestPurgeAccountSkipsReactivatedAccount(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-full-purge-race", "user-full-purge-race", "fullpurgerace@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	backdateDeletedAt(t, s, u.AccountID, time.Now().UTC().AddDate(0, 0, -91))
+
+	// Owner reactivates in the interim, clearing deleted_at, before the purge
+	// job's call reaches the store.
+	if err := s.ReactivateAccount(ctx(), u.ID); err != nil {
+		t.Fatalf("ReactivateAccount: %v", err)
+	}
+
+	if err := s.PurgeAccount(ctx(), u.AccountID); err != nil {
+		t.Fatalf("PurgeAccount: %v", err)
+	}
+
+	if _, err := s.GetUser(ctx(), u.ID); err != nil {
+		t.Fatalf("GetUser after skipped purge: %v; want account still present", err)
+	}
+
+	has, err := s.HasAuditEvent(ctx(), u.AccountID, "account.delete.purged")
+	if err != nil {
+		t.Fatalf("HasAuditEvent: %v", err)
+	}
+	if has {
+		t.Fatal("HasAuditEvent(account.delete.purged) = true; want false, purge was skipped")
 	}
 }
 

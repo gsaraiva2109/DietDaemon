@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -64,6 +65,101 @@ func TestPhotoDataWrongUser(t *testing.T) {
 	rec := doRequest(h, "GET", "/api/v1/body/photos/p1/data", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("cross-user photo access expected 404, got %d", rec.Code)
+	}
+}
+
+// crossUserPhotoStore wraps fakeMealStore to apply the same per-user scoping
+// the real SQL-backed store enforces at the query layer (WHERE user_id = ?,
+// see internal/store/store_photos.go). The base fake ignores the userID
+// argument entirely, which is fine for single-user tests but can't exercise
+// cross-user denial, so this wrapper adds it back for the one fixture photo
+// under test.
+type crossUserPhotoStore struct {
+	*fakeMealStore
+	ownerID string
+}
+
+func (s *crossUserPhotoStore) ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error) {
+	if userID != s.ownerID {
+		return []types.ProgressPhoto{}, nil
+	}
+	return s.fakeMealStore.ListPhotoMetadata(ctx, userID)
+}
+
+func (s *crossUserPhotoStore) GetPhotoData(ctx context.Context, userID, photoID string) (types.ProgressPhoto, error) {
+	if userID != s.ownerID {
+		return types.ProgressPhoto{}, types.ErrNotFound
+	}
+	return s.fakeMealStore.GetPhotoData(ctx, userID, photoID)
+}
+
+func (s *crossUserPhotoStore) DeletePhoto(ctx context.Context, userID, photoID string) error {
+	if userID != s.ownerID {
+		return types.ErrNotFound
+	}
+	return s.fakeMealStore.DeletePhoto(ctx, userID, photoID)
+}
+
+// TestPhotoEndpointsCrossUserDenied consolidates cross-user authorization
+// checks across every registered photo endpoint (see RegisterRoutes in
+// handler.go): list, get-data, and delete. A photo is "owned" by ownerID
+// while every request in this test authenticates as the fixed test-user
+// (see doRequest), so each case exercises the same wrong-user scenario as
+// TestPhotoDataWrongUser, just against a different endpoint. Upload is
+// excluded: it creates a new resource rather than accessing an existing
+// one, so there's no ownership boundary to cross.
+func TestPhotoEndpointsCrossUserDenied(t *testing.T) {
+	const ownerID = "owner-a"
+	const photoID = "p1"
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int
+		checkBody  func(t *testing.T, rec *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "list excludes another user's photos",
+			method:     "GET",
+			path:       "/api/v1/body/photos",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				photos := decodeJSON[[]types.ProgressPhoto](t, rec)
+				if len(photos) != 0 {
+					t.Errorf("list leaked %d photo(s) belonging to another user", len(photos))
+				}
+			},
+		},
+		{
+			name:       "get-data denies another user's photo",
+			method:     "GET",
+			path:       "/api/v1/body/photos/" + photoID + "/data",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "delete denies another user's photo",
+			method:     "DELETE",
+			path:       "/api/v1/body/photos/" + photoID,
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &crossUserPhotoStore{fakeMealStore: newFakeMealStore(), ownerID: ownerID}
+			store.photoMetadata = []types.ProgressPhoto{{ID: photoID, UserID: ownerID, View: "front"}}
+			store.photoData = types.ProgressPhoto{ID: photoID, UserID: ownerID, MimeType: "image/png", Data: []byte("x")}
+			h := newHandler(store, &fakeMealLogger{})
+
+			rec := doRequest(h, tc.method, tc.path, nil, nil)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("%s %s: got status %d, want %d (body=%s)", tc.method, tc.path, rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.checkBody != nil {
+				tc.checkBody(t, rec)
+			}
+		})
 	}
 }
 

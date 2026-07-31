@@ -268,6 +268,12 @@ func TestRestorePurgedAccountSkipsPhotos(t *testing.T) {
 	// not whatever the backup's source happened to look like.
 	target := openTestStore(t, filepath.Join(dir, "target.db"))
 	mustUpsertUser(t, ctx, target, "u1")
+	// PurgeAccountPhotos now guards on deleted_at IS NOT NULL (TOCTOU fix), so
+	// the account must actually be pending deletion before the purge call
+	// takes effect.
+	if err := target.RequestAccountDeletion(ctx, "u1"); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
 	if err := target.PurgeAccountPhotos(ctx, "u1"); err != nil {
 		t.Fatalf("PurgeAccountPhotos: %v", err)
 	}
