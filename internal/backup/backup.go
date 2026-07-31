@@ -41,6 +41,10 @@ const backupCountDropThreshold = 0.5
 // Store is the read/write side a backup run needs. *store.Store satisfies it.
 type Store interface {
 	ListUsers(ctx context.Context) ([]types.User, error)
+	// AccountDeletedAt reports the deletion timestamp of the account owning
+	// userID (nil if the account isn't pending deletion), so tick() can
+	// exclude accounts pending deletion from backups entirely.
+	AccountDeletedAt(ctx context.Context, userID string) (*time.Time, error)
 	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
 	SetBackupLastRun(ctx context.Context, userID string, t time.Time) error
 	SetBackupCounts(ctx context.Context, userID string, mealsCount, rollupsCount int) error
@@ -125,20 +129,36 @@ func (r *Runner) tick(ctx context.Context) {
 	}
 	now := r.now()
 	for _, u := range users {
-		cfg, err := r.store.GetBackupConfig(ctx, u.ID)
-		if errors.Is(err, types.ErrNotFound) {
-			continue // no config == disabled
-		}
-		if err != nil {
-			r.log.Error("backup: get config", "user", u.ID, "err", err)
-			continue
-		}
-		if !cfg.Enabled || !r.due(cfg, now) {
-			continue
-		}
-		if err := r.runFor(ctx, u.ID, cfg, now); err != nil {
-			r.log.Error("backup: run", "user", u.ID, "err", err)
-		}
+		r.tickUser(ctx, u.ID, now)
+	}
+}
+
+// tickUser runs a backup for one user if they're not pending deletion, have
+// backup enabled, and are due. Split out of tick so each skip condition adds
+// to this method's complexity instead of the loop's.
+func (r *Runner) tickUser(ctx context.Context, userID string, now time.Time) {
+	deletedAt, err := r.store.AccountDeletedAt(ctx, userID)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		r.log.Error("backup: deletion status", "user", userID, "err", err)
+		return
+	}
+	if deletedAt != nil {
+		return // account pending/completed deletion: excluded from backup entirely
+	}
+
+	cfg, err := r.store.GetBackupConfig(ctx, userID)
+	if errors.Is(err, types.ErrNotFound) {
+		return // no config == disabled
+	}
+	if err != nil {
+		r.log.Error("backup: get config", "user", userID, "err", err)
+		return
+	}
+	if !cfg.Enabled || !r.due(cfg, now) {
+		return
+	}
+	if err := r.runFor(ctx, userID, cfg, now); err != nil {
+		r.log.Error("backup: run", "user", userID, "err", err)
 	}
 }
 
@@ -157,7 +177,10 @@ func (r *Runner) due(cfg types.BackupConfig, now time.Time) bool {
 // RunOnce runs a backup for one user immediately, ignoring the interval gate.
 // It is the shared entry point for both the manual "run now" API endpoint
 // and (via runFor) the ticker, so the two never duplicate the export logic.
-// Returns types.ErrNotFound if the user has no backup_config.
+// Unlike tick(), it does not itself check AccountDeletedAt: the manual path
+// relies on the API layer's own deletion gate (internal/api/handler.go's
+// wrap) rejecting requests for accounts pending deletion before this is ever
+// called. Returns types.ErrNotFound if the user has no backup_config.
 func (r *Runner) RunOnce(ctx context.Context, userID string) error {
 	cfg, err := r.store.GetBackupConfig(ctx, userID)
 	if err != nil {

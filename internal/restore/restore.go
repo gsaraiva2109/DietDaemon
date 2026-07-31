@@ -17,6 +17,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // Store is the write side a restore run needs. *store.Store satisfies it.
@@ -33,7 +34,11 @@ type Store interface {
 	RestoreWater(ctx context.Context, w types.WaterLog) error
 	RestoreFast(ctx context.Context, f types.Fast) error
 
-	// Diet plans. Restore order matters: templates before slot options
+	// AccountDeletionStatus reports the account's deletion tier, so RunOnce
+	// can refuse to resurrect photos for accounts whose PhotosPurgedAt is set.
+	AccountDeletionStatus(ctx context.Context, userID string) (store.AccountDeletionStatus, error)
+
+	// RestoreTemplate Diet plans. Restore order matters: templates before slot options
 	// (template_id is a foreign key), plans before day-types before slots
 	// before slot options, day-types before day overrides.
 	RestoreTemplate(ctx context.Context, t types.MealTemplate) error
@@ -145,7 +150,14 @@ func (r *Runner) RunOnce(ctx context.Context, userID string, cfg types.BackupCon
 	sum.Fasts = restoreCSV(&state, "fasts.csv", "restore fast", exportfmt.ReadFastsCSV,
 		func(f types.Fast, userID string) types.Fast { f.UserID = userID; return f },
 		func(f types.Fast) string { return f.ID }, r.store.RestoreFast)
-	sum.Photos = restorePhotos(&state, r.store)
+	status, err := r.store.AccountDeletionStatus(ctx, userID)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		errs = append(errs, fmt.Errorf("restore: account deletion status: %w", err))
+	} else if status.PhotosPurgedAt != nil {
+		sum.Skipped = append(sum.Skipped, "photos: purged per retention policy, not restored")
+	} else {
+		sum.Photos = restorePhotos(&state, r.store)
+	}
 
 	// Diet plans, restored in foreign-key order: templates (slot options
 	// reference them) -> plans -> day-types -> slots -> slot options ->
@@ -204,7 +216,7 @@ func restoreCSV[T any](state *restoreState, filename, action string, parse func(
 	return count
 }
 
-func restorePhotos(state *restoreState, store Store) int {
+func restorePhotos(state *restoreState, st Store) int {
 	data, skipped, err := readBackupFile(state, "photos.csv")
 	if skipped {
 		state.sum.Skipped = append(state.sum.Skipped, "photos.csv")
@@ -228,7 +240,7 @@ func restorePhotos(state *restoreState, store Store) int {
 		}
 		entry.Photo.UserID = state.userID
 		entry.Photo.Data = blob
-		if err := store.RestorePhoto(state.ctx, entry.Photo); err != nil {
+		if err := st.RestorePhoto(state.ctx, entry.Photo); err != nil {
 			*state.errs = append(*state.errs, fmt.Errorf("restore: restore photo %s: %w", entry.Photo.ID, err))
 			continue
 		}

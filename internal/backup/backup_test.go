@@ -33,6 +33,8 @@ func newFakeStore() *fakeStore {
 
 func (f *fakeStore) ListUsers(context.Context) ([]types.User, error) { return f.users, nil }
 
+func (f *fakeStore) AccountDeletedAt(context.Context, string) (*time.Time, error) { return nil, nil }
+
 func (f *fakeStore) GetBackupConfig(_ context.Context, userID string) (types.BackupConfig, error) {
 	cfg, ok := f.configs[userID]
 	if !ok {
@@ -258,6 +260,70 @@ func TestTick_SkipsDisabledOrUnconfigured(t *testing.T) {
 
 	if dst.writes != 0 {
 		t.Fatalf("expected no writes for disabled/unconfigured users, got %d", dst.writes)
+	}
+}
+
+// deletedAccountFakeStore reports a non-nil AccountDeletedAt for one
+// specific user, leaving every other user untouched.
+type deletedAccountFakeStore struct {
+	*fakeStore
+	deletedUserID string
+	deletedAt     time.Time
+}
+
+func (f *deletedAccountFakeStore) AccountDeletedAt(_ context.Context, userID string) (*time.Time, error) {
+	if userID == f.deletedUserID {
+		return &f.deletedAt, nil
+	}
+	return nil, nil
+}
+
+func TestTick_SkipsAccountPendingDeletion(t *testing.T) {
+	store := &deletedAccountFakeStore{fakeStore: newFakeStore(), deletedUserID: "u1", deletedAt: time.Now().Add(-time.Hour)}
+	store.users = []types.User{{ID: "u1"}}
+	store.configs["u1"] = types.BackupConfig{
+		UserID: "u1", Enabled: true, Destination: "local",
+		IntervalHrs: 24,
+		LastRunAt:   time.Now().Add(-25 * time.Hour),
+	}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	r.tick(context.Background())
+
+	if dst.writes != 0 {
+		t.Fatalf("expected no writes for account pending deletion, got %d", dst.writes)
+	}
+	if !store.lastRuns["u1"].IsZero() {
+		t.Fatalf("expected last_run_at untouched for account pending deletion")
+	}
+}
+
+// deletionStatusErrFakeStore fails AccountDeletedAt for every user.
+type deletionStatusErrFakeStore struct {
+	*fakeStore
+	err error
+}
+
+func (f *deletionStatusErrFakeStore) AccountDeletedAt(context.Context, string) (*time.Time, error) {
+	return nil, f.err
+}
+
+func TestTick_SkipsUserOnDeletionStatusError(t *testing.T) {
+	store := &deletionStatusErrFakeStore{fakeStore: newFakeStore(), err: errors.New("db down")}
+	store.users = []types.User{{ID: "u1"}}
+	store.configs["u1"] = types.BackupConfig{
+		UserID: "u1", Enabled: true, Destination: "local",
+		IntervalHrs: 24,
+		LastRunAt:   time.Now().Add(-25 * time.Hour),
+	}
+	dst := &fakeDest{}
+	r := New(store, dst, nil, time.Hour)
+
+	r.tick(context.Background())
+
+	if dst.writes != 0 {
+		t.Fatalf("expected no writes when deletion status lookup errors, got %d", dst.writes)
 	}
 }
 

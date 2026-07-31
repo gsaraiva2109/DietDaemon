@@ -413,6 +413,43 @@ func TestAccountDeletionStatusNotFound(t *testing.T) {
 	}
 }
 
+// TestAccountDeletedAt covers the narrow AccountDeletedAt view used by
+// internal/backup: nil for an active account, set after a deletion request,
+// and types.ErrNotFound passed through unchanged for a missing user.
+func TestAccountDeletedAt(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u, err := s.CreateUserWithPassword(ctx(), "acct-deletedat", "user-deletedat", "deletedat@example.com", "User", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+
+	deletedAt, err := s.AccountDeletedAt(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletedAt: %v", err)
+	}
+	if deletedAt != nil {
+		t.Fatalf("AccountDeletedAt = %v; want nil for an active account", deletedAt)
+	}
+
+	if err := s.RequestAccountDeletion(ctx(), u.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	deletedAt, err = s.AccountDeletedAt(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("AccountDeletedAt: %v", err)
+	}
+	if deletedAt == nil {
+		t.Fatalf("AccountDeletedAt = nil; want set after RequestAccountDeletion")
+	}
+
+	if _, err := s.AccountDeletedAt(ctx(), "no-such-user"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("AccountDeletedAt(missing user) = %v; want types.ErrNotFound", err)
+	}
+}
+
 // TestAccountMethodsWrapDBErrorsWhenClosed exercises the "if err != nil {
 // return fmt.Errorf(...) }" wrapper branch guarding every DB call in these
 // methods, by closing the store's real DB connection first -- BeginTx/Query/
