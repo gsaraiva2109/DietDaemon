@@ -24,9 +24,9 @@ sizing/design happens when picked up.
 3. **Smart reminders from historical patterns** — learn usual meal/log times from stored history,
    nudge before the user's own pattern instead of `scheduler.DefaultRules()`'s fixed hours.
    Extends the existing rules engine, not a new one.
-4. **Photo storage policy** — where/how progress photos (`PhotoGrid.tsx`, `PhotoCompare.tsx`) are
-   stored, size limits, retention. Needs a design pass (storage backend, retention, whether it
-   survives `MULTI_USER` account deletion) before implementation.
+4. **Photo storage policy** — see [docs/PHOTO_STORAGE.md](PHOTO_STORAGE.md) for the approved
+   BLOB-in-DB storage decision, enforced limits, access-control guarantees, and future
+   S3-migration trigger conditions.
 5. **Correction feedback loop** — when `/correct` fixes a misparsed item, auto-feed that
    correction into the alias table instead of leaving the food-library fix as a separate manual
    step.
