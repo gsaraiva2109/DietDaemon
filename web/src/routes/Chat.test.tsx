@@ -136,11 +136,18 @@ describe('Chat top-level states (demo mode / backend unavailable)', () => {
   })
 
   it('renders the unavailable state when the health check fails', async () => {
+    // assistant-ui's thread-list runtime logs its own "load failed" error
+    // asynchronously, sometimes after the visible error state has already
+    // settled — wait for that call explicitly before restoring, or it slips
+    // past this test and trips the global console guard in a later one.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     listSessions.mockReset().mockRejectedValue(new Error('network down'))
     renderChat()
     // The query's own `retry: 1` delays settling into isError by one retry
     // backoff (~1s) before the unavailable screen shows.
     expect(await screen.findByText('network down', {}, { timeout: 5000 })).toBeInTheDocument()
+    await waitFor(() => expect(consoleError).toHaveBeenCalled())
+    consoleError.mockRestore()
   }, 10000)
 })
 
