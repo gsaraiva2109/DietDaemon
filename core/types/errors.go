@@ -17,4 +17,7 @@ var (
 	// ErrIdentityLinked is returned by LinkOIDCIdentity when the provider+subject
 	// pair is already linked to a different user.
 	ErrIdentityLinked = errors.New("identity already linked to another account")
+
+	// ErrQuotaExceeded is returned when a write would exceed a per-user resource cap.
+	ErrQuotaExceeded = errors.New("quota exceeded")
 )

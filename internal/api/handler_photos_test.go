@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	photostore "github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 func TestPhotosRoutesRequireAuth(t *testing.T) {
@@ -134,6 +135,51 @@ func TestUploadPhotoDefaultsViewAndDate(t *testing.T) {
 	}
 	if photo.Date == "" {
 		t.Errorf("expected default date to be populated")
+	}
+}
+
+// TestHandleUploadPhotoInvalidView is a regression test proving an invalid
+// view value now gets a clean 400 instead of falling through to the DB's
+// `view IN ('front','side','back')` CHECK constraint as a raw 500.
+func TestHandleUploadPhotoInvalidView(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := multipartUploadRequest(map[string]string{"view": "diagonal"}, true, pngBytes)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec)
+}
+
+func TestHandleUploadPhotoInvalidMimeType(t *testing.T) {
+	store := newFakeMealStore()
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := multipartUploadRequest(nil, true, []byte("not an image, just plain text"))
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec)
+}
+
+func TestHandleUploadPhotoQuotaExceeded(t *testing.T) {
+	store := newFakeMealStore()
+	store.photoCount = photostore.MaxPhotosPerUser
+	h := newHandler(store, &fakeMealLogger{})
+
+	req := multipartUploadRequest(nil, true, pngBytes)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

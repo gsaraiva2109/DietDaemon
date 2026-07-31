@@ -262,6 +262,7 @@ type MealStore interface {
 	GetPhotoData(ctx context.Context, userID, photoID string) (types.ProgressPhoto, error)
 	UploadPhoto(ctx context.Context, p types.ProgressPhoto) error
 	DeletePhoto(ctx context.Context, userID, photoID string) error
+	CountPhotos(ctx context.Context, userID string) (int, error)
 
 	// GetProfile Profile & goals.
 	GetProfile(ctx context.Context, userID string) (types.UserProfile, error)
@@ -1244,6 +1245,9 @@ func (h *Handler) writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, types.ErrConflict):
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "conflict"})
+	case errors.Is(err, types.ErrQuotaExceeded):
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "photo quota exceeded"})
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 		// Log the real error server-side; return a generic message to avoid

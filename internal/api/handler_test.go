@@ -117,6 +117,8 @@ type fakeMealStore struct {
 	photoDataErr         error
 	uploadPhotoErr       error
 	deletePhotoErr       error
+	photoCount           int
+	photoCountErr        error
 
 	// BYOK AI keys.
 	aiKeyProvider  string
@@ -521,6 +523,9 @@ func (s *fakeMealStore) UploadPhoto(_ context.Context, _ types.ProgressPhoto) er
 }
 func (s *fakeMealStore) DeletePhoto(_ context.Context, _, _ string) error {
 	return s.deletePhotoErr
+}
+func (s *fakeMealStore) CountPhotos(_ context.Context, _ string) (int, error) {
+	return s.photoCount, s.photoCountErr
 }
 
 // Body tracking / shared.

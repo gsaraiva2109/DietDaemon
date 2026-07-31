@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -191,5 +192,37 @@ func TestListPhotoMetadata_ExcludesBlobAndReturnsCorrectResults(t *testing.T) {
 		if len(p.Data) != 0 {
 			t.Fatalf("ListPhotoMetadata[%s] included BLOB data %q, want none", want.ID, p.Data)
 		}
+	}
+}
+
+func TestCountPhotos(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	uid := "u-photo-count"
+	mustUser(t, s, types.User{ID: uid})
+
+	n, err := s.CountPhotos(ctx(), uid)
+	if err != nil {
+		t.Fatalf("CountPhotos (empty): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("CountPhotos (empty) = %d, want 0", n)
+	}
+
+	for i := range 3 {
+		if err := s.UploadPhoto(ctx(), types.ProgressPhoto{
+			ID: fmt.Sprintf("count-%d", i), UserID: uid, Date: "2026-07-01", View: "front", MimeType: "image/png", Data: []byte("x"),
+		}); err != nil {
+			t.Fatalf("UploadPhoto(%d): %v", i, err)
+		}
+	}
+
+	n, err = s.CountPhotos(ctx(), uid)
+	if err != nil {
+		t.Fatalf("CountPhotos: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("CountPhotos = %d, want 3", n)
 	}
 }
