@@ -129,29 +129,36 @@ func (r *Runner) tick(ctx context.Context) {
 	}
 	now := r.now()
 	for _, u := range users {
-		deletedAt, err := r.store.AccountDeletedAt(ctx, u.ID)
-		if err != nil && !errors.Is(err, types.ErrNotFound) {
-			r.log.Error("backup: deletion status", "user", u.ID, "err", err)
-			continue
-		}
-		if deletedAt != nil {
-			continue // account pending/completed deletion: excluded from backup entirely
-		}
+		r.tickUser(ctx, u.ID, now)
+	}
+}
 
-		cfg, err := r.store.GetBackupConfig(ctx, u.ID)
-		if errors.Is(err, types.ErrNotFound) {
-			continue // no config == disabled
-		}
-		if err != nil {
-			r.log.Error("backup: get config", "user", u.ID, "err", err)
-			continue
-		}
-		if !cfg.Enabled || !r.due(cfg, now) {
-			continue
-		}
-		if err := r.runFor(ctx, u.ID, cfg, now); err != nil {
-			r.log.Error("backup: run", "user", u.ID, "err", err)
-		}
+// tickUser runs a backup for one user if they're not pending deletion, have
+// backup enabled, and are due. Split out of tick so each skip condition adds
+// to this method's complexity instead of the loop's.
+func (r *Runner) tickUser(ctx context.Context, userID string, now time.Time) {
+	deletedAt, err := r.store.AccountDeletedAt(ctx, userID)
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		r.log.Error("backup: deletion status", "user", userID, "err", err)
+		return
+	}
+	if deletedAt != nil {
+		return // account pending/completed deletion: excluded from backup entirely
+	}
+
+	cfg, err := r.store.GetBackupConfig(ctx, userID)
+	if errors.Is(err, types.ErrNotFound) {
+		return // no config == disabled
+	}
+	if err != nil {
+		r.log.Error("backup: get config", "user", userID, "err", err)
+		return
+	}
+	if !cfg.Enabled || !r.due(cfg, now) {
+		return
+	}
+	if err := r.runFor(ctx, userID, cfg, now); err != nil {
+		r.log.Error("backup: run", "user", userID, "err", err)
 	}
 }
 
