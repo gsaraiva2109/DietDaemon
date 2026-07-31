@@ -237,3 +237,76 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 		Message:           message,
 	})
 }
+
+// targetReviewMinSampleDays is the minimum number of distinct weight-entry
+// days required within the lookback window before evaluating divergence —
+// doubled from learnedMealHours's 7-day gate (scheduler.go) since this needs
+// multiple weeks of signal, not one.
+const targetReviewMinSampleDays = 14
+
+// targetReviewLookbackDays is the rolling window checked for a sustained
+// goal/trend divergence — "several weeks" per the issue.
+const targetReviewLookbackDays = 28
+
+// handleTargetReview flags a sustained divergence between the user's stated
+// goal (cut/maintain/bulk) and their observed multi-week weight trend. It
+// never changes anything — the client routes the user to the existing
+// profile/onboarding wizard to confirm any change.
+func (h *Handler) handleTargetReview(w http.ResponseWriter, r *http.Request, userID string) {
+	profile, err := h.store.GetProfile(r.Context(), userID)
+	if err != nil || profile.Goal == "" {
+		_ = json.NewEncoder(w).Encode(types.TargetReviewSuggestion{})
+		return
+	}
+
+	trend, err := h.store.WeightTrend(r.Context(), userID, targetReviewLookbackDays)
+	if err != nil || len(trend) < targetReviewMinSampleDays {
+		_ = json.NewEncoder(w).Encode(types.TargetReviewSuggestion{})
+		return
+	}
+
+	direction := classifyTrendDirection(trend[0].RollingAvg, trend[len(trend)-1].RollingAvg)
+	message := classifyGoalDivergence(profile.Goal, direction)
+	if message == "" {
+		_ = json.NewEncoder(w).Encode(types.TargetReviewSuggestion{})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(types.TargetReviewSuggestion{
+		Message:                message,
+		ObservedTrendKgPerWeek: trend[len(trend)-1].RollingAvg - trend[0].RollingAvg,
+		Goal:                   profile.Goal,
+		SinceDate:              trend[0].Date,
+	})
+}
+
+// classifyGoalDivergence returns a user-facing, observational message when
+// the stated goal conflicts with the observed weight-trend direction, or ""
+// when they're aligned. Language stays descriptive ("your weight has
+// been..."), never prescriptive dietary advice.
+func classifyGoalDivergence(goal, direction string) string {
+	switch goal {
+	case "cut":
+		switch direction {
+		case "up":
+			return "Your weight has been trending up over the last 4 weeks while your goal is set to cut — want to review your target?"
+		case "stable":
+			return "Your weight has been stable for the last 4 weeks while your goal is set to cut — want to review your target?"
+		}
+	case "bulk":
+		switch direction {
+		case "down":
+			return "Your weight has been trending down over the last 4 weeks while your goal is set to bulk — want to review your target?"
+		case "stable":
+			return "Your weight has been stable for the last 4 weeks while your goal is set to bulk — want to review your target?"
+		}
+	case "maintain":
+		switch direction {
+		case "up":
+			return "Your weight has been trending up over the last 4 weeks while your goal is set to maintain — want to review your target?"
+		case "down":
+			return "Your weight has been trending down over the last 4 weeks while your goal is set to maintain — want to review your target?"
+		}
+	}
+	return ""
+}

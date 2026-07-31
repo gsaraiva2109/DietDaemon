@@ -550,6 +550,17 @@ type GoalSuggestion struct {
 	Message           string  `json:"message"`
 }
 
+// TargetReviewSuggestion flags a sustained divergence between the user's
+// stated goal (cut/maintain/bulk) and their observed multi-week weight
+// trend. An empty Message means "nothing to flag" — same convention as
+// GoalSuggestion.
+type TargetReviewSuggestion struct {
+	Message                string  `json:"message"`
+	ObservedTrendKgPerWeek float64 `json:"observed_trend_kg_per_week"`
+	Goal                   string  `json:"goal"`
+	SinceDate              string  `json:"since_date"`
+}
+
 // ---------------------------------------------------------------------------
 // Auth types — sessions and API keys
 // ---------------------------------------------------------------------------

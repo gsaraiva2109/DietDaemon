@@ -58,6 +58,7 @@ import type {
   SleepLog,
   SleepQuality,
   StreakResponse,
+  TargetReviewSuggestion,
   TDEEResult,
   TotpEnrollResponse,
   UserProfile,
@@ -751,6 +752,7 @@ export const api = {
         `&gender=${encodeURIComponent(p.gender)}&activity=${encodeURIComponent(p.activity)}`,
     ),
   goalSuggestions: () => request<GoalSuggestion>('/goals/suggestions'),
+  targetReview: () => request<TargetReviewSuggestion>('/goals/target-review'),
 
   // --- Nudge settings ---------------------------------------------
   nudges: {

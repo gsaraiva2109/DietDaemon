@@ -172,6 +172,30 @@ func DefaultDigestRules() []DigestRule {
 }
 
 // ---------------------------------------------------------------------------
+// Target review — goal/trend divergence
+// ---------------------------------------------------------------------------
+
+// TargetReviewRule fires a once-a-week nudge when the user's stated goal
+// (cut/maintain/bulk) has diverged from their observed weight trend over the
+// past several weeks. Same weekly-cadence structure as DigestRule (deduped by
+// ISO year-week), but the condition it checks is the goal/trend divergence,
+// not a digest summary. On by default — this is a core nudge, not a
+// power-user tuning knob (unlike WeeklyBudgetRule).
+type TargetReviewRule struct {
+	ID        string // stable identifier, used for dedupe
+	CheckHour int    // local hour (0-23) the rule becomes eligible
+	Weekday   time.Weekday
+}
+
+// DefaultTargetReviewRules returns the built-in target-review nudge: Sunday
+// morning, alongside the weekly digest.
+func DefaultTargetReviewRules() []TargetReviewRule {
+	return []TargetReviewRule{
+		{ID: "target-review", CheckHour: 9, Weekday: time.Sunday},
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Weekly rolling budget compensation
 // ---------------------------------------------------------------------------
 

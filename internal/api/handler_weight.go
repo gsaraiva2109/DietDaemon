@@ -119,17 +119,7 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 	if err == nil && len(trend) > 0 {
 		summary.LatestTrendPoint = &trend[len(trend)-1]
 		if len(trend) >= 2 {
-			first := trend[0].RollingAvg
-			last := trend[len(trend)-1].RollingAvg
-			diff := last - first
-			switch {
-			case diff > 0.5:
-				summary.TrendDirection = "up"
-			case diff < -0.5:
-				summary.TrendDirection = "down"
-			default:
-				summary.TrendDirection = "stable"
-			}
+			summary.TrendDirection = classifyTrendDirection(trend[0].RollingAvg, trend[len(trend)-1].RollingAvg)
 		}
 	}
 	if summary.TrendDirection == "" {
@@ -137,4 +127,18 @@ func (h *Handler) handleBodySummary(w http.ResponseWriter, r *http.Request, user
 	}
 
 	_ = json.NewEncoder(w).Encode(summary)
+}
+
+// classifyTrendDirection buckets a rolling-average weight change into
+// "up"/"down"/"stable", using a 0.5kg deadband to absorb day-to-day noise.
+func classifyTrendDirection(first, last float64) string {
+	diff := last - first
+	switch {
+	case diff > 0.5:
+		return "up"
+	case diff < -0.5:
+		return "down"
+	default:
+		return "stable"
+	}
 }

@@ -780,6 +780,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/profile", h.wrap(h.handleUpsertProfile))
 	mux.HandleFunc("GET /api/v1/tdee", h.wrap(h.handleCalculateTDEE))
 	mux.HandleFunc("GET /api/v1/goals/suggestions", h.wrap(h.handleGoalSuggestions))
+	mux.HandleFunc("GET /api/v1/goals/target-review", h.wrap(h.handleTargetReview))
 
 	// Data export.
 	mux.HandleFunc("GET /api/v1/export/meals", h.wrap(h.handleExportMeals))
