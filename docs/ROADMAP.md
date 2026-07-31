@@ -6,9 +6,7 @@ sizing/design happens when picked up.
 
 ## Low complexity
 
-1. **Shareable read-only dashboard link** — read-only token scoped to one `account_id`, same
-   per-account isolation multi-user login already requires. Not a new access model, just another
-   token type on the existing scoped-read path.
+None currently.
 
 ## Medium complexity
 
@@ -17,11 +15,6 @@ sizing/design happens when picked up.
    to begin with (not a DB gap, a barcode gap). Scope expectations accordingly. Will need a
    barcode-decode library when picked up — `gozxing` (pure-Go ZXing port) fits this repo's
    no-CGO stance (matches the `modernc.org/sqlite` choice); decide then, no dependency added now.
-2. **Macro-aware recipe suggestion from on-hand ingredients** — user lists what's in the fridge,
-   the matching engine (`internal/suggest`, shipped) finds combos hitting remaining macros.
-3. **Photo storage policy** — see [docs/PHOTO_STORAGE.md](PHOTO_STORAGE.md) for the approved
-   BLOB-in-DB storage decision, enforced limits, access-control guarantees, and future
-   S3-migration trigger conditions.
 
 ## High complexity
 
