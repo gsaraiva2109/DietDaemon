@@ -11,6 +11,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/exportfmt"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // fakeSource is a hand-rolled Source: files holds what Read returns per
@@ -128,6 +129,10 @@ func (f *fakeStore) RestoreSlotOption(_ context.Context, opt types.DietPlanSlotO
 func (f *fakeStore) SetDayOverride(_ context.Context, o types.DietPlanDayOverride) error {
 	f.dayOverrides = append(f.dayOverrides, o)
 	return nil
+}
+
+func (f *fakeStore) AccountDeletionStatus(context.Context, string) (store.AccountDeletionStatus, error) {
+	return store.AccountDeletionStatus{}, nil
 }
 
 // buildBackupFiles renders a small (1-2 row) valid backup using the real
@@ -398,6 +403,76 @@ func TestRunOnce_IdempotentRerun(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sum1, sum2) {
 		t.Fatalf("expected same summary on rerun, got %+v then %+v", sum1, sum2)
+	}
+}
+
+// purgedPhotosFakeStore reports PhotosPurgedAt set, so RunOnce must refuse to
+// restore photos for it.
+type purgedPhotosFakeStore struct {
+	*fakeStore
+}
+
+func (f *purgedPhotosFakeStore) AccountDeletionStatus(context.Context, string) (store.AccountDeletionStatus, error) {
+	return store.AccountDeletionStatus{PhotosPurgedAt: new(time.Now())}, nil
+}
+
+func TestRunOnce_PurgedPhotosSkipped(t *testing.T) {
+	src := &fakeSource{files: buildBackupFiles(), list: allFilenames()}
+	fs := &purgedPhotosFakeStore{fakeStore: &fakeStore{}}
+	r := New(fs, src)
+
+	sum, err := r.RunOnce(context.Background(), "u1", types.BackupConfig{})
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if sum.Photos != 0 {
+		t.Fatalf("expected no photos restored for purged account, got %d", sum.Photos)
+	}
+	if len(fs.photos) != 0 {
+		t.Fatalf("expected RestorePhoto never called for purged account, got %d calls", len(fs.photos))
+	}
+	wantSkip := "photos: purged per retention policy, not restored"
+	found := false
+	for _, s := range sum.Skipped {
+		if s == wantSkip {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %q in Skipped, got %v", wantSkip, sum.Skipped)
+	}
+	// Every other entity still restores normally.
+	if sum.Meals != 1 || sum.Rollups != 1 || sum.Weight != 1 {
+		t.Fatalf("expected other entities unaffected, got %+v", sum)
+	}
+}
+
+// deletionStatusErrFakeStore fails AccountDeletionStatus, so RunOnce must
+// collect the error and skip restoring photos rather than treat it as "not
+// purged".
+type deletionStatusErrFakeStore struct {
+	*fakeStore
+}
+
+func (f *deletionStatusErrFakeStore) AccountDeletionStatus(context.Context, string) (store.AccountDeletionStatus, error) {
+	return store.AccountDeletionStatus{}, fmt.Errorf("db down")
+}
+
+func TestRunOnce_DeletionStatusErrorSkipsPhotos(t *testing.T) {
+	src := &fakeSource{files: buildBackupFiles(), list: allFilenames()}
+	fs := &deletionStatusErrFakeStore{fakeStore: &fakeStore{}}
+	r := New(fs, src)
+
+	sum, err := r.RunOnce(context.Background(), "u1", types.BackupConfig{})
+	if err == nil || !strings.Contains(err.Error(), "account deletion status") {
+		t.Fatalf("expected error mentioning account deletion status, got %v", err)
+	}
+	if sum.Photos != 0 || len(fs.photos) != 0 {
+		t.Fatalf("expected no photos restored when deletion status lookup fails, got sum=%+v photos=%v", sum, fs.photos)
+	}
+	// Every other entity still restores normally.
+	if sum.Meals != 1 || sum.Rollups != 1 {
+		t.Fatalf("expected other entities unaffected, got %+v", sum)
 	}
 }
 

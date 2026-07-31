@@ -83,7 +83,23 @@ the store isn't touched, so `-db` doesn't even need to point to a real file.
 | Workouts          | Fully preserved | Including individual exercises (sets/reps/weight), round-tripped via the `exercises_json` column.                                                                                                                                                                                                                                                                                                                                           |
 | Water             | Fully preserved | Amount, timestamp, note round-trip exactly.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Fasting           | Fully preserved | Including end time and completion state for closed fasts.                                                                                                                                                                                                                                                                                                                                                                                   |
-| Progress photos   | Fully preserved | Blob data plus metadata (date, view, mime type).                                                                                                                                                                                                                                                                                                                                                                                            |
+| Progress photos   | **Conditional** | Blob data plus metadata (date, view, mime type) — unless the target account has since had its photos purged per retention policy, in which case restore refuses to bring them back. See "Purged photos are never restored" below.                                                                                                                                                                                                           |
+
+## Purged photos are never restored
+
+Before restoring photos, `RunOnce` checks the *target* account's deletion
+status via `store.AccountDeletionStatus` — the same underlying query
+[scheduled backup](BACKUP.md) uses (through its own narrow `AccountDeletedAt`
+view). If `photos_purged_at` is set — the account already went through its
+retention-policy photo purge — restore skips `photos.csv` and every photo
+blob entirely, even if they're present and intact in the backup being
+restored. This is deliberate: an old backup taken before the purge must not
+silently undo it. The skip is recorded in `Summary.Skipped` as
+`"photos: purged per retention policy, not restored"`, distinct from the
+plain filename entries used when a file is simply absent from the backup.
+
+Every other entity in the backup still restores normally; only photos are
+affected.
 
 ## Idempotency
 

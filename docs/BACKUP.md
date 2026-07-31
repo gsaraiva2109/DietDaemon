@@ -35,6 +35,15 @@ scheduler — same shape (a ticker + a per-user check), separate concern. It reu
 exact CSV writer used by the on-demand export endpoint (`internal/exportfmt`), so
 scheduled backups and manual exports are byte-identical in format.
 
+### Accounts pending deletion are excluded
+
+Before running a backup for a user, `tick()` checks the account's deletion
+status (via the narrow `AccountDeletedAt` view of `store.AccountDeletionStatus`).
+If the account has `deleted_at` set — soft-deleted, anywhere in the retention
+window before its final purge — the entire run is skipped for that user, not
+just the photos. Backups never capture a snapshot of an account that's in the
+process of being deleted.
+
 A user can also trigger a backup immediately via "Run now" in the dashboard, which
 calls the same export logic outside the interval gate.
 

@@ -176,6 +176,17 @@ type AccountDeletionStatus struct {
 	PhotosPurgedAt *time.Time
 }
 
+// AccountDeletedAt is a narrow view of AccountDeletionStatus exposing only
+// DeletedAt. internal/backup needs this to exclude accounts pending deletion
+// from scheduled backups, but can't import internal/store directly (this
+// package already imports internal/backup, so that would cycle) -- so it
+// declares its own interface method against this signature instead of the
+// full AccountDeletionStatus type.
+func (s *Store) AccountDeletedAt(ctx context.Context, userID string) (*time.Time, error) {
+	status, err := s.AccountDeletionStatus(ctx, userID)
+	return status.DeletedAt, err
+}
+
 // ListAccountsPendingPhotoPurge returns IDs of accounts soft-deleted at or
 // before deletedBefore whose photos have not yet been purged. Used by
 // PurgeRunner both for day-30 photo-purge candidates and, with an earlier

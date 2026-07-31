@@ -238,3 +238,61 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("restored template = %+v, want name Aveia with 1 item at 190 kcal", gotTmpl)
 	}
 }
+
+// TestRestorePurgedAccountSkipsPhotos pins the #209 acceptance bar: a backup
+// taken while a photo still existed must not resurrect that photo once the
+// account's photos have since been purged, even though the blob is still
+// sitting right there in the backup on disk.
+func TestRestorePurgedAccountSkipsPhotos(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	src := openTestStore(t, filepath.Join(dir, "source.db"))
+	mustUpsertUser(t, ctx, src, "u1")
+	mustSetBackupConfig(t, ctx, src, types.BackupConfig{
+		UserID: "u1", Enabled: true, Destination: "local", LocalSubdir: "u1",
+	})
+	if err := src.UploadPhoto(ctx, types.ProgressPhoto{
+		ID: "p1", UserID: "u1", Date: "2026-01-01", View: "front", MimeType: "image/jpeg",
+		Data: []byte("fake-jpeg-bytes"), CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UploadPhoto: %v", err)
+	}
+
+	dst := mustLocalDisk(t, dir)
+	mustRunBackupOnce(t, ctx, src, dst, "u1")
+
+	// The backup on disk still has the photo blob and photos.csv entry, but
+	// the account being restored into has since had its photos purged per
+	// retention policy -- restore must check that account's current status,
+	// not whatever the backup's source happened to look like.
+	target := openTestStore(t, filepath.Join(dir, "target.db"))
+	mustUpsertUser(t, ctx, target, "u1")
+	if err := target.PurgeAccountPhotos(ctx, "u1"); err != nil {
+		t.Fatalf("PurgeAccountPhotos: %v", err)
+	}
+
+	cfg := types.BackupConfig{UserID: "u1", Destination: "local", LocalSubdir: "u1"}
+	sum := mustRunRestoreOnce(t, ctx, target, dst, "u1", cfg)
+
+	if sum.Photos != 0 {
+		t.Fatalf("expected 0 photos restored for a purged account, got %d", sum.Photos)
+	}
+	gotPhotos, err := target.ListPhotoMetadata(ctx, "u1")
+	if err != nil {
+		t.Fatalf("ListPhotoMetadata: %v", err)
+	}
+	if len(gotPhotos) != 0 {
+		t.Fatalf("expected no photos in target store, got %+v", gotPhotos)
+	}
+	wantSkip := "photos: purged per retention policy, not restored"
+	found := false
+	for _, s := range sum.Skipped {
+		if s == wantSkip {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %q in Skipped, got %v", wantSkip, sum.Skipped)
+	}
+}
