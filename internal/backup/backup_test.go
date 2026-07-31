@@ -87,7 +87,7 @@ func (f *fakeStore) ListPhotoMetadata(context.Context, string) ([]types.Progress
 	return nil, nil
 }
 
-func (f *fakeStore) GetPhotosData(context.Context, []string) (map[string][]byte, error) {
+func (f *fakeStore) GetPhotosData(context.Context, string, []string) (map[string][]byte, error) {
 	return map[string][]byte{}, nil
 }
 
@@ -162,7 +162,7 @@ type photoDataErrFakeStore struct {
 	err error
 }
 
-func (f *photoDataErrFakeStore) GetPhotosData(context.Context, []string) (map[string][]byte, error) {
+func (f *photoDataErrFakeStore) GetPhotosData(context.Context, string, []string) (map[string][]byte, error) {
 	return nil, f.err
 }
 
@@ -341,7 +341,7 @@ func (f *allEntitiesFakeStore) ListPhotoMetadata(context.Context, string) ([]typ
 	return []types.ProgressPhoto{{ID: "p1"}}, nil
 }
 
-func (f *allEntitiesFakeStore) GetPhotosData(_ context.Context, photoIDs []string) (map[string][]byte, error) {
+func (f *allEntitiesFakeStore) GetPhotosData(_ context.Context, _ string, photoIDs []string) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(photoIDs))
 	for _, id := range photoIDs {
 		out[id] = []byte("jpeg-bytes")
@@ -489,7 +489,7 @@ func (f *multiPhotoFakeStore) ListPhotoMetadata(context.Context, string) ([]type
 	return []types.ProgressPhoto{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}, nil
 }
 
-func (f *multiPhotoFakeStore) GetPhotosData(_ context.Context, photoIDs []string) (map[string][]byte, error) {
+func (f *multiPhotoFakeStore) GetPhotosData(_ context.Context, _ string, photoIDs []string) (map[string][]byte, error) {
 	f.getPhotosDataCalls++
 	out := make(map[string][]byte, len(photoIDs))
 	for _, id := range photoIDs {

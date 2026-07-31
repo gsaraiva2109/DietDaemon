@@ -13,6 +13,7 @@ import (
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // --- fakes ---
@@ -512,7 +513,7 @@ func (s *fakeMealStore) DeleteMeasurement(_ context.Context, _, _ string) error 
 func (s *fakeMealStore) ListPhotoMetadata(_ context.Context, _ string) ([]types.ProgressPhoto, error) {
 	return s.photoMetadata, s.photoMetadataErr
 }
-func (s *fakeMealStore) GetPhotoData(_ context.Context, _ string) (types.ProgressPhoto, error) {
+func (s *fakeMealStore) GetPhotoData(_ context.Context, _, _ string) (types.ProgressPhoto, error) {
 	return s.photoData, s.photoDataErr
 }
 func (s *fakeMealStore) UploadPhoto(_ context.Context, _ types.ProgressPhoto) error {
@@ -846,6 +847,12 @@ type fakeAuthStore struct {
 	deleteUserSessionsErr   error
 	auditEvents             []types.AuditEvent
 
+	// Tiered account deletion/reactivation (issue #199 HTTP-layer gate).
+	deletionStatus            map[string]store.AccountDeletionStatus // userID -> status
+	requestAccountDeletionErr error
+	reactivateAccountErr      error
+	accountDeletionStatusErr  error
+
 	// OIDC characterization-test knobs (handler_oidc_test.go).
 	oidcIdentities           map[string]types.User // key: provider+"|"+subject
 	getUserByOIDCIdentityErr error                 // overrides the default not-found lookup
@@ -879,6 +886,8 @@ func newFakeAuthStore() *fakeAuthStore {
 		keyUserID:   make(map[string]string),
 		shareTokens: make(map[string][]types.ShareToken),
 		shareUserID: make(map[string]string),
+
+		deletionStatus: make(map[string]store.AccountDeletionStatus),
 	}
 	// Pre-register a test user for existing test compatibility.
 	s.users["test-user"] = types.User{ID: "test-user", Email: "test@example.com", Status: "active", CreatedAt: time.Now().UTC()}
@@ -924,6 +933,39 @@ func (s *fakeAuthStore) CountUsers(_ context.Context) (int, error) {
 func (s *fakeAuthStore) DeleteAccount(_ context.Context, userID string) error {
 	delete(s.users, userID)
 	return nil
+}
+
+func (s *fakeAuthStore) RequestAccountDeletion(_ context.Context, userID string) error {
+	if s.requestAccountDeletionErr != nil {
+		return s.requestAccountDeletionErr
+	}
+	if _, ok := s.users[userID]; !ok {
+		return types.ErrNotFound
+	}
+	now := time.Now().UTC()
+	s.deletionStatus[userID] = store.AccountDeletionStatus{DeletedAt: &now}
+	return nil
+}
+
+func (s *fakeAuthStore) ReactivateAccount(_ context.Context, userID string) error {
+	if s.reactivateAccountErr != nil {
+		return s.reactivateAccountErr
+	}
+	if _, ok := s.users[userID]; !ok {
+		return types.ErrNotFound
+	}
+	delete(s.deletionStatus, userID)
+	return nil
+}
+
+func (s *fakeAuthStore) AccountDeletionStatus(_ context.Context, userID string) (store.AccountDeletionStatus, error) {
+	if s.accountDeletionStatusErr != nil {
+		return store.AccountDeletionStatus{}, s.accountDeletionStatusErr
+	}
+	if _, ok := s.users[userID]; !ok {
+		return store.AccountDeletionStatus{}, types.ErrNotFound
+	}
+	return s.deletionStatus[userID], nil
 }
 
 func (s *fakeAuthStore) GetUserByAPIKey(_ context.Context, hashedKey string) (types.User, error) {

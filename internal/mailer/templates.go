@@ -37,3 +37,25 @@ func MFAEmailCodeEmail(code string) Message {
 		TextBody: fmt.Sprintf("Your verification code: %s\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore it.", code),
 	}
 }
+
+// AccountDeletionRequestedEmail builds the deletion-confirmation message sent
+// immediately after a user requests account deletion. It explains the
+// tiered retention grace window (30 days for full recovery including
+// photos, 90 days for the account itself) and how to reactivate.
+func AccountDeletionRequestedEmail(reactivateLink string) Message {
+	return Message{
+		Subject:  "Account deletion requested — DietDaemon",
+		HTMLBody: fmt.Sprintf(`<p>We've received your request to delete your DietDaemon account.</p><p>Your account is scheduled for permanent deletion. Progress photos are purged after 30 days; the rest of your account and data after 90 days.</p><p>Changed your mind? <a href="%s">Sign in and reactivate your account</a> any time before then to keep everything.</p>`, reactivateLink),
+		TextBody: fmt.Sprintf("We've received your request to delete your DietDaemon account.\n\nYour account is scheduled for permanent deletion. Progress photos are purged after 30 days; the rest of your account and data after 90 days.\n\nChanged your mind? Sign in and reactivate your account any time before then to keep everything: %s", reactivateLink),
+	}
+}
+
+// AccountReactivatedEmail confirms a pending account deletion was canceled
+// and normal access has been restored.
+func AccountReactivatedEmail() Message {
+	return Message{
+		Subject:  "Your account has been reactivated — DietDaemon",
+		HTMLBody: `<p>Your DietDaemon account has been reactivated. The pending deletion has been canceled and your normal access is restored.</p>`,
+		TextBody: "Your DietDaemon account has been reactivated. The pending deletion has been canceled and your normal access is restored.",
+	}
+}

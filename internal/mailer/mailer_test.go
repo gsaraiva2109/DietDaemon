@@ -1,6 +1,7 @@
 package mailer
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -100,5 +101,19 @@ func TestTemplatesNotEmpty(t *testing.T) {
 	r := PasswordResetEmail("http://example.com/reset?t=abc")
 	if r.Subject == "" || r.HTMLBody == "" || r.TextBody == "" {
 		t.Error("password reset email template should have subject, html, and text")
+	}
+
+	link := "http://example.com/reactivate?t=abc"
+	d := AccountDeletionRequestedEmail(link)
+	if d.Subject == "" || d.HTMLBody == "" || d.TextBody == "" {
+		t.Error("account deletion requested email template should have subject, html, and text")
+	}
+	if !strings.Contains(d.HTMLBody, link) || !strings.Contains(d.TextBody, link) {
+		t.Error("account deletion requested email should include the reactivation link")
+	}
+
+	a := AccountReactivatedEmail()
+	if a.Subject == "" || a.HTMLBody == "" || a.TextBody == "" {
+		t.Error("account reactivated email template should have subject, html, and text")
 	}
 }
