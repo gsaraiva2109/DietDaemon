@@ -324,10 +324,14 @@ type MealStore interface {
 
 // MealLogger submits raw text through the parsing pipeline, and can also directly
 // log a fully-resolved meal (used by template logging and meal duplication).
-// Satisfied by the pipeline.Engine.
+// ParseAndResolve/LogMealFromItems back the photo-menu dining flow (#201):
+// parse the picked/edited dish text without persisting, then log it once
+// the caller has picked a forced confidence. Satisfied by the pipeline.Engine.
 type MealLogger interface {
 	Handle(ctx context.Context, msg types.InboundMessage) error
 	LogMeal(ctx context.Context, meal types.Meal) error
+	ParseAndResolve(ctx context.Context, userID, text, locale string) ([]types.ResolvedItem, int, error)
+	LogMealFromItems(ctx context.Context, userID string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) (types.Meal, error)
 }
 
 // Suggester recommends a next meal from what's left of today's targets and
@@ -731,6 +735,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/plans/extract/text", h.wrap(h.handleExtractPlanFromText))
 	mux.HandleFunc("POST /api/v1/plans/extract/image", h.wrap(h.handleExtractPlanFromImage))
 
+	// Photo menu dining mode (#201): extract dish candidates from a
+	// photographed restaurant menu, then log the user's pick at forced low
+	// confidence.
+	mux.HandleFunc("POST /api/v1/menu/extract/image", h.wrap(h.handleExtractMenuFromImage))
+	mux.HandleFunc("POST /api/v1/menu/log-dish", h.wrap(h.handleLogMenuDish))
+
 	// Body tracking — weight.
 	mux.HandleFunc("GET /api/v1/body/weight", h.wrap(h.handleListWeight))
 	mux.HandleFunc("POST /api/v1/body/weight", h.wrap(h.handleLogWeight))
@@ -1000,6 +1010,8 @@ func isExpensiveRequest(r *http.Request) bool {
 		path == "/api/v1/foods/custom/ocr" ||
 		path == "/api/v1/plans/extract/text" ||
 		path == "/api/v1/plans/extract/image" ||
+		path == "/api/v1/menu/extract/image" ||
+		path == "/api/v1/menu/log-dish" ||
 		path == "/api/v1/settings/backup/run"
 }
 

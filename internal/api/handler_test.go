@@ -1192,6 +1192,18 @@ type fakeMealLogger struct {
 	lastMsg  types.InboundMessage
 	lastMeal types.Meal
 	err      error
+
+	// parseItems/parseErr back ParseAndResolve, used by the photo-menu
+	// dining flow (#201, handler_menu_extract.go) to resolve a picked dish
+	// before logging it.
+	parseItems []types.ResolvedItem
+	parseErr   error
+
+	// loggedConfidence records what LogMealFromItems was called with, so
+	// tests can assert the caller forced a specific confidence regardless
+	// of the resolved items.
+	loggedConfidence float64
+	fromItemsErr     error
 }
 
 func (l *fakeMealLogger) Handle(_ context.Context, msg types.InboundMessage) error {
@@ -1202,6 +1214,20 @@ func (l *fakeMealLogger) Handle(_ context.Context, msg types.InboundMessage) err
 func (l *fakeMealLogger) LogMeal(_ context.Context, meal types.Meal) error {
 	l.lastMeal = meal
 	return l.err
+}
+
+func (l *fakeMealLogger) ParseAndResolve(_ context.Context, _, _, _ string) ([]types.ResolvedItem, int, error) {
+	return l.parseItems, 0, l.parseErr
+}
+
+func (l *fakeMealLogger) LogMealFromItems(_ context.Context, userID string, at time.Time, rawText string, confidence float64, items []types.ResolvedItem) (types.Meal, error) {
+	l.loggedConfidence = confidence
+	if l.fromItemsErr != nil {
+		return types.Meal{}, l.fromItemsErr
+	}
+	meal := types.Meal{ID: "menu-meal-1", UserID: userID, At: at, RawText: rawText, Confidence: confidence, Items: items}
+	l.lastMeal = meal
+	return meal, nil
 }
 
 type fakeSuggester struct {

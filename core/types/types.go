@@ -886,3 +886,17 @@ type PlanDraft struct {
 	Unreadable bool               `json:"unreadable"`
 	Notes      *string            `json:"notes"`
 }
+
+type MenuDishCandidate struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// MenuDraft is the list of dish candidates extracted from a photographed
+// restaurant menu (#201) for the user to pick one from — nothing here is
+// persisted directly; picking a dish feeds its text into the normal meal
+// parser (pipeline.Engine.ParseAndResolve), same as typed/spoken input.
+type MenuDraft struct {
+	Dishes     []MenuDishCandidate `json:"dishes"`
+	Unreadable bool                `json:"unreadable"`
+}
