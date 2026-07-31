@@ -112,11 +112,16 @@ func runWithConfig(cfg *config.Config) error {
 		return err
 	}
 
-	backupRunner, err := startBackgroundServices(ctx, cfg, st, runtime)
+	m, err := mailer.New(mailer.Config{Provider: cfg.EmailProvider, From: cfg.EmailFrom, ResendAPIKey: cfg.ResendAPIKey, SESRegion: cfg.SESRegion, SMTPHost: cfg.SMTPHost, SMTPPort: cfg.SMTPPort, SMTPUsername: cfg.SMTPUsername, SMTPPassword: cfg.SMTPPassword, SMTPTLS: cfg.SMTPTLS, PublicBaseURL: cfg.PublicBaseURL})
+	if err != nil {
+		return fmt.Errorf("mailer: %w", err)
+	}
+
+	backupRunner, err := startBackgroundServices(ctx, cfg, st, runtime, m)
 	if err != nil {
 		return err
 	}
-	if err := startDashboard(ctx, cfg, st, runtime, backupRunner); err != nil {
+	if err := startDashboard(ctx, cfg, st, runtime, backupRunner, m); err != nil {
 		return err
 	}
 	return runMessageLoop(ctx, cfg, runtime.message, runtime.engine)
@@ -253,7 +258,7 @@ func newNotifier(cfg *config.Config) (ports.Notifier, error) {
 	return notifier, nil
 }
 
-func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime) (*backup.Runner, error) {
+func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime, m mailer.Mailer) (*backup.Runner, error) {
 	sched := scheduler.New(st, st, runtime.notifier, scheduler.DefaultRules(), cfg.Location, cfg.NudgeInterval,
 		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()), scheduler.WithRuleConfig(st), scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
 		scheduler.WithChatSender(st, runtime.message), scheduler.WithSentNudges(st), scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()), scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
@@ -268,7 +273,7 @@ func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.
 	go backupRunner.Run(ctx)
 	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
 
-	go assistant.NewPurgeRunner(st, 24*time.Hour).Run(ctx)
+	go assistant.NewPurgeRunner(st, 24*time.Hour).WithMailer(m).Run(ctx)
 	slog.Info("chat session purge runner running", "retention", "30d")
 	if err := startFoodImportRunner(ctx, cfg, st, runtime.embedder); err != nil {
 		return nil, err
@@ -326,7 +331,7 @@ func startFoodImportRunner(ctx context.Context, cfg *config.Config, st *store.St
 	return nil
 }
 
-func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime, backupRunner *backup.Runner) error {
+func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, runtime *appRuntime, backupRunner *backup.Runner, m mailer.Mailer) error {
 	if !cfg.EnableDashboard {
 		return nil
 	}
@@ -335,10 +340,6 @@ func startDashboard(ctx context.Context, cfg *config.Config, st *store.Store, ru
 		LockoutCfg: auth.DefaultLockoutConfig(), RegistrationMode: types.RegistrationMode(cfg.RegistrationMode), CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, MultiUser: cfg.MultiUser,
 	}
 	oidcRegistry := oidc.BuildRegistry(oidcProviderConfigs(cfg))
-	m, err := mailer.New(mailer.Config{Provider: cfg.EmailProvider, From: cfg.EmailFrom, ResendAPIKey: cfg.ResendAPIKey, SESRegion: cfg.SESRegion, SMTPHost: cfg.SMTPHost, SMTPPort: cfg.SMTPPort, SMTPUsername: cfg.SMTPUsername, SMTPPassword: cfg.SMTPPassword, SMTPTLS: cfg.SMTPTLS, PublicBaseURL: cfg.PublicBaseURL})
-	if err != nil {
-		return fmt.Errorf("mailer: %w", err)
-	}
 	wa, err := auth.NewWebAuthn(cfg.WebAuthnConfig())
 	if err != nil {
 		return fmt.Errorf("webauthn: %w", err)

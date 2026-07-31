@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -175,5 +176,34 @@ func TestDeletePhotoNotFound(t *testing.T) {
 	rec := doRequest(h, "DELETE", "/api/v1/body/photos/missing", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+// TestDeletePhotoLogsAuditEvent covers the plan's requirement that a
+// single-photo delete stays immediate but now also logs an auth_audit_log
+// event, so deletions are traceable even outside the tiered account-deletion
+// flow.
+func TestDeletePhotoLogsAuditEvent(t *testing.T) {
+	mealStore := newFakeMealStore()
+	authStore := newFakeAuthStore()
+	h := newHandlerWithAccountStore(mealStore, authStore)
+
+	rec := doRequest(h, "DELETE", "/api/v1/body/photos/p1", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(authStore.auditEvents) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(authStore.auditEvents))
+	}
+	ev := authStore.auditEvents[0]
+	if ev.Event != "photo.delete" {
+		t.Errorf("event = %q, want photo.delete", ev.Event)
+	}
+	if ev.UserID != "test-user" {
+		t.Errorf("userID = %q, want test-user", ev.UserID)
+	}
+	if !strings.Contains(ev.Meta, "p1") {
+		t.Errorf("meta = %q, want it to contain photo id p1", ev.Meta)
 	}
 }
