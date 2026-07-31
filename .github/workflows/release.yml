@@ -11,6 +11,10 @@ permissions:
   packages: write
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 env:
   GO_VERSION: '1.26'
   NODE_VERSION: '22'
@@ -99,6 +103,7 @@ jobs:
     runs-on: [self-hosted, homelab, linux, amd64]
     needs: [release-please, go, frontend]
     if: needs.release-please.outputs.release_created == 'true'
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
