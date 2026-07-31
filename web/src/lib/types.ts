@@ -336,6 +336,22 @@ export interface PlanDraft {
   notes: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Photo-menu dining mode (#201): a photographed restaurant menu returns a flat
+// list of dish candidates for the user to pick from, no catalog resolution —
+// the picked/edited name+description goes straight to the free-text parser.
+// ---------------------------------------------------------------------------
+
+export interface MenuDishCandidate {
+  name: string
+  description: string
+}
+
+export interface MenuDraft {
+  dishes: MenuDishCandidate[]
+  unreadable: boolean
+}
+
 // GET /plans/day/{date} — the resolved day-type, its slots, and the targets
 // in effect for one date. `targets` mirrors GET /targets: its value is Go's
 // DailyTargets, which carries no json tags of its own, so those nested keys

@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/labelextract"
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/menuextract"
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/planextract"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -16,6 +17,12 @@ import (
 
 // Compile-time interface check.
 var _ ports.VisionAdapter = (*Adapter)(nil)
+
+const (
+	generatePath      = "/api/generate"
+	contentTypeHeader = "Content-Type"
+	jsonContentType   = "application/json"
+)
 
 // ---------------------------------------------------------------------------
 // ExtractLabel — POST /api/generate with an embedded image
@@ -47,11 +54,11 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.url+"/api/generate", bytes.NewReader(payload))
+		a.url+generatePath, bytes.NewReader(payload))
 	if err != nil {
 		return types.NutritionLabelDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -93,11 +100,11 @@ func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.url+"/api/generate", bytes.NewReader(payload))
+		a.url+generatePath, bytes.NewReader(payload))
 	if err != nil {
 		return types.PlanDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -115,4 +122,50 @@ func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string
 	}
 
 	return planextract.ParseResponse(gr.Response)
+}
+
+// ---------------------------------------------------------------------------
+// ExtractMenu — POST /api/generate with an embedded image
+// ---------------------------------------------------------------------------
+
+// ExtractMenu sends the photographed restaurant menu to Ollama's
+// /api/generate endpoint using visionModel (set via SetVisionModel) and
+// parses the model's JSON reply. mimeType is unused: Ollama's images array
+// takes bare base64 with no data-URI prefix.
+func (a *Adapter) ExtractMenu(ctx context.Context, image []byte, mimeType string) (types.MenuDraft, error) {
+	body := visionRequest{
+		Model:  a.visionModel,
+		Prompt: menuextract.Prompt,
+		Images: []string{base64.StdEncoding.EncodeToString(image)},
+		Stream: false,
+		Format: "json",
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return types.MenuDraft{}, fmt.Errorf("ollama: marshal vision request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		a.url+generatePath, bytes.NewReader(payload))
+	if err != nil {
+		return types.MenuDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
+	}
+	req.Header.Set(contentTypeHeader, jsonContentType)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return types.MenuDraft{}, fmt.Errorf("ollama: vision generate: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return types.MenuDraft{}, fmt.Errorf("ollama: vision generate status %d", resp.StatusCode)
+	}
+
+	var gr generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+		return types.MenuDraft{}, fmt.Errorf("ollama: decode vision generate: %w", err)
+	}
+
+	return menuextract.ParseResponse(gr.Response)
 }

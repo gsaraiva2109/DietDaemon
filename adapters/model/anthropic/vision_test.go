@@ -141,6 +141,75 @@ func TestExtractPlanHTTPError(t *testing.T) {
 	}
 }
 
+func checkExtractMenuRequest(t *testing.T, req visionRequest, wantB64 string) {
+	t.Helper()
+	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+		t.Fatalf("unexpected message shape: %+v", req.Messages)
+	}
+	imgBlock := req.Messages[0].Content[0]
+	if imgBlock.Type != "image" || imgBlock.Source == nil {
+		t.Fatalf("content[0] = %+v, want image block", imgBlock)
+	}
+	if imgBlock.Source.Data != wantB64 {
+		t.Errorf("image data mismatch")
+	}
+	textBlock := req.Messages[0].Content[1]
+	if textBlock.Type != "text" || !strings.Contains(textBlock.Text, "restaurant menu") {
+		t.Errorf("content[1] = %+v, want the menuextract prompt", textBlock)
+	}
+}
+
+func TestExtractMenu(t *testing.T) {
+	img := []byte("fake-jpeg-bytes")
+	wantB64 := base64.StdEncoding.EncodeToString(img)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req visionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		checkExtractMenuRequest(t, req, wantB64)
+
+		_ = json.NewEncoder(w).Encode(messagesResponse{
+			Content: []contentBlock{{Type: "text", Text: `{"dishes":[{"name":"Frango à parmegiana","description":"Peito empanado, molho de tomate"}],"unreadable":false}`}},
+		})
+	}))
+	defer srv.Close()
+
+	a := &Adapter{apiKey: "test-key", model: "claude-haiku-4-5-20251001", client: &http.Client{Timeout: 5 * time.Second}, baseURL: srv.URL}
+	draft, err := a.ExtractMenu(t.Context(), img, "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractMenu: %v", err)
+	}
+	if len(draft.Dishes) != 1 || draft.Dishes[0].Name != "Frango à parmegiana" {
+		t.Errorf("Dishes = %+v, want one dish named Frango à parmegiana", draft.Dishes)
+	}
+	if draft.Unreadable {
+		t.Error("Unreadable = true, want false")
+	}
+}
+
+func TestExtractMenuHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid image"}}`))
+	}))
+	defer srv.Close()
+
+	a := &Adapter{apiKey: "test-key", model: "claude-haiku-4-5-20251001", client: &http.Client{Timeout: 5 * time.Second}, baseURL: srv.URL}
+	_, err := a.ExtractMenu(t.Context(), []byte("img"), "image/jpeg")
+	if err == nil {
+		t.Fatal("expected error on 400, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid image") {
+		t.Errorf("error = %q, want it to include the response body detail", err.Error())
+	}
+}
+
 func TestExtractLabelHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

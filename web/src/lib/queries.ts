@@ -695,6 +695,26 @@ export function useExtractPlanFromImage() {
   })
 }
 
+// Extracts dish candidates from a photographed restaurant menu (#201), for
+// the caller to pick one from. Nothing persists server-side, so no cache to
+// invalidate (mirrors useExtractPlanFromImage).
+export function useExtractMenuFromImage() {
+  return useMutation({
+    mutationFn: (file: File) => api.menu.extractFromImage(file),
+  })
+}
+
+export function useLogMenuDish() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dish: { name: string; description: string }) => api.menu.logDish(dish),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rollup'] })
+      qc.invalidateQueries({ queryKey: ['meals'] })
+    },
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Body Tracking
 // ---------------------------------------------------------------------------

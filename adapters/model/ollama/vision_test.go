@@ -148,6 +148,67 @@ func TestExtractPlanHTTPError(t *testing.T) {
 	}
 }
 
+func checkExtractMenuRequest(t *testing.T, req visionRequest, wantB64 string) {
+	t.Helper()
+	if req.Model != "llava" {
+		t.Errorf("model = %q, want llava", req.Model)
+	}
+	if !strings.Contains(req.Prompt, "restaurant menu") {
+		t.Errorf("prompt missing menuextract prompt: %q", req.Prompt)
+	}
+	if len(req.Images) != 1 || req.Images[0] != wantB64 {
+		t.Errorf("images = %v, want [%s]", req.Images, wantB64)
+	}
+	if req.Format != "json" {
+		t.Errorf("format = %q, want json", req.Format)
+	}
+}
+
+func TestExtractMenu(t *testing.T) {
+	img := []byte("fake-jpeg-bytes")
+	wantB64 := base64.StdEncoding.EncodeToString(img)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/generate" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req visionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		checkExtractMenuRequest(t, req, wantB64)
+
+		_ = json.NewEncoder(w).Encode(generateResponse{
+			Response: `{"dishes":[{"name":"Frango à parmegiana","description":"Peito empanado, molho de tomate"}],"unreadable":false}`,
+		})
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "nomic-embed-text", "llama3.1", 30*time.Second)
+	a.SetVisionModel("llava")
+	draft, err := a.ExtractMenu(t.Context(), img, "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractMenu: %v", err)
+	}
+	if len(draft.Dishes) != 1 || draft.Dishes[0].Name != "Frango à parmegiana" {
+		t.Errorf("Dishes = %+v, want one dish named Frango à parmegiana", draft.Dishes)
+	}
+}
+
+func TestExtractMenuHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "", "", 30*time.Second)
+	a.SetVisionModel("llava")
+	if _, err := a.ExtractMenu(t.Context(), []byte("img"), "image/jpeg"); err == nil {
+		t.Error("expected error on 503, got nil")
+	}
+}
+
 func TestExtractLabelHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)

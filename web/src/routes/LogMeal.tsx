@@ -22,6 +22,7 @@ import { Button, Card, EmptyState, Spinner } from '@/components/ui'
 import { DuplicateMealModal } from '@/components/DuplicateMealModal'
 import { FoodCard } from '@/components/FoodCard'
 import { CustomFoodModal } from '@/components/CustomFoodModal'
+import { MenuDiningCard } from './DiningMode'
 import type { MealTemplate, FoodDetail, FoodServingUnit } from '@/lib/types'
 import { GRAMS_UNIT_ID, GENERIC_VOLUME_UNITS, unitOptionsFor, gramsFor, type SelectedFood } from '@/lib/servingUnits'
 import { TemplateIcon, CopyIcon, SearchIcon, FoodsIcon, TrashIcon } from '@/components/icons'
@@ -30,12 +31,18 @@ import { formatNumber, scaleMacros, sumMacros } from '@/lib/format'
 
 const EXAMPLES = ['200g grilled chicken, 2 eggs, 150g rice', '1 banana and a glass of milk', '3 slices of pizza']
 
+const MODE_TAB_KEY = {
+  text: 'logMeal.textTab',
+  picker: 'logMeal.pickerTab',
+  menu: 'logMeal.menuTab',
+} as const
+
 export function LogMeal() {
   const { t } = useTranslation()
   const [params] = useSearchParams()
   // Pre-fill from a deep link (e.g. "Log this" on a food / frequent-food pill).
   const [text, setText] = useState(() => params.get('text') ?? '')
-  const [mode, setMode] = useState<'text' | 'picker'>('text')
+  const [mode, setMode] = useState<'text' | 'picker' | 'menu'>('text')
   const log = useLogMeal()
   const templates = useTemplates()
   const logTemplate = useLogTemplate()
@@ -55,7 +62,7 @@ export function LogMeal() {
       <PageHeader eyebrow={t('logMeal.eyebrow')} title={t('logMeal.title')} />
 
       <div className="mb-4 flex gap-2">
-        {(['text', 'picker'] as const).map((m) => (
+        {(['text', 'picker', 'menu'] as const).map((m) => (
           <button
             key={m}
             type="button"
@@ -66,12 +73,12 @@ export function LogMeal() {
                 : 'border-line bg-surface text-muted hover:text-ink'
             }`}
           >
-            {t(m === 'text' ? 'logMeal.textTab' : 'logMeal.pickerTab')}
+            {t(MODE_TAB_KEY[m])}
           </button>
         ))}
       </div>
 
-      {mode === 'text' ? (
+      {mode === 'text' && (
         <Card className="p-5">
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <textarea
@@ -106,9 +113,9 @@ export function LogMeal() {
             </p>
           )}
         </Card>
-      ) : (
-        <FoodPicker />
       )}
+      {mode === 'picker' && <FoodPicker />}
+      {mode === 'menu' && <MenuDiningCard />}
 
       {/* Quick actions: log a saved template, or copy a meal from a past day. */}
       <div className="mt-6 flex flex-col gap-3">

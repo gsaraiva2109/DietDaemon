@@ -33,15 +33,7 @@ sizing/design happens when picked up.
 
 ## High complexity
 
-1. **Eating-out mode (photo menu only)** — OCR the photo (same image→text shape as the existing
-   STT step), feed the transcript through the normal meal parser. Dish name → macros still needs
-   an LLM rough-estimate (no nutrition source prices whole restaurant dishes), shipped as
-   low-confidence per the existing "honest about uncertainty" design principle. The LLM adapter
-   this depends on is already shipped (`COMPLETION_ADAPTER=ollama|anthropic|openai`). Skipping
-   the digital-menu-scraper variant entirely (see Dropped). OCR step: shell out to the
-   `tesseract` binary via `os/exec` rather than a cgo binding (`gosseract`), same no-CGO
-   reasoning as the barcode-scan pick above — decide then, no dependency added now.
-2. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
+1. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
    across accounts. Auth already supports multi-user (OIDC, invite mode); this is a data-model
    layer on top (shared vs private meals/targets per household).
 

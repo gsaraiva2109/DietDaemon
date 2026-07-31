@@ -38,6 +38,7 @@ import type {
   Macros,
   Meal,
   MealTemplate,
+  MenuDraft,
   MeasurementEntry,
   NewApiKey,
   NudgeRuleUpdate,
@@ -248,6 +249,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ items }),
     }),
+
+  // Photo-menu dining mode (#201): photograph a restaurant menu, pick a dish
+  // candidate, log it. No catalog resolution step — logDish's picked/edited
+  // name+description goes straight to the free-text parser, which forces low
+  // confidence server-side since it's a rough restaurant estimate.
+  menu: {
+    extractFromImage: (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return multipart<MenuDraft>('/menu/extract/image', fd)
+    },
+    logDish: (dish: { name: string; description: string }) =>
+      request<Meal>('/menu/log-dish', { method: 'POST', body: JSON.stringify(dish) }),
+  },
 
   // --- Auth: sessions, registration, API keys ------------------
   auth: {

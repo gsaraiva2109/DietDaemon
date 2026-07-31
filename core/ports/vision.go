@@ -22,4 +22,9 @@ type VisionAdapter interface {
 	// draft it can find. It must never invent or estimate a value:
 	// unreadable fields are nil, not guessed.
 	ExtractPlan(ctx context.Context, image []byte, mimeType string) (types.PlanDraft, error)
+
+	// ExtractMenu reads image (raw bytes, given mimeType e.g. "image/jpeg") — a
+	// photographed restaurant menu — and returns the dish candidates it can
+	// find. It must never invent a dish that isn't visible.
+	ExtractMenu(ctx context.Context, image []byte, mimeType string) (types.MenuDraft, error)
 }
