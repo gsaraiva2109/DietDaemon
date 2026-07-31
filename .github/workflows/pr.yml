@@ -27,7 +27,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.2
         id: filter
         with:
@@ -52,7 +52,7 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Go
         uses: actions/setup-go@v6.5.0
@@ -107,10 +107,10 @@ jobs:
         working-directory: web
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@v6.4.0
+        uses: actions/setup-node@v6.5.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -145,7 +145,7 @@ jobs:
     if: needs.changes.outputs.go == 'true' || needs.changes.outputs.frontend == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
 
       - name: Run Trivy filesystem & secret scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -171,7 +171,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
