@@ -498,6 +498,13 @@ export interface GoalSuggestion {
   message: string
 }
 
+export interface TargetReviewSuggestion {
+  message: string
+  observed_trend_kg_per_week: number
+  goal: string
+  since_date: string
+}
+
 export const ACTIVITY_LEVELS = [
   { value: 'sedentary' },
   { value: 'light' },

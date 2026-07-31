@@ -100,6 +100,14 @@ type DigestStore interface {
 	ListWorkoutsInRange(ctx context.Context, userID, startDate, endDate string) ([]types.Workout, error)
 }
 
+// TargetReviewStore provides the read side for detecting a goal/trend
+// divergence. The concrete *store.Store already satisfies this via its
+// existing GetProfile and WeightTrend methods.
+type TargetReviewStore interface {
+	GetProfile(ctx context.Context, userID string) (types.UserProfile, error)
+	WeightTrend(ctx context.Context, userID string, days int) ([]types.WeightTrend, error)
+}
+
 // ChatRouteStore resolves the chat metadata needed to reach a user
 // proactively. The concrete *store.Store satisfies it once GetChatRoute is
 // added.
@@ -139,6 +147,8 @@ type Scheduler struct {
 	ruleConfig        RuleConfigStore
 	digestStore       DigestStore
 	digestRules       []DigestRule
+	targetReviewStore TargetReviewStore
+	targetReviewRules []TargetReviewRule
 	chatRoutes        ChatRouteStore
 	chatSender        ChatSender
 	weeklyBudgetStore WeeklyBudgetStore
@@ -203,6 +213,17 @@ func WithDigestRules(ds DigestStore, digestRules []DigestRule) Option {
 	return func(s *Scheduler) {
 		s.digestStore = ds
 		s.digestRules = digestRules
+	}
+}
+
+// WithTargetReviewRules attaches the target-review rules and their data
+// source to the scheduler. When nil is passed for targetReviewRules no
+// target-review nudge is evaluated. On by default alongside the other
+// core nudges, unlike WeeklyBudgetRule's opt-in gating.
+func WithTargetReviewRules(trs TargetReviewStore, targetReviewRules []TargetReviewRule) Option {
+	return func(s *Scheduler) {
+		s.targetReviewStore = trs
+		s.targetReviewRules = targetReviewRules
 	}
 }
 
@@ -328,6 +349,11 @@ func (s *Scheduler) evalUser(ctx context.Context, now time.Time, user types.User
 	// Weekly digest (independent of macro targets and health data).
 	if s.digestStore != nil {
 		s.evalDigestRules(ctx, now, user, overrides)
+	}
+
+	// Weekly target review (goal/trend divergence).
+	if s.targetReviewStore != nil {
+		s.evalTargetReviewRules(ctx, now, user, overrides)
 	}
 
 	// Weekly rolling budget (self-correcting targets).
@@ -828,6 +854,140 @@ func (s *Scheduler) evalDigestRule(ctx context.Context, user types.User, local t
 	}
 	if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
 		s.log.Error("scheduler: digest mark-nudged", "rule", r.ID, "err", err)
+	}
+}
+
+// targetReviewMinSampleDays and targetReviewLookbackDays mirror the same
+// gate/window used by the GET /goals/target-review handler
+// (internal/api/handler_goals.go) — duplicated here since the scheduler
+// package doesn't import the api package.
+const (
+	targetReviewMinSampleDays = 14
+	targetReviewLookbackDays  = 28
+)
+
+// evalTargetReviewRules evaluates the target-review rules for one user.
+// Weekly cadence, deduped by ISO year-week like DigestRule.
+func (s *Scheduler) evalTargetReviewRules(ctx context.Context, now time.Time, user types.User, overrides map[string]types.NudgeRuleConfig) {
+	local := now.In(s.locFor(user))
+	for _, base := range s.targetReviewRules {
+		s.evalTargetReviewRule(ctx, user, local, base, overrides)
+	}
+}
+
+// evalTargetReviewRule evaluates a single target-review rule for one user:
+// override resolution, weekday/hour gate, ISO-week dedupe, goal/trend
+// divergence check, and delivery. Never mutates targets — this is an
+// ack-only informational nudge; reviewing/changing a target happens through
+// the app's profile/onboarding flow, not chat.
+func (s *Scheduler) evalTargetReviewRule(ctx context.Context, user types.User, local time.Time, base TargetReviewRule, overrides map[string]types.NudgeRuleConfig) {
+	r, enabled := resolveRule(base, base.ID, overrides)
+	if !enabled {
+		return
+	}
+	if local.Weekday() != r.Weekday || local.Hour() < r.CheckHour {
+		return
+	}
+
+	year, week := local.ISOWeek()
+	weekKey := fmt.Sprintf("%d-W%02d", year, week)
+
+	done, err := s.nudges.WasNudged(ctx, user.ID, weekKey, r.ID)
+	if err != nil {
+		s.log.Error("scheduler: target review was-nudged", "rule", r.ID, "err", err)
+		return
+	}
+	if done {
+		return
+	}
+
+	profile, err := s.targetReviewStore.GetProfile(ctx, user.ID)
+	if err != nil || profile.Goal == "" {
+		_ = s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID)
+		return
+	}
+
+	trend, err := s.targetReviewStore.WeightTrend(ctx, user.ID, targetReviewLookbackDays)
+	if err != nil || len(trend) < targetReviewMinSampleDays {
+		_ = s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID)
+		return
+	}
+
+	direction := classifyTrendDirection(trend[0].RollingAvg, trend[len(trend)-1].RollingAvg)
+	message := classifyGoalDivergence(profile.Goal, direction)
+	if message == "" {
+		// Aligned, or the delta is within the noise band — don't nag.
+		_ = s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID)
+		return
+	}
+
+	s.deliverTargetReviewNudge(ctx, user, weekKey, r, message)
+}
+
+// classifyTrendDirection buckets a rolling-average weight change into
+// "up"/"down"/"stable", using a 0.5kg deadband to absorb day-to-day noise.
+func classifyTrendDirection(first, last float64) string {
+	diff := last - first
+	switch {
+	case diff > 0.5:
+		return "up"
+	case diff < -0.5:
+		return "down"
+	default:
+		return "stable"
+	}
+}
+
+// classifyGoalDivergence returns a user-facing, observational message when
+// the stated goal conflicts with the observed weight-trend direction, or ""
+// when they're aligned. Never prescriptive dietary advice.
+func classifyGoalDivergence(goal, direction string) string {
+	switch goal {
+	case "cut":
+		switch direction {
+		case "up":
+			return "Your weight has been trending up over the last 4 weeks while your goal is set to cut — want to review your target?"
+		case "stable":
+			return "Your weight has been stable for the last 4 weeks while your goal is set to cut — want to review your target?"
+		}
+	case "bulk":
+		switch direction {
+		case "down":
+			return "Your weight has been trending down over the last 4 weeks while your goal is set to bulk — want to review your target?"
+		case "stable":
+			return "Your weight has been stable for the last 4 weeks while your goal is set to bulk — want to review your target?"
+		}
+	case "maintain":
+		switch direction {
+		case "up":
+			return "Your weight has been trending up over the last 4 weeks while your goal is set to maintain — want to review your target?"
+		case "down":
+			return "Your weight has been trending down over the last 4 weeks while your goal is set to maintain — want to review your target?"
+		}
+	}
+	return ""
+}
+
+// deliverTargetReviewNudge sends the divergence nudge as a plain informational
+// message — no inline buttons: there is no target-mutating action to expose
+// (unlike the water/workout quick-actions), and there is no dismiss-callback
+// route in the bot command set, so an interactive button here would risk
+// the exact "callback that 404s" failure mode DefaultRules already documents.
+// The weekly ISO-week dedupe marked below is itself the ack — sending once is
+// enough, no separate acknowledgement round-trip needed.
+func (s *Scheduler) deliverTargetReviewNudge(ctx context.Context, user types.User, weekKey string, r TargetReviewRule, message string) {
+	n := types.Notification{
+		UserID:   user.ID,
+		Title:    "DietDaemon",
+		Body:     message,
+		Priority: types.PriorityDefault,
+	}
+	if err := s.deliver(ctx, user, r.ID, n, nil, nil); err != nil {
+		s.log.Error("scheduler: target review notify", "rule", r.ID, "err", err)
+		return // not marked: retry next tick
+	}
+	if err := s.nudges.MarkNudged(ctx, user.ID, weekKey, r.ID); err != nil {
+		s.log.Error("scheduler: target review mark-nudged", "rule", r.ID, "err", err)
 	}
 }
 

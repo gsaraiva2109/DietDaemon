@@ -1586,3 +1586,115 @@ func TestWeeklyBudgetDeliverErrorNotMarkedNudged(t *testing.T) {
 		t.Error("delivery error must not mark nudged, so it retries next tick")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Target review — goal/trend divergence
+// ---------------------------------------------------------------------------
+
+type fakeTargetReviewStore struct {
+	profile    types.UserProfile
+	profileErr error
+	trend      []types.WeightTrend
+	trendErr   error
+}
+
+func (f *fakeTargetReviewStore) GetProfile(context.Context, string) (types.UserProfile, error) {
+	return f.profile, f.profileErr
+}
+func (f *fakeTargetReviewStore) WeightTrend(context.Context, string, int) ([]types.WeightTrend, error) {
+	return f.trend, f.trendErr
+}
+
+// targetReviewTrend builds a 14-point (the minimum-sample threshold) daily
+// weight trend running from firstAvg to lastAvg — only the endpoints matter
+// for classifyTrendDirection, the interior points just satisfy the sample gate.
+func targetReviewTrend(firstAvg, lastAvg float64) []types.WeightTrend {
+	trend := make([]types.WeightTrend, targetReviewMinSampleDays)
+	for i := range trend {
+		avg := firstAvg
+		if i == len(trend)-1 {
+			avg = lastAvg
+		}
+		trend[i] = types.WeightTrend{RollingAvg: avg}
+	}
+	return trend
+}
+
+func TestTargetReviewFiresOnceThenDedupesSameISOWeek(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	trs := &fakeTargetReviewStore{
+		profile: types.UserProfile{Goal: "cut"},
+		trend:   targetReviewTrend(80, 80), // stable while trying to cut -> diverging
+	}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithTargetReviewRules(trs, DefaultTargetReviewRules()))
+
+	// 2026-06-21 is a Sunday.
+	sunday9am := time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), sunday9am)
+	if len(nt.sent) != 1 {
+		t.Fatalf("target review sent = %d, want 1", len(nt.sent))
+	}
+
+	// Another eval the same day/week must dedupe.
+	s.tick(context.Background(), sunday9am.Add(2*time.Hour))
+	if len(nt.sent) != 1 {
+		t.Errorf("target review should dedupe within the same ISO week, sent %d", len(nt.sent))
+	}
+
+	// The following Sunday is a new ISO week: fires again.
+	nextSunday := sunday9am.AddDate(0, 0, 7)
+	s.tick(context.Background(), nextSunday)
+	if len(nt.sent) != 2 {
+		t.Errorf("target review should fire again the following ISO week, sent %d", len(nt.sent))
+	}
+}
+
+func TestTargetReviewMatchingGoalSkipsDeliveryButMarksNudged(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	trs := &fakeTargetReviewStore{
+		profile: types.UserProfile{Goal: "cut"},
+		trend:   targetReviewTrend(81, 80), // trending down, matches cut
+	}
+	nt := &fakeNotifier{}
+	nd := newFakeNudges()
+	s := New(st, nd, nt, nil, time.UTC, time.Minute, WithTargetReviewRules(trs, DefaultTargetReviewRules()))
+
+	sunday := time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), sunday)
+	if len(nt.sent) != 0 {
+		t.Errorf("matching goal/trend should not deliver a nudge, sent %d", len(nt.sent))
+	}
+	year, week := sunday.ISOWeek()
+	weekKey := fmt.Sprintf("%d-W%02d", year, week)
+	if !nd.marked[key("u1", weekKey, "target-review")] {
+		t.Error("expected the week marked nudged even without delivery, so it doesn't re-check every tick")
+	}
+}
+
+func TestTargetReviewSparseDataSkipsDelivery(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	trs := &fakeTargetReviewStore{
+		profile: types.UserProfile{Goal: "cut"},
+		trend:   targetReviewTrend(80, 80)[:targetReviewMinSampleDays-1], // one day short
+	}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithTargetReviewRules(trs, DefaultTargetReviewRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("sparse data should not deliver a nudge, sent %d", len(nt.sent))
+	}
+}
+
+func TestTargetReviewNoGoalSkipsDelivery(t *testing.T) {
+	st := &fakeStore{users: []types.User{{ID: "u1", Timezone: "UTC"}}, targets: map[string]types.Macros{}, rollups: map[string]types.Macros{}}
+	trs := &fakeTargetReviewStore{trend: targetReviewTrend(80, 80)}
+	nt := &fakeNotifier{}
+	s := New(st, newFakeNudges(), nt, nil, time.UTC, time.Minute, WithTargetReviewRules(trs, DefaultTargetReviewRules()))
+
+	s.tick(context.Background(), time.Date(2026, 6, 21, 9, 0, 0, 0, time.UTC))
+	if len(nt.sent) != 0 {
+		t.Errorf("no goal set should not deliver a nudge, sent %d", len(nt.sent))
+	}
+}

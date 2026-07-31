@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
@@ -176,5 +177,140 @@ func TestGoalSuggestionsFullHappyPath(t *testing.T) {
 	}
 	if got.CurrentIntakeKcal != 2000 {
 		t.Errorf("expected current intake 2000, got %v", got.CurrentIntakeKcal)
+	}
+}
+
+// targetReviewTrend builds a 14-point (the minimum-sample threshold) daily
+// weight trend running from firstAvg to lastAvg — only the endpoints matter
+// for classifyTrendDirection, the interior points just satisfy the sample gate.
+func targetReviewTrend(firstAvg, lastAvg float64) []types.WeightTrend {
+	trend := make([]types.WeightTrend, targetReviewMinSampleDays)
+	start, _ := time.Parse(dateLayout, "2026-06-01")
+	for i := range trend {
+		avg := firstAvg
+		if i == len(trend)-1 {
+			avg = lastAvg
+		}
+		trend[i] = types.WeightTrend{
+			Date:       start.AddDate(0, 0, i).Format(dateLayout),
+			RollingAvg: avg,
+		}
+	}
+	return trend
+}
+
+func TestTargetReviewCut(t *testing.T) {
+	t.Run("sustained divergence", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "cut"}
+		store.weightTrend = targetReviewTrend(80, 80) // stable while trying to cut
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message == "" {
+			t.Error("expected a diverging suggestion, got empty message")
+		}
+	})
+
+	t.Run("matching goal", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "cut"}
+		store.weightTrend = targetReviewTrend(81, 80) // trending down, matches cut
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message != "" {
+			t.Errorf("expected no suggestion, got %q", got.Message)
+		}
+	})
+}
+
+func TestTargetReviewMaintain(t *testing.T) {
+	t.Run("sustained divergence", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "maintain"}
+		store.weightTrend = targetReviewTrend(78, 80) // trending up while maintaining
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message == "" {
+			t.Error("expected a diverging suggestion, got empty message")
+		}
+	})
+
+	t.Run("matching goal", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "maintain"}
+		store.weightTrend = targetReviewTrend(80, 80) // stable, matches maintain
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message != "" {
+			t.Errorf("expected no suggestion, got %q", got.Message)
+		}
+	})
+}
+
+func TestTargetReviewBulk(t *testing.T) {
+	t.Run("sustained divergence", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "bulk"}
+		store.weightTrend = targetReviewTrend(80, 78) // trending down while bulking
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message == "" {
+			t.Error("expected a diverging suggestion, got empty message")
+		}
+	})
+
+	t.Run("matching goal", func(t *testing.T) {
+		store := newFakeMealStore()
+		store.profile = types.UserProfile{UserID: "test-user", Goal: "bulk"}
+		store.weightTrend = targetReviewTrend(78, 80) // trending up, matches bulk
+		h := newHandler(store, &fakeMealLogger{})
+
+		rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+		got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+		if got.Message != "" {
+			t.Errorf("expected no suggestion, got %q", got.Message)
+		}
+	})
+}
+
+func TestTargetReviewSparseData(t *testing.T) {
+	store := newFakeMealStore()
+	store.profile = types.UserProfile{UserID: "test-user", Goal: "cut"}
+	store.weightTrend = targetReviewTrend(80, 80)[:targetReviewMinSampleDays-1] // one day short
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+	if got.Message != "" {
+		t.Errorf("expected no suggestion on sparse data, got %q", got.Message)
+	}
+}
+
+func TestTargetReviewNoisyTrend(t *testing.T) {
+	store := newFakeMealStore()
+	store.profile = types.UserProfile{UserID: "test-user", Goal: "maintain"}
+	store.weightTrend = targetReviewTrend(80, 80.3) // within the 0.5kg noise band
+	h := newHandler(store, &fakeMealLogger{})
+
+	rec := doRequest(h, "GET", "/api/v1/goals/target-review", nil, nil)
+	got := decodeJSON[types.TargetReviewSuggestion](t, rec)
+	if got.Message != "" {
+		t.Errorf("expected no suggestion within noise band, got %q", got.Message)
 	}
 }

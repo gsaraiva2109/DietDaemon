@@ -21,6 +21,7 @@ import { formatNumber } from '@/lib/format'
 import { GoalIcon } from '@/components/icons'
 import { TDEECard } from '@/components/TDEECard'
 import { GoalSuggestion } from '@/components/GoalSuggestion'
+import { TargetReviewPrompt } from '@/components/TargetReviewPrompt'
 import { fadeUp } from '@/lib/motion'
 
 function ageFrom(birth: string): number {
@@ -162,6 +163,9 @@ export function Goals() {
 
         {/* Suggested adjustment */}
         <GoalSuggestion />
+
+        {/* Goal/trend divergence review */}
+        <TargetReviewPrompt />
       </motion.div>
     </div>
   )

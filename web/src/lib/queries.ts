@@ -1183,6 +1183,23 @@ export function useGoalSuggestions() {
   })
 }
 
+export function useTargetReviewSuggestion() {
+  const { demo } = useDemo()
+  return useQuery({
+    queryKey: ['goals', 'target-review', demo],
+    queryFn: () =>
+      demo
+        ? {
+            message:
+              "Your weight has been stable for the last 4 weeks while your goal is set to cut — want to review your target?",
+            observed_trend_kg_per_week: 0,
+            goal: 'cut',
+            since_date: '2026-07-03',
+          }
+        : api.targetReview(),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // BYOK AI key
 // ---------------------------------------------------------------------------

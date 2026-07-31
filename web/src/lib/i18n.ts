@@ -344,6 +344,11 @@ const en = {
     unavailable: 'unavailable',
     failedToApply: 'Failed to apply',
   },
+  targetReview: {
+    title: 'Review your target?',
+    reviewButton: 'Review target',
+    dismiss: 'Dismiss',
+  },
   macroBar: {
     progressAria: '{{label}} progress',
     over: 'over',
@@ -1589,6 +1594,11 @@ const ptBR: typeof en = {
     apply: 'Aplicar',
     unavailable: 'indisponível',
     failedToApply: 'Falha ao aplicar',
+  },
+  targetReview: {
+    title: 'Revisar sua meta?',
+    reviewButton: 'Revisar meta',
+    dismiss: 'Dispensar',
   },
   macroBar: {
     progressAria: 'progresso de {{label}}',

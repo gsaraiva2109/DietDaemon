@@ -44,11 +44,6 @@ sizing/design happens when picked up.
 2. **Family/household multi-user sharing** — shared targets or a shared fridge/food library
    across accounts. Auth already supports multi-user (OIDC, invite mode); this is a data-model
    layer on top (shared vs private meals/targets per household).
-3. **Target auto-suggestion from trend** — if weight trend contradicts the stated goal (e.g.
-   "cutting" but flat 3 weeks), surface a gentle "adjust target?" prompt instead of silently
-   nudging against a target that isn't working. Trend-detection isn't trivial (noise vs signal),
-   and framing needs care to stay an observation about the user's own stated goal, not dietary
-   advice — same territory as the dropped meal-plan generator.
 
 ## Dropped / not pursuing
 

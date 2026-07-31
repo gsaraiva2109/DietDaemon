@@ -262,6 +262,7 @@ func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.
 	sched := scheduler.New(st, st, runtime.notifier, scheduler.DefaultRules(), cfg.Location, cfg.NudgeInterval,
 		scheduler.WithHealthRules(st, scheduler.DefaultHealthRules()), scheduler.WithRuleConfig(st), scheduler.WithDigestRules(st, scheduler.DefaultDigestRules()),
 		scheduler.WithChatSender(st, runtime.message), scheduler.WithSentNudges(st), scheduler.WithWeeklyBudgetRules(st, scheduler.DefaultWeeklyBudgetRules()), scheduler.WithSmartMealRules(st, scheduler.DefaultSmartMealRules()),
+		scheduler.WithTargetReviewRules(st, scheduler.DefaultTargetReviewRules()),
 	)
 	go sched.Run(ctx)
 	slog.Info("scheduler running", "interval", cfg.NudgeInterval.String())
