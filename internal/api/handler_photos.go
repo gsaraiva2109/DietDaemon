@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,24 @@ func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, user
 
 	// Detect mime type from first 512 bytes.
 	mimeType := http.DetectContentType(data)
+
+	if !validView(view) {
+		writeValidationError(w, "view must be one of: front, side, back")
+		return
+	}
+	if !validPhotoMimeType(mimeType) {
+		writeValidationError(w, "unsupported image type; allowed: jpeg, png, webp")
+		return
+	}
+	count, err := h.store.CountPhotos(r.Context(), userID)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if count >= store.MaxPhotosPerUser {
+		h.writeErr(w, types.ErrQuotaExceeded)
+		return
+	}
 
 	photo := types.ProgressPhoto{
 		ID:        newHandlerID(),

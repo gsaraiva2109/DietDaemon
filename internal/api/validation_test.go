@@ -77,6 +77,28 @@ func TestValidationRejectsInvalidPersistedInputs(t *testing.T) {
 	}
 }
 
+func TestValidView(t *testing.T) {
+	for view, want := range map[string]bool{
+		"front": true, "side": true, "back": true,
+		"": false, "diagonal": false, "FRONT": false,
+	} {
+		if got := validView(view); got != want {
+			t.Errorf("validView(%q) = %v, want %v", view, got, want)
+		}
+	}
+}
+
+func TestValidPhotoMimeType(t *testing.T) {
+	for mimeType, want := range map[string]bool{
+		"image/jpeg": true, "image/png": true, "image/webp": true,
+		"image/gif": false, "text/plain": false, "": false,
+	} {
+		if got := validPhotoMimeType(mimeType); got != want {
+			t.Errorf("validPhotoMimeType(%q) = %v, want %v", mimeType, got, want)
+		}
+	}
+}
+
 func TestValidDateUsesLocalCalendarDay(t *testing.T) {
 	loc := time.FixedZone("UTC-3", -3*60*60)
 	today := time.Now().In(loc).Format("2006-01-02")

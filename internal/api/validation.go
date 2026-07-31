@@ -88,6 +88,24 @@ func validNutritionSource(value string) bool {
 	}
 }
 
+func validView(view string) bool {
+	switch view {
+	case "front", "side", "back":
+		return true
+	default:
+		return false
+	}
+}
+
+func validPhotoMimeType(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
 func validMacros(m types.Macros) bool {
 	return isFinite(m.Calories) && m.Calories >= 0 &&
 		isFinite(m.Protein) && m.Protein >= 0 &&

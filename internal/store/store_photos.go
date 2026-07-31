@@ -14,6 +14,20 @@ import (
 // audited as safe at this project's current scale.
 const maxPhotoRows = 10000
 
+// MaxPhotosPerUser caps stored photos per user (3 views/day × generous
+// headroom). Flat const, revisit if usage patterns show it's wrong.
+const MaxPhotosPerUser = 100
+
+// CountPhotos returns the number of progress photos stored for userID.
+func (s *Store) CountPhotos(ctx context.Context, userID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM progress_photos WHERE user_id = ?`
+	var n int
+	if err := s.db.QueryRowContext(ctx, s.rewrite(q), userID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count photos: %w", err)
+	}
+	return n, nil
+}
+
 // ListPhotoMetadata returns progress photo records without the BLOB data.
 func (s *Store) ListPhotoMetadata(ctx context.Context, userID string) ([]types.ProgressPhoto, error) {
 	q := fmt.Sprintf(`
