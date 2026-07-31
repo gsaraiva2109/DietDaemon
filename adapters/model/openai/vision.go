@@ -19,6 +19,13 @@ import (
 // Compile-time interface check.
 var _ ports.VisionAdapter = (*Adapter)(nil)
 
+const (
+	chatCompletionsPath = "/chat/completions"
+	contentTypeHeader   = "Content-Type"
+	jsonContentType     = "application/json"
+	bearerPrefix        = "Bearer "
+)
+
 // ---------------------------------------------------------------------------
 // ExtractLabel — POST {baseURL}/chat/completions with an image_url content part
 // ---------------------------------------------------------------------------
@@ -69,13 +76,13 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/chat/completions", bytes.NewReader(payload))
+		a.baseURL+chatCompletionsPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.NutritionLabelDraft{}, fmt.Errorf("openai: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 	if a.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.apiKey)
+		req.Header.Set("Authorization", bearerPrefix+a.apiKey)
 	}
 
 	resp, err := a.client.Do(req)
@@ -129,13 +136,13 @@ func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/chat/completions", bytes.NewReader(payload))
+		a.baseURL+chatCompletionsPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.PlanDraft{}, fmt.Errorf("openai: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 	if a.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.apiKey)
+		req.Header.Set("Authorization", bearerPrefix+a.apiKey)
 	}
 
 	resp, err := a.client.Do(req)
@@ -189,13 +196,13 @@ func (a *Adapter) ExtractMenu(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/chat/completions", bytes.NewReader(payload))
+		a.baseURL+chatCompletionsPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.MenuDraft{}, fmt.Errorf("openai: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 	if a.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.apiKey)
+		req.Header.Set("Authorization", bearerPrefix+a.apiKey)
 	}
 
 	resp, err := a.client.Do(req)

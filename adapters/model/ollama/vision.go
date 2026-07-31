@@ -18,6 +18,12 @@ import (
 // Compile-time interface check.
 var _ ports.VisionAdapter = (*Adapter)(nil)
 
+const (
+	generatePath      = "/api/generate"
+	contentTypeHeader = "Content-Type"
+	jsonContentType   = "application/json"
+)
+
 // ---------------------------------------------------------------------------
 // ExtractLabel — POST /api/generate with an embedded image
 // ---------------------------------------------------------------------------
@@ -48,11 +54,11 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.url+"/api/generate", bytes.NewReader(payload))
+		a.url+generatePath, bytes.NewReader(payload))
 	if err != nil {
 		return types.NutritionLabelDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -94,11 +100,11 @@ func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.url+"/api/generate", bytes.NewReader(payload))
+		a.url+generatePath, bytes.NewReader(payload))
 	if err != nil {
 		return types.PlanDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -140,11 +146,11 @@ func (a *Adapter) ExtractMenu(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.url+"/api/generate", bytes.NewReader(payload))
+		a.url+generatePath, bytes.NewReader(payload))
 	if err != nil {
 		return types.MenuDraft{}, fmt.Errorf("ollama: build vision request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {

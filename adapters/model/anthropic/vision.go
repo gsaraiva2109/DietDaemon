@@ -19,6 +19,15 @@ import (
 // Compile-time interface check.
 var _ ports.VisionAdapter = (*Adapter)(nil)
 
+const (
+	messagesPath           = "/v1/messages"
+	apiKeyHeader           = "x-api-key"
+	anthropicVersionHeader = "anthropic-version"
+	anthropicVersion       = "2023-06-01"
+	contentTypeHeader      = "content-type"
+	jsonContentType        = "application/json"
+)
+
 // ---------------------------------------------------------------------------
 // ExtractLabel — POST /v1/messages with an image content block
 // ---------------------------------------------------------------------------
@@ -72,13 +81,13 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/v1/messages", bytes.NewReader(payload))
+		a.baseURL+messagesPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.NutritionLabelDraft{}, fmt.Errorf("anthropic: build vision request: %w", err)
 	}
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("content-type", "application/json")
+	req.Header.Set(apiKeyHeader, a.apiKey)
+	req.Header.Set(anthropicVersionHeader, anthropicVersion)
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -132,13 +141,13 @@ func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/v1/messages", bytes.NewReader(payload))
+		a.baseURL+messagesPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.PlanDraft{}, fmt.Errorf("anthropic: build vision request: %w", err)
 	}
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("content-type", "application/json")
+	req.Header.Set(apiKeyHeader, a.apiKey)
+	req.Header.Set(anthropicVersionHeader, anthropicVersion)
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -192,13 +201,13 @@ func (a *Adapter) ExtractMenu(ctx context.Context, image []byte, mimeType string
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.baseURL+"/v1/messages", bytes.NewReader(payload))
+		a.baseURL+messagesPath, bytes.NewReader(payload))
 	if err != nil {
 		return types.MenuDraft{}, fmt.Errorf("anthropic: build vision request: %w", err)
 	}
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("content-type", "application/json")
+	req.Header.Set(apiKeyHeader, a.apiKey)
+	req.Header.Set(anthropicVersionHeader, anthropicVersion)
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
