@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
 func TestExtractLabel(t *testing.T) {
@@ -63,24 +65,36 @@ func TestExtractLabel(t *testing.T) {
 	}
 }
 
-func checkExtractPlanRequest(t *testing.T, req visionRequest, wantDataURI string) {
+func checkExtractPlanRequest(t *testing.T, req visionRequest, wantDataURIs []string) {
 	t.Helper()
-	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 1+len(wantDataURIs) {
 		t.Fatalf("unexpected message shape: %+v", req.Messages)
 	}
 	textPart := req.Messages[0].Content[0]
 	if textPart.Type != "text" || !strings.Contains(textPart.Text, "carb-cycling") {
 		t.Errorf("content[0] = %+v, want the planextract photo prompt", textPart)
 	}
-	imgPart := req.Messages[0].Content[1]
-	if imgPart.Type != "image_url" || imgPart.ImageURL == nil || imgPart.ImageURL.URL != wantDataURI {
-		t.Errorf("content[1] = %+v, want image_url %q", imgPart, wantDataURI)
+	for i, wantDataURI := range wantDataURIs {
+		imgPart := req.Messages[0].Content[1+i]
+		if imgPart.Type != "image_url" || imgPart.ImageURL == nil || imgPart.ImageURL.URL != wantDataURI {
+			t.Errorf("content[%d] = %+v, want image_url %q", 1+i, imgPart, wantDataURI)
+		}
 	}
 }
 
 func TestExtractPlan(t *testing.T) {
-	img := []byte("fake-jpeg-bytes")
-	wantDataURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(img)
+	img1 := []byte("fake-jpeg-bytes-1")
+	img2 := []byte("fake-jpeg-bytes-2")
+	img3 := []byte("fake-jpeg-bytes-3")
+	pages := []types.PlanImagePage{
+		{Data: img1, MimeType: "image/jpeg"},
+		{Data: img2, MimeType: "image/jpeg"},
+		{Data: img3, MimeType: "image/jpeg"},
+	}
+	wantDataURIs := make([]string, len(pages))
+	for i, p := range pages {
+		wantDataURIs[i] = "data:" + p.MimeType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -91,7 +105,7 @@ func TestExtractPlan(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		checkExtractPlanRequest(t, req, wantDataURI)
+		checkExtractPlanRequest(t, req, wantDataURIs)
 
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`
@@ -100,7 +114,7 @@ func TestExtractPlan(t *testing.T) {
 	defer srv.Close()
 
 	a := New(srv.URL, "sk-test", "gpt-4o-mini", 30*time.Second)
-	draft, err := a.ExtractPlan(t.Context(), img, "image/jpeg")
+	draft, err := a.ExtractPlan(t.Context(), pages)
 	if err != nil {
 		t.Fatalf("ExtractPlan: %v", err)
 	}
@@ -120,7 +134,7 @@ func TestExtractPlanHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	a := New(srv.URL, "sk-test", "gpt-4o-mini", 30*time.Second)
-	_, err := a.ExtractPlan(t.Context(), []byte("img"), "image/jpeg")
+	_, err := a.ExtractPlan(t.Context(), []types.PlanImagePage{{Data: []byte("img"), MimeType: "image/jpeg"}})
 	if err == nil {
 		t.Fatal("expected error on 400, got nil")
 	}

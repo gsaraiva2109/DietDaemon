@@ -82,15 +82,26 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 // ExtractPlan — POST /api/generate with an embedded image
 // ---------------------------------------------------------------------------
 
-// ExtractPlan sends the photographed diet-plan page to Ollama's
+// ExtractPlan sends the photographed diet-plan pages to Ollama's
 // /api/generate endpoint using visionModel (set via SetVisionModel) and
 // parses the model's JSON reply. mimeType is unused: Ollama's images array
 // takes bare base64 with no data-URI prefix.
-func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string) (types.PlanDraft, error) {
+//
+// Risk: Ollama's /api/generate multi-image ordering is not a documented API
+// guarantee the way OpenAI/Anthropic's message-block ordering is. Page order
+// is preserved in the Images slice we send, but Ollama's own handling of
+// that ordering across multiple images has not been verified against a real
+// multi-page scan — this needs manual verification, not just a mocked
+// contract test.
+func (a *Adapter) ExtractPlan(ctx context.Context, pages []types.PlanImagePage) (types.PlanDraft, error) {
+	images := make([]string, len(pages))
+	for i, page := range pages {
+		images[i] = base64.StdEncoding.EncodeToString(page.Data)
+	}
 	body := visionRequest{
 		Model:  a.visionModel,
 		Prompt: planextract.PhotoPrompt,
-		Images: []string{base64.StdEncoding.EncodeToString(image)},
+		Images: images,
 		Stream: false,
 		Format: "json",
 	}

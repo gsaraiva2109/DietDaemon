@@ -115,23 +115,27 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 // ExtractPlan — POST /v1/messages with an image content block
 // ---------------------------------------------------------------------------
 
-// ExtractPlan sends the photographed diet-plan page to Anthropic's Messages
-// API as an image content block and parses the model's JSON reply.
-func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string) (types.PlanDraft, error) {
+// ExtractPlan sends the photographed diet-plan pages to Anthropic's Messages
+// API as one image content block per page (in order) and parses the model's
+// JSON reply.
+func (a *Adapter) ExtractPlan(ctx context.Context, pages []types.PlanImagePage) (types.PlanDraft, error) {
+	content := make([]visionContentBlock, 0, len(pages)+1)
+	for _, page := range pages {
+		content = append(content, visionContentBlock{Type: "image", Source: &imageSource{
+			Type:      "base64",
+			MediaType: page.MimeType,
+			Data:      base64.StdEncoding.EncodeToString(page.Data),
+		}})
+	}
+	content = append(content, visionContentBlock{Type: "text", Text: planextract.PhotoPrompt})
+
 	body := visionRequest{
 		Model:     a.model,
-		MaxTokens: 1024,
+		MaxTokens: 4096,
 		Messages: []visionMessage{
 			{
-				Role: "user",
-				Content: []visionContentBlock{
-					{Type: "image", Source: &imageSource{
-						Type:      "base64",
-						MediaType: mimeType,
-						Data:      base64.StdEncoding.EncodeToString(image),
-					}},
-					{Type: "text", Text: planextract.PhotoPrompt},
-				},
+				Role:    "user",
+				Content: content,
 			},
 		},
 	}

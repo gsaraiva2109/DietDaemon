@@ -837,6 +837,15 @@ type PlanBundle struct {
 	DayTypes []DietPlanDayTypeBundle `json:"day_types"`
 }
 
+// PlanImagePage is one page of a multi-page scanned/photographed diet plan,
+// in submission order. VisionAdapter.ExtractPlan takes a slice of these so a
+// plan spanning several photos is extracted as a single draft instead of one
+// per page.
+type PlanImagePage struct {
+	Data     []byte
+	MimeType string
+}
+
 // PlanDraftItem is one extracted food line within a PlanDraftOption, mirroring
 // NutritionLabelDraft's nullable, reviewable style (#193). RawName is
 // preserved exactly as written by the model — never normalized or translated

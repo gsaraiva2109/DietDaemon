@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -113,11 +114,37 @@ func TestHandleExtractPlanFromTextUnparseableResponse(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func doExtractPlanFromImage(h *Handler, fileContent []byte, fileName string) *httptest.ResponseRecorder {
+	var files map[string][]byte
+	if fileName != "" {
+		files = map[string][]byte{fileName: fileContent}
+	}
+	return doExtractPlanFromImages(h, files)
+}
+
+// doExtractPlanFromImages posts a multipart request with one "file" part per
+// entry in files, in map iteration order isn't guaranteed — callers that
+// care about page order should use doExtractPlanFromImagesOrdered.
+func doExtractPlanFromImages(h *Handler, files map[string][]byte) *httptest.ResponseRecorder {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	contents := make([][]byte, len(names))
+	for i, name := range names {
+		contents[i] = files[name]
+	}
+	return doExtractPlanFromImagesOrdered(h, names, contents)
+}
+
+// doExtractPlanFromImagesOrdered posts a multipart request with one "file"
+// field per (names[i], contents[i]) pair, in the given order — the order the
+// handler must preserve into the PlanImagePage slice it builds.
+func doExtractPlanFromImagesOrdered(h *Handler, names []string, contents [][]byte) *httptest.ResponseRecorder {
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
-	if fileName != "" {
-		part, _ := w.CreateFormFile("file", fileName)
-		_, _ = part.Write(fileContent)
+	for i, name := range names {
+		part, _ := w.CreateFormFile("file", name)
+		_, _ = part.Write(contents[i])
 	}
 	_ = w.Close()
 
@@ -166,9 +193,86 @@ func TestHandleExtractPlanFromImageOversized(t *testing.T) {
 	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
 	h.visionAdapter = &fakeVisionAdapter{}
 
-	rec := doExtractPlanFromImage(h, bytes.Repeat([]byte("a"), 6<<20), "plan.png")
+	rec := doExtractPlanFromImage(h, bytes.Repeat([]byte("a"), maxPlanTotalBytes+1), "plan.png")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageTotalSizeOverLimit(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	// Two pages that individually fit but together exceed maxPlanTotalBytes.
+	half := maxPlanTotalBytes/2 + 1
+	names := []string{"page1.png", "page2.png"}
+	contents := [][]byte{bytes.Repeat([]byte("a"), half), bytes.Repeat([]byte("a"), half)}
+
+	rec := doExtractPlanFromImagesOrdered(h, names, contents)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImagePageCountOverLimit(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	names := make([]string, maxPlanPages+1)
+	contents := make([][]byte, maxPlanPages+1)
+	for i := range names {
+		names[i] = fmt.Sprintf("page%d.png", i+1)
+		contents[i] = testPNGBytes
+	}
+
+	rec := doExtractPlanFromImagesOrdered(h, names, contents)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageInvalidPageAmongValid(t *testing.T) {
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = &fakeVisionAdapter{}
+
+	names := []string{"page1.png", "page2.txt"}
+	contents := [][]byte{testPNGBytes, []byte("plain text, not an image")}
+
+	rec := doExtractPlanFromImagesOrdered(h, names, contents)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "page 2") {
+		t.Errorf("error body = %s, want it to name page 2", rec.Body.String())
+	}
+}
+
+func TestHandleExtractPlanFromImageMultiplePages(t *testing.T) {
+	planName := "Plano"
+	adapter := &fakeVisionAdapter{planDraft: types.PlanDraft{
+		PlanName: &planName,
+		DayTypes: []types.PlanDraftDayType{{Name: "Dia único"}},
+	}}
+	h := newHandler(&fakeMealStore{}, &fakeMealLogger{})
+	h.visionAdapter = adapter
+
+	names := []string{"page1.png", "page2.png", "page3.png"}
+	contents := [][]byte{testPNGBytes, testPNGBytes, testPNGBytes}
+
+	rec := doExtractPlanFromImagesOrdered(h, names, contents)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(adapter.calledPages) != 3 {
+		t.Fatalf("calledPages len = %d, want 3", len(adapter.calledPages))
+	}
+	for i, p := range adapter.calledPages {
+		if p.MimeType != "image/png" {
+			t.Errorf("calledPages[%d].MimeType = %q, want image/png", i, p.MimeType)
+		}
+		if len(p.Data) != len(testPNGBytes) {
+			t.Errorf("calledPages[%d].Data len = %d, want %d", i, len(p.Data), len(testPNGBytes))
+		}
 	}
 }
 
@@ -202,10 +306,13 @@ func TestHandleExtractPlanFromImage(t *testing.T) {
 	if len(got.DayTypes) != 1 || got.DayTypes[0].Name != "Dia único" {
 		t.Errorf("DayTypes = %+v, want one day type named Dia único", got.DayTypes)
 	}
-	if adapter.calledMime != "image/png" {
-		t.Errorf("ExtractPlan mimeType = %q, want image/png", adapter.calledMime)
+	if len(adapter.calledPages) != 1 {
+		t.Fatalf("calledPages len = %d, want 1", len(adapter.calledPages))
 	}
-	if adapter.calledLen != len(testPNGBytes) {
-		t.Errorf("ExtractPlan image len = %d, want %d", adapter.calledLen, len(testPNGBytes))
+	if adapter.calledPages[0].MimeType != "image/png" {
+		t.Errorf("ExtractPlan mimeType = %q, want image/png", adapter.calledPages[0].MimeType)
+	}
+	if len(adapter.calledPages[0].Data) != len(testPNGBytes) {
+		t.Errorf("ExtractPlan image len = %d, want %d", len(adapter.calledPages[0].Data), len(testPNGBytes))
 	}
 }
