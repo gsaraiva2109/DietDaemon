@@ -4,7 +4,7 @@
 // to /login with a generic message. ?link=1 means an account-link flow.
 
 import { useEffect, useRef } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'

@@ -3,7 +3,7 @@
 // matched child route. Demo mode reports as authed, so it passes through.
 
 import { useEffect } from 'react'
-import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { Spinner } from './ui'

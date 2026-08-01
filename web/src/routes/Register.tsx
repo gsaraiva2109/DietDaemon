@@ -3,7 +3,7 @@
 // generic (no per-field server detail).
 
 import { useState, type SyntheticEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useProviders } from '@/lib/queries'

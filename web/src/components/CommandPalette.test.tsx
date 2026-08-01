@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {fireEvent, render, screen} from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
-import {MemoryRouter} from 'react-router-dom'
+import {MemoryRouter} from 'react-router'
 import '@/lib/i18n'
 import {ThemeProvider} from '@/lib/theme'
 import {DemoProvider} from '@/lib/demo'

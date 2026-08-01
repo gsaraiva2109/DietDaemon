@@ -1,7 +1,7 @@
 // Settings > Recently deleted: chat sessions soft-deleted within the last 30
 // days (#53). Same page shape as AssistantSettings (back link + PageHeader).
 
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useDeletedChatSessions, useRestoreChatSession } from '@/lib/queries'
 import { PageHeader } from '@/components/PageHeader'

@@ -3,7 +3,7 @@
 // disabled in demo mode (reads still return sample data).
 
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { PageHeader } from '@/components/PageHeader'
 import { Button, Card, EmptyState, Eyebrow, Pill, Spinner } from '@/components/ui'

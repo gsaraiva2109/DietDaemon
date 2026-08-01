@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import {
   useFood,

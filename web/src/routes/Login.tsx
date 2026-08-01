@@ -3,7 +3,7 @@
 // demo mode (no backend). Honors ?next= to return where the guard sent us.
 
 import { useState, type SyntheticEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { useDemo, demoAvailable } from '@/lib/demo'

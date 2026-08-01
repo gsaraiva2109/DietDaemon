@@ -2,7 +2,7 @@
 // success, send the user to /login to sign in with the new password.
 
 import { useState, type SyntheticEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { useResetPassword } from '@/lib/queries'
