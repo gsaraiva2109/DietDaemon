@@ -3,7 +3,7 @@
 // regardless of outcome.
 
 import { useState, type SyntheticEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useForgotPassword } from '@/lib/queries'
 import { AuthLayout } from '@/components/AuthLayout'

@@ -5,7 +5,7 @@
 // local-draft-then-save pattern for targets.
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useDemo } from '@/lib/demo'

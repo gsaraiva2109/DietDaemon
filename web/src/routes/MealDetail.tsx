@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useMeal, useDeleteItem } from '@/lib/queries'
 import { useDemo } from '@/lib/demo'

@@ -4,7 +4,7 @@
 // dead and nothing else would load either, so show one "invalid" state
 // instead of five broken sections.
 
-import { useParams } from 'react-router-dom'
+import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useSharedDashboard } from '@/lib/queries'
 import { MACRO_META, type DailyRollup, type MacroKey } from '@/lib/types'

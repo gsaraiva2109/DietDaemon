@@ -4,7 +4,7 @@
 // session; we hand off to <MfaChallenge>.
 
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'

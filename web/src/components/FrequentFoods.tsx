@@ -2,7 +2,7 @@
 // straight to the log composer pre-filled with the food name. Embedded on both
 // the Dashboard and the Foods browser, so it stays fully self-contained.
 
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useFrequentFoods } from '@/lib/queries'
 import type { FoodDetail } from '@/lib/types'

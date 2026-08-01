@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import '@testing-library/jest-dom/vitest'
 import '@/lib/i18n'
 import { FoodDetailModal } from './FoodDetailModal'
@@ -9,8 +9,8 @@ import { DemoProvider } from '@/lib/demo'
 import type { FoodDetail } from '@/lib/types'
 
 const navigateMock = vi.fn()
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router-dom')>()
+vi.mock('react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router')>()
   return { ...actual, useNavigate: () => navigateMock }
 })
 

@@ -3,7 +3,7 @@
 // silently writing it into the personal food library; the user confirms or
 // rejects each one. A settings sub-page, mirrors Aliases.tsx.
 
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useDemo } from '@/lib/demo'

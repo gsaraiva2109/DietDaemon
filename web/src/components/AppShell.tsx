@@ -1,7 +1,7 @@
 // Desktop-first app shell: a quiet sidebar on >=md, a bottom bar on mobile.
 // Not edge-to-edge sticky; the nav is a calm rail, content breathes.
 
-import { NavLink } from 'react-router-dom'
+import { NavLink } from 'react-router'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {

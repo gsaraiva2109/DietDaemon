@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { expect, test, vi } from 'vitest'
 import '@/lib/i18n'
 import { ThemeProvider } from '@/lib/theme'

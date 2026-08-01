@@ -7,7 +7,7 @@ import {
   Route,
   Routes,
   useLocation,
-} from 'react-router-dom'
+} from 'react-router'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/lib/auth'
 import { ThemeProvider, useTheme } from '@/lib/theme'
