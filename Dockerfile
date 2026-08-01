@@ -19,18 +19,9 @@ COPY . .
 COPY --from=web /web/dist/ ./internal/web/dist/
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /bin/dietdaemon ./cmd/dietdaemon
-
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /bin/tune ./cmd/tune
-
-# Bulk food-database importer. Datasets are user-provided (mounted volumes),
-# so only the binary ships in the image.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /bin/import-foods ./cmd/import-foods
-
-# Minimal HTTP liveness probe for distroless HEALTHCHECK.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /bin/dietdaemon ./cmd/dietdaemon && \
+    go build -ldflags="-s -w" -o /bin/tune ./cmd/tune && \
+    go build -ldflags="-s -w" -o /bin/import-foods ./cmd/import-foods && \
     go build -ldflags="-s -w" -o /bin/healthcheck ./cmd/healthcheck
 
 # Pre-create /data owned by nonroot so named volumes inherit the

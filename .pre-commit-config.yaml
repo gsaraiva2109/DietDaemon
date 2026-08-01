@@ -40,6 +40,13 @@ repos:
         types_or: [ts, tsx]
         args: [--config, web/eslint.config.js]
 
+  # --- Docker ---
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        files: ^Dockerfile$
+
   - repo: local
     hooks:
       - id: conventional-commit
