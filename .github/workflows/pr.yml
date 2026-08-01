@@ -26,6 +26,7 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      coverage: ${{ steps.filter.outputs.go == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.sonar == 'true' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.2
@@ -44,9 +45,13 @@ jobs:
               - 'fixtures/**'
             frontend:
               - 'web/**'
+            sonar:
+              - '.github/workflows/pr.yml'
+              - 'sonar-project.properties'
+              - 'Makefile'
 
   go:
-    name: Go (lint, test, build)
+    name: Go (lint, build)
     runs-on: ubuntu-latest
     needs: [changes]
     if: needs.changes.outputs.go == 'true'
@@ -64,16 +69,6 @@ jobs:
 
       - name: Vet
         run: go vet ./...
-
-      - name: Test with coverage
-        run: make test-coverage
-
-      - name: Upload Go coverage
-        uses: actions/upload-artifact@v7
-        with:
-          name: go-coverage
-          path: coverage.out
-          retention-days: 1
 
       - name: Vulnerability scan
         run: make govulncheck
@@ -125,18 +120,67 @@ jobs:
       - name: TypeScript check
         run: npx tsc -b --noEmit
 
+      - name: Build
+        run: npm run build
+
+  go-coverage:
+    name: Go coverage
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.coverage == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Test with coverage
+        run: make test-coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 1
+
+  frontend-coverage:
+    name: Frontend coverage
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.coverage == 'true'
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Test with coverage
         run: npm run test:coverage
 
-      - name: Upload frontend coverage
+      - name: Upload coverage
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: web/coverage/lcov.info
           retention-days: 1
-
-      - name: Build
-        run: npm run build
 
   trivy:
     name: Trivy (secret scan)
@@ -166,8 +210,8 @@ jobs:
   sonarqube:
     name: SonarQube Scan
     runs-on: [self-hosted, homelab, linux, amd64]
-    needs: [changes, go, frontend]
-    if: always() && (needs.changes.outputs.go == 'true' || needs.changes.outputs.frontend == 'true')
+    needs: [changes, go, frontend, go-coverage, frontend-coverage]
+    if: always() && needs.changes.outputs.coverage == 'true'
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -180,14 +224,12 @@ jobs:
         with:
           name: go-coverage
           path: .
-        continue-on-error: true
 
       - name: Download frontend coverage
         uses: actions/download-artifact@v8.0.1
         with:
           name: frontend-coverage
           path: web/coverage
-        continue-on-error: true
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v8.2.1
@@ -204,12 +246,12 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [go, frontend, sonarqube, trivy]
+    needs: [go, frontend, go-coverage, frontend-coverage, sonarqube, trivy]
     if: always()
     steps:
       - name: Check job results
         run: |
-          if [[ "${{ needs.go.result }}" == "failure" || "${{ needs.frontend.result }}" == "failure" || "${{ needs.sonarqube.result }}" == "failure" || "${{ needs.trivy.result }}" == "failure" ]]; then
+          if [[ "${{ needs.go.result }}" == "failure" || "${{ needs.frontend.result }}" == "failure" || "${{ needs.go-coverage.result }}" == "failure" || "${{ needs.frontend-coverage.result }}" == "failure" || "${{ needs.sonarqube.result }}" == "failure" || "${{ needs.trivy.result }}" == "failure" ]]; then
             echo "One or more required jobs failed."
             exit 1
           fi
