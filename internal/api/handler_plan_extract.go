@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/planextract"
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,14 @@ func (h *Handler) handleExtractPlanFromText(w http.ResponseWriter, r *http.Reque
 // returns.
 // ---------------------------------------------------------------------------
 
+// maxPlanPages and maxPlanTotalBytes bound a multi-page plan photo upload:
+// at most 10 pages, 25 MB combined, checked before any page reaches the
+// vision adapter.
+const (
+	maxPlanPages      = 10
+	maxPlanTotalBytes = 25 << 20
+)
+
 func (h *Handler) handleExtractPlanFromImage(w http.ResponseWriter, r *http.Request, userID string) {
 	if h.visionAdapter == nil {
 		w.WriteHeader(http.StatusNotImplemented)
@@ -76,36 +86,59 @@ func (h *Handler) handleExtractPlanFromImage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxPlanTotalBytes)
 	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
+	if err := r.ParseMultipartForm(maxPlanTotalBytes); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload too large (max 25 MB combined)"})
 		return
 	}
 
-	file, _, err := r.FormFile("file")
-	if err != nil {
+	fileHeaders := r.MultipartForm.File["file"]
+	if len(fileHeaders) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
 		return
 	}
-	defer func() { _ = file.Close() }()
-
-	data, err := io.ReadAll(io.LimitReader(file, 5<<20))
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-
-	mimeType := http.DetectContentType(data)
-	if len(mimeType) < 6 || mimeType[:6] != "image/" {
+	if len(fileHeaders) > maxPlanPages {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "uploaded file is not an image"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("too many pages (max %d)", maxPlanPages)})
 		return
 	}
 
-	draft, err := h.visionAdapter.ExtractPlan(r.Context(), data, mimeType)
+	pages := make([]types.PlanImagePage, 0, len(fileHeaders))
+	totalBytes := 0
+	for i, fh := range fileHeaders {
+		file, err := fh.Open()
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+		data, err := io.ReadAll(io.LimitReader(file, maxPlanTotalBytes+1))
+		_ = file.Close()
+		if err != nil {
+			h.writeErr(w, err)
+			return
+		}
+
+		totalBytes += len(data)
+		if totalBytes > maxPlanTotalBytes {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload too large (max 25 MB combined)"})
+			return
+		}
+
+		mimeType := http.DetectContentType(data)
+		if len(mimeType) < 6 || mimeType[:6] != "image/" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("page %d is not an image", i+1)})
+			return
+		}
+
+		pages = append(pages, types.PlanImagePage{Data: data, MimeType: mimeType})
+	}
+
+	draft, err := h.visionAdapter.ExtractPlan(r.Context(), pages)
 	if err != nil {
 		h.writeErr(w, err)
 		return

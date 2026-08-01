@@ -83,7 +83,9 @@ Respond with ONLY this JSON object, no markdown fences, no commentary:
 // "Training day" / "Rest day" as columns and meals as rows), a known hard
 // case for photographed layouts — the model must not guess which column a
 // value belongs to.
-const PhotoPrompt = `You are reading a photographed or scanned page describing a diet/nutrition plan written by a nutritionist. The text on the page may be in any language (e.g. Portuguese, English) — read it natively, no locale branching is needed.
+const PhotoPrompt = `You are reading a photographed or scanned diet/nutrition plan written by a nutritionist. The text may be in any language (e.g. Portuguese, English) — read it natively, no locale branching is needed.
+
+One or more ordered page images follow, in the order they were captured. Treat them as a single document: a later page may continue a day type, slot, or option started on an earlier page, or it may introduce a new one — read across all pages before deciding a day type or slot is complete. If any page is illegible, unrelated to a diet plan, or its content cannot be confidently placed into the structure, do not silently drop it: set unreadable to true rather than omitting that page's content.
 
 A plan may prescribe different day types with different targets (for example a carb-cycling plan may prescribe a "training day" and a "rest day", each with its own macro targets). Each day type has:
 - a name (e.g. "Dia de treino" / "Training day", "Dia de descanso" / "Rest day")

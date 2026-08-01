@@ -49,6 +49,7 @@ type visionRequest struct {
 	Model          string          `json:"model"`
 	Messages       []visionMessage `json:"messages"`
 	ResponseFormat *responseFormat `json:"response_format"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
 }
 
 // ExtractLabel sends the photographed nutrition label as a data-URI image_url
@@ -111,24 +112,27 @@ func (a *Adapter) ExtractLabel(ctx context.Context, image []byte, mimeType strin
 // ExtractPlan — POST {baseURL}/chat/completions with an image_url content part
 // ---------------------------------------------------------------------------
 
-// ExtractPlan sends the photographed diet-plan page as a data-URI image_url
-// content part to an OpenAI-compatible chat/completions endpoint and parses
-// the model's JSON reply.
-func (a *Adapter) ExtractPlan(ctx context.Context, image []byte, mimeType string) (types.PlanDraft, error) {
-	dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image))
+// ExtractPlan sends the photographed diet-plan pages, in order, as data-URI
+// image_url content parts to an OpenAI-compatible chat/completions endpoint
+// and parses the model's JSON reply.
+func (a *Adapter) ExtractPlan(ctx context.Context, pages []types.PlanImagePage) (types.PlanDraft, error) {
+	content := make([]visionContentPart, 0, 1+len(pages))
+	content = append(content, visionContentPart{Type: "text", Text: planextract.PhotoPrompt})
+	for _, page := range pages {
+		dataURI := fmt.Sprintf("data:%s;base64,%s", page.MimeType, base64.StdEncoding.EncodeToString(page.Data))
+		content = append(content, visionContentPart{Type: "image_url", ImageURL: &imageURL{URL: dataURI}})
+	}
 
 	body := visionRequest{
 		Model: a.model,
 		Messages: []visionMessage{
 			{
-				Role: "user",
-				Content: []visionContentPart{
-					{Type: "text", Text: planextract.PhotoPrompt},
-					{Type: "image_url", ImageURL: &imageURL{URL: dataURI}},
-				},
+				Role:    "user",
+				Content: content,
 			},
 		},
 		ResponseFormat: &responseFormat{Type: "json_object"},
+		MaxTokens:      4096,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

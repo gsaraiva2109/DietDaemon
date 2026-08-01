@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
 func TestExtractLabel(t *testing.T) {
@@ -84,7 +86,7 @@ func TestExtractLabelUnreadable(t *testing.T) {
 	}
 }
 
-func checkExtractPlanRequest(t *testing.T, req visionRequest, wantB64 string) {
+func checkExtractPlanRequest(t *testing.T, req visionRequest, pages []types.PlanImagePage) {
 	t.Helper()
 	if req.Model != "llava" {
 		t.Errorf("model = %q, want llava", req.Model)
@@ -92,8 +94,14 @@ func checkExtractPlanRequest(t *testing.T, req visionRequest, wantB64 string) {
 	if !strings.Contains(req.Prompt, "carb-cycling") {
 		t.Errorf("prompt missing planextract photo prompt: %q", req.Prompt)
 	}
-	if len(req.Images) != 1 || req.Images[0] != wantB64 {
-		t.Errorf("images = %v, want [%s]", req.Images, wantB64)
+	if len(req.Images) != len(pages) {
+		t.Fatalf("len(images) = %d, want %d", len(req.Images), len(pages))
+	}
+	for i, page := range pages {
+		wantB64 := base64.StdEncoding.EncodeToString(page.Data)
+		if req.Images[i] != wantB64 {
+			t.Errorf("images[%d] = %v, want %s", i, req.Images[i], wantB64)
+		}
 	}
 	if req.Format != "json" {
 		t.Errorf("format = %q, want json", req.Format)
@@ -101,8 +109,11 @@ func checkExtractPlanRequest(t *testing.T, req visionRequest, wantB64 string) {
 }
 
 func TestExtractPlan(t *testing.T) {
-	img := []byte("fake-jpeg-bytes")
-	wantB64 := base64.StdEncoding.EncodeToString(img)
+	pages := []types.PlanImagePage{
+		{Data: []byte("fake-jpeg-bytes-page-1"), MimeType: "image/jpeg"},
+		{Data: []byte("fake-jpeg-bytes-page-2"), MimeType: "image/jpeg"},
+		{Data: []byte("fake-jpeg-bytes-page-3"), MimeType: "image/jpeg"},
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
@@ -113,7 +124,7 @@ func TestExtractPlan(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		checkExtractPlanRequest(t, req, wantB64)
+		checkExtractPlanRequest(t, req, pages)
 
 		_ = json.NewEncoder(w).Encode(generateResponse{
 			Response: `{"plan_name":"Plano","day_types":[{"name":"Dia único","targets":{"Calories":2000,"Protein":150,"Carbs":200,"Fat":60,"Fiber":25},"water_goal_ml":2500,"slots":[],"low_confidence_fields":[]}],"unreadable":false,"notes":null}`,
@@ -123,7 +134,7 @@ func TestExtractPlan(t *testing.T) {
 
 	a := New(srv.URL, "nomic-embed-text", "llama3.1", 30*time.Second)
 	a.SetVisionModel("llava")
-	draft, err := a.ExtractPlan(t.Context(), img, "image/jpeg")
+	draft, err := a.ExtractPlan(t.Context(), pages)
 	if err != nil {
 		t.Fatalf("ExtractPlan: %v", err)
 	}
@@ -143,7 +154,8 @@ func TestExtractPlanHTTPError(t *testing.T) {
 
 	a := New(srv.URL, "", "", 30*time.Second)
 	a.SetVisionModel("llava")
-	if _, err := a.ExtractPlan(t.Context(), []byte("img"), "image/jpeg"); err == nil {
+	pages := []types.PlanImagePage{{Data: []byte("img"), MimeType: "image/jpeg"}}
+	if _, err := a.ExtractPlan(t.Context(), pages); err == nil {
 		t.Error("expected error on 503, got nil")
 	}
 }

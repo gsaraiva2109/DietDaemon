@@ -12,9 +12,10 @@ import (
 )
 
 // fakeVisionAdapter returns a pre-programmed draft/error, mirroring
-// fakeChatAdapter in internal/assistant/assistant_test.go. ExtractLabel,
-// ExtractPlan, and ExtractMenu share err/calledMime/calledLen since tests
-// only ever program one method per case.
+// fakeChatAdapter in internal/assistant/assistant_test.go. ExtractLabel and
+// ExtractMenu share err/calledMime/calledLen since tests only ever program
+// one method per case; ExtractPlan is multi-page, so it records the pages it
+// received separately in calledPages.
 type fakeVisionAdapter struct {
 	draft     types.NutritionLabelDraft
 	planDraft types.PlanDraft
@@ -23,6 +24,8 @@ type fakeVisionAdapter struct {
 
 	calledMime string
 	calledLen  int
+
+	calledPages []types.PlanImagePage
 }
 
 func (f *fakeVisionAdapter) ExtractLabel(_ context.Context, image []byte, mimeType string) (types.NutritionLabelDraft, error) {
@@ -34,9 +37,8 @@ func (f *fakeVisionAdapter) ExtractLabel(_ context.Context, image []byte, mimeTy
 	return f.draft, nil
 }
 
-func (f *fakeVisionAdapter) ExtractPlan(_ context.Context, image []byte, mimeType string) (types.PlanDraft, error) {
-	f.calledMime = mimeType
-	f.calledLen = len(image)
+func (f *fakeVisionAdapter) ExtractPlan(_ context.Context, pages []types.PlanImagePage) (types.PlanDraft, error) {
+	f.calledPages = pages
 	if f.err != nil {
 		return types.PlanDraft{}, f.err
 	}
