@@ -8,6 +8,10 @@
     { "matchManagers": ["github-actions"], "groupName": "GitHub Actions" },
     { "matchManagers": ["gomod"], "groupName": "Go dependencies" },
     { "matchManagers": ["npm"], "groupName": "npm dependencies" },
+    {
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    },
     { "matchManagers": ["dockerfile"], "groupName": "Docker base images" },
     {
       "matchUpdateTypes": ["patch"],
