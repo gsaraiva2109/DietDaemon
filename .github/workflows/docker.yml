@@ -26,6 +26,11 @@ jobs:
   docker:
     name: Build & Push Docker Image
     runs-on: [self-hosted, homelab, linux, amd64]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -54,6 +59,7 @@ jobs:
           fi
 
       - name: Build and push
+        id: build-and-push
         uses: docker/build-push-action@v7.3.0
         with:
           context: .
@@ -62,6 +68,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image
+        run: cosign sign --yes "${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
 
       - name: Run Trivy image vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
