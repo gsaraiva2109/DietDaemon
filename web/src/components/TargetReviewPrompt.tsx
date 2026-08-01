@@ -27,7 +27,7 @@ export function TargetReviewPrompt() {
   const { data } = useTargetReviewSuggestion()
   const [dismissed, setDismissed] = useState(isDismissed)
 
-  if (dismissed || !data || !data.message) return null
+  if (dismissed || !data?.message) return null
 
   function dismiss() {
     localStorage.setItem(DISMISS_KEY, String(Date.now() + DISMISS_DAYS * 24 * 60 * 60 * 1000))
