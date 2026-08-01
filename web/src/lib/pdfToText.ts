@@ -56,12 +56,14 @@ export async function pdfToText(file: File): Promise<PdfTextResult> {
   }
 
   const nonWhitespaceChars = pageTexts.join('').replace(/\s/g, '').length
-  const status: PdfTextResult['status'] =
-    nonWhitespaceChars < MIN_CHARS_PER_PAGE * Math.max(pageCount, 1)
-      ? 'empty'
-      : isMalformed(pageTexts)
-        ? 'malformed'
-        : 'ok'
+  let status: PdfTextResult['status']
+  if (nonWhitespaceChars < MIN_CHARS_PER_PAGE * Math.max(pageCount, 1)) {
+    status = 'empty'
+  } else if (isMalformed(pageTexts)) {
+    status = 'malformed'
+  } else {
+    status = 'ok'
+  }
 
   const text = pageTexts.map((t, i) => `--- Page ${i + 1} ---\n${t}`).join('\n\n')
   return { text, pageCount, status }
