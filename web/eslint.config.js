@@ -27,6 +27,7 @@ export default defineConfig([
             'useDemo',
             'useTheme',
             'demoAvailable',
+            'mostRecentMondayISO',
             'nextMondayISO',
             'parseLogMealResult',
             'sourceLabel',

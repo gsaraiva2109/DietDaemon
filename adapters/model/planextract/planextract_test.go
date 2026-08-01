@@ -35,6 +35,18 @@ func TestParseResponse(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "weekday schedule mix of names and nulls",
+			raw:  `{"plan_name":"Plan","day_types":[{"name":"Training day","targets":{"Calories":2600,"Protein":180,"Carbs":300,"Fat":70,"Fiber":30},"water_goal_ml":3500,"slots":[],"low_confidence_fields":[]},{"name":"Rest day","targets":{"Calories":1900,"Protein":170,"Carbs":120,"Fat":65,"Fiber":25},"water_goal_ml":3000,"slots":[],"low_confidence_fields":[]}],"unreadable":false,"notes":null,"weekday_schedule":["Training day","Training day","Rest day",null,"Training day","Rest day",null],"substitutions":[]}`,
+		},
+		{
+			name: "substitutions present",
+			raw:  `{"plan_name":"Plan","day_types":[],"unreadable":false,"notes":null,"weekday_schedule":[null,null,null,null,null,null,null],"substitutions":["Pode substituir arroz por batata doce","You may swap rice for sweet potato"]}`,
+		},
+		{
+			name: "weekday schedule and substitutions absent",
+			raw:  `{"plan_name":"Plan","day_types":[],"unreadable":false,"notes":null}`,
+		},
+		{
 			name: "portuguese food names preserved",
 			raw:  `{"plan_name":"Plano cutting","day_types":[{"name":"Dia único","targets":{"Calories":2000,"Protein":160,"Carbs":180,"Fat":60,"Fiber":30},"water_goal_ml":2500,"slots":[{"label":"Almoço","time_of_day":"12:30","options":[{"label":"Opção única","items":[{"raw_name":"Arroz integral","quantity":100,"unit":"g","ad_libitum":false},{"raw_name":"Salada à vontade","quantity":null,"unit":null,"ad_libitum":true}],"low_confidence_fields":[]}]}],"low_confidence_fields":[]}],"unreadable":false,"notes":"Beber bastante água"}`,
 		},
@@ -174,6 +186,52 @@ func TestParseResponseUnreadable(t *testing.T) {
 	}
 	if len(got.DayTypes) != 0 {
 		t.Errorf("DayTypes = %v, want empty", got.DayTypes)
+	}
+}
+
+func TestParseResponseWeekdayScheduleAndSubstitutions(t *testing.T) {
+	got, err := ParseResponse(`{"plan_name":"Plan","day_types":[{"name":"Training day","targets":{"Calories":2600,"Protein":180,"Carbs":300,"Fat":70,"Fiber":30},"water_goal_ml":3500,"slots":[],"low_confidence_fields":[]},{"name":"Rest day","targets":{"Calories":1900,"Protein":170,"Carbs":120,"Fat":65,"Fiber":25},"water_goal_ml":3000,"slots":[],"low_confidence_fields":[]}],"unreadable":false,"notes":null,"weekday_schedule":["Training day","Training day","Rest day",null,"Training day","Rest day",null],"substitutions":["Pode substituir arroz por batata doce","You may swap rice for sweet potato"]}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertWeekdayScheduleFields(t, got.WeekdaySchedule)
+	assertSubstitutionsFields(t, got.Substitutions)
+}
+
+func assertWeekdayScheduleFields(t *testing.T, schedule []*string) {
+	t.Helper()
+	if len(schedule) != 7 {
+		t.Fatalf("WeekdaySchedule len = %d, want 7", len(schedule))
+	}
+	want := []*string{
+		new("Training day"), new("Training day"), new("Rest day"), nil,
+		new("Training day"), new("Rest day"), nil,
+	}
+	for i, w := range want {
+		got := schedule[i]
+		if w == nil {
+			if got != nil {
+				t.Errorf("WeekdaySchedule[%d] = %v, want nil", i, *got)
+			}
+			continue
+		}
+		if got == nil || *got != *w {
+			t.Errorf("WeekdaySchedule[%d] = %v, want %q", i, got, *w)
+		}
+	}
+}
+
+func assertSubstitutionsFields(t *testing.T, subs []string) {
+	t.Helper()
+	want := []string{"Pode substituir arroz por batata doce", "You may swap rice for sweet potato"}
+	if len(subs) != len(want) {
+		t.Fatalf("Substitutions len = %d, want %d", len(subs), len(want))
+	}
+	for i, w := range want {
+		if subs[i] != w {
+			t.Errorf("Substitutions[%d] = %q, want %q", i, subs[i], w)
+		}
 	}
 }
 

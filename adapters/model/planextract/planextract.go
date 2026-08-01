@@ -45,6 +45,10 @@ Apply this three-tier confidence rule to every field:
 2. Present but uncertain (unclear phrasing, ambiguous abbreviation, illegible fragment): still report your best-effort reading, but add that field's key to the low_confidence_fields array at its level (each day type has its own low_confidence_fields for its own fields such as "name", "water_goal_ml", "targets.calories", "targets.protein", "targets.carbs", "targets.fat", "targets.fiber"; each option has its own low_confidence_fields for its items' fields).
 3. Not present in the text: the value must be JSON null. NEVER invent, guess, or estimate a value.
 
+weekday_schedule is an array of exactly 7 elements, in Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday order. Each element is either null (the text doesn't specify a day type for that weekday) or must be EXACTLY the "name" string of one of the day types listed in day_types above — never a name that isn't in day_types, never a guess for a weekday the text doesn't address.
+
+substitutions is an array of strings: standalone substitution notes or instructions found in the text that don't belong to a specific item/slot/option (e.g. "Pode substituir arroz por batata doce"), reported verbatim in the source language. Leave it an empty array if the text has none. Never infer a substitution relationship that isn't explicitly stated — this is not a place to invent food-swap suggestions.
+
 If the pasted text is not a diet plan, or is too garbled or incomplete to extract anything meaningful from, set unreadable to true and leave every other field null or empty.
 
 Respond with ONLY this JSON object, no markdown fences, no commentary:
@@ -74,7 +78,9 @@ Respond with ONLY this JSON object, no markdown fences, no commentary:
     }
   ],
   "unreadable": boolean,
-  "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above)
+  "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above),
+  "weekday_schedule": [string or null, string or null, string or null, string or null, string or null, string or null, string or null] (Monday through Sunday, in order),
+  "substitutions": array of strings (verbatim substitution notes; empty array if none)
 }`
 
 // PhotoPrompt instructs the model to read a photographed or scanned
@@ -107,6 +113,10 @@ Apply this three-tier confidence rule to every field:
 2. Present but uncertain (unclear phrasing, ambiguous abbreviation, illegible fragment, partial glare or blur): still report your best-effort reading, but add that field's key to the low_confidence_fields array at its level (each day type has its own low_confidence_fields for its own fields such as "name", "water_goal_ml", "targets.calories", "targets.protein", "targets.carbs", "targets.fat", "targets.fiber"; each option has its own low_confidence_fields for its items' fields).
 3. Not present on the page: the value must be JSON null. NEVER invent, guess, or estimate a value.
 
+weekday_schedule is an array of exactly 7 elements, in Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday order. Each element is either null (the page doesn't specify a day type for that weekday) or must be EXACTLY the "name" string of one of the day types listed in day_types above — never a name that isn't in day_types, never a guess for a weekday the page doesn't address.
+
+substitutions is an array of strings: standalone substitution notes or instructions found on the page that don't belong to a specific item/slot/option (e.g. "Pode substituir arroz por batata doce"), reported verbatim in the source language. Leave it an empty array if the page has none. Never infer a substitution relationship that isn't explicitly stated — this is not a place to invent food-swap suggestions.
+
 If the photographed page is not a diet plan, or is too garbled, blurry, or incomplete to extract anything meaningful from — including the multi-column ambiguity case above — set unreadable to true and leave every other field null or empty.
 
 Respond with ONLY this JSON object, no markdown fences, no commentary:
@@ -136,7 +146,9 @@ Respond with ONLY this JSON object, no markdown fences, no commentary:
     }
   ],
   "unreadable": boolean,
-  "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above)
+  "notes": string or null (any general free-text guidance from the plan that doesn't fit the structure above),
+  "weekday_schedule": [string or null, string or null, string or null, string or null, string or null, string or null, string or null] (Monday through Sunday, in order),
+  "substitutions": array of strings (verbatim substitution notes; empty array if none)
 }`
 
 type wireItem struct {
@@ -167,10 +179,12 @@ type wireDayType struct {
 }
 
 type wireResponse struct {
-	PlanName   *string       `json:"plan_name"`
-	DayTypes   []wireDayType `json:"day_types"`
-	Unreadable bool          `json:"unreadable"`
-	Notes      *string       `json:"notes"`
+	PlanName        *string       `json:"plan_name"`
+	DayTypes        []wireDayType `json:"day_types"`
+	Unreadable      bool          `json:"unreadable"`
+	Notes           *string       `json:"notes"`
+	WeekdaySchedule []*string     `json:"weekday_schedule"`
+	Substitutions   []string      `json:"substitutions"`
 }
 
 // ParseResponse parses a model's raw text response (optionally
@@ -184,10 +198,12 @@ func ParseResponse(raw string) (types.PlanDraft, error) {
 	}
 
 	return types.PlanDraft{
-		PlanName:   wr.PlanName,
-		DayTypes:   mapDayTypes(wr.DayTypes),
-		Unreadable: wr.Unreadable,
-		Notes:      wr.Notes,
+		PlanName:        wr.PlanName,
+		DayTypes:        mapDayTypes(wr.DayTypes),
+		Unreadable:      wr.Unreadable,
+		Notes:           wr.Notes,
+		WeekdaySchedule: wr.WeekdaySchedule,
+		Substitutions:   wr.Substitutions,
 	}, nil
 }
 

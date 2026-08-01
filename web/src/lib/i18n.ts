@@ -859,6 +859,13 @@ const en = {
     extractModeNative_other: 'Native text extraction, {{count}} pages',
     extractModeScan_one: 'Scanned extraction, {{count}} page',
     extractModeScan_other: 'Scanned extraction, {{count}} pages',
+    // Weekday schedule + substitutions review (#223)
+    weekdayScheduleTitle: 'Weekly schedule',
+    weekdayScheduleHint: 'Assign a day-type to each weekday. Leave any day unset if the extraction didn\'t specify one.',
+    weekdayMonday: 'Monday', weekdayTuesday: 'Tuesday', weekdayWednesday: 'Wednesday', weekdayThursday: 'Thursday',
+    weekdayFriday: 'Friday', weekdaySaturday: 'Saturday', weekdaySunday: 'Sunday', weekdayNotSpecified: 'Not specified',
+    weekdayIncompleteHint: 'Fill in every day to apply this as the plan\'s cycle automatically — you can always set it later instead.',
+    substitutionsTitle: 'Substitutions',
   },
   menu: {
     // Photo-menu dining mode (#201)
@@ -2137,6 +2144,13 @@ const ptBR: typeof en = {
     extractModeNative_other: 'Extração nativa de texto, {{count}} páginas',
     extractModeScan_one: 'Extração digitalizada, {{count}} página',
     extractModeScan_other: 'Extração digitalizada, {{count}} páginas',
+    // Cronograma semanal + substituições (#223)
+    weekdayScheduleTitle: 'Cronograma semanal',
+    weekdayScheduleHint: 'Atribua um tipo de dia a cada dia da semana. Deixe em branco se a extração não especificou um.',
+    weekdayMonday: 'Segunda-feira', weekdayTuesday: 'Terça-feira', weekdayWednesday: 'Quarta-feira', weekdayThursday: 'Quinta-feira',
+    weekdayFriday: 'Sexta-feira', weekdaySaturday: 'Sábado', weekdaySunday: 'Domingo', weekdayNotSpecified: 'Não especificado',
+    weekdayIncompleteHint: 'Preencha todos os dias para aplicar isso como o ciclo do plano automaticamente — você também pode configurá-lo depois.',
+    substitutionsTitle: 'Substituições',
   },
   menu: {
     // Modo cardápio por foto (#201)
