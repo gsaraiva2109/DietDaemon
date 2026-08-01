@@ -707,8 +707,8 @@ function SubstitutionsSection({ substitutions }: Readonly<{ substitutions: strin
     <div className="mb-5 rounded-lg border border-dashed border-line p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('plan.substitutionsTitle')}</p>
       <ul className="list-disc space-y-1 pl-5 text-sm text-ink">
-        {substitutions.map((s, i) => (
-          <li key={i}>{s}</li>
+        {substitutions.map((s) => (
+          <li key={s}>{s}</li>
         ))}
       </ul>
     </div>
