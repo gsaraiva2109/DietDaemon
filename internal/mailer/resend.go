@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/resendlabs/resend-go"
+	"github.com/resend/resend-go/v3"
 )
 
 type resendMailer struct {
@@ -28,7 +28,7 @@ func (m *resendMailer) Send(ctx context.Context, to string, msg Message) error {
 		Text:    msg.TextBody,
 	}
 
-	_, err := m.client.Emails.Send(params)
+	_, err := m.client.Emails.SendWithContext(ctx, params)
 	if err != nil {
 		return fmt.Errorf("mailer/resend: %w", err)
 	}
