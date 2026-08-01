@@ -850,7 +850,15 @@ const en = {
     importPhotoHint: 'Upload a photo of the prescription, or a PDF of it, and review a draft before anything saves.',
     choosePhotoFile: 'Choose a photo or PDF',
     renderingPdf: 'Rendering PDF…',
-    pdfMultiPageNotice: 'This PDF has more than one page — only the first page was used. Run import again for the other pages, then merge the day types manually below.',
+    fileTooLarge: 'That file is too large — the limit is {{maxMB}} MB combined.',
+    pdfTooManyPages: 'This PDF has {{count}} pages — the limit is {{max}}.',
+    malformedNotice: 'The extracted text looks garbled — a common sign of a PDF with broken font encoding. You can retry as a scan instead.',
+    textPreviewLabel: 'Extracted text preview',
+    retryAsScan: 'Retry as scan',
+    extractModeNative_one: 'Native text extraction, {{count}} page',
+    extractModeNative_other: 'Native text extraction, {{count}} pages',
+    extractModeScan_one: 'Scanned extraction, {{count}} page',
+    extractModeScan_other: 'Scanned extraction, {{count}} pages',
   },
   menu: {
     // Photo-menu dining mode (#201)
@@ -2120,7 +2128,15 @@ const ptBR: typeof en = {
     importPhotoHint: 'Envie uma foto da prescrição, ou um PDF dela, e revise um rascunho antes de salvar qualquer coisa.',
     choosePhotoFile: 'Escolher uma foto ou PDF',
     renderingPdf: 'Renderizando o PDF…',
-    pdfMultiPageNotice: 'Este PDF tem mais de uma página — apenas a primeira foi usada. Rode a importação novamente para as outras páginas e depois combine os tipos de dia manualmente abaixo.',
+    fileTooLarge: 'Esse arquivo é muito grande — o limite é {{maxMB}} MB no total.',
+    pdfTooManyPages: 'Este PDF tem {{count}} páginas — o limite é {{max}}.',
+    malformedNotice: 'O texto extraído parece corrompido — um sinal comum de PDF com codificação de fonte quebrada. Você pode tentar novamente como digitalização.',
+    textPreviewLabel: 'Prévia do texto extraído',
+    retryAsScan: 'Tentar novamente como digitalização',
+    extractModeNative_one: 'Extração nativa de texto, {{count}} página',
+    extractModeNative_other: 'Extração nativa de texto, {{count}} páginas',
+    extractModeScan_one: 'Extração digitalizada, {{count}} página',
+    extractModeScan_other: 'Extração digitalizada, {{count}} páginas',
   },
   menu: {
     // Modo cardápio por foto (#201)

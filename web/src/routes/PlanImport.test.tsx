@@ -33,15 +33,21 @@ vi.mock('@/lib/api', async (importOriginal) => {
   }
 })
 
-// Real PDF-canvas rendering is unreliable under jsdom, so the PDF-selection
-// UI path is tested against a canned Blob[] instead of exercising pdfjs-dist
-// for real (see pdfToImages.ts's comment; that path needs manual verification).
+// Real PDF-canvas/text-layer work is unreliable under jsdom, so the
+// PDF-selection UI path is tested against canned pdfToText/pdfToImages
+// results instead of exercising pdfjs-dist for real (see those modules' own
+// comments; that path needs manual verification).
 vi.mock('@/lib/pdfToImages', () => ({
   pdfToImages: vi.fn(),
+}))
+vi.mock('@/lib/pdfToText', () => ({
+  pdfToText: vi.fn(),
 }))
 
 import { api, ApiError } from '@/lib/api'
 import { pdfToImages } from '@/lib/pdfToImages'
+import { pdfToText } from '@/lib/pdfToText'
+import type { PdfTextResult } from '@/lib/pdfToText'
 
 const list = vi.mocked(api.plans.list)
 const active = vi.mocked(api.plans.active)
@@ -54,6 +60,7 @@ const createSlot = vi.mocked(api.plans.slots.create)
 const createOption = vi.mocked(api.plans.options.create)
 const searchCatalog = vi.mocked(api.foods.searchCatalog)
 const pdfToImagesMock = vi.mocked(pdfToImages)
+const pdfToTextMock = vi.mocked(pdfToText)
 
 const TARGETS = { Calories: 1800, Protein: 140, Carbs: 150, Fat: 55, Fiber: 20 }
 
@@ -150,6 +157,7 @@ beforeEach(() => {
   extractFromText.mockReset()
   extractFromImage.mockReset()
   pdfToImagesMock.mockReset()
+  pdfToTextMock.mockReset()
   createDayType.mockReset()
   createSlot.mockReset()
   createOption.mockReset()
@@ -295,41 +303,99 @@ function selectPhotoFile(file: File) {
   fireEvent.change(screen.getByLabelText('Choose a photo or PDF'), { target: { files: [file] } })
 }
 
+function oversizedFile(name = 'plan.pdf'): File {
+  const file = pdfFile(name)
+  Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 })
+  return file
+}
+
+function textResult(overrides: Partial<PdfTextResult> = {}): PdfTextResult {
+  return { text: '--- Page 1 ---\nBreakfast: 100g oats', pageCount: 1, status: 'ok', ...overrides }
+}
+
 // Reuses the same DraftReview screen the text-import path already covers in
-// depth above; these mainly prove the new photo/PDF entry point reaches it.
+// depth above; these mainly prove the new photo/PDF entry point reaches it,
+// and that it picks the right path (native text vs. scanned images) per
+// #220/#222's client-side logic.
 describe('Plan import from photo/PDF', () => {
-  it('uploads a photo directly, without touching pdfToImages', async () => {
+  it('uploads a photo directly, without touching pdfToText or pdfToImages', async () => {
     extractFromImage.mockResolvedValue(draft())
     await openPhotoForm()
     selectPhotoFile(pngFile())
 
     await screen.findByText('Review the extracted plan')
-    expect(extractFromImage).toHaveBeenCalledWith(expect.any(File))
+    expect(extractFromImage).toHaveBeenCalledWith([expect.any(File)])
+    expect(pdfToTextMock).not.toHaveBeenCalled()
     expect(pdfToImagesMock).not.toHaveBeenCalled()
   })
 
-  it('renders a PDF to an image via pdfToImages before extracting', async () => {
-    pdfToImagesMock.mockResolvedValue([new Blob(['page-1'], { type: 'image/png' })])
+  it('extracts a multi-page PDF via native text when the text layer looks usable', async () => {
+    pdfToTextMock.mockResolvedValue(textResult({ pageCount: 3, text: '--- Page 1 ---\n...' }))
+    extractFromText.mockResolvedValue(draft())
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    await screen.findByText('Review the extracted plan')
+    expect(pdfToTextMock).toHaveBeenCalledWith(expect.any(File))
+    expect(extractFromText).toHaveBeenCalledWith('--- Page 1 ---\n...')
+    expect(pdfToImagesMock).not.toHaveBeenCalled()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
+
+  it('auto-falls-back to the scanned (image) path when the PDF has no usable text', async () => {
+    pdfToTextMock.mockResolvedValue(textResult({ status: 'empty', pageCount: 2, text: '' }))
+    pdfToImagesMock.mockResolvedValue([
+      new Blob(['page-1'], { type: 'image/png' }),
+      new Blob(['page-2'], { type: 'image/png' }),
+    ])
     extractFromImage.mockResolvedValue(draft())
     await openPhotoForm()
     selectPhotoFile(pdfFile())
 
     await screen.findByText('Review the extracted plan')
     expect(pdfToImagesMock).toHaveBeenCalledWith(expect.any(File))
-    expect(extractFromImage).toHaveBeenCalledWith(expect.any(File))
+    expect(extractFromImage).toHaveBeenCalledWith([expect.any(File), expect.any(File)])
+    expect(extractFromText).not.toHaveBeenCalled()
   })
 
-  it('warns and uses only the first page for a multi-page PDF, without merging pages', async () => {
-    pdfToImagesMock.mockResolvedValue([
-      new Blob(['page-1'], { type: 'image/png' }),
-      new Blob(['page-2'], { type: 'image/png' }),
-    ])
-    extractFromImage.mockReturnValue(new Promise(() => {})) // stay on this screen so the notice is observable
+  it('shows a text preview and an explicit retry-as-scan action for malformed text, without auto-extracting', async () => {
+    pdfToTextMock.mockResolvedValue(textResult({ status: 'malformed', text: 'g@rbl3d t3xt' }))
     await openPhotoForm()
     selectPhotoFile(pdfFile())
 
-    expect(await screen.findByText(/only the first page was used/)).toBeInTheDocument()
-    expect(extractFromImage).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(/looks garbled/)).toBeInTheDocument()
+    expect(screen.getByText('g@rbl3d t3xt')).toBeInTheDocument()
+    expect(extractFromText).not.toHaveBeenCalled()
+    expect(extractFromImage).not.toHaveBeenCalled()
+
+    pdfToImagesMock.mockResolvedValue([new Blob(['page-1'], { type: 'image/png' })])
+    extractFromImage.mockResolvedValue(draft())
+    fireEvent.click(screen.getByText('Retry as scan'))
+
+    await screen.findByText('Review the extracted plan')
+    expect(pdfToImagesMock).toHaveBeenCalledWith(expect.any(File))
+    expect(extractFromImage).toHaveBeenCalledWith([expect.any(File)])
+  })
+
+  it('rejects a PDF over the page-count limit before calling extract', async () => {
+    pdfToTextMock.mockResolvedValue(textResult({ pageCount: 11 }))
+    await openPhotoForm()
+    selectPhotoFile(pdfFile())
+
+    expect(await screen.findByText(/This PDF has 11 pages/)).toBeInTheDocument()
+    expect(extractFromText).not.toHaveBeenCalled()
+    expect(extractFromImage).not.toHaveBeenCalled()
+  })
+
+  it('rejects an over-limit file by size before any network or PDF work', async () => {
+    await openPhotoForm()
+    selectPhotoFile(oversizedFile())
+
+    expect(await screen.findByText(/too large/)).toBeInTheDocument()
+    expect(pdfToTextMock).not.toHaveBeenCalled()
+    expect(pdfToImagesMock).not.toHaveBeenCalled()
+    expect(extractFromText).not.toHaveBeenCalled()
+    expect(extractFromImage).not.toHaveBeenCalled()
   })
 
   it('shows an error with a working manual-builder fallback when image extraction fails', async () => {
@@ -343,15 +409,17 @@ describe('Plan import from photo/PDF', () => {
   })
 
   it('shows an error when the PDF fails to render, without calling extract', async () => {
-    pdfToImagesMock.mockRejectedValue(new Error('corrupt pdf'))
+    pdfToTextMock.mockRejectedValue(new Error('corrupt pdf'))
     await openPhotoForm()
     selectPhotoFile(pdfFile())
 
     expect(await screen.findByText('corrupt pdf')).toBeInTheDocument()
+    expect(extractFromText).not.toHaveBeenCalled()
     expect(extractFromImage).not.toHaveBeenCalled()
   })
 
-  it('shows an error when the PDF has no pages, without calling extract', async () => {
+  it('shows an error when the scanned fallback has no pages, without calling extract', async () => {
+    pdfToTextMock.mockResolvedValue(textResult({ status: 'empty', text: '' }))
     pdfToImagesMock.mockResolvedValue([])
     await openPhotoForm()
     selectPhotoFile(pdfFile())
