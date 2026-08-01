@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { useExtractPlanFromText, useExtractPlanFromImage, useCatalogSearch } from '@/lib/queries'
 import { pdfToImages } from '@/lib/pdfToImages'
+import { pdfToText, type PdfTextResult } from '@/lib/pdfToText'
 import { Card, Button, Pill, Field } from '@/components/ui'
 import { MACRO_KEYS } from '@/lib/types'
 import type {
@@ -28,6 +29,12 @@ import { ItemSearchResults, PlanItemRow, toResolvedItem, todayISO, nextMondayISO
 import { GRAMS_UNIT_ID } from '@/lib/servingUnits'
 
 const MAX_PASTE_CHARS = 20_000
+
+// Mirrors the backend's maxPlanPages / maxPlanTotalBytes (#220/#222),
+// enforced here too so an over-limit upload fails fast, before any network
+// call.
+const MAX_PLAN_PAGES = 10
+const MAX_PLAN_TOTAL_BYTES = 25 * 1024 * 1024
 
 type Stage =
   | { kind: 'collapsed' }
@@ -154,6 +161,24 @@ function isPdfFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 }
 
+// Progress through a photo/PDF import: idle -> (rendering ->) extracting.
+// "rendering" covers client-side PDF work (reading the text layer, or
+// rendering pages to PNGs for the scanned fallback); "extracting" covers the
+// network call, labeled with which path is running and how many pages.
+type PhotoStage =
+  | { kind: 'idle' }
+  | { kind: 'rendering' }
+  | { kind: 'extracting'; mode: 'native' | 'scan'; pages: number }
+
+// Set only when native extraction looked garbled (#220): shows a text
+// preview and an explicit opt-in to retry as a scan, instead of silently
+// switching modes per requirement 6 of the epic.
+interface MalformedState {
+  file: File
+  preview: string
+  pageCount: number
+}
+
 function PhotoImportCard({
   onExtracted,
   onFailed,
@@ -164,50 +189,127 @@ function PhotoImportCard({
   onCancel: () => void
 }>) {
   const { t } = useTranslation()
-  const extract = useExtractPlanFromImage()
-  const [rendering, setRendering] = useState(false)
-  const [multiPage, setMultiPage] = useState(false)
+  const extractText = useExtractPlanFromText()
+  const extractImage = useExtractPlanFromImage()
+  const [stage, setStage] = useState<PhotoStage>({ kind: 'idle' })
+  const [malformed, setMalformed] = useState<MalformedState | null>(null)
 
-  async function handleFile(file: File) {
-    setMultiPage(false)
-    let imageFile = file
-    if (isPdfFile(file)) {
-      setRendering(true)
+  function fail(err: unknown) {
+    setStage({ kind: 'idle' })
+    onFailed(err instanceof Error ? err.message : t('plan.extractFailed'))
+  }
+
+  async function extractAsScan(pages: Blob[]) {
+    if (pages.length === 0) {
+      setStage({ kind: 'idle' })
+      onFailed(t('plan.extractFailed'))
+      return
+    }
+    if (pages.length > MAX_PLAN_PAGES) {
+      setStage({ kind: 'idle' })
+      onFailed(t('plan.pdfTooManyPages', { count: pages.length, max: MAX_PLAN_PAGES }))
+      return
+    }
+    const files = pages.map((blob, i) => new File([blob], `plan-page-${i + 1}.png`, { type: 'image/png' }))
+    setStage({ kind: 'extracting', mode: 'scan', pages: files.length })
+    extractImage.mutate(files, { onSuccess: onExtracted, onError: fail })
+  }
+
+  async function retryAsScan(file: File) {
+    setMalformed(null)
+    setStage({ kind: 'rendering' })
+    let pages: Blob[]
+    try {
+      pages = await pdfToImages(file)
+    } catch (err) {
+      fail(err)
+      return
+    }
+    await extractAsScan(pages)
+  }
+
+  async function handlePdf(file: File) {
+    setStage({ kind: 'rendering' })
+    let result: PdfTextResult
+    try {
+      result = await pdfToText(file)
+    } catch (err) {
+      fail(err)
+      return
+    }
+    if (result.pageCount > MAX_PLAN_PAGES) {
+      setStage({ kind: 'idle' })
+      onFailed(t('plan.pdfTooManyPages', { count: result.pageCount, max: MAX_PLAN_PAGES }))
+      return
+    }
+    if (result.status === 'malformed') {
+      setStage({ kind: 'idle' })
+      setMalformed({ file, preview: result.text, pageCount: result.pageCount })
+      return
+    }
+    if (result.status === 'empty') {
       let pages: Blob[]
       try {
         pages = await pdfToImages(file)
       } catch (err) {
-        setRendering(false)
-        onFailed(err instanceof Error ? err.message : t('plan.extractFailed'))
+        fail(err)
         return
       }
-      setRendering(false)
-      if (pages.length === 0) {
-        onFailed(t('plan.extractFailed'))
-        return
-      }
-      // Multi-page merging into one extraction call is out of scope: use the
-      // first page and tell the user, rather than silently dropping the rest.
-      if (pages.length > 1) setMultiPage(true)
-      imageFile = new File([pages[0]], 'plan-page.png', { type: 'image/png' })
+      await extractAsScan(pages)
+      return
     }
-    extract.mutate(imageFile, {
-      onSuccess: onExtracted,
-      onError: (err) => onFailed(err instanceof Error ? err.message : t('plan.extractFailed')),
-    })
+    setStage({ kind: 'extracting', mode: 'native', pages: result.pageCount })
+    extractText.mutate(result.text, { onSuccess: onExtracted, onError: fail })
   }
 
-  const busy = rendering || extract.isPending
+  async function handleFile(file: File) {
+    setMalformed(null)
+    if (file.size > MAX_PLAN_TOTAL_BYTES) {
+      onFailed(t('plan.fileTooLarge', { maxMB: MAX_PLAN_TOTAL_BYTES / (1024 * 1024) }))
+      return
+    }
+    if (isPdfFile(file)) {
+      await handlePdf(file)
+      return
+    }
+    setStage({ kind: 'extracting', mode: 'scan', pages: 1 })
+    extractImage.mutate([file], { onSuccess: onExtracted, onError: fail })
+  }
+
+  const busy = stage.kind !== 'idle'
+  let progressLabel: string | null = null
+  if (stage.kind === 'rendering') {
+    progressLabel = t('plan.renderingPdf')
+  } else if (stage.kind === 'extracting') {
+    const modeKey = stage.mode === 'native' ? 'plan.extractModeNative' : 'plan.extractModeScan'
+    progressLabel = t(modeKey, { count: stage.pages })
+  }
 
   return (
     <Card className="p-5">
       <p className="mb-1 font-semibold text-ink">{t('plan.importFromPhoto')}</p>
       <p className="mb-3 text-sm text-muted">{t('plan.importPhotoHint')}</p>
-      {multiPage && (
-        <output className="mb-3 block text-sm font-medium text-accent">
-          {t('plan.pdfMultiPageNotice')}
-        </output>
+
+      {malformed && (
+        <div className="mb-3 rounded-lg border border-line bg-surface-2/50 p-3">
+          <p className="mb-2 text-sm font-medium text-accent" role="alert">
+            {t('plan.malformedNotice')}
+          </p>
+          <p className="mb-1 text-xs font-medium text-muted">{t('plan.textPreviewLabel')}</p>
+          <pre className="mb-2 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-bg p-2 text-xs text-ink">
+            {malformed.preview}
+          </pre>
+          <Button
+            variant="ghost"
+            onClick={() => void retryAsScan(malformed.file)}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs"
+          >
+            {t('plan.retryAsScan')}
+          </Button>
+        </div>
       )}
+
       <label htmlFor="plan-import-photo" className="mb-1.5 block text-sm font-medium text-ink">
         {t('plan.choosePhotoFile')}
       </label>
@@ -222,7 +324,7 @@ function PhotoImportCard({
         }}
         className="block w-full text-sm text-ink"
       />
-      {busy && <p className="mt-2 text-sm text-muted">{rendering ? t('plan.renderingPdf') : t('plan.extracting')}</p>}
+      {progressLabel && <p className="mt-2 text-sm text-muted">{progressLabel}</p>}
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel} disabled={busy} className="px-3 py-1.5 text-sm">
           {t('plan.cancel')}

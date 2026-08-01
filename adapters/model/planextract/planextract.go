@@ -27,6 +27,8 @@ import (
 // natively, so no locale branching is needed here.
 const Prompt = `You are reading pasted text describing a diet/nutrition plan written by a nutritionist. The text may be in any language (e.g. Portuguese, English) — read it natively, no locale branching is needed.
 
+The text may contain lines like "--- Page 2 ---". These are page-boundary markers inserted by the client from a multi-page source document, not part of the plan itself — ignore them when reading content, and never treat one as a day type, slot, option, or item.
+
 A plan may prescribe different day types with different targets (for example a carb-cycling plan may prescribe a "training day" and a "rest day", each with its own macro targets). Each day type has:
 - a name (e.g. "Dia de treino" / "Training day", "Dia de descanso" / "Rest day")
 - macro targets: calories, protein, carbs, fat, fiber

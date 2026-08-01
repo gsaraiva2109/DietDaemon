@@ -586,10 +586,12 @@ export const api = {
       // server-side; the caller reviews the draft before anything saves.
       fromText: (text: string) =>
         request<PlanDraft>('/plans/extract/text', { method: 'POST', body: text }),
-      // Multipart upload, mirrors ocrScan's shape. Same PlanDraft contract.
-      fromImage: (file: File) => {
+      // Multipart upload, mirrors ocrScan's shape. One or more page images
+      // under the same 'file' field name — the backend treats them as an
+      // ordered multi-page document (#220/#222). Same PlanDraft contract.
+      fromImage: (files: File[]) => {
         const fd = new FormData()
-        fd.append('file', file)
+        for (const file of files) fd.append('file', file)
         return multipart<PlanDraft>('/plans/extract/image', fd)
       },
     },
