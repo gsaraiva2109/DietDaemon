@@ -334,6 +334,14 @@ export interface PlanDraft {
   day_types: PlanDraftDayType[]
   unreadable: boolean
   notes: string | null
+  // Monday..Sunday, always 7 entries; each null or an exact match of some
+  // day_types[].name in this same draft (#223). Older drafts predating this
+  // field simply won't have it — callers must not assume its presence.
+  weekday_schedule: (string | null)[]
+  // Verbatim standalone substitution notes the model found outside the
+  // structured day-type/slot/option tree; [] if none. Display-only in the
+  // review screen — never blocks confirm, never resolved against the catalog.
+  substitutions: string[]
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import { pdfToText, type PdfTextResult } from '@/lib/pdfToText'
 import { Card, Button, Pill, Field } from '@/components/ui'
 import { MACRO_KEYS } from '@/lib/types'
 import type {
+  DietPlan,
   FoodDetail,
   FoodServingUnit,
   PlanDraft,
@@ -25,7 +26,15 @@ import type {
   PlanDraftOption,
   PlanDraftSlot,
 } from '@/lib/types'
-import { ItemSearchResults, PlanItemRow, toResolvedItem, todayISO, nextMondayISO, type LocalItem } from './Plan'
+import {
+  ItemSearchResults,
+  PlanItemRow,
+  toResolvedItem,
+  todayISO,
+  nextMondayISO,
+  mostRecentMondayISO,
+  type LocalItem,
+} from './Plan'
 import { GRAMS_UNIT_ID } from '@/lib/servingUnits'
 
 const MAX_PASTE_CHARS = 20_000
@@ -567,21 +576,53 @@ function DraftDayTypeCard({
   )
 }
 
+// draft.notes plus, if any, a labeled block of standalone substitution notes
+// (#223) — substitutions have no DB column of their own, they ride along in
+// the plan's existing free-text notes. undefined (not '') when there's
+// nothing to say, so api.plans.create omits the field rather than sending an
+// empty string.
+function buildNotesWithSubstitutions(draft: PlanDraft): string | undefined {
+  const substitutions = draft.substitutions ?? []
+  const parts: string[] = []
+  if (draft.notes) parts.push(draft.notes)
+  if (substitutions.length > 0) {
+    parts.push(['Substitutions:', ...substitutions.map((s) => `- ${s}`)].join('\n'))
+  }
+  return parts.length > 0 ? parts.join('\n\n') : undefined
+}
+
+// The edited weekday grid names a day-type per weekday; nameToID resolves
+// those to the ids createPlanFromDraft just minted. Only returns a pattern
+// once all 7 slots resolve — a null slot has no valid id to place, and
+// inventing one would violate the never-invent rule, so an incomplete grid
+// is left for the user to finish later in the normal CycleEditor instead.
+function buildCyclePatternFromWeekdaySchedule(
+  schedule: (string | null)[],
+  nameToID: Record<string, string>,
+): string[] | null {
+  const ids = schedule.map((name) => (name ? nameToID[name] : undefined))
+  return ids.every((id): id is string => !!id) ? ids : null
+}
+
 // Fires the same create-plan -> day-types -> slots -> options sequence
 // usePlanClone demonstrates for duplication, walking the draft in order.
 // Stops and toasts on the first failure; partial creation is left in place
 // rather than attempting rollback, matching usePlanClone's own behaviour.
+// Returns the day-type name -> id map alongside the plan so the caller can
+// resolve the weekday grid into a cycle_pattern once everything exists.
 async function createPlanFromDraft(
   draft: PlanDraft,
   resolved: Record<string, LocalItem>,
-  meta: { name: string; validFrom: string; validTo: string; anchor: string },
-): Promise<string> {
+  meta: { name: string; validFrom: string; validTo: string; anchor: string; notes?: string },
+): Promise<{ plan: DietPlan; dayTypeIDs: Record<string, string> }> {
   const plan = await api.plans.create({
     name: meta.name,
+    notes: meta.notes,
     valid_from: meta.validFrom,
     valid_to: meta.validTo,
     cycle_anchor_date: meta.anchor,
   })
+  const dayTypeIDs: Record<string, string> = {}
   for (const [dtIdx, dt] of draft.day_types.entries()) {
     const newDayType = await api.plans.dayTypes.create(plan.id, {
       name: dt.name,
@@ -589,6 +630,7 @@ async function createPlanFromDraft(
       targets: dt.targets,
       water_goal_ml: dt.water_goal_ml ?? 0,
     })
+    dayTypeIDs[dt.name] = newDayType.id
     for (const [slotIdx, slot] of dt.slots.entries()) {
       const newSlot = await api.plans.slots.create(plan.id, newDayType.id, {
         label: slot.label,
@@ -605,7 +647,72 @@ async function createPlanFromDraft(
       }
     }
   }
-  return plan.id
+  return { plan, dayTypeIDs }
+}
+
+const WEEKDAY_KEYS = [
+  'plan.weekdayMonday',
+  'plan.weekdayTuesday',
+  'plan.weekdayWednesday',
+  'plan.weekdayThursday',
+  'plan.weekdayFriday',
+  'plan.weekdaySaturday',
+  'plan.weekdaySunday',
+] as const
+
+function WeekdayScheduleSection({
+  dayTypeNames,
+  schedule,
+  onChange,
+}: Readonly<{
+  dayTypeNames: string[]
+  schedule: (string | null)[]
+  onChange: (i: number, value: string | null) => void
+}>) {
+  const { t } = useTranslation()
+  const incomplete = schedule.some((v) => v == null)
+  return (
+    <div className="mb-5 rounded-lg border border-line p-3">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('plan.weekdayScheduleTitle')}</p>
+      <p className="mb-3 text-sm text-muted">{t('plan.weekdayScheduleHint')}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {WEEKDAY_KEYS.map((key, i) => (
+          <label key={key} className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-ink">{t(key)}</span>
+            <select
+              value={schedule[i] ?? ''}
+              onChange={(e) => onChange(i, e.target.value || null)}
+              aria-label={t(key)}
+              className="rounded-lg border border-line bg-bg px-2 py-1.5 text-sm text-ink outline-none focus:border-primary"
+            >
+              <option value="">{t('plan.weekdayNotSpecified')}</option>
+              {dayTypeNames.map((dtName) => (
+                <option key={dtName} value={dtName}>
+                  {dtName}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      {incomplete && <p className="mt-2 text-xs text-muted">{t('plan.weekdayIncompleteHint')}</p>}
+    </div>
+  )
+}
+
+function SubstitutionsSection({ substitutions }: Readonly<{ substitutions: string[] }>) {
+  const { t } = useTranslation()
+  if (substitutions.length === 0) return null
+  return (
+    <div className="mb-5 rounded-lg border border-dashed border-line p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t('plan.substitutionsTitle')}</p>
+      <ul className="list-disc space-y-1 pl-5 text-sm text-ink">
+        {substitutions.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function DraftReview({
@@ -626,6 +733,9 @@ function DraftReview({
   const [validTo, setValidTo] = useState('')
   const [anchor, setAnchor] = useState(nextMondayISO())
   const [confirming, setConfirming] = useState(false)
+  // Pre-#223 drafts have no weekday_schedule at all; default every slot to
+  // null rather than assume anything about the extraction.
+  const [weekday, setWeekday] = useState<(string | null)[]>(() => draft.weekday_schedule ?? new Array(7).fill(null))
 
   function resolveItem(key: string, draftItem: PlanDraftItem, food: FoodDetail) {
     setResolved((cur) => ({ ...cur, [key]: fromDraftItem(draftItem, food) }))
@@ -647,9 +757,20 @@ function DraftReview({
     if (!ready || confirming) return
     setConfirming(true)
     try {
-      const planID = await createPlanFromDraft(draft, resolved, { name: name.trim(), validFrom, validTo, anchor })
+      const notes = buildNotesWithSubstitutions(draft)
+      const { plan, dayTypeIDs } = await createPlanFromDraft(draft, resolved, {
+        name: name.trim(),
+        validFrom,
+        validTo,
+        anchor,
+        notes,
+      })
+      const cyclePattern = buildCyclePatternFromWeekdaySchedule(weekday, dayTypeIDs)
+      if (cyclePattern) {
+        await api.plans.update(plan.id, { ...plan, cycle_pattern: cyclePattern, cycle_anchor_date: mostRecentMondayISO() })
+      }
       await qc.invalidateQueries({ queryKey: ['plan'] })
-      onCreated(planID)
+      onCreated(plan.id)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('plan.saveFailed'))
     } finally {
@@ -668,6 +789,13 @@ function DraftReview({
         <Field label={t('plan.validToLabel')} type="date" value={validTo} onChange={(e) => setValidTo(e.target.value)} hint={t('plan.validToHint')} />
         <Field label={t('plan.anchorLabel')} type="date" value={anchor} onChange={(e) => setAnchor(e.target.value)} hint={t('plan.anchorHint')} />
       </div>
+
+      <WeekdayScheduleSection
+        dayTypeNames={draft.day_types.map((dt) => dt.name)}
+        schedule={weekday}
+        onChange={(i, value) => setWeekday((cur) => cur.map((v, idx) => (idx === i ? value : v)))}
+      />
+      <SubstitutionsSection substitutions={draft.substitutions ?? []} />
 
       <div className="space-y-3">
         {draft.day_types.map((dt, dtIdx) => (

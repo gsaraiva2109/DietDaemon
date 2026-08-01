@@ -894,6 +894,14 @@ type PlanDraft struct {
 	DayTypes   []PlanDraftDayType `json:"day_types"`
 	Unreadable bool               `json:"unreadable"`
 	Notes      *string            `json:"notes"`
+	// WeekdaySchedule has exactly 7 entries, Monday->Sunday; each is nil
+	// (source doesn't address that weekday) or must exactly match a
+	// DayTypes[].Name in this draft — never a name absent from DayTypes.
+	WeekdaySchedule []*string `json:"weekday_schedule"`
+	// Substitutions are standalone swap notes verbatim from the source,
+	// kept separate from Notes since they describe item interchangeability
+	// rather than general commentary.
+	Substitutions []string `json:"substitutions"`
 }
 
 type MenuDishCandidate struct {

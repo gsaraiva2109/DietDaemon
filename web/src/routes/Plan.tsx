@@ -78,6 +78,15 @@ export function nextMondayISO(): string {
   return d.toISOString().slice(0, 10)
 }
 
+// Companion to nextMondayISO for anchoring a schedule that starts "now"
+// (e.g. an imported weekday grid, #223): the most recent Monday on or
+// before today, today counting as itself when today is Monday.
+export function mostRecentMondayISO(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return d.toISOString().slice(0, 10)
+}
+
 function byPosition<T extends { position: number }>(list: T[]): T[] {
   return [...list].sort((a, b) => a.position - b.position)
 }

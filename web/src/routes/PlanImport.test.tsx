@@ -20,6 +20,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         active: vi.fn(),
         get: vi.fn(),
         create: vi.fn(),
+        update: vi.fn(),
         extract: { fromText: vi.fn(), fromImage: vi.fn() },
         dayTypes: { ...actual.api.plans.dayTypes, create: vi.fn() },
         slots: { ...actual.api.plans.slots, create: vi.fn() },
@@ -53,6 +54,7 @@ const list = vi.mocked(api.plans.list)
 const active = vi.mocked(api.plans.active)
 const getBundle = vi.mocked(api.plans.get)
 const createPlan = vi.mocked(api.plans.create)
+const updatePlan = vi.mocked(api.plans.update)
 const extractFromText = vi.mocked(api.plans.extract.fromText)
 const extractFromImage = vi.mocked(api.plans.extract.fromImage)
 const createDayType = vi.mocked(api.plans.dayTypes.create)
@@ -112,6 +114,8 @@ function draft(overrides: Partial<PlanDraft> = {}): PlanDraft {
     plan_name: 'Imported plan',
     unreadable: false,
     notes: null,
+    weekday_schedule: new Array(7).fill(null),
+    substitutions: [],
     day_types: [
       {
         name: 'High carb',
@@ -154,6 +158,7 @@ beforeEach(() => {
   active.mockReset().mockRejectedValue(new ApiError(404, 'not found'))
   getBundle.mockReset().mockResolvedValue(bundle(plan()))
   createPlan.mockReset().mockResolvedValue(plan())
+  updatePlan.mockReset().mockResolvedValue(plan())
   extractFromText.mockReset()
   extractFromImage.mockReset()
   pdfToImagesMock.mockReset()
@@ -181,7 +186,9 @@ describe('Plan import from text', () => {
   it('renders the review screen with unresolved items and a disabled confirm button', async () => {
     await extractAndReachReview(draft())
 
-    expect(screen.getByText('High carb')).toBeInTheDocument()
+    // "High carb" now also appears as a weekday-grid <option>, so assert
+    // presence rather than uniqueness.
+    expect(screen.getAllByText('High carb').length).toBeGreaterThan(0)
     expect(screen.getByText('Breakfast')).toBeInTheDocument()
     expect(screen.getByText('Peito de frango grelhado')).toBeInTheDocument()
     expect(screen.getByText('Confirm import')).toBeDisabled()
@@ -253,6 +260,98 @@ describe('Plan import from text', () => {
 
     // onCreated hands off to the normal PlanBuilder view of the new plan.
     expect(await screen.findByRole('heading', { name: 'Imported plan' })).toBeInTheDocument()
+  })
+
+  it('renders an editable 7-day weekday grid, defaulted to unspecified', async () => {
+    await extractAndReachReview(draft())
+
+    const monday = screen.getByLabelText('Monday')
+    const sunday = screen.getByLabelText('Sunday')
+    expect(monday).toHaveValue('')
+    expect(sunday).toHaveValue('')
+    expect(screen.getAllByRole('combobox')).toHaveLength(7)
+
+    fireEvent.change(monday, { target: { value: 'High carb' } })
+    expect(monday).toHaveValue('High carb')
+    expect(sunday).toHaveValue('')
+  })
+
+  it('shows the substitutions section only when the draft has substitutions', async () => {
+    await extractAndReachReview(draft({ substitutions: ['Swap rice for potato'] }))
+    expect(screen.getByText('Substitutions')).toBeInTheDocument()
+    expect(screen.getByText('Swap rice for potato')).toBeInTheDocument()
+  })
+
+  it('renders no substitutions section when the draft has none', async () => {
+    await extractAndReachReview(draft({ substitutions: [] }))
+    expect(screen.queryByText('Substitutions')).not.toBeInTheDocument()
+  })
+
+  it('sends notes and the folded substitutions text on confirm', async () => {
+    searchCatalog.mockResolvedValue([foodDetail()])
+    createPlan.mockResolvedValue(plan({ id: 'new-plan-1' }))
+    createDayType.mockResolvedValue({ id: 'dt-1', plan_id: 'new-plan-1', name: 'High carb', position: 0, targets: TARGETS, water_goal_ml: 2000 })
+    createSlot.mockResolvedValue({ id: 'slot-1', day_type_id: 'dt-1', position: 0, time_of_day: '07:00', label: 'Breakfast' })
+    createOption.mockResolvedValue({ id: 'opt-1', slot_id: 'slot-1', position: 0, label: 'Option 1', template_id: 'tmpl-1' })
+    getBundle.mockResolvedValue(bundle(plan({ id: 'new-plan-1', name: 'Imported plan' })))
+    await extractAndReachReview(draft({ notes: 'Avoid dairy', substitutions: ['Swap rice for potato'] }))
+
+    fireEvent.change(screen.getByLabelText('Search the food catalog for Peito de frango grelhado'), {
+      target: { value: 'frango' },
+    })
+    fireEvent.click(await screen.findByText('Chicken breast'))
+    await waitFor(() => expect(screen.getByText('Confirm import')).not.toBeDisabled())
+    fireEvent.click(screen.getByText('Confirm import'))
+
+    await waitFor(() =>
+      expect(createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({ notes: 'Avoid dairy\n\nSubstitutions:\n- Swap rice for potato' }),
+      ),
+    )
+  })
+
+  it('computes and applies cycle_pattern/cycle_anchor_date once the weekday grid is fully specified', async () => {
+    searchCatalog.mockResolvedValue([foodDetail()])
+    createPlan.mockResolvedValue(plan({ id: 'new-plan-1' }))
+    createDayType.mockResolvedValue({ id: 'dt-1', plan_id: 'new-plan-1', name: 'High carb', position: 0, targets: TARGETS, water_goal_ml: 2000 })
+    createSlot.mockResolvedValue({ id: 'slot-1', day_type_id: 'dt-1', position: 0, time_of_day: '07:00', label: 'Breakfast' })
+    createOption.mockResolvedValue({ id: 'opt-1', slot_id: 'slot-1', position: 0, label: 'Option 1', template_id: 'tmpl-1' })
+    getBundle.mockResolvedValue(bundle(plan({ id: 'new-plan-1', name: 'Imported plan' })))
+    await extractAndReachReview(draft({ weekday_schedule: new Array(7).fill('High carb') }))
+
+    fireEvent.change(screen.getByLabelText('Search the food catalog for Peito de frango grelhado'), {
+      target: { value: 'frango' },
+    })
+    fireEvent.click(await screen.findByText('Chicken breast'))
+    await waitFor(() => expect(screen.getByText('Confirm import')).not.toBeDisabled())
+    fireEvent.click(screen.getByText('Confirm import'))
+
+    await waitFor(() =>
+      expect(updatePlan).toHaveBeenCalledWith(
+        'new-plan-1',
+        expect.objectContaining({ cycle_pattern: new Array(7).fill('dt-1'), cycle_anchor_date: expect.any(String) }),
+      ),
+    )
+  })
+
+  it('does not call api.plans.update when the weekday grid is left incomplete', async () => {
+    searchCatalog.mockResolvedValue([foodDetail()])
+    createPlan.mockResolvedValue(plan({ id: 'new-plan-1' }))
+    createDayType.mockResolvedValue({ id: 'dt-1', plan_id: 'new-plan-1', name: 'High carb', position: 0, targets: TARGETS, water_goal_ml: 2000 })
+    createSlot.mockResolvedValue({ id: 'slot-1', day_type_id: 'dt-1', position: 0, time_of_day: '07:00', label: 'Breakfast' })
+    createOption.mockResolvedValue({ id: 'opt-1', slot_id: 'slot-1', position: 0, label: 'Option 1', template_id: 'tmpl-1' })
+    getBundle.mockResolvedValue(bundle(plan({ id: 'new-plan-1', name: 'Imported plan' })))
+    await extractAndReachReview(draft())
+
+    fireEvent.change(screen.getByLabelText('Search the food catalog for Peito de frango grelhado'), {
+      target: { value: 'frango' },
+    })
+    fireEvent.click(await screen.findByText('Chicken breast'))
+    await waitFor(() => expect(screen.getByText('Confirm import')).not.toBeDisabled())
+    fireEvent.click(screen.getByText('Confirm import'))
+
+    await waitFor(() => expect(createOption).toHaveBeenCalled())
+    expect(updatePlan).not.toHaveBeenCalled()
   })
 
   it('shows an error with a working manual-builder fallback when extraction fails', async () => {
