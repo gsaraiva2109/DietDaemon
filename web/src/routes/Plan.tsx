@@ -66,8 +66,16 @@ import type {
 
 const ZERO_MACROS: Macros = { Calories: 0, Protein: 0, Carbs: 0, Fat: 0, Fiber: 0 }
 
+// Formats a Date's own local calendar date (not toISOString's UTC date,
+// which rolls over to the next/previous day whenever local time is near
+// midnight in a non-zero UTC offset — e.g. 23:54 local in UTC-3 is already
+// past 02:00 UTC the next day).
+function localISODate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10)
+  return localISODate(new Date())
 }
 
 // The common case (a 7-day pattern) is anchored on a Monday; if today is
@@ -75,7 +83,7 @@ export function todayISO(): string {
 export function nextMondayISO(): string {
   const d = new Date()
   d.setDate(d.getDate() + ((1 - d.getDay() + 7) % 7))
-  return d.toISOString().slice(0, 10)
+  return localISODate(d)
 }
 
 // Companion to nextMondayISO for anchoring a schedule that starts "now"
@@ -84,7 +92,7 @@ export function nextMondayISO(): string {
 export function mostRecentMondayISO(): string {
   const d = new Date()
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
-  return d.toISOString().slice(0, 10)
+  return localISODate(d)
 }
 
 function byPosition<T extends { position: number }>(list: T[]): T[] {

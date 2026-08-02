@@ -34,10 +34,14 @@ function photo(id: string, date: string, view: string): ProgressPhoto {
 // so build fixture dates relative to "now" to reliably hit each branch of
 // relativeCaption (today / daysAgo / weeksAgo / monthsAgo) regardless of
 // when this test happens to run.
+// Builds the local calendar date, not toISOString's UTC date: near midnight
+// in a non-zero UTC offset (e.g. 23:54 local in UTC-3), toISOString() has
+// already rolled into the next UTC day, off-by-one from the local date
+// relativeCaption actually compares against.
 function isoDaysAgo(daysAgo: number): string {
   const d = new Date()
   d.setDate(d.getDate() - daysAgo)
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 const TODAY = photo('p0', isoDaysAgo(0), 'front') // relativeCaption: today

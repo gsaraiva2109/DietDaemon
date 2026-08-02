@@ -1,0 +1,111 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 233 >>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(DietBox Fixture Plan) Tj
+0 -16 Td
+(Dia de treino) Tj
+0 -16 Td
+(Refeicao: Cafe da manha - 07:00) Tj
+0 -16 Td
+(Opcao 1: 100g aveia em flocos, 1 banana media) Tj
+0 -16 Td
+(Nota unica pagina 1: TRK-P1-AVEIA) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 293 >>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(Dia de treino \(continuacao\)) Tj
+0 -16 Td
+(Refeicao: Almoco - 12:30) Tj
+0 -16 Td
+(Opcao 1: 150g peito de frango grelhado, 100g arroz integral) Tj
+0 -16 Td
+(Substituicao: trocar arroz integral por 150g batata doce) Tj
+0 -16 Td
+(Nota unica pagina 2: TRK-P2-FRANGO) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 200 >>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(Dia de descanso) Tj
+0 -16 Td
+(Refeicao: Cafe da manha - 08:00) Tj
+0 -16 Td
+(Opcao 1: 200ml iogurte natural, 30g granola) Tj
+0 -16 Td
+(Nota unica pagina 3: RST-P3-IOGURTE) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 283 >>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(Dia de descanso \(continuacao\)) Tj
+0 -16 Td
+(Refeicao: Jantar - 19:00) Tj
+0 -16 Td
+(Opcao 1: 120g salmao grelhado, salada verde a vontade) Tj
+0 -16 Td
+(Observacoes gerais: beber 2 litros de agua por dia) Tj
+0 -16 Td
+(Nota unica pagina 4: RST-P4-SALMAO) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000133 00000 n 
+0000000260 00000 n 
+0000000544 00000 n 
+0000000671 00000 n 
+0000001015 00000 n 
+0000001142 00000 n 
+0000001393 00000 n 
+0000001521 00000 n 
+0000001856 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+1954
+%%EOF
