@@ -1,0 +1,109 @@
+{
+  "plan_name": "Plano Alimentar Exemplo",
+  "day_types": [
+    {
+      "name": "Dia de treino",
+      "targets": {"Calories": 2400, "Protein": 180, "Carbs": 260, "Fat": 70, "Fiber": 30},
+      "water_goal_ml": 3000,
+      "slots": [
+        {
+          "label": "Café da manhã",
+          "time_of_day": "07:00",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Aveia com Morango Silvestre", "quantity": 60, "unit": "g", "ad_libitum": false},
+                {"raw_name": "Iogurte Natural", "quantity": 170, "unit": "g", "ad_libitum": false}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        },
+        {
+          "label": "Almoço",
+          "time_of_day": "12:30",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Peito de Frango Grelhado", "quantity": 150, "unit": "g", "ad_libitum": false},
+                {"raw_name": "Arroz Integral", "quantity": 100, "unit": "g", "ad_libitum": false},
+                {"raw_name": "Salada Verde", "quantity": null, "unit": null, "ad_libitum": true}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        },
+        {
+          "label": "Jantar",
+          "time_of_day": "19:30",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Salmão Grelhado com Quinoa Dourada", "quantity": 120, "unit": "g", "ad_libitum": false},
+                {"raw_name": "Brócolis Cozido", "quantity": 100, "unit": "g", "ad_libitum": false}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        }
+      ],
+      "low_confidence_fields": []
+    },
+    {
+      "name": "Dia de descanso",
+      "targets": {"Calories": 1900, "Protein": 140, "Carbs": 180, "Fat": 60, "Fiber": 28},
+      "water_goal_ml": 2500,
+      "slots": [
+        {
+          "label": "Café da manhã",
+          "time_of_day": "08:00",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Omelete de Claras com Espinafre Fresco", "quantity": 3, "unit": "claras", "ad_libitum": false},
+                {"raw_name": "Torrada Integral", "quantity": 2, "unit": "fatias", "ad_libitum": false}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        },
+        {
+          "label": "Almoço",
+          "time_of_day": "13:00",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Filé de Tilápia Assado", "quantity": 150, "unit": "g", "ad_libitum": false},
+                {"raw_name": "Purê de Abóbora", "quantity": 100, "unit": "g", "ad_libitum": false}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        },
+        {
+          "label": "Jantar",
+          "time_of_day": "20:00",
+          "options": [
+            {
+              "label": "Opção 1",
+              "items": [
+                {"raw_name": "Sopa de Legumes Caseira", "quantity": null, "unit": null, "ad_libitum": true}
+              ],
+              "low_confidence_fields": []
+            }
+          ]
+        }
+      ],
+      "low_confidence_fields": []
+    }
+  ],
+  "unreadable": false,
+  "notes": "Beber pelo menos 2 litros de água por dia. Evitar frituras durante a semana.",
+  "weekday_schedule": ["Dia de treino", "Dia de descanso", "Dia de treino", "Dia de descanso", "Dia de treino", null, null],
+  "substitutions": ["Pode substituir arroz por batata doce"]
+}
