@@ -50,7 +50,7 @@ const PAGES = [
 ]
 
 function pdfEscape(str) {
-  return str.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+  return str.replaceAll('\\', '\\\\').replaceAll('(', '\\(').replaceAll(')', '\\)')
 }
 
 function contentStreamBody(lines) {
@@ -71,7 +71,8 @@ const objects = new Map() // objNum -> body string (without "N 0 obj"/"endobj")
 objects.set(1, '<< /Type /Catalog /Pages 2 0 R >>')
 
 const pageObjNums = PAGES.map((_, i) => 3 + i * 2)
-objects.set(2, `<< /Type /Pages /Kids [${pageObjNums.map((n) => `${n} 0 R`).join(' ')}] /Count ${pageObjNums.length} >>`)
+const kids = pageObjNums.map((n) => `${n} 0 R`).join(' ')
+objects.set(2, `<< /Type /Pages /Kids [${kids}] /Count ${pageObjNums.length} >>`)
 
 PAGES.forEach((lines, i) => {
   const pageObj = pageObjNums[i]

@@ -139,33 +139,8 @@ func assertDietboxDraft(t *testing.T, got types.PlanDraft) {
 		t.Fatalf("DayTypes len = %d, want 2", len(got.DayTypes))
 	}
 
-	treino := got.DayTypes[0]
-	if treino.Name != "Dia de treino" {
-		t.Errorf("DayTypes[0].Name = %q, want Dia de treino", treino.Name)
-	}
-	if len(treino.Slots) != 3 {
-		t.Fatalf("Dia de treino slots len = %d, want 3", len(treino.Slots))
-	}
-	wantSlotItemCounts := []int{2, 3, 2}
-	for i, slot := range treino.Slots {
-		if len(slot.Options) != 1 || len(slot.Options[0].Items) != wantSlotItemCounts[i] {
-			t.Errorf("Dia de treino slot %d (%s) item count = %d, want %d", i, slot.Label, itemCount(slot), wantSlotItemCounts[i])
-		}
-	}
-
-	descanso := got.DayTypes[1]
-	if descanso.Name != "Dia de descanso" {
-		t.Errorf("DayTypes[1].Name = %q, want Dia de descanso", descanso.Name)
-	}
-	if len(descanso.Slots) != 3 {
-		t.Fatalf("Dia de descanso slots len = %d, want 3", len(descanso.Slots))
-	}
-	wantDescansoItemCounts := []int{2, 2, 1}
-	for i, slot := range descanso.Slots {
-		if len(slot.Options) != 1 || len(slot.Options[0].Items) != wantDescansoItemCounts[i] {
-			t.Errorf("Dia de descanso slot %d (%s) item count = %d, want %d", i, slot.Label, itemCount(slot), wantDescansoItemCounts[i])
-		}
-	}
+	assertDayType(t, got.DayTypes[0], "Dia de treino", []int{2, 3, 2})
+	assertDayType(t, got.DayTypes[1], "Dia de descanso", []int{2, 2, 1})
 
 	if len(got.Substitutions) != 1 || got.Substitutions[0] != "Pode substituir arroz por batata doce" {
 		t.Errorf("Substitutions = %v, want [Pode substituir arroz por batata doce]", got.Substitutions)
@@ -174,14 +149,36 @@ func assertDietboxDraft(t *testing.T, got types.PlanDraft) {
 		t.Errorf("Notes = %v, want it to contain the water-intake note", got.Notes)
 	}
 
-	if len(got.WeekdaySchedule) != 7 {
-		t.Fatalf("WeekdaySchedule len = %d, want 7", len(got.WeekdaySchedule))
-	}
 	wantSchedule := []*string{new("Dia de treino"), new("Dia de descanso"), new("Dia de treino"), new("Dia de descanso"), new("Dia de treino"), nil, nil}
-	for i, want := range wantSchedule {
-		got := got.WeekdaySchedule[i]
-		if (want == nil) != (got == nil) || (want != nil && *want != *got) {
-			t.Errorf("WeekdaySchedule[%d] = %v, want %v", i, derefOrNilStr(got), derefOrNilStr(want))
+	assertWeekdaySchedule(t, got.WeekdaySchedule, wantSchedule)
+}
+
+func assertDayType(t *testing.T, day types.PlanDraftDayType, wantName string, wantSlotItemCounts []int) {
+	t.Helper()
+
+	if day.Name != wantName {
+		t.Errorf("DayTypes.Name = %q, want %s", day.Name, wantName)
+	}
+	if len(day.Slots) != len(wantSlotItemCounts) {
+		t.Fatalf("%s slots len = %d, want %d", wantName, len(day.Slots), len(wantSlotItemCounts))
+	}
+	for i, slot := range day.Slots {
+		if len(slot.Options) != 1 || len(slot.Options[0].Items) != wantSlotItemCounts[i] {
+			t.Errorf("%s slot %d (%s) item count = %d, want %d", wantName, i, slot.Label, itemCount(slot), wantSlotItemCounts[i])
+		}
+	}
+}
+
+func assertWeekdaySchedule(t *testing.T, got, want []*string) {
+	t.Helper()
+
+	if len(got) != 7 {
+		t.Fatalf("WeekdaySchedule len = %d, want 7", len(got))
+	}
+	for i, w := range want {
+		g := got[i]
+		if (w == nil) != (g == nil) || (w != nil && *w != *g) {
+			t.Errorf("WeekdaySchedule[%d] = %v, want %v", i, derefOrNilStr(g), derefOrNilStr(w))
 		}
 	}
 }
@@ -220,7 +217,7 @@ func TestHandleExtractPlanFromText_OutOfOrderMarkersPassthrough(t *testing.T) {
 	}
 	idx2 := strings.Index(adapter.calledPrompt, "--- Page 2 ---")
 	idx1 := strings.Index(adapter.calledPrompt, "--- Page 1 ---")
-	if !(idx2 < idx1) {
+	if idx2 >= idx1 {
 		t.Errorf("handler reordered markers: want Page 2 marker (idx %d) before Page 1 marker (idx %d), matching input order", idx2, idx1)
 	}
 }
