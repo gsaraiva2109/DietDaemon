@@ -251,6 +251,9 @@ beforeEach(() => {
 })
 
 describe('Plan import from photo/PDF, against a real multi-page PDF fixture', () => {
+  // Real pdfjs-dist parsing plus a multi-item resolve loop comfortably clears
+  // vitest's 5s default locally, but coverage instrumentation on CI's slower
+  // runner pushes it over — give it real headroom instead of a tight budget.
   it('extracts the real PDF text (every page, in order) and renders every day type/meal/substitution/note on review', async () => {
     // See pdfToText.fixture.test.ts's comment: the legacy build can't load
     // glyph-width metrics for a non-embedded standard font without an
@@ -320,5 +323,5 @@ describe('Plan import from photo/PDF, against a real multi-page PDF fixture', ()
         }),
       ),
     )
-  })
+  }, 20000)
 })
