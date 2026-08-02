@@ -50,7 +50,7 @@ const PAGES = [
 ]
 
 function pdfEscape(str) {
-  return str.replaceAll(/\\/g, String.raw`\\`).replaceAll(/\(/g, String.raw`\(`).replaceAll(/\)/g, String.raw`\)`)
+  return str.replaceAll('\\', String.raw`\\`).replaceAll('(', String.raw`\(`).replaceAll(')', String.raw`\)`)
 }
 
 function contentStreamBody(lines) {
