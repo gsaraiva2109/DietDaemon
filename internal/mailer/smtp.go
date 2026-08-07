@@ -7,7 +7,10 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 )
+
+const smtpDialTimeout = 10 * time.Second
 
 type smtpMailer struct {
 	from     string
@@ -16,6 +19,11 @@ type smtpMailer struct {
 	username string
 	password string
 	tls      bool
+
+	// insecureSkipVerify is only ever set by tests, to point Send at a
+	// local server presenting a self-signed cert. Zero value (false) in
+	// production, since newSMTP never sets it.
+	insecureSkipVerify bool
 }
 
 func newSMTP(from, host string, port int, username, password string, useTLS bool) *smtpMailer {
@@ -42,12 +50,28 @@ func (m *smtpMailer) Send(ctx context.Context, to string, msg Message) error {
 	sb.WriteString("\r\n")
 	sb.WriteString(msg.TextBody)
 
-	// Dial with context-aware timeout via the stdlib.
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: m.host})
+	// Dial with a context-aware timeout, then bound the whole conversation
+	// (handshake + MAIL/RCPT/DATA/QUIT) with a conn-level deadline — an
+	// unresponsive server must not hang the calling goroutine forever.
+	rawConn, err := (&net.Dialer{Timeout: smtpDialTimeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("mailer/smtp: dial: %w", err)
 	}
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(smtpDialTimeout)
+	}
+	if err := rawConn.SetDeadline(deadline); err != nil {
+		_ = rawConn.Close()
+		return fmt.Errorf("mailer/smtp: set deadline: %w", err)
+	}
+
+	conn := tls.Client(rawConn, &tls.Config{ServerName: m.host, InsecureSkipVerify: m.insecureSkipVerify}) // #nosec G402 -- only true in tests, see field doc
 	defer func() { _ = conn.Close() }()
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("mailer/smtp: tls handshake: %w", err)
+	}
 
 	client, err := smtp.NewClient(conn, m.host)
 	if err != nil {

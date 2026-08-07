@@ -154,10 +154,9 @@ func (h *Handler) finishRegistrationEmail(ctx context.Context, u types.User, acc
 	}
 	link := h.publicBaseURL + "/verify-email?token=" + token
 	msg := mailer.VerificationEmail(link)
-	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
-		slog.Error("send verification email failed", "err", err)
+	if err := h.auditedSend(ctx, u.Email, msg, auditActor{AccountID: accountID, UserID: u.ID, IP: ip, UA: ua}, "email.verification_sent", "email.verification_send_failed"); err != nil {
+		return u, err
 	}
-	h.writeAudit(ctx, accountID, u.ID, "email.verification_sent", ip, ua, u.Email)
 	return u, nil
 }
 
@@ -1190,4 +1189,29 @@ func (h *Handler) writeAudit(ctx context.Context, accountID, userID, event, ip, 
 	}
 	// Best-effort; never fail a request over audit logging.
 	_ = h.authStore.WriteAuditEvent(ctx, ev)
+}
+
+// auditActor identifies who a send is on behalf of and where the request
+// came from, for the audit event auditedSend writes.
+type auditActor struct {
+	AccountID string
+	UserID    string
+	IP        string
+	UA        string
+}
+
+// auditedSend sends msg to `to` and writes exactly one audit event:
+// successEvent on success, or failEvent (with the error logged server-side)
+// on failure. It never writes both, unlike the ad hoc log-and-audit calls it
+// replaces. The caller decides what a failure means for the response: return
+// the error to fail the request (delivery-must-succeed flows), or ignore it
+// to keep the send best-effort.
+func (h *Handler) auditedSend(ctx context.Context, to string, msg mailer.Message, actor auditActor, successEvent, failEvent string) error {
+	if err := h.mailer.Send(ctx, to, msg); err != nil {
+		slog.Error("send email failed", "event", failEvent, "err", err)
+		h.writeAudit(ctx, actor.AccountID, actor.UserID, failEvent, actor.IP, actor.UA, to)
+		return err
+	}
+	h.writeAudit(ctx, actor.AccountID, actor.UserID, successEvent, actor.IP, actor.UA, to)
+	return nil
 }
