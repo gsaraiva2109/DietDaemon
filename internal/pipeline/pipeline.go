@@ -37,11 +37,13 @@ type Resolver interface {
 type MealStore interface {
 	UpsertUser(ctx context.Context, u types.User) error
 	GetUser(ctx context.Context, userID string) (types.User, error)
-	SaveMeal(ctx context.Context, m types.Meal) error
+	// SaveMealAndAddToRollup saves a meal and atomically adds its macros to
+	// the day's rollup in one transaction (see internal/store's doc comment
+	// on the method for why this must be atomic and additive, not a
+	// separate read-modify-write UpsertRollup call).
+	SaveMealAndAddToRollup(ctx context.Context, m types.Meal, targets types.Macros) error
 	TargetsFor(ctx context.Context, userID, date string) (types.DailyTargets, error)
 	SetTargets(ctx context.Context, t types.DailyTargets) error
-	GetRollup(ctx context.Context, userID, localDate string) (types.DailyRollup, error)
-	UpsertRollup(ctx context.Context, r types.DailyRollup) error
 	// GetUserIDByChannel Channel mapping (multi-user).
 	GetUserIDByChannel(ctx context.Context, channel, channelUserID string) (string, error)
 	MapChannelUser(ctx context.Context, channel, channelUserID, userID string) error
@@ -156,14 +158,17 @@ func (e *Engine) LogMealFromItems(ctx context.Context, userID string, at time.Ti
 	return meal, nil
 }
 
-// persistMeal saves a meal and updates the daily rollup. Single save+rollup path
-// used by LogMeal, LogMealFromItems, and (via LogMealFromItems) commitMeal.
+// persistMeal saves a meal and folds it into the daily rollup atomically.
+// Single save+rollup path used by LogMeal, LogMealFromItems, and (via
+// LogMealFromItems) commitMeal.
 func (e *Engine) persistMeal(ctx context.Context, meal types.Meal) error {
-	if err := e.store.SaveMeal(ctx, meal); err != nil {
-		return fmt.Errorf("pipeline: save meal: %w", err)
+	localDate := meal.At.In(e.userLoc(ctx, meal.UserID)).Format("2006-01-02")
+	targets, err := e.store.TargetsFor(ctx, meal.UserID, localDate)
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("pipeline: targets for rollup: %w", err)
 	}
-	if err := e.updateRollup(ctx, meal.UserID, meal.At, meal.Total(), e.userLoc(ctx, meal.UserID)); err != nil {
-		return fmt.Errorf("pipeline: update rollup: %w", err)
+	if err := e.store.SaveMealAndAddToRollup(ctx, meal, targets.Targets); err != nil {
+		return fmt.Errorf("pipeline: save meal: %w", err)
 	}
 	return nil
 }
@@ -465,27 +470,6 @@ func splitResolved(items []types.ResolvedItem) (good, open []types.ResolvedItem)
 		}
 	}
 	return good, open
-}
-
-// updateRollup adds the meal's macros to the user's rollup for its local day,
-// creating the row (with current targets) on first meal of the day.
-func (e *Engine) updateRollup(ctx context.Context, userID string, at time.Time, add types.Macros, loc *time.Location) error {
-	localDate := at.In(loc).Format("2006-01-02")
-
-	rollup, err := e.store.GetRollup(ctx, userID, localDate)
-	if err != nil {
-		if !isNotFound(err) {
-			return err
-		}
-		rollup = types.DailyRollup{UserID: userID, Date: localDate}
-		if t, terr := e.store.TargetsFor(ctx, userID, localDate); terr == nil {
-			rollup.Targets = t.Targets
-		} else if !isNotFound(terr) {
-			return terr
-		}
-	}
-	rollup.Consumed = rollup.Consumed.Add(add)
-	return e.store.UpsertRollup(ctx, rollup)
 }
 
 // summary builds the acknowledgement reply for a logged meal: totals plus a

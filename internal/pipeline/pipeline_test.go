@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -37,11 +38,13 @@ func (f fakeResolver) Resolve(_ context.Context, _ string, items []types.ParsedI
 }
 
 type fakeStore struct {
-	meals    []types.Meal
-	rollups  map[string]types.DailyRollup
-	targets  map[string]types.Macros
-	users    map[string]types.User
-	channels map[string]string // "channel:channelUserID" → userID
+	meals      []types.Meal
+	rollups    map[string]types.DailyRollup
+	targets    map[string]types.Macros
+	users      map[string]types.User
+	channels   map[string]string // "channel:channelUserID" → userID
+	targetsErr error             // when set, TargetsFor returns this instead of doing a lookup
+	saveErr    error             // when set, SaveMealAndAddToRollup returns this instead of saving
 }
 
 func newFakeStore() *fakeStore {
@@ -60,8 +63,30 @@ func (s *fakeStore) GetUser(_ context.Context, userID string) (types.User, error
 	}
 	return types.User{}, types.ErrNotFound
 }
+
+// SaveMeal exists only to satisfy commands.MealStore (used by /target); the
+// pipeline itself goes through SaveMealAndAddToRollup below.
 func (s *fakeStore) SaveMeal(_ context.Context, m types.Meal) error {
 	s.meals = append(s.meals, m)
+	return nil
+}
+
+// SaveMealAndAddToRollup mirrors the store's atomic insert-and-add semantics:
+// it always adds to whatever is already in s.rollups[date] rather than
+// overwriting it, and only applies targets on first creation of the day's
+// row, so tests exercising concurrent/repeated calls see additive behavior.
+func (s *fakeStore) SaveMealAndAddToRollup(_ context.Context, m types.Meal, targets types.Macros) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.meals = append(s.meals, m)
+	date := m.At.Format("2006-01-02")
+	rollup, ok := s.rollups[date]
+	if !ok {
+		rollup = types.DailyRollup{UserID: m.UserID, Date: date, Targets: targets}
+	}
+	rollup.Consumed = rollup.Consumed.Add(m.Total())
+	s.rollups[date] = rollup
 	return nil
 }
 func (s *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTargets, error) {
@@ -71,6 +96,9 @@ func (s *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTar
 	return types.DailyTargets{}, types.ErrNotFound
 }
 func (s *fakeStore) TargetsFor(ctx context.Context, userID, _ string) (types.DailyTargets, error) {
+	if s.targetsErr != nil {
+		return types.DailyTargets{}, s.targetsErr
+	}
 	return s.GetTargets(ctx, userID)
 }
 func (s *fakeStore) SetTargets(_ context.Context, t types.DailyTargets) error {
@@ -371,6 +399,51 @@ func TestRollupAccumulates(t *testing.T) {
 	}
 	if got := st.rollups["2026-06-17"].Consumed.Calories; got != 300 {
 		t.Errorf("accumulated calories = %v, want 300", got)
+	}
+}
+
+// TestPersistMealPropagatesTargetsError confirms persistMeal aborts before
+// touching the store at all when TargetsFor fails for a reason other than
+// "not found" -- unlike the pre-#272 code, which could save the meal first
+// and only then discover it couldn't resolve the rollup's targets, leaving
+// the meal committed with no rollup update.
+func TestPersistMealPropagatesTargetsError(t *testing.T) {
+	st := newFakeStore()
+	st.targetsErr = errors.New("targets backend unavailable")
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
+	)
+
+	_, err := e.LogMealFromItems(context.Background(), "u1", time.Now(), "100g rice", 0.95,
+		[]types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})})
+	if err == nil {
+		t.Fatal("LogMealFromItems: want error when TargetsFor fails, got nil")
+	}
+	if len(st.meals) != 0 {
+		t.Errorf("meals = %v, want none saved when TargetsFor fails before the store call", st.meals)
+	}
+}
+
+// TestPersistMealPropagatesSaveError confirms a SaveMealAndAddToRollup
+// failure (e.g. the transaction couldn't commit) is wrapped and returned
+// rather than swallowed.
+func TestPersistMealPropagatesSaveError(t *testing.T) {
+	st := newFakeStore()
+	st.saveErr = errors.New("db unavailable")
+	rp := &fakeReplier{}
+	e := New(
+		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
+		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
+		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
+	)
+
+	_, err := e.LogMealFromItems(context.Background(), "u1", time.Now(), "100g rice", 0.95,
+		[]types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})})
+	if err == nil {
+		t.Fatal("LogMealFromItems: want error when SaveMealAndAddToRollup fails, got nil")
 	}
 }
 
