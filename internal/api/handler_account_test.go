@@ -304,6 +304,9 @@ func TestHandleDeleteAccountSendsEmail(t *testing.T) {
 	if len(fm.sent) != 1 || fm.sent[0].to != "test-user@example.com" {
 		t.Fatalf("sent = %v; want one email to test-user@example.com", fm.sent)
 	}
+	if len(authStore.auditEvents) != 1 || authStore.auditEvents[0].Event != "account.deletion_email_sent" {
+		t.Errorf("expected account.deletion_email_sent audit event, got %#v", authStore.auditEvents)
+	}
 }
 
 // TestHandleDeleteAccountEmailSkippedOnUserLookupFailure covers
@@ -334,9 +337,9 @@ func TestHandleDeleteAccountEmailSkippedOnUserLookupFailure(t *testing.T) {
 }
 
 // TestHandleDeleteAccountEmailSendFailureStillSucceeds covers
-// sendAccountDeletionEmail's slog.Error branch when the mailer itself fails:
+// sendAccountDeletionEmail's error branch when the mailer itself fails:
 // deletion has already committed, so a send failure must not surface as a
-// non-204 response.
+// non-204 response, but it must still be audited.
 func TestHandleDeleteAccountEmailSendFailureStillSucceeds(t *testing.T) {
 	authStore := newFakeAuthStore()
 	ms := newFakeMealStore()
@@ -347,6 +350,9 @@ func TestHandleDeleteAccountEmailSendFailureStillSucceeds(t *testing.T) {
 	rec := doRequest(h, "DELETE", "/api/v1/account", map[string]string{"confirm": "DELETE"}, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 (best-effort send), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(authStore.auditEvents) != 1 || authStore.auditEvents[0].Event != "account.deletion_email_send_failed" {
+		t.Errorf("expected account.deletion_email_send_failed audit event, got %#v", authStore.auditEvents)
 	}
 }
 
@@ -514,12 +520,15 @@ func TestHandleReactivateAccountSendsEmail(t *testing.T) {
 	if len(fm.sent) != 1 || fm.sent[0].to != "test-user@example.com" {
 		t.Fatalf("sent = %v; want one email to test-user@example.com", fm.sent)
 	}
+	if len(authStore.auditEvents) != 1 || authStore.auditEvents[0].Event != "account.reactivated_email_sent" {
+		t.Errorf("expected account.reactivated_email_sent audit event, got %#v", authStore.auditEvents)
+	}
 }
 
 // TestHandleReactivateAccountEmailSendFailureStillSucceeds covers
-// handleReactivateAccount's slog.Error branch when the mailer fails:
-// reactivation has already committed, so a send failure must not surface as
-// a non-200 response.
+// handleReactivateAccount's error branch when the mailer fails: reactivation
+// has already committed, so a send failure must not surface as a non-200
+// response, but it must still be audited.
 func TestHandleReactivateAccountEmailSendFailureStillSucceeds(t *testing.T) {
 	authStore := newFakeAuthStore()
 	deletedAt := time.Now().UTC().Add(-5 * 24 * time.Hour)
@@ -532,6 +541,9 @@ func TestHandleReactivateAccountEmailSendFailureStillSucceeds(t *testing.T) {
 	rec := doRequest(h, "POST", "/api/v1/account/reactivate", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (best-effort send), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(authStore.auditEvents) != 1 || authStore.auditEvents[0].Event != "account.reactivated_email_send_failed" {
+		t.Errorf("expected account.reactivated_email_send_failed audit event, got %#v", authStore.auditEvents)
 	}
 }
 

@@ -216,13 +216,13 @@ func TestMagicRequestLockoutFailuresAreGenericNoOps(t *testing.T) {
 	}
 }
 
-func TestMagicRequestDeliveryFailureDoesNotConsumeLockoutAttempt(t *testing.T) {
+func TestMagicRequestDeliveryFailureSurfacesFailureAndDoesNotConsumeLockoutAttempt(t *testing.T) {
 	authStore := newMagicTestAuthStore()
 	fm := &fakeMailer{sendErr: errors.New("mail unavailable")}
 
 	rec := doRequest(buildMagicHandler(authStore, fm), http.MethodPost, "/api/v1/auth/magic/request", map[string]string{"email": "test@example.com"}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected generic 200, got %d", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 (delivery failure must not be reported as generic 200), got %d: %s", rec.Code, rec.Body.String())
 	}
 	if len(authStore.loginAttempts) != 0 {
 		t.Errorf("delivery failure recorded lockout attempts: %#v", authStore.loginAttempts)

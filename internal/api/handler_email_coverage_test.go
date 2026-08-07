@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,14 +109,15 @@ func TestHandleResendVerifyMailerSendFailureStillNoContent(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("resend status = %d, want 204 (best-effort send): %s", rec.Code, rec.Body.String())
 	}
-	foundFailAudit := false
+	var events []string
 	for _, ev := range authStore.auditEvents {
-		if ev.Event == "email.verification_send_failed" {
-			foundFailAudit = true
-		}
+		events = append(events, ev.Event)
 	}
-	if !foundFailAudit {
-		t.Error("expected email.verification_send_failed audit event")
+	if !containsStr(events, "email.verification_send_failed") {
+		t.Errorf("expected email.verification_send_failed audit event, got %v", events)
+	}
+	if containsStr(events, "email.verification_sent") {
+		t.Errorf("email.verification_sent must not be written when send failed, got %v", events)
 	}
 }
 
@@ -332,12 +334,7 @@ func TestHandleEmailChangeSuccess(t *testing.T) {
 }
 
 func containsStr(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +426,7 @@ func TestHandleEmailChangeInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestHandleEmailChangeMailerSendErrorStillSucceeds(t *testing.T) {
+func TestHandleEmailChangeMailerSendErrorSurfacesFailure(t *testing.T) {
 	authStore := newEmailTestAuthStore()
 	hash, err := auth.Hash("correct horse battery staple")
 	if err != nil {
@@ -442,11 +439,23 @@ func TestHandleEmailChangeMailerSendErrorStillSucceeds(t *testing.T) {
 	rec := doRequest(h, http.MethodPost, "/api/v1/auth/email/change", map[string]string{
 		"email": "new@example.com", "current_password": "correct horse battery staple",
 	}, nil)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("email change status = %d, want 204 (best-effort send): %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("email change status = %d, want 500 (send failure must not be reported as success): %s", rec.Code, rec.Body.String())
 	}
+	// The address change itself already committed -- only delivery of the
+	// new verification email failed, so it isn't rolled back.
 	if authStore.userEmails["test-user"] != "new@example.com" {
 		t.Error("email should still be updated despite mailer failure")
+	}
+	var events []string
+	for _, ev := range authStore.auditEvents {
+		events = append(events, ev.Event)
+	}
+	if !containsStr(events, "email.verification_send_failed") {
+		t.Errorf("expected email.verification_send_failed audit event, got %v", events)
+	}
+	if containsStr(events, "email.verification_sent") {
+		t.Errorf("email.verification_sent must not be written when send failed, got %v", events)
 	}
 }
 
@@ -495,6 +504,31 @@ func TestHandleForgotPasswordSuccess(t *testing.T) {
 	}
 	if len(authStore.emailTokens) != 1 {
 		t.Errorf("expected one reset token issued, got %d", len(authStore.emailTokens))
+	}
+}
+
+func TestHandleForgotPasswordMailerSendFailureSurfacesFailure(t *testing.T) {
+	authStore := newEmailTestAuthStore()
+	authStore.userByEmail["test@example.com"] = types.User{ID: "test-user", AccountID: "acct-1", Email: "test@example.com"}
+	authStore.phcHash["test-user"] = "password hash"
+	fm := &fakeMailer{sendErr: errors.New("smtp down")}
+	h := buildEmailHandler(authStore, fm)
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/password/forgot", map[string]string{"email": "test@example.com"}, nil)
+	// A send failure must not be reported as the generic "ok" response (#268)
+	// -- the user would otherwise believe a reset email is on its way.
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("forgot-password status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	var events []string
+	for _, ev := range authStore.auditEvents {
+		events = append(events, ev.Event)
+	}
+	if !containsStr(events, "password.reset_email_send_failed") {
+		t.Errorf("expected password.reset_email_send_failed audit event, got %v", events)
+	}
+	if containsStr(events, "password.reset_email_sent") {
+		t.Errorf("password.reset_email_sent must not be written when send failed, got %v", events)
 	}
 }
 

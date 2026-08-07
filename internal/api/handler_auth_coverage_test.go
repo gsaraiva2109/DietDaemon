@@ -124,6 +124,42 @@ func TestHandleRegisterSendsVerificationEmailWhenMailerConfigured(t *testing.T) 
 	}
 }
 
+func TestFinishRegistrationEmailSendFailureAuditsButStillRegisters(t *testing.T) {
+	authStore := newEmailTestAuthStore()
+	fm := &fakeMailer{sendErr: errors.New("smtp down")}
+	meals := newFakeMealStore()
+	h := New(meals, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, nil, "DietDaemon", testAuthConfig()),
+		WithMailer(fm, "smtp"),
+		WithPublicBaseURL("http://localhost:8080"),
+	)
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"email":    "new3@example.com",
+		"password": "correct horse battery staple",
+	}, nil)
+	// A failed verification email must not be reported as a successful
+	// registration (#269) -- the account row is already committed by the
+	// time finishRegistrationEmail runs, so it isn't rolled back, but the
+	// response itself must reflect the failure.
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("register status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := authStore.userByEmail["new3@example.com"]; !ok {
+		t.Error("user should still be registered despite verification email failure")
+	}
+	var events []string
+	for _, ev := range authStore.auditEvents {
+		events = append(events, ev.Event)
+	}
+	if !containsStr(events, "email.verification_send_failed") {
+		t.Errorf("expected email.verification_send_failed audit event, got %v", events)
+	}
+	if containsStr(events, "email.verification_sent") {
+		t.Errorf("email.verification_sent must not be written when send failed, got %v", events)
+	}
+}
+
 func TestHandleRegisterCreateEmailTokenFailure(t *testing.T) {
 	authStore := newEmailTestAuthStore()
 	authStore.createEmailTokenErr = errors.New("store unavailable")

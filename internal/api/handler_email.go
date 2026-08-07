@@ -121,12 +121,10 @@ func (h *Handler) handleResendVerify(w http.ResponseWriter, r *http.Request, use
 
 	link := h.publicBaseURL + "/verify-email?token=" + token
 	msg := mailer.VerificationEmail(link)
-	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
-		// Log but don't fail — the token still exists.
-		h.writeAudit(ctx, u.AccountID, userID, "email.verification_send_failed", h.clientIP(r), r.UserAgent(), u.Email)
-	}
-
-	h.writeAudit(ctx, u.AccountID, userID, "email.verification_sent", h.clientIP(r), r.UserAgent(), u.Email)
+	// Best-effort — the token still exists even if the send fails, so this
+	// never fails the request. auditedSend writes exactly one audit event
+	// (never both "sent" and "send_failed" for the same call).
+	_ = h.auditedSend(ctx, u.Email, msg, auditActor{AccountID: u.AccountID, UserID: userID, IP: h.clientIP(r), UA: r.UserAgent()}, "email.verification_sent", "email.verification_send_failed")
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -208,13 +206,17 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 
 	link := h.publicBaseURL + "/verify-email?token=" + token
 	msg := mailer.VerificationEmail(link)
-	if err := h.mailer.Send(ctx, newEmail, msg); err != nil {
-		slog.Error("send verification email failed", "err", err)
-	}
 
 	ip := h.clientIP(r)
 	h.writeAudit(ctx, u.AccountID, userID, "email.changed", ip, r.UserAgent(), u.Email+" → "+newEmail)
-	h.writeAudit(ctx, u.AccountID, userID, "email.verification_sent", ip, r.UserAgent(), newEmail)
+
+	// The address has already changed; the user can't verify it without this
+	// email, so a send failure must be surfaced rather than answered with a
+	// false 204. auditedSend writes exactly one audit event either way.
+	if err := h.auditedSend(ctx, newEmail, msg, auditActor{AccountID: u.AccountID, UserID: userID, IP: ip, UA: r.UserAgent()}, "email.verification_sent", "email.verification_send_failed"); err != nil {
+		h.writeErr(w, err)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -283,8 +285,17 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// If EMAIL_PROVIDER=none, the links will be logged by the none mailer.
 	link := h.publicBaseURL + "/reset-password?token=" + token
 	msg := mailer.PasswordResetEmail(link)
-	if err := h.mailer.Send(ctx, email, msg); err != nil {
-		slog.Error("send password reset email failed", "err", err)
+	// A send failure here must not be reported as generic success (#268) --
+	// the caller would otherwise believe a reset email is on the way when it
+	// never left the server. This does narrow the anti-enumeration guarantee
+	// above: while the mailer is broken, a request for a real account fails
+	// visibly where a request for a nonexistent one still returns generic
+	// "ok". That's an accepted trade-off (mailer outages are rare/operational,
+	// not attacker-controlled) and is further bounded by the per-email
+	// lockout already applied above.
+	if err := h.auditedSend(ctx, email, msg, auditActor{AccountID: u.AccountID, UserID: u.ID, IP: h.clientIP(r), UA: r.UserAgent()}, "password.reset_email_sent", "password.reset_email_send_failed"); err != nil {
+		h.writeErr(w, err)
+		return
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})

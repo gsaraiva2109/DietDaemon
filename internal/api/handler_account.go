@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -292,7 +291,7 @@ func (h *Handler) handleDeleteAccount(w http.ResponseWriter, r *http.Request, us
 	}
 	h.clearSessionCookies(w)
 
-	h.sendAccountDeletionEmail(ctx, userID)
+	h.sendAccountDeletionEmail(ctx, r, userID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -302,7 +301,7 @@ func (h *Handler) handleDeleteAccount(w http.ResponseWriter, r *http.Request, us
 // already committed by the time this runs, and a mailer outage shouldn't
 // turn that into a failed response. No-op when no mailer is configured,
 // matching finishRegistrationEmail/handleMFAEmailSend's convention.
-func (h *Handler) sendAccountDeletionEmail(ctx context.Context, userID string) {
+func (h *Handler) sendAccountDeletionEmail(ctx context.Context, r *http.Request, userID string) {
 	if h.mailer == nil || h.emailProvider == "none" {
 		return
 	}
@@ -311,9 +310,7 @@ func (h *Handler) sendAccountDeletionEmail(ctx context.Context, userID string) {
 		return
 	}
 	msg := mailer.AccountDeletionRequestedEmail(h.publicBaseURL)
-	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
-		slog.Error("send account deletion email failed", "err", err)
-	}
+	_ = h.auditedSend(ctx, u.Email, msg, auditActor{AccountID: u.AccountID, UserID: userID, IP: h.clientIP(r), UA: r.UserAgent()}, "account.deletion_email_sent", "account.deletion_email_send_failed")
 }
 
 // handleReactivateAccount cancels a pending account deletion (see the tiered
@@ -329,9 +326,7 @@ func (h *Handler) handleReactivateAccount(w http.ResponseWriter, r *http.Request
 
 	if h.mailer != nil && h.emailProvider != "none" {
 		if u, err := h.store.GetUser(ctx, userID); err == nil && u.Email != "" {
-			if err := h.mailer.Send(ctx, u.Email, mailer.AccountReactivatedEmail()); err != nil {
-				slog.Error("send account reactivated email failed", "err", err)
-			}
+			_ = h.auditedSend(ctx, u.Email, mailer.AccountReactivatedEmail(), auditActor{AccountID: u.AccountID, UserID: userID, IP: h.clientIP(r), UA: r.UserAgent()}, "account.reactivated_email_sent", "account.reactivated_email_send_failed")
 		}
 	}
 

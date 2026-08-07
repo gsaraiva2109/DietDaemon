@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -91,15 +90,14 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 
 	link := h.publicBaseURL + "/magic?token=" + linkToken
 	msg := mailer.MagicSigninEmail(link, code)
-	if err := h.mailer.Send(ctx, u.Email, msg); err != nil {
-		slog.Error("send magic signin email failed", "err", err)
-		h.writeAudit(ctx, u.AccountID, u.ID, "user.magic_request_failed", ip, r.UserAgent(), "delivery failed")
-		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+	// The user cannot sign in without this email, so a send failure must be
+	// surfaced rather than answered with a false "ok" (#269).
+	if err := h.auditedSend(ctx, u.Email, msg, auditActor{AccountID: u.AccountID, UserID: u.ID, IP: ip, UA: r.UserAgent()}, "user.magic_requested", "user.magic_request_failed"); err != nil {
+		h.writeErr(w, err)
 		return
 	}
 
 	_ = h.authStore.RecordLoginAttempt(ctx, key, false)
-	h.writeAudit(ctx, u.AccountID, u.ID, "user.magic_requested", ip, r.UserAgent(), u.Email)
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 }
