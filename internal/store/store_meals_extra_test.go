@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,5 +316,214 @@ func TestMealPlanAttributionRoundTrip(t *testing.T) {
 	byIDRanged := mealsByID(ranged)
 	if byIDRanged[attributed.ID].PlanOptionID != "option-1" {
 		t.Fatalf("GetMealsInRange plan attribution = %+v", byIDRanged[attributed.ID])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SaveMealAndAddToRollup (#272: meal save and rollup update must be atomic
+// and additive, or concurrent meal logs for the same user/day lose updates)
+// ---------------------------------------------------------------------------
+
+// TestSaveMealAndAddToRollupConcurrent is the -race regression test called
+// for in #272's acceptance criteria: N goroutines each log a distinct meal
+// for the same user/day concurrently. The old code (separate GetRollup +
+// UpsertRollup calls, outside the meal's transaction) could interleave two
+// read-modify-write cycles and silently drop one meal's contribution. The
+// fix folds both writes into one transaction with an additive SQL upsert
+// (consumed_x = consumed_x + delta), so every goroutine's delta lands
+// regardless of interleaving. tempDB's sqlite connection pool is capped at
+// 1 (see store.go), so this test's goroutines serialize through Go's
+// database/sql pool rather than truly overlapping inside SQLite -- it still
+// proves the fix, since the bug was the release-then-reacquire gap between
+// two separate top-level store calls, which no longer exists now that both
+// writes share one transaction. The same additive upsert is what makes this
+// safe under genuine concurrent transactions on Postgres, via ordinary
+// row-level locking on ON CONFLICT DO UPDATE.
+func TestSaveMealAndAddToRollupConcurrent(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	at := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	targets := types.Macros{Calories: 2000, Protein: 150, Carbs: 200, Fat: 60, Fiber: 30}
+
+	const n = 12
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			meal := types.Meal{
+				ID:        fmt.Sprintf("meal-%d", i),
+				UserID:    "u1",
+				At:        at,
+				RawText:   "concurrent meal",
+				CreatedAt: at,
+				Items:     []types.ResolvedItem{mkItem(fmt.Sprintf("item-%d", i), 100)},
+			}
+			if err := s.SaveMealAndAddToRollup(ctx(), meal, targets); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("SaveMealAndAddToRollup: %v", err)
+	}
+
+	rollups, err := s.GetRollups(ctx(), "u1", "2026-06-17", "2026-06-17")
+	if err != nil {
+		t.Fatalf("GetRollups: %v", err)
+	}
+	if len(rollups) != 1 {
+		t.Fatalf("expected 1 rollup row, got %d", len(rollups))
+	}
+	if got, want := rollups[0].Consumed.Calories, float64(n*100); got != want {
+		t.Fatalf("consumed kcal = %f, want %f (lost update under concurrency)", got, want)
+	}
+	if rollups[0].Targets.Calories != targets.Calories {
+		t.Fatalf("targets.Calories = %f, want %f (seeded once on first insert, must not be clobbered)",
+			rollups[0].Targets.Calories, targets.Calories)
+	}
+
+	recent, err := s.RecentMeals(ctx(), "u1", n+1)
+	if err != nil {
+		t.Fatalf("RecentMeals: %v", err)
+	}
+	if len(recent) != n {
+		t.Fatalf("expected %d meals persisted, got %d", n, len(recent))
+	}
+}
+
+// TestSaveMealAndAddToRollupExistingRow exercises the ON CONFLICT branch
+// directly (sequential, not concurrent): a second meal on a day that already
+// has a rollup row must add to consumed and leave targets untouched.
+func TestSaveMealAndAddToRollupExistingRow(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	at := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	first := types.Meal{
+		ID: "meal-1", UserID: "u1", At: at, RawText: "frango", CreatedAt: at,
+		Items: []types.ResolvedItem{mkItem("frango", 100)},
+	}
+	if err := s.SaveMealAndAddToRollup(ctx(), first, types.Macros{Calories: 2000}); err != nil {
+		t.Fatalf("SaveMealAndAddToRollup 1: %v", err)
+	}
+
+	second := types.Meal{
+		ID: "meal-2", UserID: "u1", At: at, RawText: "arroz", CreatedAt: at,
+		Items: []types.ResolvedItem{mkItem("arroz", 50)},
+	}
+	// A different targets value must not overwrite the row's existing targets.
+	if err := s.SaveMealAndAddToRollup(ctx(), second, types.Macros{Calories: 9999}); err != nil {
+		t.Fatalf("SaveMealAndAddToRollup 2: %v", err)
+	}
+
+	rollups, err := s.GetRollups(ctx(), "u1", "2026-06-17", "2026-06-17")
+	if err != nil {
+		t.Fatalf("GetRollups: %v", err)
+	}
+	if len(rollups) != 1 {
+		t.Fatalf("expected 1 rollup row, got %d", len(rollups))
+	}
+	if rollups[0].Consumed.Calories != 150 {
+		t.Fatalf("consumed kcal = %f, want 150", rollups[0].Consumed.Calories)
+	}
+	if rollups[0].Targets.Calories != 2000 {
+		t.Fatalf("targets.Calories = %f, want 2000 (must not be overwritten by second call)", rollups[0].Targets.Calories)
+	}
+}
+
+// TestSaveMealAndAddToRollupDuplicateSkipsRollup confirms a duplicate
+// external_id (safe no-op re-import, see insertMealTx) doesn't double-count
+// the rollup, and that the failed insert leaves nothing behind: no partial
+// items row and no rollup delta, matching the pre-existing SaveMeal contract.
+func TestSaveMealAndAddToRollupDuplicateSkipsRollup(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	at := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	ext := "mfp-123"
+	meal := types.Meal{
+		ID: "meal-1", UserID: "u1", At: at, RawText: "frango", CreatedAt: at,
+		ExternalID: &ext,
+		Items:      []types.ResolvedItem{mkItem("frango", 100)},
+	}
+	if err := s.SaveMealAndAddToRollup(ctx(), meal, types.Macros{Calories: 2000}); err != nil {
+		t.Fatalf("SaveMealAndAddToRollup 1: %v", err)
+	}
+
+	// Re-importing the same external_id under a new meal ID is the dup path.
+	dupe := meal
+	dupe.ID = "meal-1-retry"
+	if err := s.SaveMealAndAddToRollup(ctx(), dupe, types.Macros{Calories: 2000}); err != nil {
+		t.Fatalf("SaveMealAndAddToRollup dup: %v", err)
+	}
+
+	rollups, err := s.GetRollups(ctx(), "u1", "2026-06-17", "2026-06-17")
+	if err != nil {
+		t.Fatalf("GetRollups: %v", err)
+	}
+	if rollups[0].Consumed.Calories != 100 {
+		t.Fatalf("consumed kcal = %f, want 100 (dup retry must not double-count)", rollups[0].Consumed.Calories)
+	}
+
+	recent, err := s.RecentMeals(ctx(), "u1", 10)
+	if err != nil {
+		t.Fatalf("RecentMeals: %v", err)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 meal persisted (dup skipped), got %d", len(recent))
+	}
+}
+
+// TestSaveMealAndAddToRollupOnClosedDB exercises the "begin tx" error-wrap
+// branch by closing the store's real DB connection first, mirroring
+// TestAccountMethodsWrapDBErrorsWhenClosed in store_account_test.go.
+func TestSaveMealAndAddToRollupOnClosedDB(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	meal := types.Meal{ID: "meal-1", UserID: "u1", At: time.Now(), CreatedAt: time.Now()}
+	if err := s.SaveMealAndAddToRollup(ctx(), meal, types.Macros{}); err == nil {
+		t.Error("SaveMealAndAddToRollup on closed db: want error")
+	}
+}
+
+// TestSaveMealItemCountLimit confirms a meal over maxMealItems is rejected
+// before a transaction is opened, so an oversized payload can't hold the DB
+// connection for an unbounded bulk insert (see checkMealItemCount).
+func TestSaveMealItemCountLimit(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	items := make([]types.ResolvedItem, maxMealItems+1)
+	for i := range items {
+		items[i] = mkItem(fmt.Sprintf("item-%d", i), 1)
+	}
+	meal := types.Meal{ID: "too-big", UserID: "u1", At: time.Now(), CreatedAt: time.Now(), Items: items}
+
+	if err := s.SaveMeal(ctx(), meal); err == nil {
+		t.Error("SaveMeal with too many items: want error")
+	}
+	if err := s.SaveMealAndAddToRollup(ctx(), meal, types.Macros{}); err == nil {
+		t.Error("SaveMealAndAddToRollup with too many items: want error")
+	}
+
+	recent, err := s.RecentMeals(ctx(), "u1", 10)
+	if err != nil {
+		t.Fatalf("RecentMeals: %v", err)
+	}
+	if len(recent) != 0 {
+		t.Fatalf("expected no meal persisted when over the item limit, got %d", len(recent))
 	}
 }

@@ -21,16 +21,121 @@ import (
 // date string stored alongside meals (and used to bucket them by day).
 const dateLayout = "2006-01-02"
 
+// maxMealItems bounds how many resolved_items rows a single meal insert can
+// carry. Without it, a meal's item-insert transaction (SaveMeal or
+// SaveMealAndAddToRollup) has no upper bound on how long it holds the DB
+// connection -- on the SQLite backend the whole process shares one
+// connection (see store.go's SetMaxOpenConns(1) for the sqlite driver), so
+// an oversized payload would stall every other request for its duration.
+const maxMealItems = 200
+
 // SaveMeal inserts a meal and all its resolved items inside a transaction.
 func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
+	if err := checkMealItemCount(m); err != nil {
+		return err
+	}
 	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format(dateLayout)
 
-	tx, err := s.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin tx: %w", err)
+	tx, dup, err := s.beginMealInsertTx(ctx, m, localDate)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
 	}
-	defer func() { _ = tx.Rollback() }()
+	if err != nil || dup {
+		return err
+	}
 
+	return tx.Commit()
+}
+
+// SaveMealAndAddToRollup saves a meal and, in the same transaction, folds its
+// macros into the user's daily rollup with a single additive upsert
+// (consumed_x = consumed_x + delta) rather than a read-modify-write. That
+// closes the gap in #272: concurrent meal logs for the same user/day can no
+// longer clobber each other's contribution, and a crash between the meal
+// insert and the rollup update is impossible since both commit together.
+// targets seeds target_* only when this is the first rollup row of the day;
+// an existing row's targets are left untouched.
+func (s *Store) SaveMealAndAddToRollup(ctx context.Context, m types.Meal, targets types.Macros) error {
+	if err := checkMealItemCount(m); err != nil {
+		return err
+	}
+	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format(dateLayout)
+
+	tx, dup, err := s.beginMealInsertTx(ctx, m, localDate)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
+	}
+	if err != nil || dup {
+		return err
+	}
+
+	add := m.Total()
+	const rollupQ = `
+		INSERT INTO daily_rollups
+			(user_id, date,
+			 consumed_kcal, consumed_protein, consumed_carbs, consumed_fat, consumed_fiber,
+			 target_kcal, target_protein, target_carbs, target_fat, target_fiber)
+		VALUES (:user_id, :date, :kcal, :protein, :carbs, :fat, :fiber,
+		        :target_kcal, :target_protein, :target_carbs, :target_fat, :target_fiber)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			consumed_kcal    = consumed_kcal    + :kcal,
+			consumed_protein = consumed_protein + :protein,
+			consumed_carbs   = consumed_carbs   + :carbs,
+			consumed_fat     = consumed_fat     + :fat,
+			consumed_fiber   = consumed_fiber   + :fiber
+	`
+	rollupQuery, rollupArgs, err := sqlx.Named(rollupQ, map[string]any{
+		"user_id": m.UserID, "date": localDate,
+		"kcal": add.Calories, "protein": add.Protein, "carbs": add.Carbs, "fat": add.Fat, "fiber": add.Fiber,
+		"target_kcal": targets.Calories, "target_protein": targets.Protein,
+		"target_carbs": targets.Carbs, "target_fat": targets.Fat, "target_fiber": targets.Fiber,
+	})
+	if err != nil {
+		return fmt.Errorf("store: bind add rollup: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rewrite(rollupQuery), rollupArgs...); err != nil {
+		return fmt.Errorf("store: add rollup: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// checkMealItemCount rejects a meal with more items than maxMealItems.
+func checkMealItemCount(m types.Meal) error {
+	if len(m.Items) > maxMealItems {
+		return fmt.Errorf("store: meal has %d items, max %d", len(m.Items), maxMealItems)
+	}
+	return nil
+}
+
+// beginMealInsertTx opens a transaction and inserts m's meal row and its
+// resolved items, the boilerplate shared by SaveMeal and
+// SaveMealAndAddToRollup. It returns the open transaction so callers can
+// extend it (SaveMealAndAddToRollup adds a rollup upsert) before committing;
+// the caller is responsible for deferring tx.Rollback() once tx is non-nil
+// and calling tx.Commit() on success -- mirrors dup's meaning on
+// insertMealTx: true means the meal already existed (safe re-import) and the
+// caller must skip further work.
+func (s *Store) beginMealInsertTx(ctx context.Context, m types.Meal, localDate string) (tx *sqlx.Tx, dup bool, err error) {
+	tx, err = s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: begin tx: %w", err)
+	}
+
+	dup, err = s.insertMealTx(ctx, tx, m, localDate)
+	if err != nil || dup {
+		return tx, dup, err
+	}
+	if err := s.insertMealItemsTx(ctx, tx, m); err != nil {
+		return tx, false, err
+	}
+	return tx, false, nil
+}
+
+// insertMealTx inserts the meals row for m. The bool return is true when the
+// insert was a no-op because external_id already exists (safe re-import),
+// in which case the caller must skip items/rollup too.
+func (s *Store) insertMealTx(ctx context.Context, tx *sqlx.Tx, m types.Meal, localDate string) (dup bool, err error) {
 	const mealQ = `
 		INSERT INTO meals (id, user_id, at_utc, local_date, raw_text, confidence, parser_tier, created_at, external_id, plan_slot_id, plan_option_id)
 		VALUES (:id, :user_id, :at_utc, :local_date, :raw_text, :confidence, :parser_tier, :created_at, :external_id, :plan_slot_id, :plan_option_id)
@@ -49,15 +154,19 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 		"plan_option_id": m.PlanOptionID,
 	})
 	if err != nil {
-		return fmt.Errorf("store: bind meal: %w", err)
+		return false, fmt.Errorf("store: bind meal: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx, s.rewrite(mealQuery), mealArgs...); err != nil {
 		if isUniqueViolation(err) {
-			return nil // safe no-op: already imported
+			return true, nil // safe no-op: already imported
 		}
-		return fmt.Errorf("store: insert meal: %w", err)
+		return false, fmt.Errorf("store: insert meal: %w", err)
 	}
+	return false, nil
+}
 
+// insertMealItemsTx inserts m's resolved_items rows.
+func (s *Store) insertMealItemsTx(ctx context.Context, tx *sqlx.Tx, m types.Meal) error {
 	const itemPrefix = `
 		INSERT INTO resolved_items
 			(id, meal_id, position, raw_phrase, quantity, unit, normalized_grams,
@@ -71,8 +180,7 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	if err := s.insertRows(ctx, tx, itemPrefix, "", rows); err != nil {
 		return fmt.Errorf("store: insert resolved items: %w", err)
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // resolvedItemNamedArgs builds the named-parameter map shared by every insert
