@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,6 +233,85 @@ func TestCheckLoginLockoutLocked(t *testing.T) {
 	if rec.Header().Get("Retry-After") == "" {
 		t.Error("expected Retry-After header on lockout")
 	}
+}
+
+// TestCheckLoginLockoutDoesNotExtendWindow is the regression test for #273:
+// requests arriving while an account is locked must not record a fresh
+// failure. Recording one there would timestamp it "now", pushing the
+// 15-minute sliding window forward on every request and making the lockout
+// permanent as long as requests keep arriving faster than the window
+// expires. It also verifies the lockout still expires naturally once the
+// recorded failures fall outside the window.
+func TestCheckLoginLockoutDoesNotExtendWindow(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	cfg := testAuthConfig()
+	h, _ := newAuthHandlerForTest(store, cfg)
+
+	email := "sticky-lockout@example.com"
+	for range cfg.LockoutCfg.MaxAttempts {
+		_ = store.RecordLoginAttempt(context.Background(), email, false)
+	}
+	attemptCount := len(store.loginAttempts)
+
+	// Hammer the locked account: none of these may record a new failure.
+	for i := 0; i < 3; i++ {
+		rec := doRequest(h, http.MethodPost, "/api/v1/auth/login", map[string]string{
+			"email": email, "password": "whatever-password",
+		}, nil)
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d: status = %d, want 429", i, rec.Code)
+		}
+	}
+	if got := len(store.loginAttempts); got != attemptCount {
+		t.Fatalf("login-attempt count = %d after hitting the locked endpoint, want unchanged %d (checkLoginLockout must not record a failure of its own)", got, attemptCount)
+	}
+
+	// Backdate the recorded failures past the window (simulating 15+ minutes
+	// having passed without a new checked attempt) — the lockout must clear
+	// on its own instead of persisting forever.
+	cutoff := time.Now().UTC().Add(-cfg.LockoutCfg.Window - time.Minute)
+	for i := range store.loginAttempts {
+		if store.loginAttempts[i].identifier == email {
+			store.loginAttempts[i].at = cutoff
+		}
+	}
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email": email, "password": "whatever-password",
+	}, nil)
+	if rec.Code == http.StatusTooManyRequests {
+		t.Fatal("lockout did not expire after the window passed")
+	}
+}
+
+// TestCheckLoginLockoutConcurrentNoRace hits the same locked identifier from
+// many goroutines at once. Before the #273 fix, the locked branch wrote a
+// login attempt on every hit, so concurrent requests appended to the fake
+// store's slice concurrently — a genuine data race under -race. The fix
+// makes the locked branch read-only, so this must run clean.
+func TestCheckLoginLockoutConcurrentNoRace(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	cfg := testAuthConfig()
+	h, _ := newAuthHandlerForTest(store, cfg)
+
+	email := "concurrent-lockout@example.com"
+	for range cfg.LockoutCfg.MaxAttempts {
+		_ = store.RecordLoginAttempt(context.Background(), email, false)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := doRequest(h, http.MethodPost, "/api/v1/auth/login", map[string]string{
+				"email": email, "password": "whatever-password",
+			}, nil)
+			if rec.Code != http.StatusTooManyRequests {
+				t.Errorf("concurrent locked login status = %d, want 429", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // ---------------------------------------------------------------------------

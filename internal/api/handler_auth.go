@@ -278,7 +278,6 @@ func (h *Handler) checkLoginLockout(w http.ResponseWriter, ctx context.Context, 
 		return false
 	}
 	if locked {
-		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
@@ -893,7 +892,6 @@ func (h *Handler) checkTOTPChallengeLockout(w http.ResponseWriter, ctx context.C
 		return false
 	}
 	if locked {
-		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
