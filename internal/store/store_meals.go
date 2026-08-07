@@ -36,17 +36,11 @@ func (s *Store) SaveMeal(ctx context.Context, m types.Meal) error {
 	}
 	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format(dateLayout)
 
-	tx, err := s.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin tx: %w", err)
+	tx, dup, err := s.beginMealInsertTx(ctx, m, localDate)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	dup, err := s.insertMealTx(ctx, tx, m, localDate)
 	if err != nil || dup {
-		return err
-	}
-	if err := s.insertMealItemsTx(ctx, tx, m); err != nil {
 		return err
 	}
 
@@ -67,17 +61,11 @@ func (s *Store) SaveMealAndAddToRollup(ctx context.Context, m types.Meal, target
 	}
 	localDate := m.At.In(s.userLoc(ctx, m.UserID)).Format(dateLayout)
 
-	tx, err := s.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin tx: %w", err)
+	tx, dup, err := s.beginMealInsertTx(ctx, m, localDate)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	dup, err := s.insertMealTx(ctx, tx, m, localDate)
 	if err != nil || dup {
-		return err
-	}
-	if err := s.insertMealItemsTx(ctx, tx, m); err != nil {
 		return err
 	}
 
@@ -118,6 +106,30 @@ func checkMealItemCount(m types.Meal) error {
 		return fmt.Errorf("store: meal has %d items, max %d", len(m.Items), maxMealItems)
 	}
 	return nil
+}
+
+// beginMealInsertTx opens a transaction and inserts m's meal row and its
+// resolved items, the boilerplate shared by SaveMeal and
+// SaveMealAndAddToRollup. It returns the open transaction so callers can
+// extend it (SaveMealAndAddToRollup adds a rollup upsert) before committing;
+// the caller is responsible for deferring tx.Rollback() once tx is non-nil
+// and calling tx.Commit() on success -- mirrors dup's meaning on
+// insertMealTx: true means the meal already existed (safe re-import) and the
+// caller must skip further work.
+func (s *Store) beginMealInsertTx(ctx context.Context, m types.Meal, localDate string) (tx *sqlx.Tx, dup bool, err error) {
+	tx, err = s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: begin tx: %w", err)
+	}
+
+	dup, err = s.insertMealTx(ctx, tx, m, localDate)
+	if err != nil || dup {
+		return tx, dup, err
+	}
+	if err := s.insertMealItemsTx(ctx, tx, m); err != nil {
+		return tx, false, err
+	}
+	return tx, false, nil
 }
 
 // insertMealTx inserts the meals row for m. The bool return is true when the
