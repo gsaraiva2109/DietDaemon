@@ -25,7 +25,7 @@
     "assistant-stream": "^0.3.25",
     "html-to-image": "^1.11.13",
     "i18next": "^26.3.6",
-    "motion": "^12.40.0",
+    "motion": "^13.0.0",
     "pdfjs-dist": "^6.1.200",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
