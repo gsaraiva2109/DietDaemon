@@ -16,7 +16,7 @@ import (
 const (
 	defaultRequestBodyLimit = 1 << 20
 	uploadRequestBodyLimit  = 5 << 20
-	contentSecurityPolicy   = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
+	contentSecurityPolicy   = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
