@@ -45,6 +45,11 @@ func (h *Handler) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		linkUserID = uid
+
+		if status, statusErr := h.authStore.AccountDeletionStatus(r.Context(), linkUserID); statusErr == nil && status.DeletedAt != nil {
+			h.redirectAuthCallback(w, r, "account_deleted", "")
+			return
+		}
 	}
 
 	ctx := r.Context()
@@ -308,6 +313,11 @@ func (h *Handler) registerOIDCUser(ctx context.Context, provID string, identity 
 }
 
 func (h *Handler) finishOIDCLogin(w http.ResponseWriter, r *http.Request, callback oidcCallbackContext, u types.User, provID, nxt string) {
+	if status, statusErr := h.authStore.AccountDeletionStatus(callback.ctx, u.ID); statusErr == nil && status.DeletedAt != nil {
+		h.redirectAuthCallback(w, r, "account_deleted", "")
+		return
+	}
+
 	cookieTok, csrfTok, sess := auth.CreateSession(u.ID, false, callback.ip, callback.ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, false)
 	if err := h.sessions.CreateSession(callback.ctx, sess); err != nil {

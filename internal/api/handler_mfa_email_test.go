@@ -176,6 +176,34 @@ func TestMFAEmailSendAndVerify(t *testing.T) {
 	}
 }
 
+func TestMFAEmailVerifyRejectsPendingDeletionAccount(t *testing.T) {
+	authStore := newMFAEmailTestStore()
+	h := buildMFAEmailHandler(authStore, &fakeMailer{})
+	challengeToken := "valid-challenge"
+	authStore.addChallenge(challengeToken, time.Now().UTC().Add(time.Minute))
+	authStore.codes["test-user"] = mfaEmailCode{
+		hash:      auth.HashToken("123456"),
+		expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339),
+	}
+	if err := authStore.RequestAccountDeletion(context.Background(), "test-user"); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/mfa/email/verify", map[string]string{
+		"challenge_token": challengeToken,
+		"code":            "123456",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("verify status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if body := decodeJSON[map[string]any](t, rec); body["error"] != "pending_deletion" {
+		t.Errorf("error body = %#v, want pending_deletion", body)
+	}
+	if len(authStore.sessions) != 0 {
+		t.Errorf("created sessions = %d, want 0: pending-deletion account must not get a new session via MFA email verify", len(authStore.sessions))
+	}
+}
+
 func TestMFAEmailSendInvalidChallenge(t *testing.T) {
 	h := buildMFAEmailHandler(newMFAEmailTestStore(), &fakeMailer{})
 

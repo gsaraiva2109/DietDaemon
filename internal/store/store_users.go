@@ -68,9 +68,12 @@ func (s *Store) GetUser(ctx context.Context, userID string) (types.User, error) 
 	return row.toUser(), nil
 }
 
-// ListUsers returns every user. Empty slice, nil error when there are none.
+// ListUsers returns every user whose account is not pending deletion. Empty
+// slice, nil error when there are none. Every user is guaranteed to have a
+// matching accounts row (see UpsertUser, which inserts the accounts row
+// before the user row), so the join is safe as an INNER JOIN.
 func (s *Store) ListUsers(ctx context.Context) ([]types.User, error) {
-	q := fmt.Sprintf(`SELECT id, account_id, email, email_verified_at, status, display_name, timezone, locale, created_at, webauthn_handle FROM users ORDER BY id LIMIT %d`, maxListRows)
+	q := fmt.Sprintf(`SELECT u.id, u.account_id, u.email, u.email_verified_at, u.status, u.display_name, u.timezone, u.locale, u.created_at, u.webauthn_handle FROM users u JOIN accounts a ON a.id = u.account_id WHERE a.deleted_at IS NULL ORDER BY u.id LIMIT %d`, maxListRows)
 	var rows []userRow
 	if err := s.db.SelectContext(ctx, &rows, q); err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)

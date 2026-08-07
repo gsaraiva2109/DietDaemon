@@ -17,9 +17,25 @@ type fakeStore struct {
 	users   []types.User
 	targets map[string]types.Macros
 	rollups map[string]types.Macros // key: userID|date
+
+	// deletedUserIDs mirrors the real ListUsers query's `a.deleted_at IS
+	// NULL` filter (#277): a pending-deletion account's row is excluded
+	// from the list tick() evaluates, not just checked-and-skipped.
+	deletedUserIDs map[string]bool
 }
 
-func (f *fakeStore) ListUsers(context.Context) ([]types.User, error) { return f.users, nil }
+func (f *fakeStore) ListUsers(context.Context) ([]types.User, error) {
+	if len(f.deletedUserIDs) == 0 {
+		return f.users, nil
+	}
+	var out []types.User
+	for _, u := range f.users {
+		if !f.deletedUserIDs[u.ID] {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
 func (f *fakeStore) GetTargets(_ context.Context, userID string) (types.DailyTargets, error) {
 	if m, ok := f.targets[userID]; ok {
 		return types.DailyTargets{UserID: userID, Targets: m}, nil
@@ -195,6 +211,38 @@ func TestFiresWhenBehindAndDedupes(t *testing.T) {
 	s.tick(context.Background(), evening)
 	if len(nt.sent) != 1 {
 		t.Errorf("dedupe failed: nudges sent = %d, want still 1", len(nt.sent))
+	}
+}
+
+func TestTickSkipsPendingDeletionAccounts(t *testing.T) {
+	st := &fakeStore{
+		users: []types.User{{ID: "active", Timezone: "UTC"}, {ID: "deleted", Timezone: "UTC"}},
+		targets: map[string]types.Macros{
+			"active":  {Protein: 180},
+			"deleted": {Protein: 180},
+		},
+		rollups: map[string]types.Macros{
+			"active|2026-06-17":  {Protein: 100}, // 100/180 = 0.55 < 0.8 -> fires
+			"deleted|2026-06-17": {Protein: 100},
+		},
+		deletedUserIDs: map[string]bool{"deleted": true},
+	}
+	nd, nt := newFakeNudges(), &fakeNotifier{}
+	s := newSched(st, nd, nt)
+
+	evening := time.Date(2026, 6, 17, 21, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), evening)
+
+	if len(nt.sent) != 1 {
+		t.Fatalf("nudges sent = %d, want 1 (only the active user)", len(nt.sent))
+	}
+	if nt.sent[0].UserID != "active" {
+		t.Errorf("nudged user = %q, want %q", nt.sent[0].UserID, "active")
+	}
+	for _, ev := range nt.sent {
+		if ev.UserID == "deleted" {
+			t.Errorf("pending-deletion account %q must not be nudged", ev.UserID)
+		}
 	}
 }
 

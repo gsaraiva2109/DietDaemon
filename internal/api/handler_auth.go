@@ -364,6 +364,11 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = h.authStore.RecordLoginAttempt(ctx, req.email, true)
 	ua := r.UserAgent()
 
+	if status, statusErr := h.authStore.AccountDeletionStatus(ctx, u.ID); statusErr == nil && status.DeletedAt != nil {
+		writePendingDeletionError(w, status)
+		return
+	}
+
 	// MFA step-up when TOTP is confirmed.
 	if h.tryLoginMFAStepUp(w, ctx, u, req.remember, ip, ua) {
 		return
@@ -972,6 +977,11 @@ func (h *Handler) verifyTOTPChallengeCode(w http.ResponseWriter, ctx context.Con
 // finishTOTPChallengeLogin creates a session for the now-verified user and
 // writes the session response.
 func (h *Handler) finishTOTPChallengeLogin(w http.ResponseWriter, ctx context.Context, chUserID string, remember bool, ip, ua string) {
+	if status, statusErr := h.authStore.AccountDeletionStatus(ctx, chUserID); statusErr == nil && status.DeletedAt != nil {
+		writePendingDeletionError(w, status)
+		return
+	}
+
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {

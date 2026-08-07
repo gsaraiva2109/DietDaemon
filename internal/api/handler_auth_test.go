@@ -256,6 +256,34 @@ func TestHandleLoginSuccessAndWrongPassword(t *testing.T) {
 	}
 }
 
+func TestHandleLoginRejectsPendingDeletionAccount(t *testing.T) {
+	store := newAuthHandlerTestStore()
+	password := "correct horse battery staple"
+	phc, err := auth.Hash(password)
+	if err != nil {
+		t.Fatalf("Hash: %v", err)
+	}
+	user := types.User{ID: "deleted-user", AccountID: "acct-1", Email: "deleted@example.com", Status: "active", CreatedAt: time.Now().UTC()}
+	store.users[user.ID] = user
+	store.userByEmail[user.Email] = user
+	store.phcHash[user.ID] = phc
+	if err := store.RequestAccountDeletion(context.Background(), user.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	h, _ := newAuthHandlerForTest(store, testAuthConfig())
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/login", map[string]string{"email": user.Email, "password": password}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("login status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if body := decodeJSON[map[string]any](t, rec); body["error"] != "pending_deletion" {
+		t.Errorf("error body = %#v, want pending_deletion", body)
+	}
+	if len(store.sessions) != 0 {
+		t.Errorf("created sessions = %d, want 0: pending-deletion account must not get a new session at login", len(store.sessions))
+	}
+}
+
 func TestChangePasswordRevocationFailureLeavesPasswordUnchanged(t *testing.T) {
 	store := newAuthHandlerTestStore()
 	oldHash, err := auth.Hash("correct horse battery staple")

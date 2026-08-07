@@ -48,3 +48,29 @@ func TestListUsersWithCap(t *testing.T) {
 		}
 	}
 }
+
+// TestListUsersExcludesPendingDeletionAccounts pins down #277's store-level
+// fix: a user whose account has been soft-deleted (RequestAccountDeletion)
+// must not appear in ListUsers, since the scheduler and backup both drive
+// off this query with no filter of their own.
+func TestListUsersExcludesPendingDeletionAccounts(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	active := types.User{ID: "ld-active", Email: "active@example.com", DisplayName: "Active", Timezone: "UTC", CreatedAt: time.Now().UTC()}
+	deleted := types.User{ID: "ld-deleted", Email: "deleted@example.com", DisplayName: "Deleted", Timezone: "UTC", CreatedAt: time.Now().UTC()}
+	mustUser(t, s, active)
+	mustUser(t, s, deleted)
+
+	if err := s.RequestAccountDeletion(ctx(), deleted.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+
+	users, err := s.ListUsers(ctx())
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || users[0].ID != active.ID {
+		t.Fatalf("ListUsers = %+v, want only %q", users, active.ID)
+	}
+}
