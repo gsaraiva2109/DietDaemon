@@ -194,6 +194,7 @@ jobs:
       - name: Run Trivy filesystem & secret scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: 'v0.73.0'
           scan-type: 'fs'
           scanners: 'secret'
           format: 'sarif'
