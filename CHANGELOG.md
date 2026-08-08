@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-alpha.7](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.6...v0.2.0-alpha.7) (2026-08-08)
+
+
+### Fixes
+
+* **ci:** set missing sha output in release Docker metadata step ([#286](https://github.com/gsaraiva2109/DietDaemon/issues/286)) ([31c4311](https://github.com/gsaraiva2109/DietDaemon/commit/31c4311697185e521555e5a49c3bcb7a21207cde))
+
 ## [0.2.0-alpha.6](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.5...v0.2.0-alpha.6) (2026-08-08)
 
 
