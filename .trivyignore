@@ -1,0 +1,6 @@
+# GO-2026-5932: golang.org/x/crypto/openpgp flagged as unmaintained/unsafe.
+# We only use golang.org/x/crypto/argon2 (see internal/auth); openpgp is not
+# imported anywhere (`go list -deps ./...` confirms). Trivy's gobinary scanner
+# flags it off the module version alone and ignores the severity filter for
+# exit-code purposes even though the finding is unrated (UNKNOWN).
+GO-2026-5932
