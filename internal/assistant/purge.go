@@ -126,34 +126,16 @@ func (r *PurgeRunner) Run(ctx context.Context) {
 		select {
 		case <-t.C:
 			now := time.Now()
-			n, err := r.store.PurgeDeletedChatSessions(ctx, now.AddDate(0, 0, -30))
-			if err != nil {
-				slog.Error("purge deleted chat sessions", "err", err)
+			// A chat-session purge failure aborts the rest of this tick
+			// (retried on the next tick); the other sweeps below are
+			// independent and each log-and-continue on their own failure.
+			if err := r.purgeAndLog(ctx, "deleted chat sessions", now.AddDate(0, 0, -30), r.store.PurgeDeletedChatSessions); err != nil {
 				continue
 			}
-			if n > 0 {
-				slog.Info("purged deleted chat sessions", "count", n)
-			}
-			if n, err := r.store.PurgeLoginAttempts(ctx, now.Add(-loginAttemptRetention)); err != nil {
-				slog.Error("purge login attempts", "err", err)
-			} else if n > 0 {
-				slog.Info("purged login attempts", "count", n)
-			}
-			if n, err := r.store.PurgeAuthAuditEvents(ctx, now.Add(-authAuditRetention)); err != nil {
-				slog.Error("purge auth audit events", "err", err)
-			} else if n > 0 {
-				slog.Info("purged auth audit events", "count", n)
-			}
-			if n, err := r.store.PurgeExpiredAuthChallenges(ctx, now); err != nil {
-				slog.Error("purge expired auth challenges", "err", err)
-			} else if n > 0 {
-				slog.Info("purged expired auth challenges", "count", n)
-			}
-			if n, err := r.store.PurgeExpiredOIDCStates(ctx, now); err != nil {
-				slog.Error("purge expired oidc states", "err", err)
-			} else if n > 0 {
-				slog.Info("purged expired oidc states", "count", n)
-			}
+			_ = r.purgeAndLog(ctx, "login attempts", now.Add(-loginAttemptRetention), r.store.PurgeLoginAttempts)
+			_ = r.purgeAndLog(ctx, "auth audit events", now.Add(-authAuditRetention), r.store.PurgeAuthAuditEvents)
+			_ = r.purgeAndLog(ctx, "expired auth challenges", now, r.store.PurgeExpiredAuthChallenges)
+			_ = r.purgeAndLog(ctx, "expired oidc states", now, r.store.PurgeExpiredOIDCStates)
 
 			r.purgeAccountPhotos(ctx, now)
 			r.purgeAccounts(ctx, now)
@@ -162,6 +144,20 @@ func (r *PurgeRunner) Run(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// purgeAndLog runs a purge sweep, logging the outcome, and returns fn's
+// error so callers that need to short-circuit the rest of a tick can.
+func (r *PurgeRunner) purgeAndLog(ctx context.Context, label string, cutoff time.Time, fn func(context.Context, time.Time) (int, error)) error {
+	n, err := fn(ctx, cutoff)
+	if err != nil {
+		slog.Error("purge "+label, "err", err)
+		return err
+	}
+	if n > 0 {
+		slog.Info("purged "+label, "count", n)
+	}
+	return nil
 }
 
 // purgeAccountPhotos runs the day-30 photo-purge tier. One account's

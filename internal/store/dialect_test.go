@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -143,26 +144,24 @@ func TestSearchQueryMalformedInput(t *testing.T) {
 	}
 
 	for _, raw := range malformed {
-		sq := sqlite.SearchQuery(raw)
-		for _, d := range dangerous {
-			// The generated "*" prefix suffixes are expected; only flag
-			// characters that leaked in from the raw input itself.
-			if d == "*" {
-				continue
-			}
-			if strings.Contains(sq, d) {
-				t.Errorf("SQLite SearchQuery(%q) = %q, contains dangerous char %q", raw, sq, d)
-			}
-		}
+		// The generated "*" prefix suffix is expected for both dialects, and
+		// postgres additionally expects a ":*" suffix; only flag characters
+		// that leaked in from the raw input itself.
+		assertNoDangerousChars(t, "SQLite", raw, sqlite.SearchQuery(raw), dangerous, "*")
+		assertNoDangerousChars(t, "Postgres", raw, pg.SearchQuery(raw), dangerous, ":", "*")
+	}
+}
 
-		pq := pg.SearchQuery(raw)
-		for _, d := range dangerous {
-			if d == ":" || d == "*" { // ":*" suffix is expected postgres tsquery syntax
-				continue
-			}
-			if strings.Contains(pq, d) {
-				t.Errorf("Postgres SearchQuery(%q) = %q, contains dangerous char %q", raw, pq, d)
-			}
+// assertNoDangerousChars fails t if got contains any of dangerous, except
+// characters listed in allowed (expected dialect syntax like "*" or ":*").
+func assertNoDangerousChars(t *testing.T, dialect, raw, got string, dangerous []string, allowed ...string) {
+	t.Helper()
+	for _, d := range dangerous {
+		if slices.Contains(allowed, d) {
+			continue
+		}
+		if strings.Contains(got, d) {
+			t.Errorf("%s SearchQuery(%q) = %q, contains dangerous char %q", dialect, raw, got, d)
 		}
 	}
 }
