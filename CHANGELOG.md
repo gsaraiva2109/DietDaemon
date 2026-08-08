@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-alpha.8](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.7...v0.2.0-alpha.8) (2026-08-08)
+
+
+### Fixes
+
+* **ci:** pin Trivy to v0.73.0 to fix false-positive severity gate ([#288](https://github.com/gsaraiva2109/DietDaemon/issues/288)) ([2b1dc2b](https://github.com/gsaraiva2109/DietDaemon/commit/2b1dc2b1c1a081f2453ae658e59e2e742d294e9d))
+
 ## [0.2.0-alpha.7](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.6...v0.2.0-alpha.7) (2026-08-08)
 
 
