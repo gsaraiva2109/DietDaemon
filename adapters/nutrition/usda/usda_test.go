@@ -601,3 +601,13 @@ func TestFetchBulkFileEmitError(t *testing.T) {
 		t.Errorf("emitted %d matches, want 1 (must abort right after emit errors)", len(got))
 	}
 }
+
+// TestNewSetsClientTimeout pins the #276 item 6 fix: New's http.Client must
+// have a floor timeout, since callers never wrap ctx with a deadline for
+// this adapter's requests.
+func TestNewSetsClientTimeout(t *testing.T) {
+	s := New(testAPIKey)
+	if s.client.Timeout != defaultClientTimeout {
+		t.Errorf("client.Timeout = %v, want %v", s.client.Timeout, defaultClientTimeout)
+	}
+}

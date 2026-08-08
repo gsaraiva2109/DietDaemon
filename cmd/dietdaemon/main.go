@@ -267,14 +267,14 @@ func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.
 	go sched.Run(ctx)
 	slog.Info("scheduler running", "interval", cfg.NudgeInterval.String())
 
-	backupRunner, err := newBackupRunner(ctx, cfg, st)
+	backupRunner, localDst, s3Dst, err := newBackupRunner(ctx, cfg, st)
 	if err != nil {
 		return nil, err
 	}
 	go backupRunner.Run(ctx)
 	slog.Info("backup runner running", "check_interval", cfg.BackupCheckInterval.String())
 
-	go assistant.NewPurgeRunner(st, 24*time.Hour).WithMailer(m).Run(ctx)
+	go assistant.NewPurgeRunner(st, 24*time.Hour).WithMailer(m).WithBackupDestinations(localDst, s3Dst).Run(ctx)
 	slog.Info("chat session purge runner running", "retention", "30d")
 	if err := startFoodImportRunner(ctx, cfg, st, runtime.embedder); err != nil {
 		return nil, err
@@ -282,12 +282,12 @@ func startBackgroundServices(ctx context.Context, cfg *config.Config, st *store.
 	return backupRunner, nil
 }
 
-func newBackupRunner(ctx context.Context, cfg *config.Config, st *store.Store) (*backup.Runner, error) {
+func newBackupRunner(ctx context.Context, cfg *config.Config, st *store.Store) (*backup.Runner, backup.Destination, backup.Destination, error) {
 	var localDst backup.Destination
 	if cfg.BackupLocalDir != "" {
 		ld, err := localdisk.New(cfg.BackupLocalDir)
 		if err != nil {
-			return nil, fmt.Errorf("backup: local destination: %w", err)
+			return nil, nil, nil, fmt.Errorf("backup: local destination: %w", err)
 		}
 		localDst = ld
 	}
@@ -297,7 +297,7 @@ func newBackupRunner(ctx context.Context, cfg *config.Config, st *store.Store) (
 	} else {
 		s3Dst = sd
 	}
-	return backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval), nil
+	return backup.New(st, localDst, s3Dst, cfg.BackupCheckInterval), localDst, s3Dst, nil
 }
 
 func startFoodImportRunner(ctx context.Context, cfg *config.Config, st *store.Store, embedder resolver.Embedder) error {

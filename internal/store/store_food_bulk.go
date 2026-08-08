@@ -110,6 +110,15 @@ func (s *Store) replaceSystemServingUnitsTx(ctx context.Context, tx *sqlx.Tx, fo
 // Also backfills serving units (#134/#134-B3) for any matched row that has
 // them — the same repair pass USDA foodPortions rides in on to reach catalog
 // entries imported before that data was fetched.
+//
+// A serving-unit-fix failure for one food does not abort the rest of the
+// batch: the macro fix for every other food is independent and already
+// committed per-row, so skipping the remaining input on one bad food would
+// silently strand it as "unfixed" with no indication of where it stopped.
+// Instead we keep going and return an aggregate error (errors.Join) —
+// non-nil only when at least one food failed — alongside the count of foods
+// actually fixed, matching the existing (int, error) contract both callers
+// (cmd/dietdaemon/admin_import.go, cmd/import-foods/main.go) already use.
 func (s *Store) RepairFoodMacros(ctx context.Context, foods []types.FoodMatch) (int, error) {
 	const q = `
 		UPDATE foods SET kcal_100g = ?, protein_100g = ?, carbs_100g = ?, fat_100g = ?, fiber_100g = ?, updated_at = ?
@@ -118,6 +127,7 @@ func (s *Store) RepairFoodMacros(ctx context.Context, foods []types.FoodMatch) (
 	`
 	now := utcNow()
 	fixed := 0
+	var errs []error
 	for _, food := range foods {
 		if !plausibleMacros(food.Per100g) {
 			log.Printf("store: skip repair of food %q (source=%s): implausible macros %+v", food.FoodID, food.Source, food.Per100g)
@@ -131,7 +141,8 @@ func (s *Store) RepairFoodMacros(ctx context.Context, foods []types.FoodMatch) (
 			continue // no catalog row matched (source, name) — nothing to repair
 		}
 		if err != nil {
-			return fixed, fmt.Errorf("store: repair food macros %q: %w", food.FoodID, err)
+			errs = append(errs, fmt.Errorf("store: repair food macros %q: %w", food.FoodID, err))
+			continue
 		}
 		fixed++
 		if len(food.ServingUnits) == 0 {
@@ -139,15 +150,18 @@ func (s *Store) RepairFoodMacros(ctx context.Context, foods []types.FoodMatch) (
 		}
 		tx, err := s.db.BeginTxx(ctx, nil)
 		if err != nil {
-			return fixed, fmt.Errorf("store: begin repair serving units tx: %w", err)
+			errs = append(errs, fmt.Errorf("store: begin repair serving units tx %q: %w", matchedID, err))
+			continue
 		}
 		if err := s.replaceSystemServingUnitsTx(ctx, tx, matchedID, food.ServingUnits); err != nil {
 			_ = tx.Rollback()
-			return fixed, fmt.Errorf("store: repair serving units %q: %w", matchedID, err)
+			errs = append(errs, fmt.Errorf("store: repair serving units %q: %w", matchedID, err))
+			continue
 		}
 		if err := tx.Commit(); err != nil {
-			return fixed, fmt.Errorf("store: commit repair serving units %q: %w", matchedID, err)
+			errs = append(errs, fmt.Errorf("store: commit repair serving units %q: %w", matchedID, err))
+			continue
 		}
 	}
-	return fixed, nil
+	return fixed, errors.Join(errs...)
 }

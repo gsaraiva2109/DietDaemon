@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,9 +195,10 @@ func TestRepairFoodMacros(t *testing.T) {
 	// SQL since BulkUpsertFoods now rightly refuses to write such a row.
 	if _, err := s.db.Exec(
 		`INSERT INTO foods (food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
-		 VALUES ('558', 'Amendoim', 'taco', 2, 606, 2535, 23, 54, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		 VALUES ('558', 'Amendoim', 'taco', 2, 606, 2535, 23, 54, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+		        ('559', 'Feijao', 'taco', 1, 1, 1, 1, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 	); err != nil {
-		t.Fatalf("seed legacy row: %v", err)
+		t.Fatalf("seed legacy rows: %v", err)
 	}
 
 	fresh := []types.FoodMatch{
@@ -205,13 +208,32 @@ func TestRepairFoodMacros(t *testing.T) {
 			ServingUnits: []types.FoodServingUnit{{Label: "1 punhado", Grams: 30}},
 		},
 		{FoodID: "no-match", Name: "Nothing Stored", Source: "taco", Per100g: types.Macros{Calories: 1}},
+		// Matches but carries no serving units — covers the "nothing to
+		// backfill" path distinct from the "1 punhado" case above.
+		{
+			FoodID: "TACO559", Name: "Feijao", Source: "taco",
+			Per100g: types.Macros{Calories: 333, Protein: 21, Carbs: 60, Fat: 1.2, Fiber: 8.7},
+		},
+		// Implausible macros: skipped before any DB call, never counted.
+		{
+			FoodID: "TACOBAD", Name: "Corrupted", Source: "taco",
+			Per100g: types.Macros{Calories: 2, Protein: 606, Carbs: 2535, Fat: 23, Fiber: 54},
+		},
 	}
 	fixed, err := s.RepairFoodMacros(ctx(), fresh)
 	if err != nil {
 		t.Fatalf("RepairFoodMacros: %v", err)
 	}
-	if fixed != 1 {
-		t.Fatalf("expected 1 row fixed, got %d", fixed)
+	if fixed != 2 {
+		t.Fatalf("expected 2 rows fixed, got %d", fixed)
+	}
+
+	got559, err := s.GetFood(ctx(), "559")
+	if err != nil {
+		t.Fatalf("GetFood 559: %v", err)
+	}
+	if got559.Per100g.Calories != 333 {
+		t.Fatalf("unexpected repaired macros for 559: %+v", got559.Per100g)
 	}
 
 	got, err := s.GetFood(ctx(), "558")
@@ -235,6 +257,115 @@ func TestRepairFoodMacros(t *testing.T) {
 	}
 	if len(detail.ServingUnits) != 1 || detail.ServingUnits[0].Label != "1 punhado" || detail.ServingUnits[0].Grams != 30 {
 		t.Fatalf("ServingUnits = %+v, want [{1 punhado 30}]", detail.ServingUnits)
+	}
+}
+
+// TestRepairFoodMacrosContinuesPastServingUnitFailure pins down the fix for
+// the "partial-commit-then-abandon" bug: a serving-unit-fix failure partway
+// through a batch must not silently abandon every food after it. food-a's
+// serving units are deliberately invalid (grams <= 0 violates the CHECK
+// constraint), which fails only the serving-units transaction for food-a;
+// food-a's macro fix (a separate, already-committed statement) must still
+// stick, and food-b — later in the same batch — must still be processed in
+// full, with an aggregate error surfacing the food-a failure.
+func TestRepairFoodMacrosContinuesPastServingUnitFailure(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	seed := func(foodID, name string) {
+		t.Helper()
+		if _, err := s.db.Exec(
+			`INSERT INTO foods (food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
+			 VALUES (?, ?, 'taco', 1, 1, 1, 1, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+			foodID, name,
+		); err != nil {
+			t.Fatalf("seed legacy row %s: %v", foodID, err)
+		}
+	}
+	seed("legacy-a", "FoodA")
+	seed("legacy-b", "FoodB")
+
+	fresh := []types.FoodMatch{
+		{
+			FoodID: "TACOA", Name: "FoodA", Source: "taco",
+			Per100g:      types.Macros{Calories: 200, Protein: 10, Carbs: 20, Fat: 5, Fiber: 2},
+			ServingUnits: []types.FoodServingUnit{{Label: "invalid", Grams: 0}}, // violates CHECK(grams > 0)
+		},
+		{
+			FoodID: "TACOB", Name: "FoodB", Source: "taco",
+			Per100g:      types.Macros{Calories: 300, Protein: 15, Carbs: 30, Fat: 8, Fiber: 3},
+			ServingUnits: []types.FoodServingUnit{{Label: "valid", Grams: 50}},
+		},
+	}
+
+	fixed, err := s.RepairFoodMacros(ctx(), fresh)
+	if err == nil {
+		t.Fatal("expected an aggregate error from food-a's serving-unit failure")
+	}
+	if !strings.Contains(err.Error(), "legacy-a") {
+		t.Errorf("error %q should identify the food that failed (legacy-a)", err.Error())
+	}
+	if fixed != 2 {
+		t.Fatalf("expected both macro fixes to land (fixed=2), got %d", fixed)
+	}
+
+	// food-a's macro fix landed despite its serving-unit failure — the two
+	// are independent operations.
+	gotA, err := s.GetFood(ctx(), "legacy-a")
+	if err != nil {
+		t.Fatalf("GetFood legacy-a: %v", err)
+	}
+	if gotA.Per100g.Calories != 200 {
+		t.Fatalf("legacy-a macros not repaired: %+v", gotA.Per100g)
+	}
+
+	// food-b, which comes after the failing food-a in the batch, was still
+	// fully processed: macros repaired and its serving unit written.
+	gotB, err := s.GetFood(ctx(), "legacy-b")
+	if err != nil {
+		t.Fatalf("GetFood legacy-b: %v", err)
+	}
+	if gotB.Per100g.Calories != 300 {
+		t.Fatalf("legacy-b macros not repaired (batch abandoned after food-a's failure): %+v", gotB.Per100g)
+	}
+	var unitCount int
+	if err := s.db.Get(&unitCount, "SELECT COUNT(*) FROM food_serving_units WHERE food_id = 'legacy-b'"); err != nil {
+		t.Fatalf("count legacy-b serving units: %v", err)
+	}
+	if unitCount != 1 {
+		t.Fatalf("legacy-b serving units = %d, want 1 (batch abandoned after food-a's failure)", unitCount)
+	}
+}
+
+// TestRepairFoodMacrosAggregatesQueryErrors covers the generic (non-
+// sql.ErrNoRows) macro-update-query error branch: it must also be collected
+// into the aggregate error and skipped over, rather than treated specially.
+func TestRepairFoodMacrosAggregatesQueryErrors(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	if _, err := s.db.Exec(
+		`INSERT INTO foods (food_id, name, source, kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, created_at, updated_at)
+		 VALUES ('legacy-c', 'FoodC', 'taco', 1, 1, 1, 1, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	cctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled: the macro-update query fails with a non-ErrNoRows error
+
+	fresh := []types.FoodMatch{
+		{FoodID: "TACOC", Name: "FoodC", Source: "taco", Per100g: types.Macros{Calories: 400, Protein: 20, Carbs: 40, Fat: 10, Fiber: 4}},
+	}
+	fixed, err := s.RepairFoodMacros(cctx, fresh)
+	if err == nil {
+		t.Fatal("expected an aggregate error from the canceled-context query failure")
+	}
+	if !strings.Contains(err.Error(), "TACOC") {
+		t.Errorf("error %q should identify the food whose query failed (TACOC)", err.Error())
+	}
+	if fixed != 0 {
+		t.Fatalf("fixed = %d, want 0 (the query never completed)", fixed)
 	}
 }
 

@@ -16,8 +16,9 @@ import (
 // within 90-110% of their calorie target, looking back 180 days).
 // GET /api/v1/streak
 func (h *Handler) handleStreak(w http.ResponseWriter, r *http.Request, userID string) {
-	end := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	start := time.Now().AddDate(0, 0, -180).Format("2006-01-02")
+	loc := h.userLoc(r.Context(), userID)
+	end := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	start := time.Now().In(loc).AddDate(0, 0, -180).Format("2006-01-02")
 
 	rollups, err := h.store.GetRollups(r.Context(), userID, start, end)
 	if err != nil {

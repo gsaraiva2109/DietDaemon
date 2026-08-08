@@ -40,6 +40,51 @@ func TestPurgeAuthRecords(t *testing.T) {
 	}
 }
 
+// TestPurgeExpiredAuthChallengesAndOIDCStates pins the sweep for abandoned
+// MFA/WebAuthn challenges and OIDC states: rows past their own expires_at
+// are purged, rows not yet expired are left alone.
+func TestPurgeExpiredAuthChallengesAndOIDCStates(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "purge-user", CreatedAt: time.Now().UTC()})
+	now := time.Now().UTC()
+	expired := now.Add(-time.Hour).Format(time.RFC3339)
+	future := now.Add(time.Hour).Format(time.RFC3339)
+
+	if err := s.CreateMFAChallenge(ctx(), "mfa-expired", "purge-user", false, expired); err != nil {
+		t.Fatalf("CreateMFAChallenge expired: %v", err)
+	}
+	if err := s.CreateMFAChallenge(ctx(), "mfa-live", "purge-user", false, future); err != nil {
+		t.Fatalf("CreateMFAChallenge live: %v", err)
+	}
+	if n, err := s.PurgeExpiredAuthChallenges(ctx(), now); err != nil || n != 1 {
+		t.Fatalf("PurgeExpiredAuthChallenges = %d, %v; want 1, nil", n, err)
+	}
+	if _, _, _, err := s.GetMFAChallenge(ctx(), "mfa-expired"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("expected expired challenge purged, got %v", err)
+	}
+	if _, _, _, err := s.GetMFAChallenge(ctx(), "mfa-live"); err != nil {
+		t.Fatalf("expected live challenge to survive purge: %v", err)
+	}
+
+	if err := s.CreateOIDCState(ctx(), "oidc-expired", "nonce", "verifier", "", "", expired); err != nil {
+		t.Fatalf("CreateOIDCState expired: %v", err)
+	}
+	if err := s.CreateOIDCState(ctx(), "oidc-live", "nonce", "verifier", "", "", future); err != nil {
+		t.Fatalf("CreateOIDCState live: %v", err)
+	}
+	if n, err := s.PurgeExpiredOIDCStates(ctx(), now); err != nil || n != 1 {
+		t.Fatalf("PurgeExpiredOIDCStates = %d, %v; want 1, nil", n, err)
+	}
+	if _, _, _, _, err := s.ConsumeOIDCState(ctx(), "oidc-expired"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("expected expired oidc state purged, got %v", err)
+	}
+	if _, _, _, _, err := s.ConsumeOIDCState(ctx(), "oidc-live"); err != nil {
+		t.Fatalf("expected live oidc state to survive purge: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OIDC state create / consume — single-use + expiry
 // ---------------------------------------------------------------------------

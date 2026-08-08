@@ -159,6 +159,12 @@ type Scheduler struct {
 	defaultLoc        *time.Location
 	interval          time.Duration
 
+	// mealHoursCache memoizes learnedHoursFor's result per user
+	// (userID -> learnedHoursEntry), invalidated once the user's local date
+	// rolls over. The Scheduler is long-lived across ticks, so this is where
+	// tick-to-tick cache state naturally lives.
+	mealHoursCache sync.Map
+
 	now func() time.Time
 	log *slog.Logger
 }
@@ -493,17 +499,49 @@ func (s *Scheduler) evalSmartMealRules(ctx context.Context, now time.Time, user 
 		return
 	}
 	loc := s.locFor(user)
-	times, err := s.mealHistory.RecentMealTimes(ctx, user.ID, now.AddDate(0, 0, -28))
+	hours, times, err := s.learnedHoursFor(ctx, user, now, loc)
 	if err != nil {
 		s.log.Error("scheduler: recent meal times", "user", user.ID, "err", err)
 		return
 	}
-	hours := learnedMealHours(times, loc)
 	sort.Ints(hours) // ranking selects slots; chronological order finds each predecessor.
 	sched := learnedSchedule{loc: loc, hours: hours, times: times}
 	for slot, hour := range hours {
 		s.evalSmartMealSlot(ctx, now, user, rule, sched, slot, hour)
 	}
+}
+
+// learnedHoursCacheEntry is one user's memoized learnedMealHours result.
+type learnedHoursCacheEntry struct {
+	date  string // local date (dateLayout) this snapshot was computed for
+	hours []int
+	times []time.Time
+}
+
+// learnedHoursFor returns user's learned meal-hour pattern and the backing
+// 28-day meal history, refetching and rebuilding at most once per local
+// calendar day instead of on every 5-minute tick — the pattern only
+// meaningfully changes day to day.
+//
+// ponytail: invalidation is date-change only, not on-write, so a meal
+// logged after today's snapshot was taken won't suppress a later reminder
+// (evalSmartMealSlot's ateSincePreviousSlot check) until tomorrow's refresh
+// — worst case one redundant "you already ate" reminder, not a data-loss
+// bug. Upgrade to invalidate-on-meal-write if that proves annoying.
+func (s *Scheduler) learnedHoursFor(ctx context.Context, user types.User, now time.Time, loc *time.Location) ([]int, []time.Time, error) {
+	date := now.In(loc).Format(dateLayout)
+	if v, ok := s.mealHoursCache.Load(user.ID); ok {
+		if c := v.(learnedHoursCacheEntry); c.date == date {
+			return c.hours, c.times, nil
+		}
+	}
+	times, err := s.mealHistory.RecentMealTimes(ctx, user.ID, now.AddDate(0, 0, -28))
+	if err != nil {
+		return nil, nil, err
+	}
+	hours := learnedMealHours(times, loc)
+	s.mealHoursCache.Store(user.ID, learnedHoursCacheEntry{date: date, hours: hours, times: times})
+	return hours, times, nil
 }
 
 // learnedSchedule bundles a user's learned meal-hour schedule: the timezone

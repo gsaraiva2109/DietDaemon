@@ -40,10 +40,15 @@ type Source struct {
 	bulkFilePath string
 }
 
+// defaultClientTimeout floors every request this Source makes. Callers never
+// wrap ctx with a deadline for these calls, so without this the client could
+// hang indefinitely on a stalled connection.
+const defaultClientTimeout = 5 * time.Second
+
 // New returns a Source pointed at the public OFF API.
 func New() *Source {
 	return &Source{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: defaultClientTimeout},
 		baseURL: DefaultBaseURL,
 	}
 }

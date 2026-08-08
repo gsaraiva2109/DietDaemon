@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/backup"
 	"github.com/gsaraiva2109/dietdaemon/internal/mailer"
 )
 
@@ -16,6 +18,14 @@ type PurgeStore interface {
 	PurgeDeletedChatSessions(ctx context.Context, olderThan time.Time) (int, error)
 	PurgeLoginAttempts(ctx context.Context, olderThan time.Time) (int, error)
 	PurgeAuthAuditEvents(ctx context.Context, olderThan time.Time) (int, error)
+
+	// PurgeExpiredAuthChallenges/PurgeExpiredOIDCStates sweep auth_challenges
+	// (MFA + WebAuthn ceremony) and oidc_states rows past their own
+	// expires_at. Both tables are otherwise only cleaned up inline when a
+	// challenge/state is successfully consumed, so abandoned login/OAuth
+	// attempts would otherwise grow the tables unboundedly.
+	PurgeExpiredAuthChallenges(ctx context.Context, now time.Time) (int, error)
+	PurgeExpiredOIDCStates(ctx context.Context, now time.Time) (int, error)
 
 	// ListAccountsPendingPhotoPurge Tiered account-deletion retention (progress-photo purge at day 30,
 	// full account purge at day 90, plus reminder emails ~5 days before
@@ -27,6 +37,13 @@ type PurgeStore interface {
 	HasAuditEvent(ctx context.Context, accountID, event string) (bool, error)
 	AccountEmails(ctx context.Context, accountID string) ([]string, error)
 	WriteAuditEvent(ctx context.Context, ev types.AuditEvent) error
+
+	// ListAccountUserIDs and GetBackupConfig let purgeAccounts delete a
+	// purged account's exported backup files (CSVs + photo blobs) before the
+	// DB cascade removes backup_config and the per-user destination
+	// settings (local_subdir / S3 prefix) it holds.
+	ListAccountUserIDs(ctx context.Context, accountID string) ([]string, error)
+	GetBackupConfig(ctx context.Context, userID string) (types.BackupConfig, error)
 }
 
 const (
@@ -66,6 +83,14 @@ type PurgeRunner struct {
 	store    PurgeStore
 	interval time.Duration
 	mailer   mailer.Mailer
+
+	// localDst/s3Dst mirror backup.Runner's destinations, so a purged
+	// account's exported backup files can be deleted alongside the DB
+	// cascade. nil (the default, until WithBackupDestinations is called)
+	// disables that cleanup entirely -- purgeAccounts still hard-deletes the
+	// DB rows either way.
+	localDst backup.Destination
+	s3Dst    backup.Destination
 }
 
 // NewPurgeRunner creates a PurgeRunner with the given store and tick interval.
@@ -81,6 +106,17 @@ func (r *PurgeRunner) WithMailer(m mailer.Mailer) *PurgeRunner {
 	return r
 }
 
+// WithBackupDestinations enables deleting a purged account's exported backup
+// files (CSVs + photo blobs) as part of the day-90 full-purge tier. Either
+// argument may be nil if that destination isn't configured/available, same
+// as backup.New. Without this call, purgeAccounts still hard-deletes the DB
+// rows but leaves any backup files behind.
+func (r *PurgeRunner) WithBackupDestinations(localDst, s3Dst backup.Destination) *PurgeRunner {
+	r.localDst = localDst
+	r.s3Dst = s3Dst
+	return r
+}
+
 // Run ticks until ctx is cancelled, purging expired soft-deleted sessions
 // and running the tiered account-deletion purges and reminders.
 func (r *PurgeRunner) Run(ctx context.Context) {
@@ -90,24 +126,16 @@ func (r *PurgeRunner) Run(ctx context.Context) {
 		select {
 		case <-t.C:
 			now := time.Now()
-			n, err := r.store.PurgeDeletedChatSessions(ctx, now.AddDate(0, 0, -30))
-			if err != nil {
-				slog.Error("purge deleted chat sessions", "err", err)
+			// A chat-session purge failure aborts the rest of this tick
+			// (retried on the next tick); the other sweeps below are
+			// independent and each log-and-continue on their own failure.
+			if err := r.purgeAndLog(ctx, "deleted chat sessions", now.AddDate(0, 0, -30), r.store.PurgeDeletedChatSessions); err != nil {
 				continue
 			}
-			if n > 0 {
-				slog.Info("purged deleted chat sessions", "count", n)
-			}
-			if n, err := r.store.PurgeLoginAttempts(ctx, now.Add(-loginAttemptRetention)); err != nil {
-				slog.Error("purge login attempts", "err", err)
-			} else if n > 0 {
-				slog.Info("purged login attempts", "count", n)
-			}
-			if n, err := r.store.PurgeAuthAuditEvents(ctx, now.Add(-authAuditRetention)); err != nil {
-				slog.Error("purge auth audit events", "err", err)
-			} else if n > 0 {
-				slog.Info("purged auth audit events", "count", n)
-			}
+			_ = r.purgeAndLog(ctx, "login attempts", now.Add(-loginAttemptRetention), r.store.PurgeLoginAttempts)
+			_ = r.purgeAndLog(ctx, "auth audit events", now.Add(-authAuditRetention), r.store.PurgeAuthAuditEvents)
+			_ = r.purgeAndLog(ctx, "expired auth challenges", now, r.store.PurgeExpiredAuthChallenges)
+			_ = r.purgeAndLog(ctx, "expired oidc states", now, r.store.PurgeExpiredOIDCStates)
 
 			r.purgeAccountPhotos(ctx, now)
 			r.purgeAccounts(ctx, now)
@@ -116,6 +144,20 @@ func (r *PurgeRunner) Run(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// purgeAndLog runs a purge sweep, logging the outcome, and returns fn's
+// error so callers that need to short-circuit the rest of a tick can.
+func (r *PurgeRunner) purgeAndLog(ctx context.Context, label string, cutoff time.Time, fn func(context.Context, time.Time) (int, error)) error {
+	n, err := fn(ctx, cutoff)
+	if err != nil {
+		slog.Error("purge "+label, "err", err)
+		return err
+	}
+	if n > 0 {
+		slog.Info("purged "+label, "count", n)
+	}
+	return nil
 }
 
 // purgeAccountPhotos runs the day-30 photo-purge tier. One account's
@@ -136,7 +178,10 @@ func (r *PurgeRunner) purgeAccountPhotos(ctx context.Context, now time.Time) {
 }
 
 // purgeAccounts runs the day-90 full-purge tier. One account's failure is
-// logged and skipped rather than aborting the rest.
+// logged and skipped rather than aborting the rest. Backup files are deleted
+// before the DB cascade: PurgeAccount removes backup_config (ON DELETE
+// CASCADE from users/accounts) along with it, and that row is the only
+// record of which local_subdir/S3 prefix a user's exported files live under.
 func (r *PurgeRunner) purgeAccounts(ctx context.Context, now time.Time) {
 	ids, err := r.store.ListAccountsPastDeletion(ctx, now.Add(-accountPurgeRetention))
 	if err != nil {
@@ -144,12 +189,64 @@ func (r *PurgeRunner) purgeAccounts(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, id := range ids {
+		r.purgeAccountBackups(ctx, id)
 		if err := r.store.PurgeAccount(ctx, id); err != nil {
 			slog.Error("purge account", "account_id", id, "err", err)
 			continue
 		}
 		slog.Info("purged account", "account_id", id)
 	}
+}
+
+// purgeAccountBackups deletes every backup file (CSVs + photo blobs)
+// previously written for accountID's users. Best-effort and non-fatal: a
+// lookup or delete failure is logged and never blocks the DB purge that
+// follows -- a stray backup file outliving an account by a bit is a much
+// smaller problem than an account purge that silently never runs. No-op if
+// WithBackupDestinations was never called.
+func (r *PurgeRunner) purgeAccountBackups(ctx context.Context, accountID string) {
+	if r.localDst == nil && r.s3Dst == nil {
+		return
+	}
+	userIDs, err := r.store.ListAccountUserIDs(ctx, accountID)
+	if err != nil {
+		slog.Error("purge account backups: list users", "account_id", accountID, "err", err)
+		return
+	}
+	for _, uid := range userIDs {
+		r.purgeUserBackups(ctx, uid)
+	}
+}
+
+// purgeUserBackups deletes one user's backup files from whichever
+// destination their backup_config selects. A user who never configured
+// backups (types.ErrNotFound) has nothing to delete.
+func (r *PurgeRunner) purgeUserBackups(ctx context.Context, userID string) {
+	cfg, err := r.store.GetBackupConfig(ctx, userID)
+	if errors.Is(err, types.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		slog.Error("purge account backups: get config", "user_id", userID, "err", err)
+		return
+	}
+	dst := r.backupDestinationFor(cfg)
+	if dst == nil {
+		return
+	}
+	if err := dst.Delete(ctx, cfg); err != nil {
+		slog.Error("purge account backups: delete", "user_id", userID, "err", err)
+	}
+}
+
+// backupDestinationFor mirrors backup.Runner.destinationFor's selection
+// logic, minus the "not configured" error -- a missing destination here just
+// means there's nothing to clean up on that side.
+func (r *PurgeRunner) backupDestinationFor(cfg types.BackupConfig) backup.Destination {
+	if cfg.Destination == "s3" {
+		return r.s3Dst
+	}
+	return r.localDst
 }
 
 // sendReminders runs the two ~5-day-ahead reminder checks. No-op if no

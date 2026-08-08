@@ -250,3 +250,30 @@ func TestCalcSleepHours_NilWake(t *testing.T) {
 		t.Errorf("calcSleepHours = %v, want 0", got)
 	}
 }
+
+// TestComputeSleepDuration_DSTSpringForward pins the AddDate fix: computing
+// "yesterday" via Add(-24*time.Hour) is off by one hour when a DST
+// transition falls inside that 24-hour window, because elapsed real time and
+// elapsed wall-clock time diverge across the jump.
+//
+// 2024-03-10 is the US spring-forward transition in America/New_York
+// (02:00 -> 03:00 local, i.e. the UTC instant 07:00). "now" is set to
+// 01:00 local on the transition day, with bedtime "23:00" — later than
+// "now" on the same calendar date, so the function must roll back to
+// "yesterday" (2024-03-09 23:00, still EST). Add(-24h) instead lands on
+// 2024-03-09 22:00 because a 24-real-hour subtraction crosses the moment
+// clocks skipped forward. AddDate(0,0,-1) preserves the wall-clock time
+// and correctly re-resolves the prior day's offset.
+func TestComputeSleepDuration_DSTSpringForward(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	now := time.Date(2024, 3, 10, 1, 0, 0, 0, loc)
+	got := computeSleepDuration("23:00", now)
+	want := 2 * time.Hour
+	if got != want {
+		t.Errorf("computeSleepDuration across DST spring-forward = %v, want %v (yesterday 23:00 -> today 01:00)", got, want)
+	}
+}

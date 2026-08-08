@@ -160,3 +160,24 @@ func TestEnsureModelsFailsWhenTagsUnavailable(t *testing.T) {
 		t.Error("EnsureModels error = nil, want tags error")
 	}
 }
+
+// TestPullRespectsTimeout pins the #276 item 5 fix: pull() now uses a
+// (long, but bounded) timeout instead of a bare &http.Client{} with none at
+// all. pullTimeout is shrunk for the test so a slow-but-otherwise-healthy
+// server triggers the same client-side timeout a truly stuck download would.
+func TestPullRespectsTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	orig := pullTimeout
+	pullTimeout = 5 * time.Millisecond
+	defer func() { pullTimeout = orig }()
+
+	a := New(srv.URL, "", "", time.Second)
+	if err := a.pull(t.Context(), "some-model"); err == nil {
+		t.Error("pull() error = nil, want a client-timeout error")
+	}
+}

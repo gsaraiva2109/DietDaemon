@@ -1,8 +1,40 @@
 package auth
 
 import (
+	crand "crypto/rand"
+	"errors"
+	"strings"
 	"testing"
 )
+
+// failingReader is an io.Reader that always errors, used to force
+// crypto/rand.Int into its failure path.
+type failingReader struct{}
+
+func (failingReader) Read(p []byte) (int, error) {
+	return 0, errors.New("simulated crypto/rand failure")
+}
+
+// TestCryptoRand5DigitsPanicsOnRandFailure pins the fix for #276 item 1:
+// cryptoRand5Digits must panic (matching token.go/webauthn.go) rather than
+// silently falling back to math/rand/v2 when crypto/rand fails.
+func TestCryptoRand5DigitsPanicsOnRandFailure(t *testing.T) {
+	orig := crand.Reader
+	crand.Reader = failingReader{}
+	defer func() { crand.Reader = orig }()
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected cryptoRand5Digits to panic on crypto/rand failure")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "crypto/rand.Int failed") {
+			t.Errorf("panic value = %v, want message containing %q", r, "crypto/rand.Int failed")
+		}
+	}()
+	cryptoRand5Digits()
+}
 
 func TestGenerateRecoveryCodesCount(t *testing.T) {
 	tests := []int{1, 5, 10, 20}

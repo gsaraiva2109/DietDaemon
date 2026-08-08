@@ -5,6 +5,7 @@ package store
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	_ "github.com/lib/pq" // register "postgres" driver for database/sql
 )
@@ -58,7 +59,10 @@ func (d sqliteDialect) ColumnExists(table, column string) string {
 }
 
 func (d sqliteDialect) SearchQuery(raw string) string {
-	tokens := strings.Fields(raw)
+	tokens := sanitizeSearchTokens(raw)
+	if len(tokens) == 0 {
+		return ""
+	}
 	return strings.Join(tokens, "* ") + "*"
 }
 
@@ -95,8 +99,38 @@ func (d postgresDialect) ColumnExists(table, column string) string {
 }
 
 func (d postgresDialect) SearchQuery(raw string) string {
-	tokens := strings.Fields(raw)
+	tokens := sanitizeSearchTokens(raw)
+	if len(tokens) == 0 {
+		return ""
+	}
 	return strings.Join(tokens, ":* & ") + ":*"
+}
+
+// sanitizeSearchTokens splits raw on whitespace and strips every character
+// from each token that isn't a letter or digit, dropping tokens that end up
+// empty. FTS5 (SQLite) and tsquery (Postgres) both give special meaning to
+// characters a user can easily type into a search box — quotes, parens,
+// colons (column filters), the NEAR operator, etc. — and an unbalanced or
+// stray one turns the whole generated query into a syntax error instead of
+// just "no results". Reducing every token to plain alphanumerics before it's
+// assembled into a query string keeps the request always well-formed; it's
+// not a query-syntax parser, just enough to keep the *-suffixed prefix
+// queries below from ever containing dialect-special characters.
+func sanitizeSearchTokens(raw string) []string {
+	fields := strings.Fields(raw)
+	tokens := make([]string, 0, len(fields))
+	for _, f := range fields {
+		t := strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, f)
+		if t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	return tokens
 }
 
 // ---------------------------------------------------------------------------

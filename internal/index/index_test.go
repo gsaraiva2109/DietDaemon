@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -252,6 +253,101 @@ func TestCacheUpdatesOnUpsertAndInvalidatesOnDelete(t *testing.T) {
 	if cached {
 		t.Error("cache should be invalidated after Delete")
 	}
+}
+
+// TestUpsertUpdatesPrimedCacheCopyOnWrite deterministically exercises the
+// copy-on-write branch of Upsert (updating an already-cached foodID once the
+// cache is primed): it must not mutate entries in an already-handed-out
+// snapshot slice, and a fresh load() must see the new vector.
+func TestUpsertUpdatesPrimedCacheCopyOnWrite(t *testing.T) {
+	db := openTestDB(t)
+	ix := New(db)
+	ctx := context.Background()
+
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{1, 0, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "b", []float32{0, 1, 0}))
+
+	// Prime the cache.
+	_, err := ix.Nearest(ctx, []float32{1, 0, 0}, 2)
+	requireNoErr(t, err)
+
+	// Hold a reference to the pre-update snapshot, mirroring what load()
+	// hands a caller like Nearest/Exists before Upsert runs concurrently.
+	ix.mu.RLock()
+	oldSnapshot := ix.cache
+	var oldVec []float32
+	for _, e := range oldSnapshot {
+		if e.foodID == "a" {
+			oldVec = e.vec
+		}
+	}
+	ix.mu.RUnlock()
+	if oldVec == nil {
+		t.Fatal("setup: old snapshot missing foodID a")
+	}
+
+	// Update "a" while the cache is primed — exercises the in-place-update
+	// (copy-on-write) branch.
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{5, 5, 5}))
+
+	// The old snapshot's entry for "a" must be untouched: Upsert replaced
+	// the whole ix.cache slice rather than mutating oldSnapshot[i].vec.
+	if oldVec[0] != 1 || oldVec[1] != 0 || oldVec[2] != 0 {
+		t.Fatalf("old snapshot mutated in place: got %v, want unchanged [1 0 0]", oldVec)
+	}
+
+	// A fresh read reflects the update.
+	nn, err := ix.Nearest(ctx, []float32{5, 5, 5}, 1)
+	requireNoErr(t, err)
+	if nn[0].FoodID != "a" || nn[0].Score < 0.999 {
+		t.Fatalf("expected updated vector reflected in a fresh read, got %+v", nn[0])
+	}
+}
+
+// TestConcurrentUpsertAndReadNoRace runs Upsert (updating an existing,
+// already-cached foodID) concurrently with Nearest/Exists, which iterate a
+// slice snapshot returned by load() without holding the lock. Before the
+// copy-on-write fix, Upsert mutated ix.cache[i].vec in place, which the race
+// detector flags as a data race against those unsynchronized reads (and
+// which readers could theoretically observe a torn slice header for).
+// Run with -race; must be clean.
+func TestConcurrentUpsertAndReadNoRace(t *testing.T) {
+	db := openTestDB(t)
+	ix := New(db)
+	ctx := context.Background()
+
+	// Seed and prime the cache so Upsert takes the in-place-update path.
+	requireNoErr(t, ix.Upsert(ctx, "a", []float32{1, 0, 0}))
+	requireNoErr(t, ix.Upsert(ctx, "b", []float32{0, 1, 0}))
+	_, err := ix.Nearest(ctx, []float32{1, 0, 0}, 2)
+	requireNoErr(t, err)
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = ix.Upsert(ctx, "a", []float32{float32(i % 7), float32(i % 5), 0})
+		}
+	}()
+
+	for i := 0; i < 500; i++ {
+		if _, err := ix.Nearest(ctx, []float32{1, 0, 0}, 2); err != nil {
+			t.Fatalf("Nearest: %v", err)
+		}
+		if _, err := ix.Exists(ctx, "a"); err != nil {
+			t.Fatalf("Exists: %v", err)
+		}
+	}
+	close(stop)
+	wg.Wait()
 }
 
 func requireNoErr(t *testing.T, err error) {

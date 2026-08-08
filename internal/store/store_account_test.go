@@ -620,6 +620,39 @@ func TestAccountEmails(t *testing.T) {
 	}
 }
 
+// TestListAccountUserIDs verifies it collects every user's ID under an
+// account, and returns an empty result for an account with no users.
+func TestListAccountUserIDs(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	u1, err := s.CreateUserWithPassword(ctx(), "acct-userids", "user-ids-1", "ids1@example.com", "User One", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword u1: %v", err)
+	}
+	u2, err := s.CreateUserWithPassword(ctx(), "acct-userids", "user-ids-2", "ids2@example.com", "User Two", "$argon2id$dummy")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword u2: %v", err)
+	}
+
+	ids, err := s.ListAccountUserIDs(ctx(), u1.AccountID)
+	if err != nil {
+		t.Fatalf("ListAccountUserIDs: %v", err)
+	}
+	want := map[string]bool{u1.ID: true, u2.ID: true}
+	if len(ids) != 2 || !want[ids[0]] || !want[ids[1]] {
+		t.Fatalf("ListAccountUserIDs = %v; want %v", ids, want)
+	}
+
+	ids, err = s.ListAccountUserIDs(ctx(), "no-such-account")
+	if err != nil {
+		t.Fatalf("ListAccountUserIDs (no account): %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("ListAccountUserIDs for nonexistent account = %v; want empty", ids)
+	}
+}
+
 // TestAccountDeletionStatusNotFound covers AccountDeletionStatus's
 // types.ErrNotFound branch for a userID with no matching account/user row.
 func TestAccountDeletionStatusNotFound(t *testing.T) {
@@ -696,6 +729,9 @@ func TestAccountMethodsWrapDBErrorsWhenClosed(t *testing.T) {
 	}
 	if _, err := s.ListAccountsPendingPhotoPurge(ctx(), time.Now()); err == nil {
 		t.Error("ListAccountsPendingPhotoPurge on closed db: want error")
+	}
+	if _, err := s.ListAccountUserIDs(ctx(), "any"); err == nil {
+		t.Error("ListAccountUserIDs on closed db: want error")
 	}
 	if _, err := s.ListAccountsPastDeletion(ctx(), time.Now()); err == nil {
 		t.Error("ListAccountsPastDeletion on closed db: want error")

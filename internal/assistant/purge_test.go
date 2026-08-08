@@ -19,6 +19,46 @@ type fakeAccount struct {
 	deletedAt      time.Time
 	photosPurgedAt *time.Time
 	emails         []string
+	userIDs        []string // for ListAccountUserIDs
+}
+
+// orderLog records call order across the fake store and fake backup
+// destinations, so tests can pin that backup files are deleted before the
+// account they belong to is purged from the DB.
+type orderLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (o *orderLog) add(s string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.calls = append(o.calls, s)
+}
+
+// fakeBackupDest is a test double for backup.Destination, tracking Delete
+// calls by cfg.UserID so purgeAccountBackups tests can assert which users'
+// backup files were (or weren't) deleted.
+type fakeBackupDest struct {
+	mu      sync.Mutex
+	deletes []string
+	err     error
+	order   *orderLog
+}
+
+func (d *fakeBackupDest) Write(context.Context, types.BackupConfig, string, []byte) error { return nil }
+
+func (d *fakeBackupDest) Delete(_ context.Context, cfg types.BackupConfig) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.order != nil {
+		d.order.add("backup:" + cfg.UserID)
+	}
+	if d.err != nil {
+		return d.err
+	}
+	d.deletes = append(d.deletes, cfg.UserID)
+	return nil
 }
 
 // fakeAuditEvent is a minimal in-memory stand-in for an auth_audit_log row.
@@ -41,6 +81,13 @@ type fakePurgeStore struct {
 	photoPurges   []string // account IDs passed to PurgeAccountPhotos
 	accountPurges []string // account IDs passed to PurgeAccount
 
+	authChallengePurges []time.Time
+	oidcStatePurges     []time.Time
+
+	backupConfigs           map[string]types.BackupConfig // keyed by userID
+	listAccountUserIDsCalls int
+	order                   *orderLog // optional, for ordering assertions
+
 	// Error-injection fields, one per PurgeStore method, so tests can drive
 	// purge.go's error-handling branches (slog.Error + return/continue)
 	// without a real failing DB driver.
@@ -51,6 +98,8 @@ type fakePurgeStore struct {
 	hasAuditEventErr         error
 	accountEmailsErr         error
 	writeAuditEventErr       error
+	listAccountUserIDsErr    error
+	getBackupConfigErr       error
 }
 
 func (f *fakePurgeStore) ListAccountsPendingPhotoPurge(_ context.Context, deletedBefore time.Time) ([]string, error) {
@@ -116,10 +165,60 @@ func (f *fakePurgeStore) PurgeAccount(_ context.Context, accountID string) error
 	if _, ok := f.accounts[accountID]; !ok {
 		return fmt.Errorf("fake: unknown account %s", accountID)
 	}
+	if f.order != nil {
+		f.order.add("db:" + accountID)
+	}
 	f.auditEvents = append(f.auditEvents, fakeAuditEvent{accountID: "", event: "account.delete.purged"})
 	delete(f.accounts, accountID)
 	f.accountPurges = append(f.accountPurges, accountID)
 	return nil
+}
+
+func (f *fakePurgeStore) ListAccountUserIDs(_ context.Context, accountID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listAccountUserIDsCalls++
+	if f.listAccountUserIDsErr != nil {
+		return nil, f.listAccountUserIDsErr
+	}
+	a, ok := f.accounts[accountID]
+	if !ok {
+		return nil, nil
+	}
+	return a.userIDs, nil
+}
+
+func (f *fakePurgeStore) GetBackupConfig(_ context.Context, userID string) (types.BackupConfig, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.getBackupConfigErr != nil {
+		return types.BackupConfig{}, f.getBackupConfigErr
+	}
+	cfg, ok := f.backupConfigs[userID]
+	if !ok {
+		return types.BackupConfig{}, types.ErrNotFound
+	}
+	return cfg, nil
+}
+
+func (f *fakePurgeStore) PurgeExpiredAuthChallenges(_ context.Context, now time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.authChallengePurges = append(f.authChallengePurges, now)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
+}
+
+func (f *fakePurgeStore) PurgeExpiredOIDCStates(_ context.Context, now time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oidcStatePurges = append(f.oidcStatePurges, now)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
 }
 
 func (f *fakePurgeStore) HasAuditEvent(_ context.Context, accountID, event string) (bool, error) {
@@ -590,5 +689,271 @@ func TestRemindAccountWriteAuditEventError(t *testing.T) {
 
 	if len(mail.sent) != 1 {
 		t.Fatalf("expected the reminder to still be sent, got %v", mail.sent)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Expired auth_challenges / oidc_states sweep
+// ---------------------------------------------------------------------------
+
+// TestPurgeRunnerTicksPurgesExpiredAuthAndOIDC verifies Run's tick calls
+// PurgeExpiredAuthChallenges and PurgeExpiredOIDCStates (alongside the
+// pre-existing login-attempt/audit-event purges) with an ~now cutoff.
+func TestPurgeRunnerTicksPurgesExpiredAuthAndOIDC(t *testing.T) {
+	store := &fakePurgeStore{count: 2}
+	runner := NewPurgeRunner(store, 50*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go runner.Run(ctx)
+	time.Sleep(120 * time.Millisecond)
+	cancel()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.authChallengePurges) == 0 {
+		t.Fatal("expected at least one PurgeExpiredAuthChallenges call")
+	}
+	if len(store.oidcStatePurges) == 0 {
+		t.Fatal("expected at least one PurgeExpiredOIDCStates call")
+	}
+	now := time.Now()
+	for i, ts := range store.authChallengePurges {
+		if now.Sub(ts).Abs() > 5*time.Second {
+			t.Errorf("authChallengePurges[%d] = %v, want ~now", i, ts)
+		}
+	}
+	for i, ts := range store.oidcStatePurges {
+		if now.Sub(ts).Abs() > 5*time.Second {
+			t.Errorf("oidcStatePurges[%d] = %v, want ~now", i, ts)
+		}
+	}
+}
+
+// TestPurgeRunnerTicksSurvivesExpiredAuthAndOIDCErrors verifies a
+// PurgeExpiredAuthChallenges/PurgeExpiredOIDCStates failure is logged and
+// does not abort the rest of the tick (chat-session purge still runs).
+func TestPurgeRunnerTicksSurvivesExpiredAuthAndOIDCErrors(t *testing.T) {
+	store := &fakePurgeStore{err: errors.New("db down")}
+	runner := NewPurgeRunner(store, 20*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	runner.Run(ctx)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.purges) == 0 {
+		t.Fatal("expected chat-session purge to still run despite auth/oidc purge errors")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Backup-file cleanup on account purge (WithBackupDestinations)
+// ---------------------------------------------------------------------------
+
+// TestPurgeAccountBackups_DeletesFromConfiguredDestination verifies that
+// purging a due account deletes its users' backup files from whichever
+// destination their backup_config selects, before the DB row is removed.
+func TestPurgeAccountBackups_DeletesFromConfiguredDestination(t *testing.T) {
+	now := time.Now()
+	log := &orderLog{}
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		backupConfigs: map[string]types.BackupConfig{
+			"user-1": {UserID: "user-1", Destination: "local"},
+		},
+		order: log,
+	}
+	local := &fakeBackupDest{order: log}
+	s3 := &fakeBackupDest{order: log}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, s3)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if len(local.deletes) != 1 || local.deletes[0] != "user-1" {
+		t.Fatalf("local.deletes = %v; want [user-1]", local.deletes)
+	}
+	if len(s3.deletes) != 0 {
+		t.Fatalf("s3.deletes = %v; want none (config selects local)", s3.deletes)
+	}
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account purged from DB after backup cleanup")
+	}
+
+	// Backup deletion must happen before the DB purge.
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	if len(log.calls) != 2 || log.calls[0] != "backup:user-1" || log.calls[1] != "db:acct-1" {
+		t.Fatalf("call order = %v; want [backup:user-1 db:acct-1]", log.calls)
+	}
+}
+
+// TestPurgeAccountBackups_S3Destination verifies an S3-configured user's
+// files are deleted via the S3 destination, not the local one.
+func TestPurgeAccountBackups_S3Destination(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		backupConfigs: map[string]types.BackupConfig{
+			"user-1": {UserID: "user-1", Destination: "s3"},
+		},
+	}
+	local := &fakeBackupDest{}
+	s3 := &fakeBackupDest{}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, s3)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if len(s3.deletes) != 1 || s3.deletes[0] != "user-1" {
+		t.Fatalf("s3.deletes = %v; want [user-1]", s3.deletes)
+	}
+	if len(local.deletes) != 0 {
+		t.Fatalf("local.deletes = %v; want none (config selects s3)", local.deletes)
+	}
+}
+
+// TestPurgeAccountBackups_NoConfigSkipped verifies a user who never
+// configured backups (GetBackupConfig -> ErrNotFound) has nothing deleted,
+// and the account purge still proceeds normally.
+func TestPurgeAccountBackups_NoConfigSkipped(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		// no backupConfigs entry for user-1
+	}
+	local := &fakeBackupDest{}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, nil)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if len(local.deletes) != 0 {
+		t.Fatalf("local.deletes = %v; want none", local.deletes)
+	}
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged despite no backup config")
+	}
+}
+
+// TestPurgeAccountBackups_WithoutDestinationsIsNoop verifies that without
+// WithBackupDestinations, purgeAccounts never even looks up backup config —
+// it purges the DB rows exactly as before this feature existed.
+func TestPurgeAccountBackups_WithoutDestinationsIsNoop(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		backupConfigs: map[string]types.BackupConfig{
+			"user-1": {UserID: "user-1", Destination: "local"},
+		},
+	}
+	runner := NewPurgeRunner(store, time.Hour) // no WithBackupDestinations
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if store.listAccountUserIDsCalls != 0 {
+		t.Fatalf("expected ListAccountUserIDs never called without WithBackupDestinations, got %d calls", store.listAccountUserIDsCalls)
+	}
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged")
+	}
+}
+
+// TestPurgeAccountBackups_ListUsersErrorStillPurgesAccount verifies a
+// ListAccountUserIDs failure is logged and does not block the DB purge.
+func TestPurgeAccountBackups_ListUsersErrorStillPurgesAccount(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90)},
+		},
+		listAccountUserIDsErr: errors.New("list failed"),
+	}
+	local := &fakeBackupDest{}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, nil)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged despite ListAccountUserIDs error")
+	}
+}
+
+// TestPurgeAccountBackups_DeleteErrorStillPurgesAccount verifies a
+// Destination.Delete failure is logged and does not block the DB purge.
+func TestPurgeAccountBackups_DeleteErrorStillPurgesAccount(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		backupConfigs: map[string]types.BackupConfig{
+			"user-1": {UserID: "user-1", Destination: "local"},
+		},
+	}
+	local := &fakeBackupDest{err: errors.New("delete failed")}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, nil)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged despite backup Delete error")
+	}
+}
+
+// TestPurgeAccountBackups_UnavailableDestinationSkipsUser verifies a user
+// whose backup_config selects a destination that wasn't passed to
+// WithBackupDestinations (e.g. s3 unavailable at startup) is skipped without
+// error, same as backup.Runner.destinationFor's nil-destination case.
+func TestPurgeAccountBackups_UnavailableDestinationSkipsUser(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		backupConfigs: map[string]types.BackupConfig{
+			"user-1": {UserID: "user-1", Destination: "s3"},
+		},
+	}
+	local := &fakeBackupDest{}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, nil) // s3 unavailable
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if len(local.deletes) != 0 {
+		t.Fatalf("local.deletes = %v; want none (config selects unavailable s3)", local.deletes)
+	}
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged despite unavailable destination")
+	}
+}
+
+// TestPurgeAccountBackups_GetConfigErrorSkipsThatUser verifies a
+// GetBackupConfig failure (distinct from ErrNotFound) is logged and skips
+// only that user's backup deletion, without blocking the DB purge.
+func TestPurgeAccountBackups_GetConfigErrorSkipsThatUser(t *testing.T) {
+	now := time.Now()
+	store := &fakePurgeStore{
+		accounts: map[string]*fakeAccount{
+			"acct-1": {deletedAt: now.AddDate(0, 0, -90), userIDs: []string{"user-1"}},
+		},
+		getBackupConfigErr: errors.New("db down"),
+	}
+	local := &fakeBackupDest{}
+	runner := NewPurgeRunner(store, time.Hour).WithBackupDestinations(local, nil)
+
+	runner.purgeAccounts(context.Background(), now)
+
+	if len(local.deletes) != 0 {
+		t.Fatalf("local.deletes = %v; want none", local.deletes)
+	}
+	if _, ok := store.accounts["acct-1"]; ok {
+		t.Fatal("expected account still purged despite GetBackupConfig error")
 	}
 }

@@ -136,6 +136,89 @@ func TestRead_RoundTripsWrittenData(t *testing.T) {
 	}
 }
 
+func TestDelete_RemovesAllFilesUnderSubdir(t *testing.T) {
+	tmp := t.TempDir()
+	dst, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := types.BackupConfig{UserID: "u1", LocalSubdir: "u1"}
+	for _, name := range []string{"meals.csv", "rollups.csv", "photo_p1.jpg"} {
+		if err := dst.Write(context.Background(), cfg, name, []byte("data")); err != nil {
+			t.Fatalf("Write(%s): %v", name, err)
+		}
+	}
+
+	if err := dst.Delete(context.Background(), cfg); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	got, err := dst.List(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("List after Delete: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no files left after Delete, got %v", got)
+	}
+	// The subdir itself is left in place (Delete removes files, not the dir).
+	if _, err := os.Stat(filepath.Join(tmp, "u1")); err != nil {
+		t.Fatalf("expected subdir to still exist: %v", err)
+	}
+}
+
+func TestDelete_OtherUsersSubdirUntouched(t *testing.T) {
+	tmp := t.TempDir()
+	dst, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	u1 := types.BackupConfig{UserID: "u1", LocalSubdir: "u1"}
+	u2 := types.BackupConfig{UserID: "u2", LocalSubdir: "u2"}
+	if err := dst.Write(context.Background(), u1, "meals.csv", []byte("u1 data")); err != nil {
+		t.Fatalf("Write u1: %v", err)
+	}
+	if err := dst.Write(context.Background(), u2, "meals.csv", []byte("u2 data")); err != nil {
+		t.Fatalf("Write u2: %v", err)
+	}
+
+	if err := dst.Delete(context.Background(), u1); err != nil {
+		t.Fatalf("Delete u1: %v", err)
+	}
+
+	got, err := dst.Read(context.Background(), u2, "meals.csv")
+	if err != nil {
+		t.Fatalf("expected u2's file to survive u1's Delete: %v", err)
+	}
+	if string(got) != "u2 data" {
+		t.Fatalf("u2 content mismatch: %q", got)
+	}
+}
+
+func TestDelete_NonexistentSubdirIsNoop(t *testing.T) {
+	tmp := t.TempDir()
+	dst, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := types.BackupConfig{UserID: "u1", LocalSubdir: "never-written"}
+	if err := dst.Delete(context.Background(), cfg); err != nil {
+		t.Fatalf("Delete on nonexistent subdir: %v", err)
+	}
+}
+
+func TestDelete_PathTraversalRejected(t *testing.T) {
+	tmp := t.TempDir()
+	base := filepath.Join(tmp, "backups")
+	dst, err := New(base)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := types.BackupConfig{UserID: "u1", LocalSubdir: "../../etc"}
+	if err := dst.Delete(context.Background(), cfg); err == nil {
+		t.Fatalf("Delete with local_subdir %q: expected error, got nil", cfg.LocalSubdir)
+	}
+}
+
 func TestRead_PathTraversalRejected(t *testing.T) {
 	tmp := t.TempDir()
 	base := filepath.Join(tmp, "backups")

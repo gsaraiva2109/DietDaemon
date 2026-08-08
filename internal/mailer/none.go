@@ -15,7 +15,11 @@ func newNone(publicBaseURL string) *noneMailer {
 }
 
 func (m *noneMailer) Send(ctx context.Context, to string, msg Message) error {
-	slog.Info("mailer (none): would send email",
+	// Debug, not Info: the body carries raw secrets (password-reset tokens,
+	// magic-signin links/codes). Fine to print in a local homelab's
+	// `docker logs`, but Info is commonly shipped to a shared/centralized
+	// log sink where that's a real exposure. Debug is off by default there.
+	slog.Debug("mailer (none): would send email",
 		"to", to,
 		"subject", msg.Subject,
 		"html_body", msg.HTMLBody,

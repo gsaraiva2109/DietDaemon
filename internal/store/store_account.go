@@ -350,6 +350,18 @@ func (s *Store) AccountEmails(ctx context.Context, accountID string) ([]string, 
 	return emails, rows.Err()
 }
 
+// ListAccountUserIDs returns the IDs of every user under accountID. Used by
+// PurgeRunner to look up each user's backup_config (keyed by user_id, not
+// account_id) before the account is purged, so any exported backup files
+// can be deleted while the config still exists.
+func (s *Store) ListAccountUserIDs(ctx context.Context, accountID string) ([]string, error) {
+	var ids []string
+	if err := s.db.SelectContext(ctx, &ids, s.rewrite(`SELECT id FROM users WHERE account_id = ?`), accountID); err != nil {
+		return nil, fmt.Errorf("store: list account user ids: %w", err)
+	}
+	return ids, nil
+}
+
 // scanAccountIDs drains a single-column (id) result set into a slice.
 func scanAccountIDs(rows *sql.Rows) ([]string, error) {
 	var ids []string

@@ -25,16 +25,27 @@ type fakeMealStore struct {
 	rollups      []types.DailyRollup
 	user         types.User
 	correctErr   error
-	getMealErr   error
-	rollupErr    error
-	rollupsErr   error
-	recentErr    error
-	getUserErr   error
-	targets      types.DailyTargets
-	targetsErr   error
-	addErr       error
-	deleteErr    error
-	backupConfig types.BackupConfig
+	getUserCalls []string // #274: spies on h.userLoc's GetUser lookups
+
+	// #274: date/range args captured from "today"/date-boundary call sites,
+	// to prove handlers resolve the per-user location instead of h.loc.
+	lastRollupDate      string
+	lastRollupsStart    string
+	lastRollupsEnd      string
+	lastTargetsForDate  string
+	lastActivePlanDate  string
+	lastWaterTodayDate  string
+	lastUploadedPhotoAt string
+	getMealErr          error
+	rollupErr           error
+	rollupsErr          error
+	recentErr           error
+	getUserErr          error
+	targets             types.DailyTargets
+	targetsErr          error
+	addErr              error
+	deleteErr           error
+	backupConfig        types.BackupConfig
 
 	nudgeRuleConfig          map[string]types.NudgeRuleConfig
 	nudgeRuleConfigErr       error
@@ -226,13 +237,15 @@ func (s *fakeMealStore) RecentMeals(_ context.Context, _ string, _ int) ([]types
 	}
 	return s.recentMeals, nil
 }
-func (s *fakeMealStore) GetRollup(_ context.Context, _, _ string) (types.DailyRollup, error) {
+func (s *fakeMealStore) GetRollup(_ context.Context, _, date string) (types.DailyRollup, error) {
+	s.lastRollupDate = date
 	if s.rollupErr != nil {
 		return types.DailyRollup{}, s.rollupErr
 	}
 	return s.rollup, nil
 }
-func (s *fakeMealStore) GetRollups(_ context.Context, _, _, _ string) ([]types.DailyRollup, error) {
+func (s *fakeMealStore) GetRollups(_ context.Context, _, start, end string) ([]types.DailyRollup, error) {
+	s.lastRollupsStart, s.lastRollupsEnd = start, end
 	if s.rollupsErr != nil {
 		return nil, s.rollupsErr
 	}
@@ -327,7 +340,8 @@ func (s *fakeMealStore) SetBackupConfig(_ context.Context, cfg types.BackupConfi
 	s.backupConfig = cfg
 	return nil
 }
-func (s *fakeMealStore) GetUser(_ context.Context, _ string) (types.User, error) {
+func (s *fakeMealStore) GetUser(_ context.Context, userID string) (types.User, error) {
+	s.getUserCalls = append(s.getUserCalls, userID)
 	if s.getUserErr != nil {
 		return types.User{}, s.getUserErr
 	}
@@ -518,7 +532,8 @@ func (s *fakeMealStore) ListPhotoMetadata(_ context.Context, _ string) ([]types.
 func (s *fakeMealStore) GetPhotoData(_ context.Context, _, _ string) (types.ProgressPhoto, error) {
 	return s.photoData, s.photoDataErr
 }
-func (s *fakeMealStore) UploadPhoto(_ context.Context, _ types.ProgressPhoto) error {
+func (s *fakeMealStore) UploadPhoto(_ context.Context, p types.ProgressPhoto) error {
+	s.lastUploadedPhotoAt = p.Date
 	return s.uploadPhotoErr
 }
 func (s *fakeMealStore) DeletePhoto(_ context.Context, _, _ string) error {
@@ -583,7 +598,8 @@ func (s *fakeMealStore) LogWater(_ context.Context, wl types.WaterLog) error {
 	s.waterLogs = append(s.waterLogs, wl)
 	return nil
 }
-func (s *fakeMealStore) GetWaterToday(_ context.Context, _, _ string) ([]types.WaterLog, int, error) {
+func (s *fakeMealStore) GetWaterToday(_ context.Context, _, date string) ([]types.WaterLog, int, error) {
+	s.lastWaterTodayDate = date
 	if s.getWaterTodayErr != nil {
 		return nil, 0, s.getWaterTodayErr
 	}
@@ -647,7 +663,8 @@ func (s *fakeMealStore) DeleteSleep(_ context.Context, _, _ string) error {
 	return s.deleteSleepErr
 }
 
-func (s *fakeMealStore) TargetsFor(_ context.Context, _, _ string) (types.DailyTargets, error) {
+func (s *fakeMealStore) TargetsFor(_ context.Context, _, date string) (types.DailyTargets, error) {
+	s.lastTargetsForDate = date
 	if s.targetsForErr != nil {
 		return types.DailyTargets{}, s.targetsForErr
 	}
@@ -685,7 +702,8 @@ func (s *fakeMealStore) ListPlans(_ context.Context, _ string) ([]types.DietPlan
 	}
 	return out, nil
 }
-func (s *fakeMealStore) GetActivePlan(_ context.Context, _, _ string) (types.DietPlan, error) {
+func (s *fakeMealStore) GetActivePlan(_ context.Context, _, date string) (types.DietPlan, error) {
+	s.lastActivePlanDate = date
 	if s.activePlanErr != nil {
 		return types.DietPlan{}, s.activePlanErr
 	}

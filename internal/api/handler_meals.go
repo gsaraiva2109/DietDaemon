@@ -20,7 +20,7 @@ import (
 const invalidJSONBodyPrefix = "invalid JSON body: "
 
 func (h *Handler) handleRollupsToday(w http.ResponseWriter, r *http.Request, userID string) {
-	today := time.Now().In(h.loc).Format(dateLayout)
+	today := time.Now().In(h.userLoc(r.Context(), userID)).Format(dateLayout)
 	rollup, err := h.store.GetRollup(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err)

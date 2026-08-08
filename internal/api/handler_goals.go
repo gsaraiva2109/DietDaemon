@@ -144,8 +144,9 @@ func (h *Handler) handleGoalSuggestions(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Get recent rollups for average intake.
-	endDate := time.Now().In(h.loc).Format(dateLayout)
-	startDate := time.Now().In(h.loc).AddDate(0, 0, -7).Format(dateLayout)
+	loc := h.userLoc(r.Context(), userID)
+	endDate := time.Now().In(loc).Format(dateLayout)
+	startDate := time.Now().In(loc).AddDate(0, 0, -7).Format(dateLayout)
 	rollups, _ := h.store.GetRollups(r.Context(), userID, startDate, endDate)
 
 	var avgKcal float64

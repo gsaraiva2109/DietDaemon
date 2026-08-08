@@ -463,3 +463,13 @@ func requireFetchBulkCount(t *testing.T, err error, got []types.FoodMatch, wantL
 		t.Fatalf("emitted %d products, want %d", len(got), wantLen)
 	}
 }
+
+// TestNewSetsClientTimeout pins the #276 item 6 fix: New's http.Client must
+// have a floor timeout, since callers never wrap ctx with a deadline for
+// this adapter's requests.
+func TestNewSetsClientTimeout(t *testing.T) {
+	s := New()
+	if s.client.Timeout != defaultClientTimeout {
+		t.Errorf("client.Timeout = %v, want %v", s.client.Timeout, defaultClientTimeout)
+	}
+}

@@ -178,7 +178,10 @@ func computeSleepDuration(sleepAt string, now time.Time) time.Duration {
 	}
 	base := time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, now.Location())
 	if base.After(now) {
-		base = base.Add(-24 * time.Hour)
+		// AddDate, not Add(-24*time.Hour): calendar-day arithmetic stays
+		// correct across a DST transition, where "yesterday" isn't always
+		// exactly 24 hours ago in a location-aware time.Time.
+		base = base.AddDate(0, 0, -1)
 	}
 	return now.Sub(base)
 }

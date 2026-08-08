@@ -1,9 +1,30 @@
 package mailer
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
 )
+
+// captureHandler is a minimal slog.Handler that records every record passed
+// to it, honoring a configurable minimum level like a real handler would.
+type captureHandler struct {
+	level   slog.Level
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.level
+}
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(_ string) slog.Handler      { return h }
 
 func TestNew(t *testing.T) {
 	tests := []struct {
@@ -89,6 +110,40 @@ func TestNoneMailerSend(t *testing.T) {
 	err := m.Send(t.Context(), "test@example.com", VerificationEmail("http://localhost:8080/verify?token=abc"))
 	if err != nil {
 		t.Errorf("none mailer should never error: %v", err)
+	}
+}
+
+// TestNoneMailerSendLogsAtDebug pins the #276 item 4 fix: the none mailer
+// must log at Debug, not Info, since the body carries raw secrets
+// (password-reset tokens, magic-signin links). A handler configured at the
+// common production minimum (Info) must see nothing; one at Debug must see
+// the record.
+func TestNoneMailerSendLogsAtDebug(t *testing.T) {
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+
+	m := newNone("http://localhost:8080")
+	msg := PasswordResetEmail("http://localhost:8080/reset?token=SECRET123")
+
+	infoHandler := &captureHandler{level: slog.LevelInfo}
+	slog.SetDefault(slog.New(infoHandler))
+	if err := m.Send(t.Context(), "test@example.com", msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(infoHandler.records) != 0 {
+		t.Errorf("Info-level handler captured %d record(s); the secret-bearing body must not log at Info", len(infoHandler.records))
+	}
+
+	debugHandler := &captureHandler{level: slog.LevelDebug}
+	slog.SetDefault(slog.New(debugHandler))
+	if err := m.Send(t.Context(), "test@example.com", msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(debugHandler.records) != 1 {
+		t.Fatalf("Debug-level handler captured %d record(s), want 1", len(debugHandler.records))
+	}
+	if got := debugHandler.records[0].Level; got != slog.LevelDebug {
+		t.Errorf("record level = %v, want Debug", got)
 	}
 }
 

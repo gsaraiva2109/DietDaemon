@@ -104,6 +104,33 @@ func (d *Dest) List(ctx context.Context, cfg types.BackupConfig) ([]string, erro
 	return out, nil
 }
 
+// Delete removes every object List would return for cfg (everything under
+// cfg.S3Bucket/cfg.S3Prefix), e.g. when the owning account is purged.
+func (d *Dest) Delete(ctx context.Context, cfg types.BackupConfig) error {
+	if cfg.S3Bucket == "" {
+		return fmt.Errorf("s3dest: s3_bucket not configured")
+	}
+	names, err := d.List(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	client := d.client(cfg)
+	prefix := ""
+	if cfg.S3Prefix != "" {
+		prefix = strings.TrimSuffix(cfg.S3Prefix, "/") + "/"
+	}
+	for _, name := range names {
+		key := prefix + name
+		if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(cfg.S3Bucket),
+			Key:    aws.String(key),
+		}); err != nil {
+			return fmt.Errorf("s3dest: delete object %s/%s: %w", cfg.S3Bucket, key, err)
+		}
+	}
+	return nil
+}
+
 // Read fetches cfg.S3Bucket/cfg.S3Prefix/filename.
 func (d *Dest) Read(ctx context.Context, cfg types.BackupConfig, filename string) ([]byte, error) {
 	if cfg.S3Bucket == "" {

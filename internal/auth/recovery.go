@@ -5,7 +5,6 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"math/big"
-	mrand "math/rand/v2"
 )
 
 // GenerateRecoveryCodes returns n recovery codes in "xxxxx-xxxxx" format. Each
@@ -42,10 +41,7 @@ func cryptoRand5Digits() int {
 	max := big.NewInt(100000)
 	n, err := crand.Int(crand.Reader, max)
 	if err != nil {
-		// crypto/rand failures are terminal — fall back to math/rand for
-		// this single digit block rather than panicking. The code is still
-		// CSPRNG-quality for the other segment.
-		return mrand.IntN(100000) //#nosec G404 — fallback only; crypto/rand is used normally
+		panic(fmt.Sprintf("auth: crypto/rand.Int failed: %v", err))
 	}
 	return int(n.Int64())
 }

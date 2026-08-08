@@ -450,6 +450,35 @@ func (s *Store) PurgeAuthAuditEvents(ctx context.Context, olderThan time.Time) (
 	return int(n), nil
 }
 
+// PurgeExpiredAuthChallenges deletes auth_challenges rows (MFA codes and
+// WebAuthn ceremony sessions) whose expires_at is before now. A challenge is
+// normally deleted inline once consumed (DeleteMFAChallenge / the WebAuthn
+// ceremony path); this sweeps the ones abandoned mid-flow that never were.
+// expires_at is stored RFC3339 (see CreateMFAChallenge/ConsumeOIDCState), so
+// the same format is used here for the comparison.
+func (s *Store) PurgeExpiredAuthChallenges(ctx context.Context, now time.Time) (int, error) {
+	const q = `DELETE FROM auth_challenges WHERE expires_at < ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(now))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge expired auth challenges: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// PurgeExpiredOIDCStates deletes oidc_states rows whose expires_at is before
+// now. A state is normally deleted inline by ConsumeOIDCState once the OAuth
+// callback completes; this sweeps abandoned/never-completed flows.
+func (s *Store) PurgeExpiredOIDCStates(ctx context.Context, now time.Time) (int, error) {
+	const q = `DELETE FROM oidc_states WHERE expires_at < ?`
+	res, err := s.db.ExecContext(ctx, s.rewrite(q), utcStr(now))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge expired oidc states: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // --- TOTP secrets ---
 
 // UpsertTOTPSecret inserts or updates the encrypted TOTP secret for a user.
