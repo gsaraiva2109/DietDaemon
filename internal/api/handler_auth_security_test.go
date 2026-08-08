@@ -200,3 +200,78 @@ func TestHandleTOTPChallengeLockout(t *testing.T) {
 		t.Fatalf("after %d failed attempts (last=%d), expected 429 lockout, got %d: %s", lockoutCfg.MaxAttempts, lastCode, rec.Code, rec.Body.String())
 	}
 }
+
+// TestHandleTOTPChallengeLockoutDoesNotExtendWindow is the #273 regression
+// test for checkTOTPChallengeLockout: hitting the challenge endpoint while
+// locked must not record a fresh failure (that would push the sliding
+// window forward and never let the lockout expire), and the lockout must
+// clear once the recorded failures fall outside the window.
+func TestHandleTOTPChallengeLockoutDoesNotExtendWindow(t *testing.T) {
+	encKey := make([]byte, 32)
+	secret, _, err := auth.GenerateSecret("DietDaemon", "test@example.com")
+	if err != nil {
+		t.Fatalf("GenerateSecret: %v", err)
+	}
+	ct, err := auth.Encrypt([]byte(secret), encKey)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	authStore := &totpChallengeAuthStore{
+		fakeAuthStore: newFakeAuthStore(),
+		userID:        "totp-user",
+		encSecret:     base64.RawStdEncoding.EncodeToString(ct),
+	}
+
+	store := newFakeMealStore()
+	lockoutCfg := auth.LockoutConfig{MaxAttempts: 3, Window: time.Hour, LockDuration: time.Hour}
+	h := New(store, &fakeMealLogger{}, time.UTC, nil, nil,
+		WithAuth(authStore, AuthRepos{Sessions: authStore, LoginAttempts: authStore, TOTP: authStore, MFAChallenges: authStore, RecoveryCodes: authStore}, encKey, "DietDaemon", AuthConfig{
+			SessionCfg: auth.SessionConfig{
+				IdleTTL:     1 * time.Hour,
+				AbsoluteTTL: 24 * time.Hour,
+				RememberTTL: 72 * time.Hour,
+			},
+			LockoutCfg:       lockoutCfg,
+			RegistrationMode: types.RegistrationOpen,
+			CookieSecure:     false,
+		}),
+		WithMailer(&fakeMailer{}, "none"),
+		WithPublicBaseURL("http://localhost:8080"),
+	)
+
+	body := map[string]string{"challenge_token": "any-token", "code": "000000"}
+	lockKey := "totp:" + authStore.userID
+
+	for i := 0; i < lockoutCfg.MaxAttempts; i++ {
+		rec := doRequest(h, "POST", "/api/v1/auth/totp/challenge", body, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected 401 for wrong code, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	attemptCount := len(authStore.loginAttempts)
+
+	// Hitting the locked endpoint must not record a new failure.
+	for i := 0; i < 3; i++ {
+		rec := doRequest(h, "POST", "/api/v1/auth/totp/challenge", body, nil)
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("locked attempt %d: expected 429, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := len(authStore.loginAttempts); got != attemptCount {
+		t.Fatalf("login-attempt count = %d after hitting the locked endpoint, want unchanged %d (checkTOTPChallengeLockout must not record a failure of its own)", got, attemptCount)
+	}
+
+	// Backdate the recorded failures past the window — the lockout must
+	// clear on its own.
+	cutoff := time.Now().UTC().Add(-lockoutCfg.Window - time.Minute)
+	for i := range authStore.loginAttempts {
+		if authStore.loginAttempts[i].identifier == lockKey {
+			authStore.loginAttempts[i].at = cutoff
+		}
+	}
+	rec := doRequest(h, "POST", "/api/v1/auth/totp/challenge", body, nil)
+	if rec.Code == http.StatusTooManyRequests {
+		t.Fatal("TOTP challenge lockout did not expire after the window passed")
+	}
+}

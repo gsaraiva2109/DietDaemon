@@ -814,6 +814,40 @@ func TestHandleTOTPChallengeCodeSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleTOTPChallengeRejectsPendingDeletionAccount(t *testing.T) {
+	authStore := newTOTPTestStore()
+	encKey := make([]byte, 32)
+	secret, _, err := auth.GenerateSecret("DietDaemon", "totp@example.com")
+	if err != nil {
+		t.Fatalf("GenerateSecret: %v", err)
+	}
+	enrollTOTPSecret(t, authStore, encKey, "test-user", secret)
+	authStore.confirmedByUser["test-user"] = true
+	if err := authStore.RequestAccountDeletion(context.Background(), "test-user"); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	token := "valid-token"
+	authStore.challenges[auth.HashToken(token)] = totpChallengeState{
+		userID: "test-user", expiresAt: time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339),
+	}
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	h := buildTOTPHandler(authStore, defaultTOTPMeals(), encKey, auth.DefaultLockoutConfig())
+
+	rec := doRequest(h, http.MethodPost, "/api/v1/auth/totp/challenge", map[string]string{"challenge_token": token, "code": code}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("challenge status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if body := decodeJSON[map[string]any](t, rec); body["error"] != "pending_deletion" {
+		t.Errorf("error body = %#v, want pending_deletion", body)
+	}
+	if len(authStore.sessions) != 0 {
+		t.Errorf("created sessions = %d, want 0: pending-deletion account must not get a new session via TOTP challenge", len(authStore.sessions))
+	}
+}
+
 func TestHandleTOTPChallengeCreateSessionError(t *testing.T) {
 	authStore := newTOTPTestStore()
 	authStore.createSessionErr = errors.New("store unavailable")

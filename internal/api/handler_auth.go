@@ -278,7 +278,6 @@ func (h *Handler) checkLoginLockout(w http.ResponseWriter, ctx context.Context, 
 		return false
 	}
 	if locked {
-		_ = h.authStore.RecordLoginAttempt(ctx, email, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
@@ -364,6 +363,11 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Success.
 	_ = h.authStore.RecordLoginAttempt(ctx, req.email, true)
 	ua := r.UserAgent()
+
+	if status, statusErr := h.authStore.AccountDeletionStatus(ctx, u.ID); statusErr == nil && status.DeletedAt != nil {
+		writePendingDeletionError(w, status)
+		return
+	}
 
 	// MFA step-up when TOTP is confirmed.
 	if h.tryLoginMFAStepUp(w, ctx, u, req.remember, ip, ua) {
@@ -893,7 +897,6 @@ func (h *Handler) checkTOTPChallengeLockout(w http.ResponseWriter, ctx context.C
 		return false
 	}
 	if locked {
-		_ = h.loginAttempts.RecordLoginAttempt(ctx, lockKey, false)
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": auth.ErrLocked.Error()})
@@ -974,6 +977,11 @@ func (h *Handler) verifyTOTPChallengeCode(w http.ResponseWriter, ctx context.Con
 // finishTOTPChallengeLogin creates a session for the now-verified user and
 // writes the session response.
 func (h *Handler) finishTOTPChallengeLogin(w http.ResponseWriter, ctx context.Context, chUserID string, remember bool, ip, ua string) {
+	if status, statusErr := h.authStore.AccountDeletionStatus(ctx, chUserID); statusErr == nil && status.DeletedAt != nil {
+		writePendingDeletionError(w, status)
+		return
+	}
+
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, ua, h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {

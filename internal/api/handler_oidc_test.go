@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
@@ -126,6 +127,27 @@ func TestHandleOIDCStartLinkSuccess(t *testing.T) {
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleOIDCStartLinkRejectsPendingDeletionAccount(t *testing.T) {
+	idp := newTestIdP(t, "test-client")
+	authStore := newFakeAuthStore()
+	if err := authStore.RequestAccountDeletion(context.Background(), "test-user"); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	h := buildAuthSecurityHandler(authStore)
+	h.providers["known"] = idp.provider(false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/known/start?link=1", nil)
+	req.SetPathValue("id", "known")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+
+	h.handleOIDCStart(rec, req)
+
+	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "account_deleted" {
+		t.Fatalf("status/location = %d/%q, want 302 with error=account_deleted", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
@@ -616,6 +638,27 @@ func TestHandleOIDCCallbackSignInExistingIdentityMatch(t *testing.T) {
 	}
 	if authStore.lastOIDCCreateEmail != "" {
 		t.Error("expected no new user creation when an existing identity matched")
+	}
+}
+
+func TestHandleOIDCCallbackRejectsPendingDeletionAccount(t *testing.T) {
+	idp := newTestIdP(t, "test-client")
+	idp.idToken = idp.signIDToken("existing-sub", "test-nonce", "existing@example.com", true, "Existing User")
+
+	authStore := newFakeAuthStore()
+	authStore.consumeOIDCStateErr = nil
+	authStore.oidcStateNonce = "test-nonce"
+	existing := types.User{ID: "existing-user-id", AccountID: "acct-2", Email: "existing@example.com"}
+	authStore.users[existing.ID] = existing
+	authStore.oidcIdentities = map[string]types.User{"known|existing-sub": existing}
+	if err := authStore.RequestAccountDeletion(context.Background(), existing.ID); err != nil {
+		t.Fatalf("RequestAccountDeletion: %v", err)
+	}
+	h := oidcHandler(authStore, idp.provider(false))
+	rec := doOIDCCallback(h)
+
+	if rec.Code != http.StatusFound || locationParams(t, rec).Get("error") != "account_deleted" {
+		t.Fatalf("status/location = %d/%q, want 302 with error=account_deleted", rec.Code, rec.Header().Get("Location"))
 	}
 }
 

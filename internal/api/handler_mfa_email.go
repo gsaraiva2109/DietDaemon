@@ -165,6 +165,11 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
 	_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
 
+	if status, statusErr := h.authStore.AccountDeletionStatus(ctx, chUserID); statusErr == nil && status.DeletedAt != nil {
+		writePendingDeletionError(w, status)
+		return
+	}
+
 	cookieTok, csrfTok, sess := auth.CreateSession(chUserID, remember, ip, r.UserAgent(), h.sessionCfg)
 	h.setSessionCookies(w, cookieTok, csrfTok, remember)
 	if err := h.sessions.CreateSession(ctx, sess); err != nil {
