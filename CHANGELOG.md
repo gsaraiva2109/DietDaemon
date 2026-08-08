@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-alpha.10](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.9...v0.2.0-alpha.10) (2026-08-08)
+
+
+### Fixes
+
+* **ci:** keep GitHub release as draft until assets are attached ([#292](https://github.com/gsaraiva2109/DietDaemon/issues/292)) ([85e4550](https://github.com/gsaraiva2109/DietDaemon/commit/85e4550c238bf4081b5288884e7238feaf019d67))
+
 ## [0.2.0-alpha.9](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.8...v0.2.0-alpha.9) (2026-08-08)
 
 
