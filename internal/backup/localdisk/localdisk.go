@@ -85,6 +85,30 @@ func (d *Dest) Read(_ context.Context, cfg types.BackupConfig, filename string) 
 	return data, nil
 }
 
+// Delete removes every file List would return for cfg's user (everything
+// under cfg.LocalSubdir), e.g. when the owning account is purged. Deletes
+// files individually rather than the whole directory (os.RemoveAll), so it
+// only ever touches what Write actually wrote here — it never recurses into
+// subdirectories, and it never risks wiping the shared base directory when
+// LocalSubdir is empty.
+func (d *Dest) Delete(ctx context.Context, cfg types.BackupConfig) error {
+	names, err := d.List(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	dir, err := d.userDir(cfg.LocalSubdir)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		path := filepath.Join(dir, filepath.Base(name))
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("localdisk: delete %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // userDir resolves subdir against the base directory and rejects anything
 // that would escape it (via ".." or an absolute path), before the caller
 // ever touches the filesystem. filepath.Join cleans the result, so the only

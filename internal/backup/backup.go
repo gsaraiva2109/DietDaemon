@@ -72,6 +72,12 @@ type Store interface {
 // per-user credential storage.
 type Destination interface {
 	Write(ctx context.Context, cfg types.BackupConfig, filename string, data []byte) error
+
+	// Delete removes every file previously written for cfg's user (i.e.
+	// everything under their local_subdir / S3 prefix). Used when the
+	// owning account is purged, so exported CSVs and photo blobs don't
+	// outlive the account they came from.
+	Delete(ctx context.Context, cfg types.BackupConfig) error
 }
 
 // Runner ticks on a fixed interval, independent of any per-user interval_hrs,

@@ -124,9 +124,13 @@ func (d *fakeDest) Write(context.Context, types.BackupConfig, string, []byte) er
 	return nil
 }
 
+func (d *fakeDest) Delete(context.Context, types.BackupConfig) error { return nil }
+
 type failingDest struct{ err error }
 
 func (d failingDest) Write(context.Context, types.BackupConfig, string, []byte) error { return d.err }
+
+func (d failingDest) Delete(context.Context, types.BackupConfig) error { return d.err }
 
 func TestWriteCSV_WrapsStageErrors(t *testing.T) {
 	boom := errors.New("boom")
@@ -487,6 +491,8 @@ func (d *orderedFakeDest) Write(_ context.Context, _ types.BackupConfig, filenam
 	return nil
 }
 
+func (d *orderedFakeDest) Delete(context.Context, types.BackupConfig) error { return nil }
+
 // TestRunFor_PhotoBlobWrittenBeforeIndex pins the ordering guarantee called
 // out in runFor's comment: every photo blob is written before photos.csv, so
 // a recovered index never references a missing blob.
@@ -577,6 +583,8 @@ func (d *capturingDest) Write(_ context.Context, _ types.BackupConfig, filename 
 	d.writes[filename] = append([]byte(nil), data...)
 	return nil
 }
+
+func (d *capturingDest) Delete(context.Context, types.BackupConfig) error { return nil }
 
 // TestWritePhotos_BatchesDataFetch pins the N+1 fix: GetPhotosData is called
 // exactly once for all photos, and every blob still ends up with the right
