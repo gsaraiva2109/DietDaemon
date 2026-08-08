@@ -74,7 +74,7 @@ func (a *Adapter) Embed(ctx context.Context, text string) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ollama: build embed request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -127,10 +127,18 @@ type pullRequest struct {
 	Stream bool   `json:"stream"`
 }
 
+// pullTimeout bounds a model-pull request. It's far longer than the
+// adapter's normal inference timeout (a multi-GB model download can
+// legitimately take minutes) but still finite, so a stalled download doesn't
+// hang forever — the caller's context still cancels it sooner during
+// shutdown. Var, not const, so tests can shrink it to exercise the timeout
+// path without waiting 30 minutes.
+var pullTimeout = 30 * time.Minute
+
 // EnsureModels pulls configured models that are not already present in Ollama.
-// Pull requests intentionally have no client timeout: downloading a model can
-// take much longer than normal inference. The caller's context still cancels
-// the request during shutdown.
+// Pull requests use pullTimeout, not the adapter's normal (short) inference
+// timeout: downloading a model can take much longer than normal inference.
+// The caller's context still cancels the request during shutdown.
 func (a *Adapter) EnsureModels(ctx context.Context, models ...string) error {
 	required := uniqueModels(models)
 	if len(required) == 0 {
@@ -203,10 +211,12 @@ func (a *Adapter) pull(ctx context.Context, model string) error {
 	if err != nil {
 		return fmt.Errorf("ollama: build pull request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	// Pulls can last minutes; inference timeout must not abort an otherwise
-	// healthy download. Shutdown still cancels through ctx.
-	resp, err := (&http.Client{}).Do(req)
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	// Pulls can last minutes; the adapter's normal (short) inference timeout
+	// must not abort an otherwise healthy download, so this uses a
+	// distinctly longer, but still bounded, timeout. Shutdown still cancels
+	// through ctx.
+	resp, err := (&http.Client{Timeout: pullTimeout}).Do(req)
 	if err != nil {
 		return fmt.Errorf("ollama: pull %q: %w", model, err)
 	}
@@ -231,7 +241,7 @@ func (a *Adapter) Complete(ctx context.Context, prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ollama: build generate request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, jsonContentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {

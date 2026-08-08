@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +50,12 @@ func nullStr(s string) any {
 	return s
 }
 
+// locCache memoizes time.LoadLocation by IANA timezone name. A *time.Location
+// is immutable/read-only once loaded, so it's safe to share across users and
+// Store instances; this only avoids re-parsing zoneinfo for a timezone string
+// this process has already seen, not the GetUser round-trip itself.
+var locCache sync.Map // map[string]*time.Location
+
 // userLoc returns userID's timezone, falling back to the store's default
 // location when the user has none set or it fails to load. Mirrors
 // pipeline.Engine.userLoc; kept separate since Store has no dependency on
@@ -58,10 +65,14 @@ func (s *Store) userLoc(ctx context.Context, userID string) *time.Location {
 	if err != nil || u.Timezone == "" {
 		return s.loc
 	}
+	if v, ok := locCache.Load(u.Timezone); ok {
+		return v.(*time.Location)
+	}
 	loc, err := time.LoadLocation(u.Timezone)
 	if err != nil {
 		return s.loc
 	}
+	locCache.Store(u.Timezone, loc)
 	return loc
 }
 

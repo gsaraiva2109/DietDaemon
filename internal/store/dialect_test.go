@@ -102,6 +102,89 @@ func TestColumnExists(t *testing.T) {
 	}
 }
 
+// TestSearchQueryCleanInput pins the pre-existing prefix-query shape for
+// ordinary alphanumeric input, for both dialects, so the sanitization added
+// below can't quietly change the common-case output.
+func TestSearchQueryCleanInput(t *testing.T) {
+	sqlite := SQLiteDialect()
+	if got, want := sqlite.SearchQuery("chicken breast"), "chicken* breast*"; got != want {
+		t.Errorf("SQLite SearchQuery(clean) = %q, want %q", got, want)
+	}
+
+	pg, err := NewDialect("postgres")
+	if err != nil {
+		t.Fatalf("NewDialect(postgres): %v", err)
+	}
+	if got, want := pg.SearchQuery("chicken breast"), "chicken:* & breast:*"; got != want {
+		t.Errorf("Postgres SearchQuery(clean) = %q, want %q", got, want)
+	}
+}
+
+// TestSearchQueryMalformedInput pins the #276 item 3 fix: unbalanced quotes,
+// NEAR/column-filter syntax, parens, and other FTS5/tsquery-special
+// characters must not survive into the generated query string, since any of
+// them can turn the whole search request into a query-syntax error instead
+// of just "no results".
+func TestSearchQueryMalformedInput(t *testing.T) {
+	dangerous := []string{`"`, "*", "(", ")", ":", ";", "'", "-", "+", "^", "~"}
+
+	malformed := []string{
+		`"unbalanced quote`,
+		`col:value NEAR(term)`,
+		`foo:bar OR 1=1); DROP TABLE x;--`,
+		`(a & b) | c`,
+		`???`,
+	}
+
+	sqlite := SQLiteDialect()
+	pg, err := NewDialect("postgres")
+	if err != nil {
+		t.Fatalf("NewDialect(postgres): %v", err)
+	}
+
+	for _, raw := range malformed {
+		sq := sqlite.SearchQuery(raw)
+		for _, d := range dangerous {
+			// The generated "*" prefix suffixes are expected; only flag
+			// characters that leaked in from the raw input itself.
+			if d == "*" {
+				continue
+			}
+			if strings.Contains(sq, d) {
+				t.Errorf("SQLite SearchQuery(%q) = %q, contains dangerous char %q", raw, sq, d)
+			}
+		}
+
+		pq := pg.SearchQuery(raw)
+		for _, d := range dangerous {
+			if d == ":" || d == "*" { // ":*" suffix is expected postgres tsquery syntax
+				continue
+			}
+			if strings.Contains(pq, d) {
+				t.Errorf("Postgres SearchQuery(%q) = %q, contains dangerous char %q", raw, pq, d)
+			}
+		}
+	}
+}
+
+// TestSearchQueryAllPunctuationYieldsEmpty ensures a query that sanitizes
+// down to nothing (e.g. all punctuation) produces an empty query string
+// instead of a bare "*"/"​:*", which is itself invalid FTS5/tsquery syntax.
+func TestSearchQueryAllPunctuationYieldsEmpty(t *testing.T) {
+	sqlite := SQLiteDialect()
+	if got := sqlite.SearchQuery("???"); got != "" {
+		t.Errorf("SQLite SearchQuery(all-punctuation) = %q, want empty", got)
+	}
+
+	pg, err := NewDialect("postgres")
+	if err != nil {
+		t.Fatalf("NewDialect(postgres): %v", err)
+	}
+	if got := pg.SearchQuery("???"); got != "" {
+		t.Errorf("Postgres SearchQuery(all-punctuation) = %q, want empty", got)
+	}
+}
+
 func TestNewDialectInvalid(t *testing.T) {
 	d, err := NewDialect("mysql")
 	if err == nil {

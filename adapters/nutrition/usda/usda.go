@@ -47,10 +47,15 @@ type Source struct {
 	bulkFilePath string // non-empty: FetchBulk streams from this local file instead of the live API
 }
 
+// defaultClientTimeout floors every request this Source makes. Callers never
+// wrap ctx with a deadline for these calls, so without this the client could
+// hang indefinitely on a stalled connection.
+const defaultClientTimeout = 5 * time.Second
+
 // New returns a Source pointed at the USDA FDC API.
 func New(apiKey string) *Source {
 	return &Source{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: defaultClientTimeout},
 		baseURL: DefaultBaseURL,
 		apiKey:  apiKey,
 	}

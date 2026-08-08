@@ -72,18 +72,30 @@ func (ix *SQLIndex) Upsert(ctx context.Context, foodID string, vec []float32) er
 	}
 
 	ix.mu.Lock()
-	if ix.primed {
-		cachedVec := append([]float32(nil), vec...)
-		for i := range ix.cache {
-			if ix.cache[i].foodID == foodID {
-				ix.cache[i].vec = cachedVec
-				ix.mu.Unlock()
-				return nil
-			}
-		}
-		ix.cache = append(ix.cache, entry{foodID: foodID, vec: cachedVec})
+	defer ix.mu.Unlock()
+	if !ix.primed {
+		return nil
 	}
-	ix.mu.Unlock()
+	cachedVec := append([]float32(nil), vec...)
+	for i, e := range ix.cache {
+		if e.foodID == foodID {
+			// Copy-on-write: replace the whole cache slice rather than
+			// mutating ix.cache[i].vec in place. Nearest/Exists call load()
+			// under RLock but then range over the returned slice after
+			// releasing it, so an in-place field write here would race with
+			// (and could hand a torn slice header to) a concurrent reader
+			// holding an older snapshot. Replacing the slice means existing
+			// snapshots keep seeing their original, complete entries.
+			next := make([]entry, len(ix.cache))
+			copy(next, ix.cache)
+			next[i] = entry{foodID: foodID, vec: cachedVec}
+			ix.cache = next
+			return nil
+		}
+	}
+	// Appending a new entry is safe in place: any snapshot already handed
+	// out has a fixed length that doesn't reach this new index.
+	ix.cache = append(ix.cache, entry{foodID: foodID, vec: cachedVec})
 	return nil
 }
 
