@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.2.0-alpha.6](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.5...v0.2.0-alpha.6) (2026-08-08)
+
+
+### Features
+
+* add photo menu dining mode ([#218](https://github.com/gsaraiva2109/DietDaemon/issues/218)) ([b1095ad](https://github.com/gsaraiva2109/DietDaemon/commit/b1095ad55da581f170d574900c71d09aff84f18a))
+* **api:** add photo mime allowlist, quota, and view validation ([#214](https://github.com/gsaraiva2109/DietDaemon/issues/214)) ([6a107bb](https://github.com/gsaraiva2109/DietDaemon/commit/6a107bb427ecd8c3c9487a49b23e9af359d78418)), closes [#208](https://github.com/gsaraiva2109/DietDaemon/issues/208)
+* **plan-import:** extract native PDF text before falling back to scan ([#221](https://github.com/gsaraiva2109/DietDaemon/issues/221)) ([#253](https://github.com/gsaraiva2109/DietDaemon/issues/253)) ([f02d398](https://github.com/gsaraiva2109/DietDaemon/commit/f02d398cbdb44f03eabfcd38f1639ffd7b89c0f3))
+* **plan-import:** preserve weekday schedule and substitutions from source ([#254](https://github.com/gsaraiva2109/DietDaemon/issues/254)) ([892cddf](https://github.com/gsaraiva2109/DietDaemon/commit/892cddf797e805a5ca7ef5f6f7a1465da9838c1d))
+* suggest target review from sustained weight-trend divergence ([#217](https://github.com/gsaraiva2109/DietDaemon/issues/217)) ([7c331c0](https://github.com/gsaraiva2109/DietDaemon/commit/7c331c0b6f932122985e7ef0a8edb69aad21385d))
+* **vision:** support multi-page diet plan extraction ([#222](https://github.com/gsaraiva2109/DietDaemon/issues/222)) ([#252](https://github.com/gsaraiva2109/DietDaemon/issues/252)) ([105f0d0](https://github.com/gsaraiva2109/DietDaemon/commit/105f0d09eedc4038e89b09de70f89cfe174a31b9))
+
+
+### Fixes
+
+* allow inline styles and data: images in CSP ([#267](https://github.com/gsaraiva2109/DietDaemon/issues/267)) ([8b0fa28](https://github.com/gsaraiva2109/DietDaemon/commit/8b0fa2837ffcf9ec32aa209077de89f4f0a7e379))
+* **assistant:** wire mailer into background purge runner ([#212](https://github.com/gsaraiva2109/DietDaemon/issues/212)) ([2b80c1d](https://github.com/gsaraiva2109/DietDaemon/commit/2b80c1d88cbc98f3402989c15a10ed86da1d6809))
+* **auth:** stop lockout self-perpetuation and enforce account-deletion status at login ([#280](https://github.com/gsaraiva2109/DietDaemon/issues/280)) ([f0fbb60](https://github.com/gsaraiva2109/DietDaemon/commit/f0fbb60b683e18c9dd5ed80e334b6907be91548f))
+* **deps:** replace dependency framer-motion with motion ([#235](https://github.com/gsaraiva2109/DietDaemon/issues/235)) ([09f48f6](https://github.com/gsaraiva2109/DietDaemon/commit/09f48f6d0020822cc4c1721365ef2bac1c051c41))
+* **deps:** unblock compatible frontend updates ([#248](https://github.com/gsaraiva2109/DietDaemon/issues/248)) ([107db5b](https://github.com/gsaraiva2109/DietDaemon/commit/107db5b4e20c7d362603c43687b0211234495cde))
+* **deps:** update dependency motion to v13 ([#241](https://github.com/gsaraiva2109/DietDaemon/issues/241)) ([73a5559](https://github.com/gsaraiva2109/DietDaemon/commit/73a5559791b471c90f0d67e6900ee18578a8a721))
+* **deps:** update go dependencies ([#237](https://github.com/gsaraiva2109/DietDaemon/issues/237)) ([f1062bb](https://github.com/gsaraiva2109/DietDaemon/commit/f1062bbbc4fe05b90ddee1a5ab576cc24e3f9e5d))
+* **deps:** update go dependencies ([#255](https://github.com/gsaraiva2109/DietDaemon/issues/255)) ([187a956](https://github.com/gsaraiva2109/DietDaemon/commit/187a9567693310792d5db05101999d289e8f3872))
+* **deps:** update go dependencies ([#262](https://github.com/gsaraiva2109/DietDaemon/issues/262)) ([08152a9](https://github.com/gsaraiva2109/DietDaemon/commit/08152a9710a536f9e2c293d589578b95109a5339))
+* **deps:** update go dependencies to v0.44.0 ([#265](https://github.com/gsaraiva2109/DietDaemon/issues/265)) ([61f385f](https://github.com/gsaraiva2109/DietDaemon/commit/61f385fb7dc154fb0407a6ccc1ad954464f29e0f))
+* **deps:** update npm dependencies ([#238](https://github.com/gsaraiva2109/DietDaemon/issues/238)) ([37bde3c](https://github.com/gsaraiva2109/DietDaemon/commit/37bde3c9726c67bbe5f887c0e58b83fda65b4634))
+* **goals:** simplify target review guard ([#251](https://github.com/gsaraiva2109/DietDaemon/issues/251)) ([1654fe1](https://github.com/gsaraiva2109/DietDaemon/commit/1654fe19347ba4a1034ed2e1bbfdb03e327d75e1))
+* **mailer:** migrate Resend to v3 ([#250](https://github.com/gsaraiva2109/DietDaemon/issues/250)) ([f8afeb0](https://github.com/gsaraiva2109/DietDaemon/commit/f8afeb07bc0ac5edb95dfa8809cfc3da3562612b))
+* **mailer:** surface send failures and add SMTP timeouts ([#278](https://github.com/gsaraiva2109/DietDaemon/issues/278)) ([f6390e8](https://github.com/gsaraiva2109/DietDaemon/commit/f6390e86c263fe4819151ca769921c7ad4d11e1a))
+* per-user timezone in API reads and backup deletion on account purge ([#281](https://github.com/gsaraiva2109/DietDaemon/issues/281)) ([4945b08](https://github.com/gsaraiva2109/DietDaemon/commit/4945b086e1de06268fb386cc72f686126c5164b2))
+* **store:** make meal save and rollup update atomic and additive ([#279](https://github.com/gsaraiva2109/DietDaemon/issues/279)) ([c572813](https://github.com/gsaraiva2109/DietDaemon/commit/c5728131741ed48e412f1e4fa0e8c0963eb2d15f)), closes [#272](https://github.com/gsaraiva2109/DietDaemon/issues/272)
+* **web:** resolve SonarQube reliability issues, raise new-code coverage ([#198](https://github.com/gsaraiva2109/DietDaemon/issues/198)) ([5071222](https://github.com/gsaraiva2109/DietDaemon/commit/50712220ebdfc2fed8a8c9f035ff958bb99fe0e7))
+* **web:** stop polling failed queries ([#206](https://github.com/gsaraiva2109/DietDaemon/issues/206)) ([c5764e8](https://github.com/gsaraiva2109/DietDaemon/commit/c5764e8cf48f5c07bdc6c8d15b6c4840628b2286))
+
+
+### Security
+
+* **web:** upgrade react router to v8 ([#246](https://github.com/gsaraiva2109/DietDaemon/issues/246)) ([e57c3ec](https://github.com/gsaraiva2109/DietDaemon/commit/e57c3ec0e8f7d327f6b7e04f3fd2716d38672b22))
+
 ## [0.2.0-alpha.5](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.4...v0.2.0-alpha.5) (2026-07-28)
 
 
