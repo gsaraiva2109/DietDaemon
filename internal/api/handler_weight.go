@@ -42,7 +42,7 @@ func (h *Handler) handleLogWeight(w http.ResponseWriter, r *http.Request, userID
 		writeValidationError(w, "weight_kg must be between 20 and 500")
 		return
 	}
-	if !validDate(body.Date, h.loc) {
+	if !validDate(body.Date, h.userLoc(r.Context(), userID)) {
 		writeValidationError(w, "date must be a non-future YYYY-MM-DD date")
 		return
 	}

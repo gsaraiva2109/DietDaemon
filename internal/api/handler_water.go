@@ -52,7 +52,7 @@ func (h *Handler) handleLogWater(w http.ResponseWriter, r *http.Request, userID 
 }
 
 func (h *Handler) handleGetWaterToday(w http.ResponseWriter, r *http.Request, userID string) {
-	today := time.Now().In(h.loc).Format("2006-01-02")
+	today := time.Now().In(h.userLoc(r.Context(), userID)).Format("2006-01-02")
 	logs, total, err := h.store.GetWaterToday(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err)

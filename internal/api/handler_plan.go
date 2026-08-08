@@ -78,7 +78,7 @@ func (h *Handler) handleCreatePlan(w http.ResponseWriter, r *http.Request, userI
 }
 
 func (h *Handler) handleGetActivePlan(w http.ResponseWriter, r *http.Request, userID string) {
-	today := time.Now().In(h.loc).Format(dateLayout)
+	today := time.Now().In(h.userLoc(r.Context(), userID)).Format(dateLayout)
 	p, err := h.store.GetActivePlan(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err) // ErrNotFound → 404; frontend treats as "no active plan".

@@ -74,7 +74,7 @@ func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, user
 	}
 	date := r.FormValue("date")
 	if date == "" {
-		date = time.Now().In(h.loc).Format("2006-01-02")
+		date = time.Now().In(h.userLoc(r.Context(), userID)).Format("2006-01-02")
 	}
 
 	// Detect mime type from first 512 bytes.

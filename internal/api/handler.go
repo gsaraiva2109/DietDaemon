@@ -1066,8 +1066,26 @@ type sharedDayTypeResponse struct {
 // It reuses TargetsFor and resolvedDayTypeName (handler_plan.go) so the
 // resolution can never drift from what handleGetPlanDay shows the plan's
 // own owner.
+// userLoc returns userID's timezone, falling back to the boot-time default
+// location (h.loc) when the user has none set or it fails to load. Mirrors
+// store.Store.userLoc / pipeline.Engine.userLoc — handlers can't call the
+// store's unexported version directly, so this is the API-package copy of
+// the same lookup, used wherever a handler needs the requesting user's
+// "today" rather than the process-wide default.
+func (h *Handler) userLoc(ctx context.Context, userID string) *time.Location {
+	u, err := h.store.GetUser(ctx, userID)
+	if err != nil || u.Timezone == "" {
+		return h.loc
+	}
+	loc, err := time.LoadLocation(u.Timezone)
+	if err != nil {
+		return h.loc
+	}
+	return loc
+}
+
 func (h *Handler) handleGetSharedDayType(w http.ResponseWriter, r *http.Request, userID string) {
-	today := time.Now().In(h.loc).Format(dateLayout)
+	today := time.Now().In(h.userLoc(r.Context(), userID)).Format(dateLayout)
 	targets, err := h.store.TargetsFor(r.Context(), userID, today)
 	if err != nil {
 		h.writeErr(w, err)

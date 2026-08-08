@@ -44,7 +44,7 @@ func (h *Handler) handleLogMeasurements(w http.ResponseWriter, r *http.Request, 
 		writeValidationError(w, "invalid JSON body")
 		return
 	}
-	if !validDate(body.Date, h.loc) {
+	if !validDate(body.Date, h.userLoc(r.Context(), userID)) {
 		writeValidationError(w, "date must be a non-future YYYY-MM-DD date")
 		return
 	}
