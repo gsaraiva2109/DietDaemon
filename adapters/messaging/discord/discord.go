@@ -4,22 +4,19 @@
 package discord
 
 import (
-	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"golang.org/x/net/websocket"
 )
 
 // Compile-time interface check.
@@ -32,7 +29,7 @@ const RESTBaseURL = "https://discord.com/api/v10"
 type Adapter struct {
 	token         string
 	client        *http.Client
-	dialWebSocket func(context.Context, string) (*tls.Conn, error)
+	dialWebSocket func(context.Context, string) (*websocket.Conn, error)
 }
 
 // New returns a ready Adapter. token is the Discord bot token.
@@ -218,10 +215,8 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 	}
 	defer func() { _ = conn.Close() }()
 
-	br := bufio.NewReader(conn)
-
 	// Read HELLO.
-	hello, err := readGatewayPayload(br)
+	hello, err := readGatewayPayload(conn)
 	if err != nil {
 		return
 	}
@@ -259,7 +254,7 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		default:
 		}
 
-		pl, err := readGatewayPayload(br)
+		pl, err := readGatewayPayload(conn)
 		if err != nil {
 			return
 		}
@@ -360,7 +355,7 @@ func (a *Adapter) fetchGatewayURL(ctx context.Context) (string, error) {
 	return result.URL, nil
 }
 
-func (a *Adapter) heartbeat(ctx context.Context, conn *tls.Conn, intervalMs int) {
+func (a *Adapter) heartbeat(ctx context.Context, conn *websocket.Conn, intervalMs int) {
 	if intervalMs <= 0 {
 		return
 	}
@@ -377,7 +372,7 @@ func (a *Adapter) heartbeat(ctx context.Context, conn *tls.Conn, intervalMs int)
 	}
 }
 
-func (a *Adapter) sendHeartbeat(conn *tls.Conn, seq *int) {
+func (a *Adapter) sendHeartbeat(conn *websocket.Conn, seq *int) {
 	pl := gatewayPayload{Op: gatewayOpHeartbeat}
 	if seq != nil {
 		b, _ := json.Marshal(*seq)
@@ -386,151 +381,36 @@ func (a *Adapter) sendHeartbeat(conn *tls.Conn, seq *int) {
 	_ = writeGatewayFrame(conn, pl)
 }
 
-// ---------------------------------------------------------------------------
-// Minimal WebSocket helpers (stdlib only — no external dep)
-// ---------------------------------------------------------------------------
+func dialWebSocket(ctx context.Context, rawURL string) (*websocket.Conn, error) {
+	return dialWebSocketWithTLSConfig(ctx, rawURL, &tls.Config{MinVersion: tls.VersionTLS12})
+}
 
-func dialWebSocket(ctx context.Context, rawURL string) (*tls.Conn, error) {
-	u, err := url.Parse(rawURL)
+func dialWebSocketWithTLSConfig(ctx context.Context, rawURL string, tlsConfig *tls.Config) (*websocket.Conn, error) {
+	config, err := websocket.NewConfig(rawURL, "https://discord.com")
 	if err != nil {
-		return nil, fmt.Errorf("discord: parse gateway url: %w", err)
+		return nil, fmt.Errorf("discord: configure gateway: %w", err)
 	}
-	host := u.Host
-	if !strings.Contains(host, ":") {
-		host += ":443"
-	}
-
-	dialer := &tls.Dialer{Config: &tls.Config{MinVersion: tls.VersionTLS12}}
-	conn, err := dialer.DialContext(ctx, "tcp", host)
+	config.TlsConfig = tlsConfig
+	conn, err := config.DialContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("discord: dial: %w", err)
 	}
-	tlsConn := conn.(*tls.Conn)
-
-	// WebSocket upgrade handshake.
-	key := make([]byte, 16)
-	rand.Read(key)
-	// Sec-WebSocket-Key: 16 random bytes base64-encoded. Discord's gateway
-	// does not enforce the SHA-1 accept hash for bot connections.
-	wsKey := base64.StdEncoding.EncodeToString(key)
-
-	req := fmt.Sprintf("GET %s HTTP/1.1\r\n", u.RequestURI())
-	req += fmt.Sprintf("Host: %s\r\n", u.Hostname())
-	req += "Upgrade: websocket\r\n"
-	req += "Connection: Upgrade\r\n"
-	req += "Sec-WebSocket-Version: 13\r\n"
-	req += "Sec-WebSocket-Key: " + wsKey + "\r\n"
-	req += "\r\n"
-
-	if _, err := tlsConn.Write([]byte(req)); err != nil {
-		_ = tlsConn.Close()
-		return nil, fmt.Errorf("discord: ws handshake write: %w", err)
-	}
-
-	// Read HTTP 101 response.
-	br := bufio.NewReader(tlsConn)
-	resp, err := http.ReadResponse(br, nil)
-	if err != nil {
-		_ = tlsConn.Close()
-		return nil, fmt.Errorf("discord: ws handshake read: %w", err)
-	}
-	if resp.StatusCode != 101 {
-		_ = tlsConn.Close()
-		return nil, fmt.Errorf("discord: ws upgrade got %d", resp.StatusCode)
-	}
-
-	return tlsConn, nil
+	return conn, nil
 }
 
-func readGatewayPayload(br *bufio.Reader) (gatewayPayload, error) {
-	frame, err := readWSFrame(br)
-	if err != nil {
-		return gatewayPayload{}, err
+func readGatewayPayload(conn *websocket.Conn) (gatewayPayload, error) {
+	var payload gatewayPayload
+	if err := websocket.JSON.Receive(conn, &payload); err != nil {
+		return gatewayPayload{}, fmt.Errorf("discord: read gateway: %w", err)
 	}
-	var pl gatewayPayload
-	if err := json.Unmarshal(frame, &pl); err != nil {
-		return gatewayPayload{}, fmt.Errorf("discord: unmarshal gateway: %w", err)
-	}
-	return pl, nil
+	return payload, nil
 }
 
-func writeGatewayFrame(conn *tls.Conn, pl gatewayPayload) error {
-	data, _ := json.Marshal(pl)
-	return writeWSFrame(conn, data)
-}
-
-// readWSFrame reads a single unmasked text frame from the server. Server frames
-// are never masked per RFC 6455.
-func readWSFrame(br *bufio.Reader) ([]byte, error) {
-	// First two bytes: fin+opcode, mask+len.
-	b0, err := br.ReadByte()
-	if err != nil {
-		return nil, err
+func writeGatewayFrame(conn *websocket.Conn, payload gatewayPayload) error {
+	if err := websocket.JSON.Send(conn, payload); err != nil {
+		return fmt.Errorf("discord: write gateway: %w", err)
 	}
-	b1, err := br.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-
-	length := int64(b1 & 0x7f)
-	switch length {
-	case 126:
-		var buf [2]byte
-		if _, err := io.ReadFull(br, buf[:]); err != nil {
-			return nil, err
-		}
-		length = int64(buf[0])<<8 | int64(buf[1])
-	case 127:
-		var buf [8]byte
-		if _, err := io.ReadFull(br, buf[:]); err != nil {
-			return nil, err
-		}
-		length = int64(buf[0])<<56 | int64(buf[1])<<48 | int64(buf[2])<<40 | int64(buf[3])<<32 |
-			int64(buf[4])<<24 | int64(buf[5])<<16 | int64(buf[6])<<8 | int64(buf[7])
-	}
-
-	data := make([]byte, length)
-	if _, err := io.ReadFull(br, data); err != nil {
-		return nil, err
-	}
-
-	_ = b0 // opcode ignored; server always sends text frames
-	return data, nil
-}
-
-// writeWSFrame writes a single masked text frame to the server.
-func writeWSFrame(conn *tls.Conn, data []byte) error {
-	var frame []byte
-	length := len(data)
-
-	frame = append(frame, 0x81) // FIN + text opcode
-	if length < 126 {
-		// #nosec G115
-		frame = append(frame, byte(0x80|length)) // mask bit set
-	} else if length < 65536 {
-		frame = append(frame, 0xFE) // 126 with mask
-		// #nosec G115
-		frame = append(frame, byte(length>>8), byte(length))
-	} else {
-		frame = append(frame, 0xFF) // 127 with mask
-		for i := 7; i >= 0; i-- {
-			// #nosec G115
-			frame = append(frame, byte(length>>(8*i)))
-		}
-	}
-
-	// Masking key (4 random bytes).
-	maskKey := make([]byte, 4)
-	rand.Read(maskKey)
-	frame = append(frame, maskKey...)
-
-	// Masked payload.
-	for i, b := range data {
-		frame = append(frame, b^maskKey[i%4])
-	}
-
-	_, err := conn.Write(frame)
-	return err
+	return nil
 }
 
 func mustMarshal(v any) json.RawMessage {
