@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // WeightStore is the subset of store methods needed by /weight.
@@ -66,7 +67,7 @@ func (c *WeightCommand) Handle(ctx context.Context, msg types.InboundMessage, ar
 
 	today := time.Now().Format("2006-01-02")
 	entry := types.WeightEntry{
-		ID:        randomID(),
+		ID:        id.New(),
 		UserID:    msg.UserID,
 		Date:      today,
 		WeightKg:  kg,

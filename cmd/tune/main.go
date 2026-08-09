@@ -19,9 +19,9 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/ollama"
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/cmdutil"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver/embedding"
-	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 // phraseEntry is one row from fixtures/test_phrases.json.
@@ -50,7 +50,7 @@ func run(ollamaURL, embedModel, dbPath string) error {
 	}
 	fmt.Printf("Loaded %d benchmark phrases.\n", len(phrases))
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

@@ -19,3 +19,9 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+func TestUnaccent(t *testing.T) {
+	if got := Unaccent("ÀçÚÑ"); got != "AcUN" {
+		t.Errorf("Unaccent() = %q, want %q", got, "AcUN")
+	}
+}

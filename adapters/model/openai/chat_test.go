@@ -21,21 +21,6 @@ func drainReadStream(ctx context.Context, sse string) []ports.ChatEvent {
 	return ssetest.Drain(ctx, io.NopCloser(strings.NewReader(sse)), c.readStream)
 }
 
-// TestExtractArgsEmptyValue guards the bug where a legitimately empty args
-// value (no-arg commands like /help emit {"args":""}) was misread as a parse
-// failure and the raw JSON blob leaked through as the command's argument.
-func TestExtractArgsEmptyValue(t *testing.T) {
-	if got := extractArgs(`{"args": ""}`); got != "" {
-		t.Errorf("extractArgs(empty args) = %q, want empty string", got)
-	}
-	if got := extractArgs(`{"args": "grilled chicken"}`); got != "grilled chicken" {
-		t.Errorf("extractArgs = %q, want %q", got, "grilled chicken")
-	}
-	if got := extractArgs(`not json`); got != "not json" {
-		t.Errorf("extractArgs(invalid json) = %q, want raw fallback", got)
-	}
-}
-
 func TestStreamChatHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

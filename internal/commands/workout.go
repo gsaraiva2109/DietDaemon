@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // WorkoutStore is the subset of store methods needed by /workout.
@@ -50,7 +51,7 @@ func (c *WorkoutCommand) Handle(ctx context.Context, msg types.InboundMessage, a
 	}
 
 	entry := types.Workout{
-		ID:          randomID(),
+		ID:          id.New(),
 		UserID:      msg.UserID,
 		Name:        name,
 		DurationMin: durationMin,

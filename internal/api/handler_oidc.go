@@ -426,16 +426,3 @@ func (h *Handler) redirectAuthCallback(w http.ResponseWriter, r *http.Request, e
 	}
 	http.Redirect(w, r, redir, http.StatusFound)
 }
-
-// handleProviders (edit handler_auth.go:299) — populated from the OIDC registry
-// instead of returning an empty array.
-// Moved implementation below; the original placeholder in handler_auth.go is
-// replaced by wiring that calls this method.
-
-// ---------------------------------------------------------------------------
-// PKCE helpers (re-exported from oauth2 for clarity)
-// ---------------------------------------------------------------------------
-
-// Verify that the oauth2 package provides what we expect at compile time.
-var _ = oauth2.GenerateVerifier
-var _ = oauth2.S256ChallengeFromVerifier

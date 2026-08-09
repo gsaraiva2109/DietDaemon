@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/streamsend"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
 
@@ -216,23 +217,6 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	return ch, nil
 }
 
-// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
-// this, a client that disconnects mid-stream while the channel's buffer is
-// full leaks this goroutine (and its open upstream connection) forever.
-func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
-	select {
-	case ch <- evt:
-		return true
-	default:
-	}
-	select {
-	case ch <- evt:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
 func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch chan<- ports.ChatEvent) {
 	defer close(ch)
 	defer func() { _ = body.Close() }()
@@ -248,7 +232,7 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		sendEvent(ctx, ch, ports.ChatEvent{
+		streamsend.Send(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("openai chat: read stream: %w", err),
 		})
@@ -271,7 +255,7 @@ func handleStreamLine(ctx context.Context, ch chan<- ports.ChatEvent, line strin
 		if !flushPendingTools(ctx, ch, *pending) {
 			return false
 		}
-		sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "done"})
 		return false
 	}
 
@@ -283,7 +267,7 @@ func handleStreamLine(ctx context.Context, ch chan<- ports.ChatEvent, line strin
 }
 
 func handleStreamChoice(ctx context.Context, ch chan<- ports.ChatEvent, choice openaiStreamChoice, pending *map[int]*pendingTool) bool {
-	if choice.Delta.Content != "" && !sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: choice.Delta.Content}) {
+	if choice.Delta.Content != "" && !streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: choice.Delta.Content}) {
 		return false
 	}
 	appendToolCallDeltas(*pending, choice.Delta.ToolCalls)
@@ -316,28 +300,16 @@ func appendToolCallDeltas(pending map[int]*pendingTool, calls []openaiToolCallDe
 
 func flushPendingTools(ctx context.Context, ch chan<- ports.ChatEvent, pending map[int]*pendingTool) bool {
 	for _, tool := range pending {
-		if !sendEvent(ctx, ch, ports.ChatEvent{
+		if !streamsend.Send(ctx, ch, ports.ChatEvent{
 			Kind: "tool-call",
 			ToolCall: &ports.ToolCallEvent{
 				ID:   tool.id,
 				Name: tool.name,
-				Args: extractArgs(tool.args.String()),
+				Args: streamsend.ExtractArgs(tool.args.String()),
 			},
 		}) {
 			return false
 		}
 	}
 	return true
-}
-
-// extractArgs tries to parse {"args": "..."} from accumulated tool-call arguments.
-// Falls back to returning the raw accumulated text if parsing fails.
-func extractArgs(raw string) string {
-	var obj struct {
-		Args string `json:"args"`
-	}
-	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
-		return obj.Args
-	}
-	return raw
 }

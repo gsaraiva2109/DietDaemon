@@ -60,10 +60,7 @@ func (h *Handler) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 
 	ip := h.clientIP(r)
 	u, _ := h.store.GetUser(ctx, userID)
-	acctID := ""
-	if u.AccountID != "" {
-		acctID = u.AccountID
-	}
+	acctID := u.AccountID
 	h.writeAudit(ctx, acctID, userID, "email.verified", ip, r.UserAgent(), "")
 
 	w.WriteHeader(http.StatusNoContent)
@@ -346,10 +343,7 @@ func (h *Handler) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	ip := h.clientIP(r)
 	u, _ := h.store.GetUser(ctx, userID)
-	acctID := ""
-	if u.AccountID != "" {
-		acctID = u.AccountID
-	}
+	acctID := u.AccountID
 	h.writeAudit(ctx, acctID, userID, "password.reset", ip, r.UserAgent(), "")
 
 	w.WriteHeader(http.StatusNoContent)

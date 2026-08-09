@@ -8,8 +8,6 @@ package pipeline
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +18,7 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/commands"
 	"github.com/gsaraiva2109/dietdaemon/internal/i18n"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // Parser is Stage A. Satisfied by internal/parser/deterministic.Parser.
@@ -113,7 +112,7 @@ func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replie
 		registry:    registry,
 		i18n:        i18nbundle,
 		now:         time.Now,
-		idgen:       randomID,
+		idgen:       id.New,
 	}
 }
 
@@ -569,11 +568,4 @@ func (e *Engine) replyMeta(ctx context.Context, userID string, meta map[string]s
 
 func isNotFound(err error) bool {
 	return errors.Is(err, types.ErrNotFound) || errors.Is(err, types.ErrNoMatch)
-}
-
-// randomID returns a 128-bit random hex id; no external dependency.
-func randomID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }

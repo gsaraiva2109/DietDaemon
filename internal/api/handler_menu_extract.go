@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 )
@@ -23,29 +22,11 @@ func (h *Handler) handleExtractMenuFromImage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
-	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
+	data, mimeType, ok := h.decodeImageUpload(w, r, 5<<20)
+	if !ok {
 		return
 	}
 
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
-		return
-	}
-	defer func() { _ = file.Close() }()
-
-	data, err := io.ReadAll(io.LimitReader(file, 5<<20))
-	if err != nil {
-		h.writeErr(w, err)
-		return
-	}
-
-	mimeType := http.DetectContentType(data)
 	if len(mimeType) < 6 || mimeType[:6] != "image/" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "uploaded file is not an image"})

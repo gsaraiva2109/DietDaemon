@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/nutrition/taco"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/foodimport"
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
@@ -41,9 +43,9 @@ func TestRunImport_TACO(t *testing.T) {
 	}
 	st := tempStore(t)
 
-	rows, err := runImport(context.Background(), src, ports.BulkFilter{}, st, false)
+	rows, err := foodimport.FetchAndUpsert(context.Background(), src, ports.BulkFilter{}, st, false)
 	if err != nil {
-		t.Fatalf("runImport: %v", err)
+		t.Fatalf("FetchAndUpsert: %v", err)
 	}
 	if rows == 0 {
 		t.Fatal("expected rows > 0 from embedded TACO dataset")
@@ -81,9 +83,9 @@ func TestRunImport_DryRunWritesNothing(t *testing.T) {
 	}
 	st := tempStore(t)
 
-	rows, err := runImport(context.Background(), src, ports.BulkFilter{}, st, true)
+	rows, err := foodimport.FetchAndUpsert(context.Background(), src, ports.BulkFilter{}, st, true)
 	if err != nil {
-		t.Fatalf("runImport: %v", err)
+		t.Fatalf("FetchAndUpsert: %v", err)
 	}
 	if rows == 0 {
 		t.Fatal("expected rows > 0 even in dry-run (rows counted, not written)")
@@ -95,6 +97,15 @@ func TestRunImport_DryRunWritesNothing(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("dry-run should write nothing, foods table has %d rows", count)
+	}
+}
+
+func TestRunImportsTACO(t *testing.T) {
+	t.Setenv("DB_DRIVER", "sqlite")
+	dbPath := filepath.Join(t.TempDir(), "dietdaemon.db")
+
+	if err := run(context.Background(), "taco", dbPath, 1, false); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 }
 

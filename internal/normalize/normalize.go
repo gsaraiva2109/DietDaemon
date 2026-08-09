@@ -10,13 +10,13 @@ import "strings"
 // their ASCII-normalised database representations.
 func Normalize(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	return unaccent(s)
+	return Unaccent(s)
 }
 
-// unaccent maps precomposed accented Latin characters to their ASCII base.
+// Unaccent maps precomposed accented Latin characters to their ASCII base.
 // It covers PT, EN, ES, FR diacritics and is intentionally simple — fuzzy
 // matching is layered on later.
-func unaccent(s string) string {
+func Unaccent(s string) string {
 	replacer := strings.NewReplacer(
 		// Uppercase.
 		"À", "A", "Á", "A", "Â", "A", "Ã", "A", "Ä", "A", "Å", "A",

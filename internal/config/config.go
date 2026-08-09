@@ -6,7 +6,6 @@ package config
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/netip"
@@ -903,34 +902,13 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// decodeKey accepts a base64 (standard or raw, with or without padding) or hex
-// encoded key and returns the decoded bytes. Returns an error if the decoded
-// key is not exactly 32 bytes.
+// decodeKey accepts a 32-byte key encoded as 64 hexadecimal characters.
 func decodeKey(raw string) ([]byte, error) {
-	// Try hex first (64 hex chars = 32 bytes).
-	if len(raw) == 64 {
-		key, err := hex.DecodeString(raw)
-		if err == nil {
-			return key, nil
-		}
+	key, err := hex.DecodeString(raw)
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("must be a 32-byte key encoded as hex (64 chars), got %d chars", len(raw))
 	}
-
-	// Try base64 variants.
-	for _, enc := range []*base64.Encoding{
-		base64.StdEncoding,
-		base64.RawStdEncoding,
-		base64.URLEncoding,
-		base64.RawURLEncoding,
-	} {
-		key, err := enc.DecodeString(raw)
-		if err == nil {
-			if len(key) == 32 {
-				return key, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("must be a 32-byte key encoded as hex (64 chars) or base64, got %d chars", len(raw))
+	return key, nil
 }
 
 // loadDotEnv reads simple KEY=VALUE lines from path into the environment without

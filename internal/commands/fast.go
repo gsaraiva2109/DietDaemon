@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // FastStore is the subset of store methods needed by /fast.
@@ -88,7 +89,7 @@ func (c *FastCommand) handleStart(ctx context.Context, msg types.InboundMessage,
 
 	now := time.Now().UTC()
 	f := types.Fast{
-		ID:          randomID(),
+		ID:          id.New(),
 		UserID:      msg.UserID,
 		StartAt:     now,
 		TargetHours: targetHours,

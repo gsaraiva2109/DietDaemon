@@ -7,8 +7,6 @@ package scheduler
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 const schedulerWorkers = 8
@@ -649,9 +648,7 @@ func (s *Scheduler) recordSentNudge(ctx context.Context, user types.User, ruleID
 	if snapshot == nil || s.sentNudges == nil {
 		return ""
 	}
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	nudgeID := hex.EncodeToString(b[:])
+	nudgeID := id.New()
 	sn := types.SentNudge{
 		ID:       nudgeID,
 		UserID:   user.ID,

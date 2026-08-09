@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // TemplateStore is the subset of store methods needed by /template.
@@ -40,7 +41,7 @@ type TemplateCommand struct {
 // NewTemplateCommand creates a TemplateCommand that logs templates through the
 // provided meal logger and composes templates through the composer.
 func NewTemplateCommand(s TemplateStore, ml TemplateMealLogger, c TemplateComposer) *TemplateCommand {
-	return &TemplateCommand{store: s, mealLog: ml, composer: c, idgen: randomID}
+	return &TemplateCommand{store: s, mealLog: ml, composer: c, idgen: id.New}
 }
 
 func (c *TemplateCommand) Name() string        { return "/template" }

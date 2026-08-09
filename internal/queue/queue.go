@@ -1,7 +1,5 @@
-// Package queue provides the decoupling boundary between producers (message
-// ingest) and consumers (the parse pipeline). The in-memory implementation here
-// is the default for the modular monolith; a durable bus (Redis Streams, NATS)
-// can later replace it behind the same Queue interface without touching callers.
+// Package queue provides an in-memory hand-off between message ingest and the
+// parse pipeline.
 package queue
 
 import (
@@ -13,19 +11,7 @@ import (
 // ErrClosed is returned by Publish after the queue has been closed.
 var ErrClosed = errors.New("queue closed")
 
-// Queue is a typed, ordered hand-off from producers to consumers.
-type Queue[T any] interface {
-	// Publish enqueues an item, blocking while the buffer is full until space
-	// frees up or ctx is cancelled. Returns ErrClosed if the queue is closed.
-	Publish(ctx context.Context, item T) error
-	// Consume returns the channel consumers range over. The channel is closed
-	// when the queue is closed, ending the range.
-	Consume() <-chan T
-	// Close stops the queue; subsequent Publish calls return ErrClosed.
-	Close() error
-}
-
-// Memory is an in-process Queue backed by a buffered channel.
+// Memory is an in-process queue backed by a buffered channel.
 //
 // Shutdown ordering: cancel the producers' context before calling Close so no
 // Publish is blocked on a full buffer when Close runs.

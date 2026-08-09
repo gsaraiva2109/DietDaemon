@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"net/netip"
 	"os"
@@ -36,6 +38,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"WEBAUTHN_RP_ID", "WEBAUTHN_RP_ORIGINS", "WEBAUTHN_RP_DISPLAY_NAME",
 		"EMAIL_PROVIDER", "EMAIL_FROM", "RESEND_API_KEY", "SES_REGION",
 		"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_TLS",
+		"TOTP_ENC_KEY", "AI_KEY_ENC_KEY", "AI_KEY_MODE",
 		"PORT", "HEALTH_CHECK_PATH", "CONFIDENCE_THRESHOLD", "NUDGE_INTERVAL", "PENDING_TTL", "MESSAGE_WORKERS",
 	}
 	for _, k := range keys {
@@ -128,6 +131,90 @@ func TestLoadValid(t *testing.T) {
 	}
 	if c.Location == nil || c.Location.String() != "America/Sao_Paulo" {
 		t.Errorf("Location = %v, want America/Sao_Paulo", c.Location)
+	}
+}
+
+func TestDecodeKeyAccepts32ByteHex(t *testing.T) {
+	want := bytes.Repeat([]byte{0xab}, 32)
+	for _, raw := range []string{strings.Repeat("ab", 32), strings.Repeat("AB", 32)} {
+		t.Run(raw[:2], func(t *testing.T) {
+			got, err := decodeKey(raw)
+			if err != nil {
+				t.Fatalf("decodeKey() error = %v", err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("decodeKey() = %x, want %x", got, want)
+			}
+		})
+	}
+}
+
+func TestDecodeKeyRejectsBase64(t *testing.T) {
+	key := bytes.Repeat([]byte{0xff}, 32)
+	for _, tc := range []struct {
+		name string
+		enc  *base64.Encoding
+	}{
+		{"standard", base64.StdEncoding},
+		{"raw-standard", base64.RawStdEncoding},
+		{"url", base64.URLEncoding},
+		{"raw-url", base64.RawURLEncoding},
+	} {
+		raw := tc.enc.EncodeToString(key)
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := decodeKey(raw); err == nil {
+				t.Errorf("decodeKey(%q) error = nil, want hex-only validation error", raw)
+			}
+		})
+	}
+}
+
+func TestDecodeKeyRejectsInvalidHex(t *testing.T) {
+	for _, raw := range []string{
+		strings.Repeat("ab", 31) + "a",
+		strings.Repeat("ab", 32) + "a",
+		strings.Repeat("g", 64),
+	} {
+		if _, err := decodeKey(raw); err == nil {
+			t.Errorf("decodeKey(%q) error = nil, want 32-byte hex validation error", raw)
+		}
+	}
+}
+
+func TestLoadEncryptionKeysAcceptHex(t *testing.T) {
+	env := validBase()
+	env["TOTP_ENC_KEY"] = strings.Repeat("01", 32)
+	env["AI_KEY_ENC_KEY"] = strings.Repeat("ab", 32)
+	c := assertLoadOK(t, env)
+	if !bytes.Equal(c.TOTPEncKey, bytes.Repeat([]byte{1}, 32)) {
+		t.Errorf("TOTPEncKey = %x, want %x", c.TOTPEncKey, bytes.Repeat([]byte{1}, 32))
+	}
+	if !bytes.Equal(c.AIKeyEncKey, bytes.Repeat([]byte{0xab}, 32)) {
+		t.Errorf("AIKeyEncKey = %x, want %x", c.AIKeyEncKey, bytes.Repeat([]byte{0xab}, 32))
+	}
+}
+
+func TestLoadRejectsBase64EncryptionKeys(t *testing.T) {
+	key := bytes.Repeat([]byte{0xff}, 32)
+	for _, tc := range []struct {
+		name string
+		enc  *base64.Encoding
+	}{
+		{"standard", base64.StdEncoding},
+		{"raw-standard", base64.RawStdEncoding},
+		{"url", base64.URLEncoding},
+		{"raw-url", base64.RawURLEncoding},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := tc.enc.EncodeToString(key)
+			for _, envKey := range []string{"TOTP_ENC_KEY", "AI_KEY_ENC_KEY"} {
+				t.Run(envKey, func(t *testing.T) {
+					env := validBase()
+					env[envKey] = raw
+					assertLoadErr(t, env, envKey)
+				})
+			}
+		})
 	}
 }
 

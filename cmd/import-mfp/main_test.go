@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,18 @@ func TestGroupIntoMeals(t *testing.T) {
 	wantLunchAt := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 	if !lunch.At.Equal(wantLunchAt) {
 		t.Errorf("lunch At = %v, want %v", lunch.At, wantLunchAt)
+	}
+}
+
+func TestRunReturnsStoreOpenError(t *testing.T) {
+	csvPath := filepath.Join(t.TempDir(), "diary.csv")
+	if err := os.WriteFile(csvPath, []byte(testCSV), 0o600); err != nil {
+		t.Fatalf("write CSV: %v", err)
+	}
+
+	err := run(context.Background(), "user-1", csvPath, t.TempDir(), "UTC", false)
+	if err == nil || !strings.Contains(err.Error(), "open store") {
+		t.Fatalf("run error = %v, want open store error", err)
 	}
 }
 

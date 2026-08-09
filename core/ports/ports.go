@@ -28,7 +28,7 @@ type MessagingAdapter interface {
 
 // STTProvider transcribes an audio payload to text. Optional; only used when
 // ENABLE_STT is set. Returns the transcript and a detected BCP-47 locale hint
-// (empty if undetermined). Implementations: whisper (local), api.
+// (empty if undetermined). Implementations: whisper (local).
 type STTProvider interface {
 	Transcribe(ctx context.Context, audio []byte) (text string, locale string, err error)
 }

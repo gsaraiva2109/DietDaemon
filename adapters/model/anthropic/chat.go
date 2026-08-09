@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsaraiva2109/dietdaemon/adapters/model/internal/streamsend"
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
 
@@ -216,23 +217,6 @@ func (c *ChatAdapter) StreamChat(ctx context.Context, req ports.ChatRequest) (<-
 	return ch, nil
 }
 
-// sendEvent delivers evt to ch, or bails if ctx is cancelled first — without
-// this, a client that disconnects mid-stream while the channel's buffer is
-// full leaks this goroutine (and its open upstream connection) forever.
-func sendEvent(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) bool {
-	select {
-	case ch <- evt:
-		return true
-	default:
-	}
-	select {
-	case ch <- evt:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
 type streamState struct {
 	currentToolID   string
 	currentToolName string
@@ -275,7 +259,7 @@ func (s *streamState) sendTextDelta(ctx context.Context, ch chan<- ports.ChatEve
 	if err := json.Unmarshal(delta, &text); err != nil || text.Type != "text_delta" {
 		return true
 	}
-	return sendEvent(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: text.Text})
+	return streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "text-delta", Text: text.Text})
 }
 
 func (s *streamState) handleDelta(ctx context.Context, ch chan<- ports.ChatEvent, data []byte) bool {
@@ -294,12 +278,12 @@ func (s *streamState) finishToolUse(ctx context.Context, ch chan<- ports.ChatEve
 	if !s.inToolUse {
 		return true
 	}
-	if !sendEvent(ctx, ch, ports.ChatEvent{
+	if !streamsend.Send(ctx, ch, ports.ChatEvent{
 		Kind: "tool-call",
 		ToolCall: &ports.ToolCallEvent{
 			ID:   s.currentToolID,
 			Name: s.currentToolName,
-			Args: extractArgs(s.toolArgs.String()),
+			Args: streamsend.ExtractArgs(s.toolArgs.String()),
 		},
 	}) {
 		return false
@@ -313,7 +297,7 @@ func sendProviderError(ctx context.Context, ch chan<- ports.ChatEvent, data []by
 	if err := json.Unmarshal(data, &providerError); err != nil {
 		return true
 	}
-	sendEvent(ctx, ch, ports.ChatEvent{
+	streamsend.Send(ctx, ch, ports.ChatEvent{
 		Kind: "error",
 		Err:  fmt.Errorf("anthropic: %s: %s", providerError.Error.Type, providerError.Error.Message),
 	})
@@ -329,7 +313,7 @@ func (s *streamState) handleEvent(ctx context.Context, ch chan<- ports.ChatEvent
 	case "content_block_stop":
 		return s.finishToolUse(ctx, ch)
 	case "message_stop":
-		sendEvent(ctx, ch, ports.ChatEvent{Kind: "done"})
+		streamsend.Send(ctx, ch, ports.ChatEvent{Kind: "done"})
 		return false
 	case "error":
 		return sendProviderError(ctx, ch, data)
@@ -357,22 +341,9 @@ func (c *ChatAdapter) readStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		sendEvent(ctx, ch, ports.ChatEvent{
+		streamsend.Send(ctx, ch, ports.ChatEvent{
 			Kind: "error",
 			Err:  fmt.Errorf("anthropic chat: read stream: %w", err),
 		})
 	}
-}
-
-// extractArgs tries to parse {"args": "..."} from accumulated tool-use JSON.
-// Falls back to returning the raw accumulated text if parsing fails.
-func extractArgs(raw string) string {
-	var obj struct {
-		Args string `json:"args"`
-	}
-	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
-		return obj.Args
-	}
-	// ponytail: partial JSON may not parse; return raw, caller handles it.
-	return raw
 }

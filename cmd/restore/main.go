@@ -20,14 +20,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 	"github.com/gsaraiva2109/dietdaemon/internal/backup/localdisk"
 	"github.com/gsaraiva2109/dietdaemon/internal/backup/s3dest"
+	"github.com/gsaraiva2109/dietdaemon/internal/cmdutil"
 	"github.com/gsaraiva2109/dietdaemon/internal/restore"
-	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 func main() {
@@ -55,7 +53,7 @@ func main() {
 	// Disaster recovery can involve a lot of rows/blobs; let ctrl-c stop
 	// cleanly rather than killing the process mid-restore, matching
 	// cmd/import-mfp.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cmdutil.SignalContext(context.Background())
 	defer stop()
 
 	if err := run(ctx, *userID, *dbPath, *destination, *dir, *subdir, *s3Bucket, *s3Prefix, *s3Region, *s3Endpoint, *dryRun); err != nil {
@@ -107,7 +105,7 @@ func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket
 		return nil
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("restore: open store: %w", err)
 	}

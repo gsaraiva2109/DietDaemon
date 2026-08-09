@@ -15,16 +15,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/cmdutil"
 	"github.com/gsaraiva2109/dietdaemon/internal/importers/mfp"
-	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
 func main() {
@@ -43,7 +41,7 @@ func main() {
 	// A large diary export can take a moment to write; let ctrl-c stop
 	// cleanly rather than killing the process mid-import, matching
 	// cmd/import-foods.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cmdutil.SignalContext(context.Background())
 	defer stop()
 
 	if err := run(ctx, *userID, *csvPath, *dbPath, *tz, *dryRun); err != nil {
@@ -85,7 +83,7 @@ func run(ctx context.Context, userID, csvPath, dbPath, tz string, dryRun bool) e
 		return nil
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
