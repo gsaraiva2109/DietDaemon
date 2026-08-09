@@ -1,12 +1,10 @@
 package api
 
 import (
-	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"time"
 
@@ -37,18 +35,8 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	challengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, _, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-
-	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
-	if parseErr != nil || time.Now().UTC().After(exp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
+	chUserID, _, ok := h.resolveMFAChallenge(w, ctx, challengeID, errInvalidChallenge, errInvalidChallenge, nil, nil)
+	if !ok {
 		return
 	}
 
@@ -66,7 +54,7 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate 6-digit code.
-	code := generateMFAEmailCode()
+	code := generateSixDigitCode()
 	codeHash := auth.HashToken(code)
 	codeExpiresAt := time.Now().UTC().Add(mfaEmailTTL).Format(time.RFC3339)
 
@@ -118,19 +106,9 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	challengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, remember, chExpiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-
-	chExp, parseErr := time.Parse(time.RFC3339, chExpiresAt)
-	if parseErr != nil || time.Now().UTC().After(chExp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
-		_ = h.authStore.DeleteMFAEmailCode(ctx, chUserID)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
+	onExpire := func(chUserID string) { _ = h.authStore.DeleteMFAEmailCode(ctx, chUserID) }
+	chUserID, remember, ok := h.resolveMFAChallenge(w, ctx, challengeID, errInvalidChallenge, errInvalidChallenge, nil, onExpire)
+	if !ok {
 		return
 	}
 
@@ -185,15 +163,6 @@ func (h *Handler) handleMFAEmailVerify(w http.ResponseWriter, r *http.Request) {
 
 	h.writeAudit(ctx, u.AccountID, chUserID, "mfa.success", ip, r.UserAgent(), "email")
 	_ = json.NewEncoder(w).Encode(sessionResponse{User: h.userToJSON(u)})
-}
-
-// generateMFAEmailCode returns a 6-digit string from crypto/rand.
-func generateMFAEmailCode() string {
-	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
-	if err != nil {
-		panic(fmt.Sprintf("api: crypto/rand.Int failed: %v", err))
-	}
-	return fmt.Sprintf("%06d", n.Int64())
 }
 
 // logCode writes the code to the server log. Only used when emailProvider == "none".

@@ -29,6 +29,22 @@ const (
 	auditMFAFail       = "mfa.fail"
 )
 
+// actionLockoutCfg is the lighter per-identifier rate limit shared by
+// self-service actions (resend verification, forgot-password, magic-link
+// request) — distinct from the brute-force login lockout (h.lockoutCfg).
+// Go structs can't be declared const, so this is the package-level
+// equivalent.
+var actionLockoutCfg = auth.LockoutConfig{
+	MaxAttempts:  3,
+	Window:       15 * time.Minute,
+	LockDuration: 5 * time.Minute,
+}
+
+// normalizeEmail lowercases and trims an email address for storage/lookup.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // --- JSON shapes (frontend contract) ---
 
 type sessionResponse struct {
@@ -119,7 +135,7 @@ func decodeRegisterRequest(w http.ResponseWriter, r *http.Request) (registerRequ
 		return registerRequest{}, false
 	}
 
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 	if email == "" || body.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
@@ -258,7 +274,7 @@ func decodeLoginRequest(w http.ResponseWriter, r *http.Request) (loginRequest, b
 		return loginRequest{}, false
 	}
 
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 	if email == "" || body.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "email and password are required"})
@@ -862,22 +878,35 @@ func decodeTOTPChallengeRequest(w http.ResponseWriter, r *http.Request) (totpCha
 	}, true
 }
 
-// resolveTOTPChallenge looks up the pending MFA challenge and checks its
+// resolveMFAChallenge looks up the pending MFA challenge and checks its
 // expiry, writing the error response itself (and deleting the challenge on
-// expiry) when it can't proceed.
-func (h *Handler) resolveTOTPChallenge(w http.ResponseWriter, ctx context.Context, challengeID string) (chUserID string, remember, ok bool) {
+// expiry) when it can't proceed. onFail, if non-nil, runs before the error
+// response is written on both the lookup-failure and expiry paths — for
+// callers that need to clear their own cookie/state first (headers must be
+// set before WriteHeader). onExpire, if non-nil, runs only on the expiry
+// path, for cleanup that needs the resolved chUserID.
+func (h *Handler) resolveMFAChallenge(w http.ResponseWriter, ctx context.Context, challengeID, invalidMsg, expiredMsg string, onFail func(), onExpire func(chUserID string)) (chUserID string, remember, ok bool) {
 	chUserID, remember, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
 	if err != nil {
+		if onFail != nil {
+			onFail()
+		}
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid challenge"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": invalidMsg})
 		return "", false, false
 	}
 
 	exp, err := time.Parse(time.RFC3339, expiresAt)
 	if err != nil || time.Now().UTC().After(exp) {
 		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
+		if onExpire != nil {
+			onExpire(chUserID)
+		}
+		if onFail != nil {
+			onFail()
+		}
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge expired"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": expiredMsg})
 		return "", false, false
 	}
 
@@ -1014,7 +1043,7 @@ func (h *Handler) handleTOTPChallenge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	challengeID := auth.HashToken(req.challengeToken)
 
-	chUserID, remember, ok := h.resolveTOTPChallenge(w, ctx, challengeID)
+	chUserID, remember, ok := h.resolveMFAChallenge(w, ctx, challengeID, "invalid challenge", "challenge expired", nil, nil)
 	if !ok {
 		return
 	}

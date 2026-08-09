@@ -113,7 +113,9 @@ func RotateSession(ctx context.Context, repo SessionRepo, oldSession Session, re
 	return CreateSession(oldSession.UserID, remember, ip, userAgent, cfg)
 }
 
-// VerifyCSRF compares a header value against the session's CSRF token in
+// VerifyCSRF implements the double-submit cookie pattern: csrf_token is set
+// as a readable (non-HttpOnly) dd_csrf cookie, echoed by the client in
+// X-CSRF-Token, and compared here against the session's CSRF token in
 // constant time.
 func VerifyCSRF(headerVal, sessionCSRF string) bool {
 	return subtle.ConstantTimeCompare([]byte(headerVal), []byte(sessionCSRF)) == 1

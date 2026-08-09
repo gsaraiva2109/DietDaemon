@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -37,7 +36,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 	if email == "" {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
@@ -47,11 +46,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-email lockout (mirrors resend at handler_email.go:89).
 	key := "magic:" + email
-	locked, _, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, auth.LockoutConfig{
-		MaxAttempts:  3,
-		Window:       15 * time.Minute,
-		LockDuration: 5 * time.Minute,
-	})
+	locked, _, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, actionLockoutCfg)
 	if lockErr != nil || locked {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
@@ -81,7 +76,7 @@ func (h *Handler) handleMagicRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate and persist 6-digit code.
-	code := generateMagicCode()
+	code := generateSixDigitCode()
 	codeHash := auth.HashToken(code)
 	if err := h.authStore.UpsertMagicCode(ctx, u.ID, codeHash, expiresAt); err != nil {
 		h.writeErr(w, err)
@@ -184,7 +179,7 @@ func (h *Handler) verifyMagicToken(w http.ResponseWriter, r *http.Request, token
 
 func (h *Handler) verifyMagicCode(w http.ResponseWriter, r *http.Request, email, code string) (types.User, string, bool) {
 	ctx := r.Context()
-	email = strings.ToLower(strings.TrimSpace(email))
+	email = normalizeEmail(email)
 	if email == "" || code == "" {
 		writeMagicVerifyUnauthorized(w)
 		return types.User{}, "", false
@@ -238,8 +233,9 @@ func writeMagicVerifyUnauthorized(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired code"})
 }
 
-// generateMagicCode returns a 6-digit code using crypto/rand.
-func generateMagicCode() string {
+// generateSixDigitCode returns a 6-digit code using crypto/rand. Shared by
+// magic-code sign-in and MFA email-code step-up.
+func generateSixDigitCode() string {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
 		panic(fmt.Sprintf("api: crypto/rand.Int failed: %v", err))

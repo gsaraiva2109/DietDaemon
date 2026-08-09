@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
-	"strings"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/internal/auth"
@@ -90,11 +89,7 @@ func (h *Handler) handleResendVerify(w http.ResponseWriter, r *http.Request, use
 
 	// Rate-limit resend per user (reuse lockout primitives).
 	key := "resend:" + userID
-	locked, retryAfter, err := auth.CheckLockout(ctx, h.loginAttempts, key, auth.LockoutConfig{
-		MaxAttempts:  3,
-		Window:       15 * time.Minute,
-		LockDuration: 5 * time.Minute,
-	})
+	locked, retryAfter, err := auth.CheckLockout(ctx, h.loginAttempts, key, actionLockoutCfg)
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -144,7 +139,7 @@ func (h *Handler) handleEmailChange(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 
-	newEmail := strings.ToLower(strings.TrimSpace(body.Email))
+	newEmail := normalizeEmail(body.Email)
 	parsedEmail, err := mail.ParseAddress(newEmail)
 	if newEmail == "" || err != nil || parsedEmail.Address != newEmail {
 		writeValidationError(w, "invalid email")
@@ -235,7 +230,7 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 	if email == "" {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return
@@ -260,11 +255,7 @@ func (h *Handler) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 	// Rate-limit per email too (reuse lockout primitives).
 	key := "forgot:" + email
-	locked, _, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, auth.LockoutConfig{
-		MaxAttempts:  3,
-		Window:       15 * time.Minute,
-		LockDuration: 5 * time.Minute,
-	})
+	locked, _, lockErr := auth.CheckLockout(ctx, h.loginAttempts, key, actionLockoutCfg)
 	if lockErr != nil || locked {
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		return

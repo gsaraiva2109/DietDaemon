@@ -276,7 +276,7 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 
 	assertion, session, storeID := h.beginScopedPasskeyLogin(r, email)
 	if assertion == nil {
@@ -524,19 +524,8 @@ func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 	}
 
 	challengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, _, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-
-	// Check expiry.
-	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
-	if parseErr != nil || time.Now().UTC().After(exp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
+	chUserID, _, ok := h.resolveMFAChallenge(w, ctx, challengeID, errInvalidChallenge, errInvalidChallenge, nil, nil)
+	if !ok {
 		return
 	}
 
@@ -605,19 +594,8 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	}
 
 	mfaChallengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, remember, chExpiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, mfaChallengeID)
-	if err != nil {
-		h.clearWebAuthnCookie(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-	exp, parseErr := time.Parse(time.RFC3339, chExpiresAt)
-	if parseErr != nil || time.Now().UTC().After(exp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, mfaChallengeID)
-		h.clearWebAuthnCookie(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
+	chUserID, remember, ok := h.resolveMFAChallenge(w, ctx, mfaChallengeID, errInvalidChallenge, errInvalidChallenge, func() { h.clearWebAuthnCookie(w) }, nil)
+	if !ok {
 		return
 	}
 
