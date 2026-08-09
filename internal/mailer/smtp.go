@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -30,7 +31,7 @@ func newSMTP(from, host string, port int, username, password string, useTLS bool
 	return &smtpMailer{
 		from:     from,
 		host:     host,
-		port:     smtpPortOrDefault(port),
+		port:     strconv.Itoa(port),
 		username: username,
 		password: password,
 		tls:      useTLS,

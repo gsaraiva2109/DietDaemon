@@ -5,7 +5,6 @@ package mailer
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -61,11 +60,7 @@ func New(cfg Config) (Mailer, error) {
 		if cfg.From == "" {
 			return nil, fmt.Errorf("mailer: EMAIL_FROM is required")
 		}
-		port := cfg.SMTPPort
-		if port == 0 {
-			port = 587
-		}
-		return newSMTP(cfg.From, cfg.SMTPHost, port, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPTLS), nil
+		return newSMTP(cfg.From, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPTLS), nil
 
 	case "none", "":
 		return newNone(cfg.PublicBaseURL), nil
@@ -73,12 +68,4 @@ func New(cfg Config) (Mailer, error) {
 	default:
 		return nil, fmt.Errorf("mailer: unknown EMAIL_PROVIDER %q — valid: resend, ses, smtp, none", cfg.Provider)
 	}
-}
-
-// smtpPortOrDefault returns the port as a string for net/smtp.
-func smtpPortOrDefault(port int) string {
-	if port <= 0 {
-		return "587"
-	}
-	return strconv.Itoa(port)
 }

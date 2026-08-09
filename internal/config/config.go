@@ -539,10 +539,10 @@ func (c *Config) validateNutrition(problems *[]string) {
 	if len(c.NutritionSources) == 0 {
 		addProblem(problems, "NUTRITION_SOURCE must list at least one source")
 	}
-	if contains(c.NutritionSources, "usda") && c.USDAFDCAPIKey == "" {
+	if slices.Contains(c.NutritionSources, "usda") && c.USDAFDCAPIKey == "" {
 		addProblem(problems, "USDA_FDC_API_KEY is required when 'usda' is in NUTRITION_SOURCE")
 	}
-	if contains(c.NutritionSources, "taco") && c.TacoDataPath != "" {
+	if slices.Contains(c.NutritionSources, "taco") && c.TacoDataPath != "" {
 		if _, err := os.Stat(c.TacoDataPath); err != nil {
 			addProblem(problems, "TACO_DATA_PATH %q not found: %v", c.TacoDataPath, err)
 		}
@@ -556,7 +556,7 @@ func (c *Config) validateFoodImport(problems *[]string) {
 	if len(c.FoodImportSources) == 0 {
 		addProblem(problems, "FOOD_IMPORT_SOURCES must list at least one source when FOOD_IMPORT_ENABLED=true")
 	}
-	if contains(c.FoodImportSources, "usda") && c.USDAFDCAPIKey == "" {
+	if slices.Contains(c.FoodImportSources, "usda") && c.USDAFDCAPIKey == "" {
 		addProblem(problems, "USDA_FDC_API_KEY is required when 'usda' is in FOOD_IMPORT_SOURCES")
 	}
 	validateBulkFile(problems, "USDA_BULK_FILE", c.USDABulkFile)
@@ -931,10 +931,6 @@ func decodeKey(raw string) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("must be a 32-byte key encoded as hex (64 chars) or base64, got %d chars", len(raw))
-}
-
-func contains(ss []string, target string) bool {
-	return slices.Contains(ss, target)
 }
 
 // loadDotEnv reads simple KEY=VALUE lines from path into the environment without
