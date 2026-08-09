@@ -215,25 +215,29 @@ func TestRunOnceBatchingAndFinalPartialBatch(t *testing.T) {
 }
 
 func TestFetchAndUpsertCountsRowsAndHonorsDryRun(t *testing.T) {
-	for _, dryRun := range []bool{false, true} {
-		t.Run(fmt.Sprintf("dry_run=%t", dryRun), func(t *testing.T) {
-			src := &fakeSource{name: "usda", count: 501}
-			store := &fakeStore{}
+	assertFetchAndUpsert(t, false, []int{500, 1})
+	assertFetchAndUpsert(t, true, nil)
+}
 
-			total, err := FetchAndUpsert(t.Context(), src, ports.BulkFilter{}, store, dryRun)
-			if err != nil {
-				t.Fatalf("FetchAndUpsert: %v", err)
-			}
-			if total != 501 {
-				t.Fatalf("total = %d, want 501", total)
-			}
-			if dryRun && len(store.calls) != 0 {
-				t.Fatalf("dry-run writes = %d, want 0", len(store.calls))
-			}
-			if !dryRun && (len(store.calls) != 2 || len(store.calls[0]) != 500 || len(store.calls[1]) != 1) {
-				t.Fatalf("batches = %+v, want 500 then 1", store.calls)
-			}
-		})
+func assertFetchAndUpsert(t *testing.T, dryRun bool, wantBatches []int) {
+	t.Helper()
+	src := &fakeSource{name: "usda", count: 501}
+	store := &fakeStore{}
+
+	total, err := FetchAndUpsert(t.Context(), src, ports.BulkFilter{}, store, dryRun)
+	if err != nil {
+		t.Fatalf("FetchAndUpsert: %v", err)
+	}
+	if total != 501 {
+		t.Fatalf("total = %d, want 501", total)
+	}
+	if len(store.calls) != len(wantBatches) {
+		t.Fatalf("batches = %+v, want sizes %v", store.calls, wantBatches)
+	}
+	for i, wantSize := range wantBatches {
+		if got := len(store.calls[i]); got != wantSize {
+			t.Fatalf("batch %d size = %d, want %d", i, got, wantSize)
+		}
 	}
 }
 
