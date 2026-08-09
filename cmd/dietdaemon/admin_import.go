@@ -13,18 +13,11 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
-// adminImportBatchSize mirrors cmd/import-foods' own batchSize: the number of
-// rows buffered before a store write.
-const adminImportBatchSize = 500
-
 // foodImportAdmin implements api.FoodImportRunner against a live daemon's
 // store and config, so the admin/food-import/* HTTP endpoints can trigger the
 // same bulk import/repair/backfill operations cmd/import-foods runs
 // standalone, without requiring shell/volume access to the running
 // container's DB (issue #136).
-//
-// ponytail: duplicates cmd/import-foods' batching loop; dedupe into
-// internal/foodimport once a third call site doesn't risk a merge race.
 type foodImportAdmin struct {
 	store *store.Store
 	cfg   *config.Config
@@ -43,31 +36,8 @@ func (a *foodImportAdmin) ImportSource(ctx context.Context, source string, maxRo
 		filter.MaxRows = maxRows
 	}
 
-	batch := make([]types.FoodMatch, 0, adminImportBatchSize)
-	total := 0
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		if err := a.store.BulkUpsertFoods(ctx, batch); err != nil {
-			return err
-		}
-		total += len(batch)
-		batch = batch[:0]
-		return nil
-	}
-
-	err = src.FetchBulk(ctx, filter, func(fm types.FoodMatch) error {
-		batch = append(batch, fm)
-		if len(batch) >= adminImportBatchSize {
-			return flush()
-		}
-		return nil
-	})
+	total, err := foodimport.FetchAndUpsert(ctx, src, filter, a.store, false)
 	if err != nil {
-		return total, fmt.Errorf("import %s: %w", source, err)
-	}
-	if err := flush(); err != nil {
 		return total, fmt.Errorf("import %s: %w", source, err)
 	}
 	return total, nil

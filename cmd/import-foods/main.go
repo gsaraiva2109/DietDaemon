@@ -31,22 +31,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/gsaraiva2109/dietdaemon/adapters/model/ollama"
-	"github.com/gsaraiva2109/dietdaemon/core/ports"
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/cmdutil"
 	"github.com/gsaraiva2109/dietdaemon/internal/config"
 	"github.com/gsaraiva2109/dietdaemon/internal/foodimport"
 	"github.com/gsaraiva2109/dietdaemon/internal/index"
 	"github.com/gsaraiva2109/dietdaemon/internal/resolver/embedding"
-	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
-
-// batchSize is the number of rows buffered before a store write, matching
-// BulkUpsertFoods' own internal chunk size.
-const batchSize = 500
 
 func main() {
 	source := flag.String("source", "", "source to import: usda, openfoodfacts, taco (required)")
@@ -66,7 +59,7 @@ func main() {
 	// calls the embedding model once per food; let ctrl-c stop either
 	// cleanly (in-flight batch still flushes) rather than killing the
 	// process mid-write, matching cmd/dietdaemon's shutdown handling.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cmdutil.SignalContext(context.Background())
 	defer stop()
 
 	var err error
@@ -98,7 +91,7 @@ func run(ctx context.Context, source, dbPath string, maxRows int, dryRun bool) e
 		filter.MaxRows = maxRows
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -108,7 +101,7 @@ func run(ctx context.Context, source, dbPath string, maxRows int, dryRun bool) e
 		}
 	}()
 
-	total, err := runImport(ctx, src, filter, st, dryRun)
+	total, err := foodimport.FetchAndUpsert(ctx, src, filter, st, dryRun)
 	if err != nil {
 		return fmt.Errorf("import %s: %w", source, err)
 	}
@@ -126,7 +119,7 @@ func runBackfill(ctx context.Context, dbPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -177,7 +170,7 @@ func runRepair(ctx context.Context, source, dbPath string) error {
 		return err
 	}
 
-	st, err := store.New("sqlite", dbPath, store.SQLiteDialect(), nil)
+	st, err := cmdutil.OpenSQLiteStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -202,46 +195,4 @@ func runRepair(ctx context.Context, source, dbPath string) error {
 
 	fmt.Printf("import-foods: repair source=%s rows_checked=%d rows_fixed=%d\n", source, len(batch), fixed)
 	return nil
-}
-
-// bulkUpserter is the subset of *store.Store that runImport needs, so tests
-// can swap in a real temp store without depending on the rest of ports.Store.
-type bulkUpserter interface {
-	BulkUpsertFoods(ctx context.Context, foods []types.FoodMatch) error
-}
-
-// runImport streams src through filter in fixed-size batches, writing each
-// batch to st (unless dryRun), and returns the total row count seen.
-func runImport(ctx context.Context, src ports.BulkSource, filter ports.BulkFilter, st bulkUpserter, dryRun bool) (int, error) {
-	batch := make([]types.FoodMatch, 0, batchSize)
-	total := 0
-
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		if !dryRun {
-			if err := st.BulkUpsertFoods(ctx, batch); err != nil {
-				return err
-			}
-		}
-		total += len(batch)
-		batch = batch[:0]
-		return nil
-	}
-
-	err := src.FetchBulk(ctx, filter, func(fm types.FoodMatch) error {
-		batch = append(batch, fm)
-		if len(batch) >= batchSize {
-			return flush()
-		}
-		return nil
-	})
-	if err != nil {
-		return total, err
-	}
-	if err := flush(); err != nil {
-		return total, err
-	}
-	return total, nil
 }

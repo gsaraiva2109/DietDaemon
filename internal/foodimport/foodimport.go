@@ -198,7 +198,7 @@ func (r *Runner) runFor(ctx context.Context, src ports.BulkSource) (ports.BulkSo
 		}
 	}
 
-	if err := r.fetchAndUpsert(ctx, src); err != nil {
+	if _, err := FetchAndUpsert(ctx, src, r.filters[src.Name()], r.store, false); err != nil {
 		return src, "", err
 	}
 
@@ -240,18 +240,25 @@ func (r *Runner) prepareLocalImport(ctx context.Context, src ports.BulkSource, p
 	return src, before, false, nil
 }
 
-// fetchAndUpsert streams src's bulk results into r.store in batchSize chunks.
-func (r *Runner) fetchAndUpsert(ctx context.Context, src ports.BulkSource) error {
+// FetchAndUpsert streams src's bulk results into st in batchSize chunks.
+// With dryRun set, it still fetches and counts every row but does not write.
+func FetchAndUpsert(ctx context.Context, src ports.BulkSource, filter ports.BulkFilter, st Store, dryRun bool) (int, error) {
 	batch := make([]types.FoodMatch, 0, batchSize)
+	total := 0
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err := r.store.BulkUpsertFoods(ctx, batch)
+		if !dryRun {
+			if err := st.BulkUpsertFoods(ctx, batch); err != nil {
+				return err
+			}
+		}
+		total += len(batch)
 		batch = batch[:0]
-		return err
+		return nil
 	}
-	err := src.FetchBulk(ctx, r.filters[src.Name()], func(fm types.FoodMatch) error {
+	err := src.FetchBulk(ctx, filter, func(fm types.FoodMatch) error {
 		batch = append(batch, fm)
 		if len(batch) >= batchSize {
 			return flush()
@@ -259,9 +266,12 @@ func (r *Runner) fetchAndUpsert(ctx context.Context, src ports.BulkSource) error
 		return nil
 	})
 	if err != nil {
-		return err
+		return total, err
 	}
-	return flush()
+	if err := flush(); err != nil {
+		return total, err
+	}
+	return total, nil
 }
 
 // finishLocalImport verifies a local source's file didn't change mid-fetch

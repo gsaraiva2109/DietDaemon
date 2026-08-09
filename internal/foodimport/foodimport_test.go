@@ -214,6 +214,40 @@ func TestRunOnceBatchingAndFinalPartialBatch(t *testing.T) {
 	}
 }
 
+func TestFetchAndUpsertCountsRowsAndHonorsDryRun(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry_run=%t", dryRun), func(t *testing.T) {
+			src := &fakeSource{name: "usda", count: 501}
+			store := &fakeStore{}
+
+			total, err := FetchAndUpsert(t.Context(), src, ports.BulkFilter{}, store, dryRun)
+			if err != nil {
+				t.Fatalf("FetchAndUpsert: %v", err)
+			}
+			if total != 501 {
+				t.Fatalf("total = %d, want 501", total)
+			}
+			if dryRun && len(store.calls) != 0 {
+				t.Fatalf("dry-run writes = %d, want 0", len(store.calls))
+			}
+			if !dryRun && (len(store.calls) != 2 || len(store.calls[0]) != 500 || len(store.calls[1]) != 1) {
+				t.Fatalf("batches = %+v, want 500 then 1", store.calls)
+			}
+		})
+	}
+}
+
+func TestFetchAndUpsertPropagatesFetchError(t *testing.T) {
+	want := errors.New("fetch failed")
+	total, err := FetchAndUpsert(t.Context(), &fakeSource{name: "usda", fetchErr: want}, ports.BulkFilter{}, &fakeStore{}, false)
+	if total != 0 {
+		t.Fatalf("total = %d, want 0", total)
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
 func TestRunOnceAllSourcesRunEvenIfOneFails(t *testing.T) {
 	failing := &fakeSource{name: "usda", fetchErr: errors.New("boom")}
 	ok := &fakeSource{name: "taco", count: 3}
