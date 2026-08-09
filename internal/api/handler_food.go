@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"strings"
 
@@ -159,19 +158,17 @@ type customFoodRequest struct {
 }
 
 func (b customFoodRequest) input() (types.CustomFoodInput, bool) {
-	if b.Name == nil || strings.TrimSpace(*b.Name) == "" || b.Calories == nil || b.Protein == nil || b.Carbs == nil || b.Fat == nil || b.Fiber == nil || b.BasisGrams == nil || *b.BasisGrams <= 0 || !finite(*b.BasisGrams) {
+	if b.Name == nil || strings.TrimSpace(*b.Name) == "" || b.Calories == nil || b.Protein == nil || b.Carbs == nil || b.Fat == nil || b.Fiber == nil || b.BasisGrams == nil || *b.BasisGrams <= 0 || !isFinite(*b.BasisGrams) {
 		return types.CustomFoodInput{}, false
 	}
 	macros := types.Macros{Calories: *b.Calories, Protein: *b.Protein, Carbs: *b.Carbs, Fat: *b.Fat, Fiber: *b.Fiber}
 	for _, value := range []float64{macros.Calories, macros.Protein, macros.Carbs, macros.Fat, macros.Fiber} {
-		if value < 0 || !finite(value) {
+		if value < 0 || !isFinite(value) {
 			return types.CustomFoodInput{}, false
 		}
 	}
 	return types.CustomFoodInput{Name: strings.TrimSpace(*b.Name), Macros: macros, BasisGrams: *b.BasisGrams}, true
 }
-
-func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
 
 func decodeCustomFood(r *http.Request) (types.CustomFoodInput, error) {
 	var body customFoodRequest
@@ -304,7 +301,7 @@ func (h *Handler) handleCreateFoodServingUnit(w http.ResponseWriter, r *http.Req
 		Label string  `json:"label"`
 		Grams float64 `json:"grams"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Label) == "" || body.Grams <= 0 || !finite(body.Grams) {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Label) == "" || body.Grams <= 0 || !isFinite(body.Grams) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "label and positive grams are required"})
 		return

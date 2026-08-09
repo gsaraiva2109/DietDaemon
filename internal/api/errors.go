@@ -41,12 +41,6 @@ func WriteError(w http.ResponseWriter, status int, code ErrorCode, message strin
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// writeAPIError keeps internal callers source-compatible while the root HTTP
-// middleware uses the exported form above.
-func writeAPIError(w http.ResponseWriter, status int, code ErrorCode, message string) {
-	WriteError(w, status, code, message)
-}
-
 func errorForStatus(status int) (ErrorCode, string) {
 	switch status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:

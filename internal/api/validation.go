@@ -13,7 +13,7 @@ import (
 )
 
 func writeValidationError(w http.ResponseWriter, message string) {
-	writeAPIError(w, http.StatusBadRequest, ErrorValidation, message)
+	WriteError(w, http.StatusBadRequest, ErrorValidation, message)
 }
 
 func decodeRequestJSON(r *http.Request, dst any) error {

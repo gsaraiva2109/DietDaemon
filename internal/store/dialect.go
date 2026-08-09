@@ -149,13 +149,6 @@ func NewDialect(driver string) (Dialect, error) {
 	case "postgres":
 		return postgresDialect{}, nil
 	default:
-		return nil, &ErrUnsupportedDriver{Driver: driver}
+		return nil, fmt.Errorf("DB_DRIVER=%s not supported; valid drivers: sqlite, postgres", driver)
 	}
-}
-
-// ErrUnsupportedDriver is returned when DB_DRIVER is not "sqlite" or "postgres".
-type ErrUnsupportedDriver struct{ Driver string }
-
-func (e *ErrUnsupportedDriver) Error() string {
-	return "DB_DRIVER=" + e.Driver + " not supported; valid drivers: sqlite, postgres"
 }
