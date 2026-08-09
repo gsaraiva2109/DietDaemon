@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // WaterStore is the subset of store methods needed by /water.
@@ -71,7 +72,7 @@ func (c *WaterCommand) Handle(ctx context.Context, msg types.InboundMessage, arg
 	}
 
 	entry := types.WaterLog{
-		ID:       randomID(),
+		ID:       id.New(),
 		UserID:   msg.UserID,
 		AmountML: amount,
 		LoggedAt: time.Now().UTC().Format(time.RFC3339),

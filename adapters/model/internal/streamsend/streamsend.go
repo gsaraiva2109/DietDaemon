@@ -5,6 +5,7 @@ package streamsend
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/gsaraiva2109/dietdaemon/core/ports"
 )
@@ -24,4 +25,16 @@ func Send(ctx context.Context, ch chan<- ports.ChatEvent, evt ports.ChatEvent) b
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// ExtractArgs returns the args field from raw tool-call JSON, or raw when it
+// is incomplete or invalid.
+func ExtractArgs(raw string) string {
+	var obj struct {
+		Args string `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+		return obj.Args
+	}
+	return raw
 }

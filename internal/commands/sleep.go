@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
+	"github.com/gsaraiva2109/dietdaemon/internal/id"
 )
 
 // SleepStore is the subset of store methods needed by /sleep.
@@ -111,7 +112,7 @@ func (c *SleepCommand) handleLog(ctx context.Context, msg types.InboundMessage, 
 	}
 
 	sl := types.SleepLog{
-		ID:      randomID(),
+		ID:      id.New(),
 		UserID:  msg.UserID,
 		SleepAt: sleepAt,
 		WakeAt:  &wakeAt,

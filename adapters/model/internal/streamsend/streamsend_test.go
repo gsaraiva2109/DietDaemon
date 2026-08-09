@@ -44,3 +44,21 @@ func TestSendBailsOnCancelledContext(t *testing.T) {
 		t.Error("expected Send to bail when ctx is already cancelled and no reader is ready")
 	}
 }
+
+func TestExtractArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty value", raw: `{"args": ""}`, want: ""},
+		{name: "value", raw: `{"args": "grilled chicken"}`, want: "grilled chicken"},
+		{name: "invalid JSON", raw: "not json", want: "not json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExtractArgs(tc.raw); got != tc.want {
+				t.Errorf("ExtractArgs(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

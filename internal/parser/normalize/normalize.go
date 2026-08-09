@@ -6,7 +6,11 @@
 // handles food-alias folding for the store.
 package normalize
 
-import "strings"
+import (
+	"strings"
+
+	textnormalize "github.com/gsaraiva2109/dietdaemon/internal/normalize"
+)
 
 // unitKind classifies how a unit converts to grams.
 type unitKind int
@@ -69,21 +73,11 @@ func init() {
 	count("unit", "unidade", "unidades", "un", "und", "unit", "units")
 }
 
-// accentRepl folds Portuguese accented characters to ASCII.
-var accentRepl = strings.NewReplacer(
-	"á", "a", "à", "a", "â", "a", "ã", "a", "ä", "a",
-	"é", "e", "è", "e", "ê", "e", "ë", "e",
-	"í", "i", "ì", "i", "î", "i", "ï", "i",
-	"ó", "o", "ò", "o", "ô", "o", "õ", "o", "ö", "o",
-	"ú", "u", "ù", "u", "û", "u", "ü", "u",
-	"ç", "c", "ñ", "n",
-)
-
 // NormalizeUnit maps a raw unit token to its canonical name and computes grams
 // for the given quantity. locale is reserved for future unit-per-locale tables.
 // When unit is empty or unrecognized it is treated as a count (grams=0).
 func NormalizeUnit(qty float64, unit, _, _ string) (canonicalUnit string, grams float64) {
-	unit = accentRepl.Replace(strings.ToLower(strings.TrimSpace(unit)))
+	unit = textnormalize.Normalize(unit)
 	if unit == "" {
 		return "unit", 0
 	}
@@ -103,7 +97,7 @@ func NormalizeUnit(qty float64, unit, _, _ string) (canonicalUnit string, grams 
 
 // IsUnit reports whether the normalized token is a recognized unit.
 func IsUnit(token string) bool {
-	_, ok := unitAliases[accentRepl.Replace(strings.ToLower(strings.TrimSpace(token)))]
+	_, ok := unitAliases[textnormalize.Normalize(token)]
 	return ok
 }
 
