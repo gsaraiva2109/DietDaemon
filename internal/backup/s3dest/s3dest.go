@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -55,10 +56,7 @@ func (d *Dest) Write(ctx context.Context, cfg types.BackupConfig, filename strin
 	}
 	client := d.client(cfg)
 
-	key := filename
-	if cfg.S3Prefix != "" {
-		key = strings.TrimSuffix(cfg.S3Prefix, "/") + "/" + filename
-	}
+	key := path.Join(cfg.S3Prefix, filename)
 
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(cfg.S3Bucket),
@@ -80,7 +78,7 @@ func (d *Dest) List(ctx context.Context, cfg types.BackupConfig) ([]string, erro
 	client := d.client(cfg)
 	prefix := ""
 	if cfg.S3Prefix != "" {
-		prefix = strings.TrimSuffix(cfg.S3Prefix, "/") + "/"
+		prefix = path.Clean(cfg.S3Prefix) + "/"
 	}
 	var out []string
 	var token *string
@@ -115,12 +113,8 @@ func (d *Dest) Delete(ctx context.Context, cfg types.BackupConfig) error {
 		return err
 	}
 	client := d.client(cfg)
-	prefix := ""
-	if cfg.S3Prefix != "" {
-		prefix = strings.TrimSuffix(cfg.S3Prefix, "/") + "/"
-	}
 	for _, name := range names {
-		key := prefix + name
+		key := path.Join(cfg.S3Prefix, name)
 		if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(cfg.S3Bucket),
 			Key:    aws.String(key),
@@ -137,10 +131,7 @@ func (d *Dest) Read(ctx context.Context, cfg types.BackupConfig, filename string
 		return nil, fmt.Errorf("s3dest: s3_bucket not configured")
 	}
 	client := d.client(cfg)
-	key := filename
-	if cfg.S3Prefix != "" {
-		key = strings.TrimSuffix(cfg.S3Prefix, "/") + "/" + filename
-	}
+	key := path.Join(cfg.S3Prefix, filename)
 	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(cfg.S3Bucket),
 		Key:    aws.String(key),

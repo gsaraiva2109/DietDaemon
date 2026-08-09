@@ -2,12 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -107,13 +107,9 @@ func isUniqueViolation(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// newID returns a short pseudo-unique ID using a monotonic counter + timestamp
-// fallback. Simple identifiers keep the embedded DB readable.
-var idCounter int64
-
+// newID returns a random 26-char Crockford-base32 ID (stdlib rand.Text()).
 func newID() string {
-	n := atomic.AddInt64(&idCounter, 1)
-	return fmt.Sprintf("%d%x", time.Now().UnixNano(), n)
+	return rand.Text()
 }
 
 // insertRows executes one INSERT with a VALUES tuple for each row. Queries use

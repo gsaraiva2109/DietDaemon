@@ -12,11 +12,13 @@
 package index
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 
 	"github.com/gsaraiva2109/dietdaemon/core/types"
@@ -259,14 +261,6 @@ func unpackF32LE(blob []byte) ([]float32, error) {
 	return vec, nil
 }
 
-// ---------------------------------------------------------------------------
-// Top-k sort (simple insertion sort, N is small)
-// ---------------------------------------------------------------------------
-
 func sortByScore(nn []Neighbor) {
-	for i := 1; i < len(nn); i++ {
-		for j := i; j > 0 && nn[j].Score > nn[j-1].Score; j-- {
-			nn[j], nn[j-1] = nn[j-1], nn[j]
-		}
-	}
+	slices.SortFunc(nn, func(a, b Neighbor) int { return cmp.Compare(b.Score, a.Score) })
 }

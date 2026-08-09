@@ -176,6 +176,59 @@ func TestDelete_EmptyPrefixIsNoop(t *testing.T) {
 	}
 }
 
+// TestWriteListReadDelete_PrefixVariants exercises the path.Join-based key
+// construction across the S3Prefix shapes it must normalize identically:
+// empty, no trailing slash, and with a trailing slash.
+func TestWriteListReadDelete_PrefixVariants(t *testing.T) {
+	for _, prefix := range []string{"", "u1", "u1/"} {
+		t.Run("prefix="+prefix, func(t *testing.T) {
+			testPrefixRoundTrip(t, prefix)
+		})
+	}
+}
+
+// testPrefixRoundTrip writes, lists, reads, then deletes a single object
+// under prefix, asserting List/Read reflect it before Delete and List is
+// empty after — for one S3Prefix shape.
+func testPrefixRoundTrip(t *testing.T, prefix string) {
+	t.Helper()
+	srv, _ := newFakeS3(t)
+	d := testDest()
+	cfg := testCfg(srv.URL, "bucket", prefix)
+	ctx := context.Background()
+
+	if err := d.Write(ctx, cfg, "meals.csv", []byte("data")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, err := d.List(ctx, cfg)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0] != "meals.csv" {
+		t.Fatalf("List = %v, want [meals.csv]", got)
+	}
+
+	data, err := d.Read(ctx, cfg, "meals.csv")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(data) != "data" {
+		t.Fatalf("Read = %q, want %q", data, "data")
+	}
+
+	if err := d.Delete(ctx, cfg); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got, err = d.List(ctx, cfg)
+	if err != nil {
+		t.Fatalf("List after Delete: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no objects left after Delete, got %v", got)
+	}
+}
+
 func TestDelete_MissingBucketErrors(t *testing.T) {
 	d := testDest()
 	cfg := types.BackupConfig{UserID: "u1"} // no S3Bucket

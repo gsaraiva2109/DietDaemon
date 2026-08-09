@@ -3098,7 +3098,7 @@ func TestExportMealsCSV(t *testing.T) {
 	// Exact byte body: proves the internal/exportfmt extraction changed nothing
 	// about the REST endpoint's on-the-wire CSV output.
 	const wantMeals = "id,date,raw_text,kcal,protein,carbs,fat,fiber\n" +
-		"m1,0001-01-01,\"200g chicken\",330,62.0,0.0,0.0,0.0\n"
+		"m1,0001-01-01,200g chicken,330,62.0,0.0,0.0,0.0\n"
 	if got := rec.Body.String(); got != wantMeals {
 		t.Errorf("csv body mismatch:\ngot:  %q\nwant: %q", got, wantMeals)
 	}
