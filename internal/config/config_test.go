@@ -169,9 +169,15 @@ func TestDecodeKeyRejectsBase64(t *testing.T) {
 	}
 }
 
-func TestDecodeKeyRejectsWrongHexLength(t *testing.T) {
-	if _, err := decodeKey(strings.Repeat("ab", 31)); err == nil {
-		t.Fatal("decodeKey() error = nil, want 32-byte hex validation error")
+func TestDecodeKeyRejectsInvalidHex(t *testing.T) {
+	for _, raw := range []string{
+		strings.Repeat("ab", 31) + "a",
+		strings.Repeat("ab", 32) + "a",
+		strings.Repeat("g", 64),
+	} {
+		if _, err := decodeKey(raw); err == nil {
+			t.Errorf("decodeKey(%q) error = nil, want 32-byte hex validation error", raw)
+		}
 	}
 }
 
