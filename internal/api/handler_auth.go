@@ -913,6 +913,35 @@ func (h *Handler) resolveMFAChallenge(w http.ResponseWriter, ctx context.Context
 	return chUserID, remember, true
 }
 
+// resolveMFAChallengeUser decodes a request body containing only a
+// challenge_token, resolves the pending MFA challenge, and loads the
+// challenged user. Shared by step-up endpoints (passkey-MFA begin,
+// email-MFA send) that don't need any other body field.
+func (h *Handler) resolveMFAChallengeUser(w http.ResponseWriter, r *http.Request) (u types.User, chUserID string, ok bool) {
+	var body struct {
+		ChallengeToken string `json:"challenge_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChallengeToken == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge_token is required"})
+		return types.User{}, "", false
+	}
+
+	ctx := r.Context()
+	challengeID := auth.HashToken(body.ChallengeToken)
+	chUserID, _, ok = h.resolveMFAChallenge(w, ctx, challengeID, errInvalidChallenge, errInvalidChallenge, nil, nil)
+	if !ok {
+		return types.User{}, "", false
+	}
+
+	u, err := h.store.GetUser(ctx, chUserID)
+	if err != nil {
+		h.writeErr(w, err)
+		return types.User{}, "", false
+	}
+	return u, chUserID, true
+}
+
 // checkTOTPChallengeLockout enforces the per-user lockout on TOTP/recovery
 // guesses. The challenge endpoint is only IP-rate-limited
 // (wrapPublicLimited), which a distributed or IP-rotating attacker can

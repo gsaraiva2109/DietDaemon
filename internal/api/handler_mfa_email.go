@@ -25,24 +25,8 @@ func (h *Handler) handleMFAEmailSend(w http.ResponseWriter, r *http.Request) {
 	ip := h.clientIP(r)
 	ctx := r.Context()
 
-	var body struct {
-		ChallengeToken string `json:"challenge_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChallengeToken == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge_token is required"})
-		return
-	}
-
-	challengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, _, ok := h.resolveMFAChallenge(w, ctx, challengeID, errInvalidChallenge, errInvalidChallenge, nil, nil)
+	u, chUserID, ok := h.resolveMFAChallengeUser(w, r)
 	if !ok {
-		return
-	}
-
-	u, err := h.store.GetUser(ctx, chUserID)
-	if err != nil {
-		h.writeErr(w, err)
 		return
 	}
 
