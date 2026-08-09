@@ -209,7 +209,7 @@ func (h *Handler) oidcIdentity(ctx context.Context, prov *oidc.Provider, provID,
 
 	identity := oidcIdentity{
 		subject:       claims.Subject,
-		email:         strings.ToLower(strings.TrimSpace(claims.Email)),
+		email:         normalizeEmail(claims.Email),
 		emailVerified: claims.EmailVerified,
 		displayName:   strings.TrimSpace(claims.Name),
 	}

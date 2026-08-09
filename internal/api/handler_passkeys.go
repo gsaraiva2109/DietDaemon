@@ -276,7 +276,7 @@ func (h *Handler) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, errInvalidJSONBody)
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(body.Email))
+	email := normalizeEmail(body.Email)
 
 	assertion, session, storeID := h.beginScopedPasskeyLogin(r, email)
 	if assertion == nil {
@@ -514,35 +514,8 @@ func (h *Handler) issuePasskeyMFAChallenge(w http.ResponseWriter, ctx context.Co
 func (h *Handler) handleMFAPasskeyBegin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var body struct {
-		ChallengeToken string `json:"challenge_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChallengeToken == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "challenge_token is required"})
-		return
-	}
-
-	challengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, _, expiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, challengeID)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-
-	// Check expiry.
-	exp, parseErr := time.Parse(time.RFC3339, expiresAt)
-	if parseErr != nil || time.Now().UTC().After(exp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, challengeID)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-
-	u, err := h.store.GetUser(ctx, chUserID)
-	if err != nil {
-		h.writeErr(w, err)
+	u, chUserID, ok := h.resolveMFAChallengeUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -605,19 +578,8 @@ func (h *Handler) handleMFAPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	}
 
 	mfaChallengeID := auth.HashToken(body.ChallengeToken)
-	chUserID, remember, chExpiresAt, err := h.mfaChallenges.GetMFAChallenge(ctx, mfaChallengeID)
-	if err != nil {
-		h.clearWebAuthnCookie(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
-		return
-	}
-	exp, parseErr := time.Parse(time.RFC3339, chExpiresAt)
-	if parseErr != nil || time.Now().UTC().After(exp) {
-		_ = h.mfaChallenges.DeleteMFAChallenge(ctx, mfaChallengeID)
-		h.clearWebAuthnCookie(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": errInvalidChallenge})
+	chUserID, remember, ok := h.resolveMFAChallenge(w, ctx, mfaChallengeID, errInvalidChallenge, errInvalidChallenge, func() { h.clearWebAuthnCookie(w) }, nil)
+	if !ok {
 		return
 	}
 
