@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -13,6 +14,36 @@ import (
 // ---------------------------------------------------------------------------
 // Body tracking — progress photo handlers.
 // ---------------------------------------------------------------------------
+
+// decodeImageUpload reads a single-file multipart upload from the "file"
+// field, bounding the request body to maxBytes and sniffing the content
+// type of the decoded bytes. On failure it writes the appropriate error
+// response itself and returns ok=false; callers must return immediately.
+func (h *Handler) decodeImageUpload(w http.ResponseWriter, r *http.Request, maxBytes int64) (data []byte, mimeType string, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
+	if err := r.ParseMultipartForm(maxBytes); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("file too large (max %d MB)", maxBytes>>20)})
+		return nil, "", false
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
+		return nil, "", false
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err = io.ReadAll(io.LimitReader(file, maxBytes))
+	if err != nil {
+		h.writeErr(w, err)
+		return nil, "", false
+	}
+
+	return data, http.DetectContentType(data), true
+}
 
 func (h *Handler) handleListPhotos(w http.ResponseWriter, r *http.Request, userID string) {
 	photos, err := h.store.ListPhotoMetadata(r.Context(), userID)
@@ -46,25 +77,8 @@ func (h *Handler) handlePhotoData(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, userID string) {
-	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
-	// #nosec G120 — MaxBytesReader above bounds the body before ParseMultipartForm.
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file too large (max 5 MB)"})
-		return
-	}
-
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "file field required"})
-		return
-	}
-	defer func() { _ = file.Close() }()
-
-	data, err := io.ReadAll(io.LimitReader(file, 5<<20))
-	if err != nil {
-		h.writeErr(w, err)
+	data, mimeType, ok := h.decodeImageUpload(w, r, 5<<20)
+	if !ok {
 		return
 	}
 
@@ -76,9 +90,6 @@ func (h *Handler) handleUploadPhoto(w http.ResponseWriter, r *http.Request, user
 	if date == "" {
 		date = time.Now().In(h.userLoc(r.Context(), userID)).Format("2006-01-02")
 	}
-
-	// Detect mime type from first 512 bytes.
-	mimeType := http.DetectContentType(data)
 
 	if !validView(view) {
 		writeValidationError(w, "view must be one of: front, side, back")
