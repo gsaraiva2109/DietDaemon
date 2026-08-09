@@ -26,6 +26,7 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      docker: ${{ steps.filter.outputs.docker }}
       coverage: ${{ steps.filter.outputs.go == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.sonar == 'true' }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -49,6 +50,13 @@ jobs:
               - '.github/workflows/pr.yml'
               - 'sonar-project.properties'
               - 'Makefile'
+            docker:
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
+              - 'web/package.json'
+              - 'web/package-lock.json'
 
   go:
     name: Go (lint, build)
@@ -208,6 +216,46 @@ jobs:
         with:
           sarif_file: 'trivy-secrets.sarif'
 
+  docker-scan:
+    name: Docker (image vulnerability scan)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.docker == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.2.0
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: dietdaemon:pr-${{ github.event.pull_request.number || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy image vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: 'v0.73.0'
+          image-ref: dietdaemon:pr-${{ github.event.pull_request.number || github.sha }}
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          trivyignores: '.trivyignore'
+          exit-code: '1'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4.37.6
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+          category: '.github/workflows/release.yml:docker'
+
   sonarqube:
     name: SonarQube Scan
     runs-on: [self-hosted, homelab, linux, amd64]
@@ -247,12 +295,12 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [go, frontend, go-coverage, frontend-coverage, sonarqube, trivy]
+    needs: [go, frontend, go-coverage, frontend-coverage, sonarqube, trivy, docker-scan]
     if: always()
     steps:
       - name: Check job results
         run: |
-          if [[ "${{ needs.go.result }}" == "failure" || "${{ needs.frontend.result }}" == "failure" || "${{ needs.go-coverage.result }}" == "failure" || "${{ needs.frontend-coverage.result }}" == "failure" || "${{ needs.sonarqube.result }}" == "failure" || "${{ needs.trivy.result }}" == "failure" ]]; then
+          if [[ "${{ needs.go.result }}" == "failure" || "${{ needs.frontend.result }}" == "failure" || "${{ needs.go-coverage.result }}" == "failure" || "${{ needs.frontend-coverage.result }}" == "failure" || "${{ needs.sonarqube.result }}" == "failure" || "${{ needs.trivy.result }}" == "failure" || "${{ needs.docker-scan.result }}" == "failure" ]]; then
             echo "One or more required jobs failed."
             exit 1
           fi
