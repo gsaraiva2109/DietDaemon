@@ -43,6 +43,19 @@ export function GoalSuggestion() {
 
   if (!data || data.recommended_kcal <= 0 || !data.message) return null
 
+  let applyButtonContent
+  if (applied) {
+    applyButtonContent = (
+      <>
+        <CheckIcon width={16} height={16} /> {t('goalSuggestion.applied')}
+      </>
+    )
+  } else if (setTargets.isPending) {
+    applyButtonContent = t('goalSuggestion.applying')
+  } else {
+    applyButtonContent = t('goalSuggestion.apply')
+  }
+
   function apply() {
     if (!data) return
     const base = targets.data ?? ZERO
@@ -84,15 +97,7 @@ export function GoalSuggestion() {
 
           <div className="mt-4 flex items-center gap-3">
             <Button onClick={apply} disabled={demo || setTargets.isPending || applied}>
-              {applied ? (
-                <>
-                  <CheckIcon width={16} height={16} /> {t('goalSuggestion.applied')}
-                </>
-              ) : setTargets.isPending ? (
-                t('goalSuggestion.applying')
-              ) : (
-                t('goalSuggestion.apply')
-              )}
+              {applyButtonContent}
             </Button>
             {demo && <span className="text-xs text-muted">{t('goalSuggestion.unavailable')}</span>}
             {setTargets.isError && (

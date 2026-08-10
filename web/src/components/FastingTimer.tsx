@@ -77,19 +77,22 @@ export function FastingTimer() {
   const pct = running ? Math.min(100, (elapsedMs / goalMs) * 100) : 0
   const reached = running && elapsedMs >= goalMs
 
+  let statusPill = null
+  if (running) {
+    statusPill = reached ? (
+      <Pill tone="primary">{t('fastingTimer.goalReached')}</Pill>
+    ) : (
+      <Pill tone="muted">
+        {Math.floor(elapsedHours)}h / {goal}h
+      </Pill>
+    )
+  }
+
   return (
     <Card className="flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between gap-3">
         <Eyebrow>{t('fastingTimer.title')}</Eyebrow>
-        {running ? (
-          reached ? (
-            <Pill tone="primary">{t('fastingTimer.goalReached')}</Pill>
-          ) : (
-            <Pill tone="muted">
-              {Math.floor(elapsedHours)}h / {goal}h
-            </Pill>
-          )
-        ) : null}
+        {statusPill}
       </div>
 
       {running ? (

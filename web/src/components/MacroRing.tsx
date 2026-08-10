@@ -39,7 +39,12 @@ export function MacroRing({
   const p = progress(consumed, target)
   const over = isOverTarget(consumed, target)
   const centerValue = center === 'remaining' ? Math.max(0, target - consumed) : consumed
-  const centerLabel = center === 'remaining' ? (over ? t('macroRing.over') : t('macroRing.left')) : t('macroRing.eaten')
+  let centerLabel
+  if (center === 'remaining') {
+    centerLabel = over ? t('macroRing.over') : t('macroRing.left')
+  } else {
+    centerLabel = t('macroRing.eaten')
+  }
   const gid = `ring-${label}-${Math.round(size)}`
 
   return (
