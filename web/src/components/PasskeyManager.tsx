@@ -42,6 +42,21 @@ export function PasskeyManager() {
 
   const list = passkeys.data ?? []
 
+  let listContent
+  if (passkeys.isLoading) {
+    listContent = <Spinner />
+  } else if (list.length === 0) {
+    listContent = <p className="text-sm text-muted">{t('passkeyManager.noPasskeysYet')}</p>
+  } else {
+    listContent = (
+      <ul className="flex flex-col divide-y divide-line">
+        {list.map((k) => (
+          <PasskeyRow key={k.id} passkey={k} />
+        ))}
+      </ul>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <form onSubmit={onAdd} className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -58,17 +73,7 @@ export function PasskeyManager() {
         </Button>
       </form>
 
-      {passkeys.isLoading ? (
-        <Spinner />
-      ) : list.length === 0 ? (
-        <p className="text-sm text-muted">{t('passkeyManager.noPasskeysYet')}</p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-line">
-          {list.map((k) => (
-            <PasskeyRow key={k.id} passkey={k} />
-          ))}
-        </ul>
-      )}
+      {listContent}
     </div>
   )
 }
