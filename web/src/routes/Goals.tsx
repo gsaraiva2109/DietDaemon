@@ -2,7 +2,7 @@
 // profile, and a suggested adjustment. Profile edits + recalculation flow back
 // through the onboarding wizard and the targets endpoint.
 
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import {
@@ -62,12 +62,10 @@ export function Goals() {
 
   const recommended: Macros | null = useMemo(() => {
     if (!tdee.data || !prof) return null
-    const cal =
-      prof.goal === 'cut'
-        ? tdee.data.cut_cal
-        : prof.goal === 'bulk'
-          ? tdee.data.bulk_cal
-          : tdee.data.maintain_cal
+    let cal: number
+    if (prof.goal === 'cut') cal = tdee.data.cut_cal
+    else if (prof.goal === 'bulk') cal = tdee.data.bulk_cal
+    else cal = tdee.data.maintain_cal
     return {
       Calories: cal,
       Protein: tdee.data.protein_g,
@@ -87,6 +85,53 @@ export function Goals() {
   }
 
   const hasTargets = Boolean(targets.data && targets.data.Calories > 0)
+
+  let targetsContent: ReactNode
+  if (targets.isLoading) {
+    targetsContent = <Spinner />
+  } else if (hasTargets && targets.data) {
+    targetsContent = (
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+        {MACRO_KEYS.map((k) => (
+          <div key={k}>
+            <div className="text-xs uppercase tracking-[0.1em] text-muted">{t(`common.macro.${k}`)}</div>
+            <div className="mt-1 flex items-baseline gap-1">
+              <span className="text-2xl font-bold text-ink tnum">
+                {formatNumber(targets.data![k])}
+              </span>
+              <span className="text-xs text-muted">{MACRO_META[k].unit}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  } else {
+    targetsContent = (
+      <EmptyState
+        icon={<GoalIcon width={28} height={28} />}
+        title={t('goals.noTargetsTitle')}
+        hint={t('goals.noTargetsHint')}
+      />
+    )
+  }
+
+  let tdeeContent: ReactNode = null
+  if (tdee.data && prof) {
+    tdeeContent = <TDEECard result={tdee.data} goal={prof.goal} />
+  } else if (!prof) {
+    tdeeContent = (
+      <Card className="p-5">
+        <EmptyState
+          icon={<GoalIcon width={28} height={28} />}
+          title={t('goals.tellUsTitle')}
+          hint={t('goals.tellUsHint')}
+        />
+        <div className="mt-4">
+          <Button onClick={openWizard}>{t('goals.setupProfile')}</Button>
+        </div>
+      </Card>
+    )
+  }
 
   return (
     <div>
@@ -114,29 +159,7 @@ export function Goals() {
             )}
           </div>
 
-          {targets.isLoading ? (
-            <Spinner />
-          ) : hasTargets && targets.data ? (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-              {MACRO_KEYS.map((k) => (
-                <div key={k}>
-                  <div className="text-xs uppercase tracking-[0.1em] text-muted">{t(`common.macro.${k}`)}</div>
-                  <div className="mt-1 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-ink tnum">
-                      {formatNumber(targets.data![k])}
-                    </span>
-                    <span className="text-xs text-muted">{MACRO_META[k].unit}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon={<GoalIcon width={28} height={28} />}
-              title={t('goals.noTargetsTitle')}
-              hint={t('goals.noTargetsHint')}
-            />
-          )}
+          {targetsContent}
 
           {!hasTargets && !targets.isLoading && (
             <div className="mt-4">
@@ -146,20 +169,7 @@ export function Goals() {
         </Card>
 
         {/* TDEE breakdown */}
-        {tdee.data && prof ? (
-          <TDEECard result={tdee.data} goal={prof.goal} />
-        ) : !prof ? (
-          <Card className="p-5">
-            <EmptyState
-              icon={<GoalIcon width={28} height={28} />}
-              title={t('goals.tellUsTitle')}
-              hint={t('goals.tellUsHint')}
-            />
-            <div className="mt-4">
-              <Button onClick={openWizard}>{t('goals.setupProfile')}</Button>
-            </div>
-          </Card>
-        ) : null}
+        {tdeeContent}
 
         {/* Suggested adjustment */}
         <GoalSuggestion />

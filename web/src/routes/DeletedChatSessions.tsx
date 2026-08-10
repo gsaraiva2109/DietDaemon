@@ -1,6 +1,7 @@
 // Settings > Recently deleted: chat sessions soft-deleted within the last 30
 // days (#53). Same page shape as AssistantSettings (back link + PageHeader).
 
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useDeletedChatSessions, useRestoreChatSession } from '@/lib/queries'
@@ -13,6 +14,44 @@ export function DeletedChatSessions() {
   const deleted = useDeletedChatSessions()
   const restore = useRestoreChatSession()
 
+  let content: ReactNode
+  if (deleted.isLoading) {
+    content = <Spinner label={t('deletedChatSessions.loading')} />
+  } else if (deleted.isError) {
+    content = (
+      <EmptyState
+        icon={<TrashIcon width={28} height={28} />}
+        title={t('deletedChatSessions.loadErrorTitle')}
+        hint={deleted.error instanceof Error ? deleted.error.message : t('deletedChatSessions.tryAgainLater')}
+      />
+    )
+  } else if (!deleted.data?.length) {
+    content = (
+      <EmptyState
+        icon={<TrashIcon width={28} height={28} />}
+        title={t('deletedChatSessions.emptyTitle')}
+        hint={t('deletedChatSessions.emptyHint')}
+      />
+    )
+  } else {
+    content = (
+      <Card className="divide-y divide-line p-0">
+        {deleted.data.map((s) => (
+          <div key={s.id} className="flex items-center gap-3 px-4 py-3">
+            <span className="min-w-0 flex-1 truncate text-sm text-ink">{s.title || t('deletedChatSessions.newConversation')}</span>
+            <button
+              onClick={() => restore.mutate(s.id)}
+              disabled={restore.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-2 disabled:opacity-50"
+            >
+              <RestoreIcon width={14} height={14} /> {t('deletedChatSessions.restore')}
+            </button>
+          </div>
+        ))}
+      </Card>
+    )
+  }
+
   return (
     <div>
       <Link to="/settings" prefetch="intent" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
@@ -24,36 +63,7 @@ export function DeletedChatSessions() {
         {t('deletedChatSessions.description')}
       </p>
 
-      {deleted.isLoading ? (
-        <Spinner label={t('deletedChatSessions.loading')} />
-      ) : deleted.isError ? (
-        <EmptyState
-          icon={<TrashIcon width={28} height={28} />}
-          title={t('deletedChatSessions.loadErrorTitle')}
-          hint={deleted.error instanceof Error ? deleted.error.message : t('deletedChatSessions.tryAgainLater')}
-        />
-      ) : !deleted.data?.length ? (
-        <EmptyState
-          icon={<TrashIcon width={28} height={28} />}
-          title={t('deletedChatSessions.emptyTitle')}
-          hint={t('deletedChatSessions.emptyHint')}
-        />
-      ) : (
-        <Card className="divide-y divide-line p-0">
-          {deleted.data.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 px-4 py-3">
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">{s.title || t('deletedChatSessions.newConversation')}</span>
-              <button
-                onClick={() => restore.mutate(s.id)}
-                disabled={restore.isPending}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-2 disabled:opacity-50"
-              >
-                <RestoreIcon width={14} height={14} /> {t('deletedChatSessions.restore')}
-              </button>
-            </div>
-          ))}
-        </Card>
-      )}
+      {content}
 
       {restore.isError && (
         <p className="mt-3 text-sm font-medium text-accent" role="alert">

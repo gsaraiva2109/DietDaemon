@@ -1,6 +1,6 @@
 // History, recent meals with search, parser-tier filtering, and day grouping.
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { useMeals } from '@/lib/queries'
@@ -55,6 +55,32 @@ export function History() {
     return [...map.entries()]
   }, [filtered, t, i18n.language])
 
+  let content: ReactNode
+  if (meals.isLoading) {
+    content = <Spinner />
+  } else if (!meals.data?.length) {
+    content = <EmptyState title={t('history.emptyTitle')} hint={t('history.emptyHint')} />
+  } else if (!filtered.length) {
+    content = <EmptyState title={t('history.noMatchesTitle')} hint={t('history.noMatchesHint')} />
+  } else {
+    content = (
+      <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-7">
+        {groups.map(([day, dayMeals]) => (
+          <div key={day}>
+            <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{day}</h2>
+            <div className="flex flex-col gap-2.5">
+              {dayMeals.map((m) => (
+                <motion.div key={m.ID} variants={fadeUp}>
+                  <MealCard meal={m} linkTo={`/history/${m.ID}`} />
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </motion.div>
+    )
+  }
+
   return (
     <div>
       <PageHeader eyebrow={t('history.eyebrow')} title={t('history.title')} />
@@ -88,28 +114,7 @@ export function History() {
         </div>
       </div>
 
-      {meals.isLoading ? (
-        <Spinner />
-      ) : !meals.data?.length ? (
-        <EmptyState title={t('history.emptyTitle')} hint={t('history.emptyHint')} />
-      ) : !filtered.length ? (
-        <EmptyState title={t('history.noMatchesTitle')} hint={t('history.noMatchesHint')} />
-      ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-7">
-          {groups.map(([day, dayMeals]) => (
-            <div key={day}>
-              <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{day}</h2>
-              <div className="flex flex-col gap-2.5">
-                {dayMeals.map((m) => (
-                  <motion.div key={m.ID} variants={fadeUp}>
-                    <MealCard meal={m} linkTo={`/history/${m.ID}`} />
-                  </motion.div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </motion.div>
-      )}
+      {content}
     </div>
   )
 }
