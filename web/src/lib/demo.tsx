@@ -22,14 +22,14 @@ interface DemoValue {
 const DemoContext = createContext<DemoValue | null>(null)
 
 export function DemoProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [demo, setDemoState] = useState<boolean>(() =>
+  const [demo, setDemo] = useState<boolean>(() =>
     demoAvailable() ? localStorage.getItem(KEY) === '1' : false,
   )
-  const setDemo = useCallback((v: boolean) => {
-    setDemoState(v)
+  const persistDemo = useCallback((v: boolean) => {
+    setDemo(v)
     localStorage.setItem(KEY, v ? '1' : '0')
   }, [])
-  const value = useMemo(() => ({ demo, setDemo }), [demo, setDemo])
+  const value = useMemo(() => ({ demo, setDemo: persistDemo }), [demo, persistDemo])
   return <DemoContext value={value}>{children}</DemoContext>
 }
 
