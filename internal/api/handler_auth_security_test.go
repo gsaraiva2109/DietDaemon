@@ -84,10 +84,14 @@ func buildAuthSecurityHandler(authStore *fakeAuthStore) *Handler {
 	)
 }
 
-// argon2id (memory=64MiB) takes tens of ms on ordinary hardware — comfortably
-// above this bound, so it distinguishes "a hash ran" from "no hash ran"
-// without being sensitive to machine speed.
-const hashCostFloor = 8 * time.Millisecond
+// argon2id (memory=64MiB) takes tens of ms on ordinary hardware, so it
+// distinguishes "a hash ran" from "no hash ran" without being sensitive to
+// machine speed — but both ends are noisier than that suggests under
+// `-covermode=atomic` on a loaded/shared runner: the skip-hash path has
+// measured as high as ~8.5ms, and the real-hash path as low as ~29.8ms.
+// Split the difference with margin on both sides instead of hugging either
+// observed edge.
+const hashCostFloor = 18 * time.Millisecond
 
 func TestHandleRegisterDuplicateEmailSkipsHash(t *testing.T) {
 	authStore := newFakeAuthStore()
