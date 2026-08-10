@@ -44,6 +44,82 @@ export function WorkoutCard() {
 
   const list = workouts.data ?? []
 
+  let content
+  if (workouts.isLoading) {
+    content = <Spinner />
+  } else if (workouts.isError) {
+    content = (
+      <button
+        onClick={() => workouts.refetch()}
+        className="self-start text-sm font-medium text-accent hover:underline"
+      >
+        {t('workoutCard.retry')}
+      </button>
+    )
+  } else {
+    let listContent
+    if (list.length === 0) {
+      listContent = <p className="text-sm text-muted">{t('workoutCard.empty')}</p>
+    } else {
+      listContent = (
+        <ul className="flex flex-col gap-2.5">
+          {list.map((w: Workout) => (
+            <li key={w.id} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{w.name}</p>
+                <p className="text-xs text-muted tnum">{w.duration_min} min</p>
+              </div>
+              <Pill tone={INTENSITY_TONE[w.intensity]}>{w.intensity}</Pill>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+
+    content = (
+      <>
+        {open && (
+          <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-2/50 p-3">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('workoutCard.namePlaceholder')}
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
+            />
+            <div className="flex gap-2">
+              <input
+                value={minutes}
+                onChange={(e) => setMinutes(e.target.value)}
+                type="number"
+                min={1}
+                placeholder={t('workoutCard.minutesPlaceholder')}
+                className="w-20 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary tnum"
+              />
+              <select
+                value={intensity}
+                onChange={(e) => setIntensity(e.target.value as WorkoutIntensity)}
+                className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
+              >
+                <option value="light">{t('workoutCard.light')}</option>
+                <option value="moderate">{t('workoutCard.moderate')}</option>
+                <option value="heavy">{t('workoutCard.heavy')}</option>
+              </select>
+              <button
+                onClick={submit}
+                disabled={logWorkout.isPending}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-ink transition hover:brightness-105 disabled:opacity-50"
+              >
+                {t('workoutCard.save')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {listContent}
+      </>
+    )
+  }
+
   return (
     <Card className="flex h-full flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
@@ -59,71 +135,7 @@ export function WorkoutCard() {
         </button>
       </header>
 
-      {workouts.isLoading ? (
-        <Spinner />
-      ) : workouts.isError ? (
-        <button
-          onClick={() => workouts.refetch()}
-          className="self-start text-sm font-medium text-accent hover:underline"
-        >
-          {t('workoutCard.retry')}
-        </button>
-      ) : (
-        <>
-          {open && (
-            <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-2/50 p-3">
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={t('workoutCard.namePlaceholder')}
-                className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
-              />
-              <div className="flex gap-2">
-                <input
-                  value={minutes}
-                  onChange={(e) => setMinutes(e.target.value)}
-                  type="number"
-                  min={1}
-                  placeholder={t('workoutCard.minutesPlaceholder')}
-                  className="w-20 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary tnum"
-                />
-                <select
-                  value={intensity}
-                  onChange={(e) => setIntensity(e.target.value as WorkoutIntensity)}
-                  className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-primary"
-                >
-                  <option value="light">{t('workoutCard.light')}</option>
-                  <option value="moderate">{t('workoutCard.moderate')}</option>
-                  <option value="heavy">{t('workoutCard.heavy')}</option>
-                </select>
-                <button
-                  onClick={submit}
-                  disabled={logWorkout.isPending}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-ink transition hover:brightness-105 disabled:opacity-50"
-                >
-                  {t('workoutCard.save')}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {list.length === 0 ? (
-            <p className="text-sm text-muted">{t('workoutCard.empty')}</p>
-          ) : (
-            <ul className="flex flex-col gap-2.5">
-              {list.map((w: Workout) => (
-                <li key={w.id} className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-ink">{w.name}</p>
-                    <p className="text-xs text-muted tnum">{w.duration_min} min</p>
-                  </div>
-                  <Pill tone={INTENSITY_TONE[w.intensity]}>{w.intensity}</Pill>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
+      {content}
     </Card>
   )
 }

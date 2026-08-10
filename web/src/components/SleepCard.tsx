@@ -45,6 +45,70 @@ export function SleepCard() {
   )
   const last = logs[0]
 
+  let content
+  if (sleep.isLoading) {
+    content = <Spinner />
+  } else if (sleep.isError) {
+    content = (
+      <button
+        onClick={() => sleep.refetch()}
+        className="self-start text-sm font-medium text-accent hover:underline"
+      >
+        {t('sleepCard.retry')}
+      </button>
+    )
+  } else if (logs.length === 0) {
+    content = <p className="text-sm text-muted">{t('sleepCard.empty')}</p>
+  } else {
+    content = (
+      <>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-3xl font-bold text-ink tnum">{last.duration_hours.toFixed(1)}</span>
+          <span className="text-sm text-muted">{t('sleepCard.hrsLastNight')}</span>
+        </div>
+
+        <div className="mt-auto h-28 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chart} margin={{ top: 4, right: 4, bottom: 0, left: -16 }}>
+              <CartesianGrid stroke="var(--color-line)" vertical={false} />
+              <XAxis
+                dataKey="day"
+                tickLine={false}
+                axisLine={false}
+                fontSize={11}
+                stroke="var(--color-muted)"
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                fontSize={11}
+                stroke="var(--color-muted)"
+                width={32}
+                tickFormatter={(v: number) => `${Math.round(v)}`}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-line)',
+                  borderRadius: 12,
+                  color: 'var(--color-ink)',
+                }}
+              />
+              <Bar
+                dataKey="hours"
+                fill={INDIGO}
+                fillOpacity={0.7}
+                radius={[3, 3, 0, 0]}
+                name={t('sleepCard.hours')}
+                isAnimationActive={false}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </>
+    )
+  }
+
   return (
     <Card className="flex h-full flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
@@ -55,64 +119,7 @@ export function SleepCard() {
         {last && <Pill tone={QUALITY_TONE[last.quality]}>{last.quality}</Pill>}
       </header>
 
-      {sleep.isLoading ? (
-        <Spinner />
-      ) : sleep.isError ? (
-        <button
-          onClick={() => sleep.refetch()}
-          className="self-start text-sm font-medium text-accent hover:underline"
-        >
-          {t('sleepCard.retry')}
-        </button>
-      ) : logs.length === 0 ? (
-        <p className="text-sm text-muted">{t('sleepCard.empty')}</p>
-      ) : (
-        <>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-3xl font-bold text-ink tnum">{last.duration_hours.toFixed(1)}</span>
-            <span className="text-sm text-muted">{t('sleepCard.hrsLastNight')}</span>
-          </div>
-
-          <div className="mt-auto h-28 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chart} margin={{ top: 4, right: 4, bottom: 0, left: -16 }}>
-                <CartesianGrid stroke="var(--color-line)" vertical={false} />
-                <XAxis
-                  dataKey="day"
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={11}
-                  stroke="var(--color-muted)"
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={11}
-                  stroke="var(--color-muted)"
-                  width={32}
-                  tickFormatter={(v: number) => `${Math.round(v)}`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: 'var(--color-surface)',
-                    border: '1px solid var(--color-line)',
-                    borderRadius: 12,
-                    color: 'var(--color-ink)',
-                  }}
-                />
-                <Bar
-                  dataKey="hours"
-                  fill={INDIGO}
-                  fillOpacity={0.7}
-                  radius={[3, 3, 0, 0]}
-                  name={t('sleepCard.hours')}
-                  isAnimationActive={false}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </>
-      )}
+      {content}
     </Card>
   )
 }
