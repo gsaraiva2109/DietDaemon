@@ -22,7 +22,9 @@ export function MacroBar({ consumed, target, label, unit, color, confidence }: R
   const over = isOverTarget(consumed, target)
   const left = remaining(consumed, target)
   const tier = confidenceTier(confidence ?? 1)
-  const opacityClass = tier === 'high' ? '' : tier === 'medium' ? 'opacity-75' : 'opacity-50'
+  let opacityClass = 'opacity-50'
+  if (tier === 'high') opacityClass = ''
+  else if (tier === 'medium') opacityClass = 'opacity-75'
 
   return (
     <div>

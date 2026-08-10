@@ -20,6 +20,28 @@ export function PendingAliases() {
   const { data, isLoading } = usePendingAliases()
   const pending = data ?? []
 
+  let content
+  if (isLoading) {
+    content = <Spinner label={t('pendingAliases.loading')} />
+  } else if (!pending.length) {
+    content = (
+      <EmptyState
+        title={t('pendingAliases.emptyTitle')}
+        hint={t('pendingAliases.emptyHint')}
+      />
+    )
+  } else {
+    content = (
+      <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-3">
+        {pending.map((pa: PendingAlias) => (
+          <motion.div key={pa.id} variants={fadeUp}>
+            <PendingAliasRow alias={pa} demo={demo} />
+          </motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+
   return (
     <div>
       <Link
@@ -42,22 +64,7 @@ export function PendingAliases() {
         </p>
       )}
 
-      {isLoading ? (
-        <Spinner label={t('pendingAliases.loading')} />
-      ) : !pending.length ? (
-        <EmptyState
-          title={t('pendingAliases.emptyTitle')}
-          hint={t('pendingAliases.emptyHint')}
-        />
-      ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-3">
-          {pending.map((pa: PendingAlias) => (
-            <motion.div key={pa.id} variants={fadeUp}>
-              <PendingAliasRow alias={pa} demo={demo} />
-            </motion.div>
-          ))}
-        </motion.div>
-      )}
+      {content}
     </div>
   )
 }

@@ -97,8 +97,8 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <aside className="fixed inset-y-0 left-0 z-1100 hidden w-60 flex-col gap-1 overflow-y-auto border-r border-line bg-surface/60 px-3 py-5 backdrop-blur md:flex">
         <Brand />
         <nav className="mt-6 flex flex-col gap-4">
-          {NAV_GROUPS.map((group, gi) => (
-            <div key={gi} className="flex flex-col gap-1">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.headingKey ?? group.items[0].to} className="flex flex-col gap-1">
               {group.headingKey && (
                 <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted/70">
                   {t(`nav.${group.headingKey}`)}
