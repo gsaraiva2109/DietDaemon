@@ -7,7 +7,7 @@
 // bot to consume the code. When linked the page transitions to a success
 // state automatically — no manual polling or refresh needed.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { PageHeader } from '@/components/PageHeader'
@@ -96,6 +96,30 @@ export function LinkBot() {
   const expired = code !== null && remaining <= 0
   const platformLabel = PLATFORMS.find((p) => p.id === platform)?.label ?? ''
 
+  let generateContent: ReactNode
+  if (linked) {
+    generateContent = (
+      <SuccessPanel platformLabel={platformLabel} onLinkAnother={() => { setCode(null); setLinked(false); closeStream() }} />
+    )
+  } else if (code === null) {
+    generateContent = (
+      <Button onClick={generate} disabled={createCode.isPending}>
+        {createCode.isPending ? t('linkBot.generating') : t('linkBot.generateCode')}
+      </Button>
+    )
+  } else {
+    generateContent = (
+      <CodePanel
+        code={code}
+        expired={expired}
+        remaining={remaining}
+        platformLabel={platformLabel}
+        onRegenerate={generate}
+        regenerating={createCode.isPending}
+      />
+    )
+  }
+
   return (
     <div>
       <PageHeader eyebrow={t('nav.settings')} title={t('linkBot.title')} />
@@ -127,22 +151,7 @@ export function LinkBot() {
           })}
         </div>
 
-        {linked ? (
-          <SuccessPanel platformLabel={platformLabel} onLinkAnother={() => { setCode(null); setLinked(false); closeStream() }} />
-        ) : code === null ? (
-          <Button onClick={generate} disabled={createCode.isPending}>
-            {createCode.isPending ? t('linkBot.generating') : t('linkBot.generateCode')}
-          </Button>
-        ) : (
-          <CodePanel
-            code={code}
-            expired={expired}
-            remaining={remaining}
-            platformLabel={platformLabel}
-            onRegenerate={generate}
-            regenerating={createCode.isPending}
-          />
-        )}
+        {generateContent}
 
         {createCode.isError && (
           <p className="mt-3 text-sm font-medium text-accent" role="alert">
