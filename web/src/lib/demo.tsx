@@ -3,7 +3,7 @@
 // in localStorage. The query hooks (queries.ts) read `useDemo()` and return
 // this sample data instead of hitting the API.
 
-import { createContext, use, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useMemo, useState, type ReactNode } from 'react'
 
 const KEY = 'dd.demo'
 
@@ -22,14 +22,15 @@ interface DemoValue {
 const DemoContext = createContext<DemoValue | null>(null)
 
 export function DemoProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [demo, set] = useState<boolean>(() =>
+  const [demo, setDemoState] = useState<boolean>(() =>
     demoAvailable() ? localStorage.getItem(KEY) === '1' : false,
   )
-  function setDemo(v: boolean) {
-    set(v)
+  const setDemo = useCallback((v: boolean) => {
+    setDemoState(v)
     localStorage.setItem(KEY, v ? '1' : '0')
-  }
-  return <DemoContext value={{ demo, setDemo }}>{children}</DemoContext>
+  }, [])
+  const value = useMemo(() => ({ demo, setDemo }), [demo, setDemo])
+  return <DemoContext value={value}>{children}</DemoContext>
 }
 
 export function useDemo(): DemoValue {

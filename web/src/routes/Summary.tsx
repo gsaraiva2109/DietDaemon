@@ -30,6 +30,60 @@ export function Summary() {
 
   const stats = useMemo(() => compute(range.data ?? [], i18n.language), [range.data, i18n.language])
 
+  let content
+  if (range.isLoading) {
+    content = <Spinner />
+  } else if (!stats) {
+    content = <EmptyState title={t('summary.noDataTitle')} hint={t('summary.noDataHint')} />
+  } else {
+    content = (
+      <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-5">
+        {/* Stat tiles */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Tile label={t('summary.avgCaloriesPerDay')} value={formatNumber(stats.avg.Calories)} unit="kcal" />
+          <Tile label={t('summary.avgProteinPerDay')} value={formatNumber(stats.avg.Protein)} unit="g" />
+          <Tile label={t('summary.daysOnTarget')} value={`${stats.onTarget}`} unit={t('summary.of', { count: stats.logged })} />
+          <Tile label={t('summary.calorieAdherence')} value={`${stats.adherence}`} unit="%" />
+        </div>
+
+        {/* Per-macro avg vs target */}
+        <Card className="p-5">
+          <Eyebrow>{t('summary.avgVsTarget')}</Eyebrow>
+          <div className="mt-4 flex flex-col gap-5">
+            {MACRO_KEYS.map((k) => (
+              <MacroBar
+                key={k}
+                consumed={stats.avg[k]}
+                target={stats.target[k]}
+                label={t(`common.macro.${k}`)}
+                unit={MACRO_META[k].unit}
+                color={cssVar(MACRO_META[k].colorVar)}
+              />
+            ))}
+          </div>
+        </Card>
+
+        {/* Best / hardest day */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <motion.div variants={fadeUp}>
+            <Card className="p-5">
+              <Eyebrow>{t('summary.closestToTarget')}</Eyebrow>
+              <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? t('summary.na')}</p>
+              <p className="text-sm text-muted">{stats.best ? `${formatNumber(stats.best.kcal)} kcal` : t('summary.noData')}</p>
+            </Card>
+          </motion.div>
+          <motion.div variants={fadeUp}>
+            <Card className="p-5">
+              <Eyebrow>{t('summary.furthestFromTarget')}</Eyebrow>
+              <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? t('summary.na')}</p>
+              <p className="text-sm text-muted">{stats.worst ? `${formatNumber(stats.worst.kcal)} kcal` : t('summary.noData')}</p>
+            </Card>
+          </motion.div>
+        </div>
+      </motion.div>
+    )
+  }
+
   return (
     <div>
       <PageHeader eyebrow={t('summary.eyebrow')} title={t('summary.title')}>
@@ -55,56 +109,7 @@ export function Summary() {
 
       {exporting && <ExportModal onClose={() => setExporting(false)} />}
 
-      {range.isLoading ? (
-        <Spinner />
-      ) : !stats ? (
-        <EmptyState title={t('summary.noDataTitle')} hint={t('summary.noDataHint')} />
-      ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-5">
-          {/* Stat tiles */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Tile label={t('summary.avgCaloriesPerDay')} value={formatNumber(stats.avg.Calories)} unit="kcal" />
-            <Tile label={t('summary.avgProteinPerDay')} value={formatNumber(stats.avg.Protein)} unit="g" />
-            <Tile label={t('summary.daysOnTarget')} value={`${stats.onTarget}`} unit={t('summary.of', { count: stats.logged })} />
-            <Tile label={t('summary.calorieAdherence')} value={`${stats.adherence}`} unit="%" />
-          </div>
-
-          {/* Per-macro avg vs target */}
-          <Card className="p-5">
-            <Eyebrow>{t('summary.avgVsTarget')}</Eyebrow>
-            <div className="mt-4 flex flex-col gap-5">
-              {MACRO_KEYS.map((k) => (
-                <MacroBar
-                  key={k}
-                  consumed={stats.avg[k]}
-                  target={stats.target[k]}
-                  label={t(`common.macro.${k}`)}
-                  unit={MACRO_META[k].unit}
-                  color={cssVar(MACRO_META[k].colorVar)}
-                />
-              ))}
-            </div>
-          </Card>
-
-          {/* Best / hardest day */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <motion.div variants={fadeUp}>
-              <Card className="p-5">
-                <Eyebrow>{t('summary.closestToTarget')}</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.best?.label ?? t('summary.na')}</p>
-                <p className="text-sm text-muted">{stats.best ? `${formatNumber(stats.best.kcal)} kcal` : t('summary.noData')}</p>
-              </Card>
-            </motion.div>
-            <motion.div variants={fadeUp}>
-              <Card className="p-5">
-                <Eyebrow>{t('summary.furthestFromTarget')}</Eyebrow>
-                <p className="mt-2 text-lg font-bold text-ink">{stats.worst?.label ?? t('summary.na')}</p>
-                <p className="text-sm text-muted">{stats.worst ? `${formatNumber(stats.worst.kcal)} kcal` : t('summary.noData')}</p>
-              </Card>
-            </motion.div>
-          </div>
-        </motion.div>
-      )}
+      {content}
     </div>
   )
 }

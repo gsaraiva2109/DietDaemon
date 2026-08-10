@@ -2,7 +2,7 @@
 // defaults to the OS preference on first visit. Tokens for both live in
 // index.css.
 
-import { createContext, use, useEffect, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 type Theme = 'light' | 'dark'
 const KEY = 'dd.theme'
@@ -27,11 +27,12 @@ export function ThemeProvider({ children }: Readonly<{ children: ReactNode }>) {
     localStorage.setItem(KEY, theme)
   }, [theme])
 
-  return (
-    <ThemeContext value={{ theme, toggle: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')) }}>
-      {children}
-    </ThemeContext>
-  )
+  const toggle = useCallback(() => {
+    setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+  }, [])
+  const value = useMemo(() => ({ theme, toggle }), [theme, toggle])
+
+  return <ThemeContext value={value}>{children}</ThemeContext>
 }
 
 export function useTheme(): ThemeValue {
