@@ -116,6 +116,39 @@ function WeightTab() {
 
   const s = summary.data
 
+  let historyContent
+  if (log.isLoading) {
+    historyContent = (
+      <div className="mt-3"><Spinner /></div>
+    )
+  } else if (!(log.data ?? []).length) {
+    historyContent = (
+      <div className="mt-3"><EmptyState title={t('body.noWeighIns')} /></div>
+    )
+  } else {
+    historyContent = (
+      <ul className="mt-3 divide-y divide-line">
+        {[...(log.data ?? [])].reverse().map((e) => (
+          <li key={e.id} className="flex items-center justify-between gap-3 py-2.5">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold text-ink tnum">{round(e.weight_kg, 1)} kg</span>
+              <span className="text-sm text-muted">{e.date}</span>
+              {e.note && <span className="text-sm text-muted">· {e.note}</span>}
+            </div>
+            <button
+              onClick={() => deleteWeight.mutate(e.id)}
+              disabled={demo || deleteWeight.isPending}
+              aria-label={t('body.deleteWeighIn')}
+              className="text-muted transition hover:text-accent disabled:opacity-30"
+            >
+              <TrashIcon width={18} height={18} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
   function submit() {
     const kg = Number(weight)
     if (!kg) return
@@ -212,31 +245,7 @@ function WeightTab() {
 
       <Card className="p-5">
         <Eyebrow>{t('body.history')}</Eyebrow>
-        {log.isLoading ? (
-          <div className="mt-3"><Spinner /></div>
-        ) : !(log.data ?? []).length ? (
-          <div className="mt-3"><EmptyState title={t('body.noWeighIns')} /></div>
-        ) : (
-          <ul className="mt-3 divide-y divide-line">
-            {[...(log.data ?? [])].reverse().map((e) => (
-              <li key={e.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-ink tnum">{round(e.weight_kg, 1)} kg</span>
-                  <span className="text-sm text-muted">{e.date}</span>
-                  {e.note && <span className="text-sm text-muted">· {e.note}</span>}
-                </div>
-                <button
-                  onClick={() => deleteWeight.mutate(e.id)}
-                  disabled={demo || deleteWeight.isPending}
-                  aria-label={t('body.deleteWeighIn')}
-                  className="text-muted transition hover:text-accent disabled:opacity-30"
-                >
-                  <TrashIcon width={18} height={18} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        {historyContent}
       </Card>
     </div>
   )
@@ -272,6 +281,42 @@ function MeasurementsTab() {
     }
     if (!any) return
     logMeasurements.mutate(entry, { onSuccess: () => setFields({}) })
+  }
+
+  let historyContent
+  if (measurements.isLoading) {
+    historyContent = (
+      <div className="mt-3"><Spinner /></div>
+    )
+  } else if (!(measurements.data ?? []).length) {
+    historyContent = (
+      <div className="mt-3"><EmptyState title={t('body.noMeasurements')} /></div>
+    )
+  } else {
+    historyContent = (
+      <ul className="mt-3 divide-y divide-line">
+        {[...(measurements.data ?? [])].reverse().map((e) => (
+          <li key={e.id} className="flex items-center justify-between gap-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-ink">{e.date}</span>
+              {MEASUREMENT_FIELDS.filter((f) => e[f.key] > 0).map((f) => (
+                <Pill key={f.key} tone="muted">
+                  {t(`common.measurement.${f.key}`)} {round(e[f.key], 1)}
+                </Pill>
+              ))}
+            </div>
+            <button
+              onClick={() => deleteMeasurement.mutate(e.id)}
+              disabled={demo || deleteMeasurement.isPending}
+              aria-label={t('body.deleteMeasurements')}
+              className="text-muted transition hover:text-accent disabled:opacity-30"
+            >
+              <TrashIcon width={18} height={18} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    )
   }
 
   return (
@@ -321,34 +366,7 @@ function MeasurementsTab() {
 
       <Card className="p-5">
         <Eyebrow>{t('body.history')}</Eyebrow>
-        {measurements.isLoading ? (
-          <div className="mt-3"><Spinner /></div>
-        ) : !(measurements.data ?? []).length ? (
-          <div className="mt-3"><EmptyState title={t('body.noMeasurements')} /></div>
-        ) : (
-          <ul className="mt-3 divide-y divide-line">
-            {[...(measurements.data ?? [])].reverse().map((e) => (
-              <li key={e.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-ink">{e.date}</span>
-                  {MEASUREMENT_FIELDS.filter((f) => e[f.key] > 0).map((f) => (
-                    <Pill key={f.key} tone="muted">
-                      {t(`common.measurement.${f.key}`)} {round(e[f.key], 1)}
-                    </Pill>
-                  ))}
-                </div>
-                <button
-                  onClick={() => deleteMeasurement.mutate(e.id)}
-                  disabled={demo || deleteMeasurement.isPending}
-                  aria-label={t('body.deleteMeasurements')}
-                  className="text-muted transition hover:text-accent disabled:opacity-30"
-                >
-                  <TrashIcon width={18} height={18} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        {historyContent}
       </Card>
     </div>
   )

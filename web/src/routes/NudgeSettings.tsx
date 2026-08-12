@@ -67,6 +67,29 @@ export function NudgeSettings() {
   const weeklyBudget = rules.filter((r) => r.kind === 'weekly-budget')
   const smartMeal = rules.filter((r) => r.kind === 'smart-meal')
 
+  let content
+  if (isLoading) {
+    content = <Spinner label={t('nudgeSettings.loading')} />
+  } else if (!rules.length) {
+    content = (
+      <EmptyState
+        icon={<GoalIcon width={28} height={28} />}
+        title={t('nudgeSettings.emptyTitle')}
+        hint={t('nudgeSettings.emptyHint')}
+      />
+    )
+  } else {
+    content = (
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
+        <RuleGroup title={t('nudgeSettings.groups.macro')} rules={macro} demo={demo} />
+        <RuleGroup title={t('nudgeSettings.groups.health')} rules={health} demo={demo} />
+        <RuleGroup title={t('nudgeSettings.groups.weeklyBudget')} rules={weeklyBudget} demo={demo} />
+        <RuleGroup title={t('nudgeSettings.groups.smartMeal')} rules={smartMeal} demo={demo} />
+        <RuleGroup title={t('nudgeSettings.groups.digest')} rules={digest} demo={demo} />
+      </motion.div>
+    )
+  }
+
   return (
     <div>
       <Link
@@ -84,23 +107,7 @@ export function NudgeSettings() {
         </p>
       )}
 
-      {isLoading ? (
-        <Spinner label={t('nudgeSettings.loading')} />
-      ) : !rules.length ? (
-        <EmptyState
-          icon={<GoalIcon width={28} height={28} />}
-          title={t('nudgeSettings.emptyTitle')}
-          hint={t('nudgeSettings.emptyHint')}
-        />
-      ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
-          <RuleGroup title={t('nudgeSettings.groups.macro')} rules={macro} demo={demo} />
-          <RuleGroup title={t('nudgeSettings.groups.health')} rules={health} demo={demo} />
-          <RuleGroup title={t('nudgeSettings.groups.weeklyBudget')} rules={weeklyBudget} demo={demo} />
-          <RuleGroup title={t('nudgeSettings.groups.smartMeal')} rules={smartMeal} demo={demo} />
-          <RuleGroup title={t('nudgeSettings.groups.digest')} rules={digest} demo={demo} />
-        </motion.div>
-      )}
+      {content}
     </div>
   )
 }
@@ -128,7 +135,10 @@ function NudgeRuleRow({ view, demo }: Readonly<{ view: NudgeRuleView; demo: bool
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
 
   const values = draft ?? view.rule
-  const groupKey = view.kind === 'health' ? String(view.rule.Domain ?? '') : view.kind
+  let groupKey: string = view.kind
+  if (view.kind === 'health' && typeof view.rule.Domain === 'string') {
+    groupKey = view.rule.Domain
+  }
   const fields = EDITABLE_FIELDS[groupKey] ?? []
   const message = typeof view.rule.Message === 'string' ? view.rule.Message : null
   const dirty = draft !== null

@@ -32,6 +32,28 @@ export function Aliases() {
   const isLoading = searching ? search.isLoading : browse.isLoading
   const foods = ((searching ? search.data : browse.data) ?? []).slice(0, 30)
 
+  let content
+  if (isLoading) {
+    content = <Spinner label={t('aliases.loading')} />
+  } else if (!foods.length) {
+    content = <EmptyState title={t('aliases.emptyTitle')} hint={t('aliases.emptyHint')} />
+  } else {
+    content = (
+      <motion.div
+        variants={stagger}
+        initial="hidden"
+        animate="show"
+        className="flex flex-col gap-3"
+      >
+        {foods.map((f: FoodDetail) => (
+          <motion.div key={f.food_id} variants={fadeUp}>
+            <AliasRow food={f} demo={demo} />
+          </motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+
   return (
     <div>
       <Link
@@ -63,24 +85,7 @@ export function Aliases() {
         />
       </div>
 
-      {isLoading ? (
-        <Spinner label={t('aliases.loading')} />
-      ) : !foods.length ? (
-        <EmptyState title={t('aliases.emptyTitle')} hint={t('aliases.emptyHint')} />
-      ) : (
-        <motion.div
-          variants={stagger}
-          initial="hidden"
-          animate="show"
-          className="flex flex-col gap-3"
-        >
-          {foods.map((f: FoodDetail) => (
-            <motion.div key={f.food_id} variants={fadeUp}>
-              <AliasRow food={f} demo={demo} />
-            </motion.div>
-          ))}
-        </motion.div>
-      )}
+      {content}
     </div>
   )
 }

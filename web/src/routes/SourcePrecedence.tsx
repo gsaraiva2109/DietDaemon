@@ -64,6 +64,41 @@ export function SourcePrecedence() {
 
   const dirty = draft !== null
 
+  let importStatusContent
+  if (importStatus.isLoading) {
+    importStatusContent = <Spinner label={t('sourcePrecedence.importStatusLoading')} />
+  } else if (!importStatus.data?.length) {
+    importStatusContent = (
+      <EmptyState
+        title={t('sourcePrecedence.importStatusEmptyTitle')}
+        hint={t('sourcePrecedence.importStatusEmptyHint')}
+      />
+    )
+  } else {
+    importStatusContent = (
+      <Card className="p-2">
+        {importStatus.data.map((s) => (
+          <div key={s.source} className="border-t border-line px-3 py-3 first:border-t-0">
+            <div className="flex items-center gap-3">
+              <span className="flex-1 text-sm font-medium text-ink">
+                {SOURCE_LABELS[s.source] ?? s.source}
+              </span>
+              <Pill tone={RESULT_TONE[s.last_result] ?? 'neutral'}>
+                {t(RESULT_LABEL_KEY[s.last_result] ?? s.last_result)}
+              </Pill>
+              <span className="text-xs text-muted">{relativeTime(s.last_run_at, t, i18n.language)}</span>
+            </div>
+            {s.last_error && (
+              <p className="mt-1 truncate text-xs text-accent" title={s.last_error}>
+                {s.last_error}
+              </p>
+            )}
+          </div>
+        ))}
+      </Card>
+    )
+  }
+
   return (
     <div>
       <Link
@@ -150,35 +185,7 @@ export function SourcePrecedence() {
             {t('sourcePrecedence.importStatusDescription')}
           </p>
 
-          {importStatus.isLoading ? (
-            <Spinner label={t('sourcePrecedence.importStatusLoading')} />
-          ) : !importStatus.data?.length ? (
-            <EmptyState
-              title={t('sourcePrecedence.importStatusEmptyTitle')}
-              hint={t('sourcePrecedence.importStatusEmptyHint')}
-            />
-          ) : (
-            <Card className="p-2">
-              {importStatus.data.map((s) => (
-                <div key={s.source} className="border-t border-line px-3 py-3 first:border-t-0">
-                  <div className="flex items-center gap-3">
-                    <span className="flex-1 text-sm font-medium text-ink">
-                      {SOURCE_LABELS[s.source] ?? s.source}
-                    </span>
-                    <Pill tone={RESULT_TONE[s.last_result] ?? 'neutral'}>
-                      {t(RESULT_LABEL_KEY[s.last_result] ?? s.last_result)}
-                    </Pill>
-                    <span className="text-xs text-muted">{relativeTime(s.last_run_at, t, i18n.language)}</span>
-                  </div>
-                  {s.last_error && (
-                    <p className="mt-1 truncate text-xs text-accent" title={s.last_error}>
-                      {s.last_error}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </Card>
-          )}
+          {importStatusContent}
         </>
       )}
     </div>

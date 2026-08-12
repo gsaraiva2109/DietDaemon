@@ -35,6 +35,40 @@ export function FastingCard() {
     return () => clearInterval(t)
   }, [fast])
 
+  let body
+  if (active.isLoading) {
+    body = <Spinner />
+  } else if (active.isError) {
+    body = (
+      <button
+        onClick={() => active.refetch()}
+        className="self-start text-sm font-medium text-accent hover:underline"
+      >
+        {t('fastingCard.retry')}
+      </button>
+    )
+  } else if (fast) {
+    body = (
+      <ActiveFast
+        startMs={new Date(fast.start_at).getTime()}
+        targetHours={fast.target_hours}
+        now={now}
+        onEnd={() => endFast.mutate()}
+        ending={endFast.isPending}
+      />
+    )
+  } else {
+    body = (
+      <Idle
+        target={target}
+        setTarget={setTarget}
+        lastDurationH={lastDuration(history.data?.[0]?.start_at, history.data?.[0]?.end_at)}
+        onStart={() => startFast.mutate(target)}
+        starting={startFast.isPending}
+      />
+    )
+  }
+
   return (
     <Card className="flex h-full flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
@@ -45,32 +79,7 @@ export function FastingCard() {
         {fast && <Pill tone="primary">{t('fastingCard.inProgress')}</Pill>}
       </header>
 
-      {active.isLoading ? (
-        <Spinner />
-      ) : active.isError ? (
-        <button
-          onClick={() => active.refetch()}
-          className="self-start text-sm font-medium text-accent hover:underline"
-        >
-          {t('fastingCard.retry')}
-        </button>
-      ) : fast ? (
-        <ActiveFast
-          startMs={new Date(fast.start_at).getTime()}
-          targetHours={fast.target_hours}
-          now={now}
-          onEnd={() => endFast.mutate()}
-          ending={endFast.isPending}
-        />
-      ) : (
-        <Idle
-          target={target}
-          setTarget={setTarget}
-          lastDurationH={lastDuration(history.data?.[0]?.start_at, history.data?.[0]?.end_at)}
-          onStart={() => startFast.mutate(target)}
-          starting={startFast.isPending}
-        />
-      )}
+      {body}
     </Card>
   )
 }
