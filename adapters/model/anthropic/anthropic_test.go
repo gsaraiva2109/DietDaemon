@@ -15,35 +15,42 @@ import (
 // Compile-time interface check in test build too.
 var _ ports.ModelAdapter = (*Adapter)(nil)
 
+// checkCompleteRequest asserts the request shape a.Complete sends to
+// Anthropic's Messages API: headers, model, and prompt content.
+func checkCompleteRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	if r.URL.Path != "/v1/messages" {
+		t.Errorf("unexpected path: %s", r.URL.Path)
+	}
+	if got := r.Header.Get("x-api-key"); got != "test-key" {
+		t.Errorf("x-api-key = %q, want test-key", got)
+	}
+	if got := r.Header.Get("anthropic-version"); got != "2023-06-01" {
+		t.Errorf("anthropic-version = %q, want 2023-06-01", got)
+	}
+
+	var req messagesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if req.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("model = %q, want claude-haiku-4-5-20251001", req.Model)
+	}
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(req.Messages))
+	}
+	content := req.Messages[0].Content
+	if !strings.Contains(content, "How many grams in an egg?") {
+		t.Errorf("prompt missing original text: %q", content)
+	}
+	if !strings.Contains(content, "Respond with ONLY valid JSON") {
+		t.Errorf("prompt missing JSON instruction: %q", content)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.Header.Get("x-api-key"); got != "test-key" {
-			t.Errorf("x-api-key = %q, want test-key", got)
-		}
-		if got := r.Header.Get("anthropic-version"); got != "2023-06-01" {
-			t.Errorf("anthropic-version = %q, want 2023-06-01", got)
-		}
-
-		var req messagesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.Model != "claude-haiku-4-5-20251001" {
-			t.Errorf("model = %q, want claude-haiku-4-5-20251001", req.Model)
-		}
-		if len(req.Messages) != 1 {
-			t.Fatalf("messages = %d, want 1", len(req.Messages))
-		}
-		content := req.Messages[0].Content
-		if !strings.Contains(content, "How many grams in an egg?") {
-			t.Errorf("prompt missing original text: %q", content)
-		}
-		if !strings.Contains(content, "Respond with ONLY valid JSON") {
-			t.Errorf("prompt missing JSON instruction: %q", content)
-		}
+		checkCompleteRequest(t, r)
 
 		_ = json.NewEncoder(w).Encode(messagesResponse{
 			Content: []contentBlock{{Type: "text", Text: "```json\n{\"food\":\"egg\"}\n```"}},

@@ -15,28 +15,36 @@ import (
 // Compile-time interface check in test build too.
 var _ ports.ModelAdapter = (*Adapter)(nil)
 
+// checkCompleteRequest asserts the request shape a.Complete sends to the
+// OpenAI chat completions API: path, auth header, model, messages, and
+// response_format.
+func checkCompleteRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	if r.URL.Path != "/chat/completions" {
+		t.Errorf("unexpected path: %s", r.URL.Path)
+	}
+	if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer sk-test")
+	}
+
+	var req chatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if req.Model != "gpt-4o-mini" {
+		t.Errorf("model = %q, want gpt-4o-mini", req.Model)
+	}
+	if len(req.Messages) != 1 || req.Messages[0].Role != "user" || req.Messages[0].Content != "How many grams in an egg?" {
+		t.Errorf("messages = %+v, unexpected", req.Messages)
+	}
+	if req.ResponseFormat == nil || req.ResponseFormat.Type != "json_object" {
+		t.Errorf("response_format = %+v, want json_object", req.ResponseFormat)
+	}
+}
+
 func TestCompleteHappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
-			t.Errorf("Authorization = %q, want %q", got, "Bearer sk-test")
-		}
-
-		var req chatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.Model != "gpt-4o-mini" {
-			t.Errorf("model = %q, want gpt-4o-mini", req.Model)
-		}
-		if len(req.Messages) != 1 || req.Messages[0].Role != "user" || req.Messages[0].Content != "How many grams in an egg?" {
-			t.Errorf("messages = %+v, unexpected", req.Messages)
-		}
-		if req.ResponseFormat == nil || req.ResponseFormat.Type != "json_object" {
-			t.Errorf("response_format = %+v, want json_object", req.ResponseFormat)
-		}
+		checkCompleteRequest(t, r)
 
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`

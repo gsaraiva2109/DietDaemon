@@ -279,6 +279,54 @@ func TestPostgresDietPlanSmoke(t *testing.T) {
 	}
 }
 
+// assertDualDriverUserTargetsRollup exercises the user/targets/rollup
+// round-trip shared by TestPostgresDualDriverSmoke's driver subtests.
+func assertDualDriverUserTargetsRollup(t *testing.T, s *Store, userID string) {
+	t.Helper()
+
+	u := types.User{
+		ID:        userID,
+		Timezone:  "UTC",
+		CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
+	}
+	if err := s.UpsertUser(ctx(), u); err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	got, err := s.GetUser(ctx(), u.ID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if got.ID != u.ID {
+		t.Errorf("ID mismatch: %q != %q", got.ID, u.ID)
+	}
+
+	targets := types.DailyTargets{
+		UserID:  u.ID,
+		Targets: types.Macros{Calories: 2000, Protein: 150, Carbs: 200, Fat: 65, Fiber: 30},
+	}
+	if err := s.SetTargets(ctx(), targets); err != nil {
+		t.Fatalf("SetTargets: %v", err)
+	}
+
+	rollup := types.DailyRollup{
+		UserID:  u.ID,
+		Date:    "2026-07-05",
+		Targets: targets.Targets,
+	}
+	if err := s.UpsertRollup(ctx(), rollup); err != nil {
+		t.Fatalf("UpsertRollup: %v", err)
+	}
+
+	gotRollup, err := s.GetRollup(ctx(), u.ID, "2026-07-05")
+	if err != nil {
+		t.Fatalf("GetRollup: %v", err)
+	}
+	if gotRollup.Targets.Calories != 2000 {
+		t.Errorf("Targets.Calories = %f, want 2000", gotRollup.Targets.Calories)
+	}
+}
+
 func TestPostgresDualDriverSmoke(t *testing.T) {
 	drivers := map[string]func() (*Store, func()){
 		"sqlite":   func() (*Store, func()) { return tempDB(t) },
@@ -289,49 +337,39 @@ func TestPostgresDualDriverSmoke(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, cleanup := factory()
 			defer cleanup()
-
-			u := types.User{
-				ID:        "user-smoke-" + name,
-				Timezone:  "UTC",
-				CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
-			}
-			if err := s.UpsertUser(ctx(), u); err != nil {
-				t.Fatalf("UpsertUser: %v", err)
-			}
-
-			got, err := s.GetUser(ctx(), u.ID)
-			if err != nil {
-				t.Fatalf("GetUser: %v", err)
-			}
-			if got.ID != u.ID {
-				t.Errorf("ID mismatch: %q != %q", got.ID, u.ID)
-			}
-
-			targets := types.DailyTargets{
-				UserID:  u.ID,
-				Targets: types.Macros{Calories: 2000, Protein: 150, Carbs: 200, Fat: 65, Fiber: 30},
-			}
-			if err := s.SetTargets(ctx(), targets); err != nil {
-				t.Fatalf("SetTargets: %v", err)
-			}
-
-			rollup := types.DailyRollup{
-				UserID:  u.ID,
-				Date:    "2026-07-05",
-				Targets: targets.Targets,
-			}
-			if err := s.UpsertRollup(ctx(), rollup); err != nil {
-				t.Fatalf("UpsertRollup: %v", err)
-			}
-
-			gotRollup, err := s.GetRollup(ctx(), u.ID, "2026-07-05")
-			if err != nil {
-				t.Fatalf("GetRollup: %v", err)
-			}
-			if gotRollup.Targets.Calories != 2000 {
-				t.Errorf("Targets.Calories = %f, want 2000", gotRollup.Targets.Calories)
-			}
+			assertDualDriverUserTargetsRollup(t, s, "user-smoke-"+name)
 		})
+	}
+}
+
+// assertFoodImportFingerprintLifecycle exercises the migration presence
+// check and the fingerprint set/get round-trip shared by
+// TestFoodImportFingerprintStore's driver subtests.
+func assertFoodImportFingerprintLifecycle(t *testing.T, s *Store) {
+	t.Helper()
+
+	var migrations int
+	if err := s.db.Get(&migrations, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "004_food_import_fingerprints.sql"); err != nil {
+		t.Fatalf("query migration: %v", err)
+	}
+	if migrations != 1 {
+		t.Fatalf("migration count = %d, want 1", migrations)
+	}
+
+	if _, err := s.GetFoodImportFingerprint(ctx(), "usda"); !errors.Is(err, types.ErrNotFound) {
+		t.Fatalf("empty fingerprint error = %v, want ErrNotFound", err)
+	}
+	if err := s.SetFoodImportFingerprint(ctx(), "usda", "first"); err != nil {
+		t.Fatalf("set first fingerprint: %v", err)
+	}
+	if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "first" {
+		t.Fatalf("get first fingerprint = (%q, %v)", got, err)
+	}
+	if err := s.SetFoodImportFingerprint(ctx(), "usda", "second"); err != nil {
+		t.Fatalf("update fingerprint: %v", err)
+	}
+	if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "second" {
+		t.Fatalf("get updated fingerprint = (%q, %v)", got, err)
 	}
 }
 
@@ -345,30 +383,7 @@ func TestFoodImportFingerprintStore(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, cleanup := factory(t)
 			defer cleanup()
-
-			var migrations int
-			if err := s.db.Get(&migrations, s.rewrite(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`), "004_food_import_fingerprints.sql"); err != nil {
-				t.Fatalf("query migration: %v", err)
-			}
-			if migrations != 1 {
-				t.Fatalf("migration count = %d, want 1", migrations)
-			}
-
-			if _, err := s.GetFoodImportFingerprint(ctx(), "usda"); !errors.Is(err, types.ErrNotFound) {
-				t.Fatalf("empty fingerprint error = %v, want ErrNotFound", err)
-			}
-			if err := s.SetFoodImportFingerprint(ctx(), "usda", "first"); err != nil {
-				t.Fatalf("set first fingerprint: %v", err)
-			}
-			if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "first" {
-				t.Fatalf("get first fingerprint = (%q, %v)", got, err)
-			}
-			if err := s.SetFoodImportFingerprint(ctx(), "usda", "second"); err != nil {
-				t.Fatalf("update fingerprint: %v", err)
-			}
-			if got, err := s.GetFoodImportFingerprint(ctx(), "usda"); err != nil || got != "second" {
-				t.Fatalf("get updated fingerprint = (%q, %v)", got, err)
-			}
+			assertFoodImportFingerprintLifecycle(t, s)
 		})
 	}
 }

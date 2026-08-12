@@ -56,29 +56,29 @@ func main() {
 	ctx, stop := cmdutil.SignalContext(context.Background())
 	defer stop()
 
-	if err := run(ctx, *userID, *dbPath, *destination, *dir, *subdir, *s3Bucket, *s3Prefix, *s3Region, *s3Endpoint, *dryRun); err != nil {
+	cfg := types.BackupConfig{
+		UserID:      *userID,
+		Destination: *destination,
+		LocalSubdir: *subdir,
+		S3Bucket:    *s3Bucket,
+		S3Prefix:    *s3Prefix,
+		S3Region:    *s3Region,
+		S3Endpoint:  *s3Endpoint,
+	}
+
+	if err := run(ctx, *dbPath, *dir, cfg, *dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "restore: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket, s3Prefix, s3Region, s3Endpoint string, dryRun bool) error {
-	if destination == "local" && dir == "" {
+func run(ctx context.Context, dbPath, dir string, cfg types.BackupConfig, dryRun bool) error {
+	if cfg.Destination == "local" && dir == "" {
 		return fmt.Errorf("restore: -dir is required for -destination=local")
 	}
 
-	cfg := types.BackupConfig{
-		UserID:      userID,
-		Destination: destination,
-		LocalSubdir: subdir,
-		S3Bucket:    s3Bucket,
-		S3Prefix:    s3Prefix,
-		S3Region:    s3Region,
-		S3Endpoint:  s3Endpoint,
-	}
-
 	var src restore.Source
-	switch destination {
+	switch cfg.Destination {
 	case "local":
 		d, err := localdisk.New(dir)
 		if err != nil {
@@ -101,7 +101,7 @@ func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket
 		for _, f := range files {
 			fmt.Println(f)
 		}
-		fmt.Printf("restore: dry_run=true destination=%s files=%d\n", destination, len(files))
+		fmt.Printf("restore: dry_run=true destination=%s files=%d\n", cfg.Destination, len(files))
 		return nil
 	}
 
@@ -116,7 +116,7 @@ func run(ctx context.Context, userID, dbPath, destination, dir, subdir, s3Bucket
 	}()
 
 	runner := restore.New(st, src)
-	sum, rerr := runner.RunOnce(ctx, userID, cfg)
+	sum, rerr := runner.RunOnce(ctx, cfg.UserID, cfg)
 
 	// Print the summary even on a partial error: RunOnce never aborts early,
 	// so a non-nil error here can still carry a mostly-complete Summary,

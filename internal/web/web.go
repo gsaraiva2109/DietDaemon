@@ -19,6 +19,11 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
+const (
+	indexHTML          = "index.html"
+	headerCacheControl = "Cache-Control"
+)
+
 // Handler returns an http.Handler that serves the SPA: real files are served
 // as-is and declared client routes fall back to index.html. Unknown HTML
 // navigations get a branded 404; all other missing paths remain normal 404s.
@@ -34,19 +39,16 @@ func Handler() (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p == "" {
-			p = "index.html"
+			p = indexHTML
 		}
 		if _, statErr := fs.Stat(sub, p); statErr != nil {
 			if IsSPARoute(r.URL.Path) {
 				// Declared client route — hand the SPA its entry point.
 				r = r.Clone(r.Context())
 				r.URL.Path = "/"
-				p = "index.html"
-			} else if path.Ext(p) != "" {
-				// A missing asset must never return an HTML navigation page.
-				http.NotFound(w, r)
-				return
-			} else if isHTMLNavigation(r) {
+				p = indexHTML
+			} else if path.Ext(p) == "" && isHTMLNavigation(r) {
+				// Unknown HTML navigation gets a branded 404.
 				writeNotFoundPage(w)
 				return
 			} else {
@@ -60,10 +62,10 @@ func Handler() (http.Handler, error) {
 		// Vite changes the filename on every build, so cache forever.
 		// index.html must always revalidate so the browser sees new
 		// asset URLs after a deploy.
-		if p == "index.html" {
-			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		if p == indexHTML {
+			w.Header().Set(headerCacheControl, "no-cache, must-revalidate")
 		} else {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set(headerCacheControl, "public, max-age=31536000, immutable")
 		}
 
 		files.ServeHTTP(w, r)
@@ -76,7 +78,7 @@ func isHTMLNavigation(r *http.Request) bool {
 }
 
 func writeNotFoundPage(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
 	_, _ = w.Write([]byte(notFoundPage))

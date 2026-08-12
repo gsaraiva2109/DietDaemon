@@ -14,6 +14,16 @@ func TestWritePathsRoundTrip(t *testing.T) {
 	now := time.Now().UTC()
 	mustUser(t, s, types.User{ID: "write-user", Email: "write@example.com", CreatedAt: now})
 
+	assertFoodWritePath(t, s)
+	assertMealWritePath(t, s, now)
+	assertNudgeRuleConfigWritePath(t, s)
+	assertTemplateWritePath(t, s, now)
+	assertProviderKeyWritePath(t, s)
+	assertWorkoutWritePath(t, s, now)
+}
+
+func assertFoodWritePath(t *testing.T, s *Store) {
+	t.Helper()
 	food := types.FoodMatch{FoodID: "write-food", Name: "Write Food", Source: "test", Per100g: types.Macros{Calories: 100}}
 	if err := s.UpsertFood(ctx(), "write-user", food, nil); err != nil {
 		t.Fatalf("UpsertFood: %v", err)
@@ -21,7 +31,10 @@ func TestWritePathsRoundTrip(t *testing.T) {
 	if err := s.SetSourcePrecedence(ctx(), "write-user", []string{"test"}); err != nil {
 		t.Fatalf("SetSourcePrecedence: %v", err)
 	}
+}
 
+func assertMealWritePath(t *testing.T, s *Store, now time.Time) {
+	t.Helper()
 	meal := types.Meal{ID: "write-meal", UserID: "write-user", RawText: "meal", At: now, CreatedAt: now}
 	if err := s.SaveMeal(ctx(), meal); err != nil {
 		t.Fatalf("SaveMeal: %v", err)
@@ -34,14 +47,20 @@ func TestWritePathsRoundTrip(t *testing.T) {
 	if got, err := s.GetMeal(ctx(), meal.ID); err != nil || got.RawText != originalText {
 		t.Fatalf("GetMeal = %+v, %v", got, err)
 	}
+}
 
+func assertNudgeRuleConfigWritePath(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.SetNudgeRuleConfig(ctx(), "write-user", "protein", true, json.RawMessage(`{"min":0.5}`)); err != nil {
 		t.Fatalf("SetNudgeRuleConfig: %v", err)
 	}
 	if err := s.DeleteNudgeRuleConfig(ctx(), "write-user", "protein"); err != nil {
 		t.Fatalf("DeleteNudgeRuleConfig: %v", err)
 	}
+}
 
+func assertTemplateWritePath(t *testing.T, s *Store, now time.Time) {
+	t.Helper()
 	template := types.MealTemplate{ID: "write-template", UserID: "write-user", Name: "Lunch", CreatedAt: now, LastUsed: now}
 	if err := s.SaveTemplate(ctx(), template); err != nil {
 		t.Fatalf("SaveTemplate: %v", err)
@@ -49,14 +68,20 @@ func TestWritePathsRoundTrip(t *testing.T) {
 	if got, err := s.GetTemplate(ctx(), template.ID); err != nil || got.Name != template.Name {
 		t.Fatalf("GetTemplate = %+v, %v", got, err)
 	}
+}
 
+func assertProviderKeyWritePath(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.UpsertProviderKey(ctx(), "write-user", "openai", "ciphertext"); err != nil {
 		t.Fatalf("UpsertProviderKey: %v", err)
 	}
 	if got, found, err := s.GetProviderKey(ctx(), "write-user", "openai"); err != nil || !found || got != "ciphertext" {
 		t.Fatalf("GetProviderKey = %q, %t, %v", got, found, err)
 	}
+}
 
+func assertWorkoutWritePath(t *testing.T, s *Store, now time.Time) {
+	t.Helper()
 	workout := types.Workout{ID: "write-workout", UserID: "write-user", Name: "Walk", DurationMin: 30, Intensity: "low", LoggedAt: now.Format(time.RFC3339)}
 	if err := s.LogWorkout(ctx(), workout); err != nil {
 		t.Fatalf("LogWorkout: %v", err)

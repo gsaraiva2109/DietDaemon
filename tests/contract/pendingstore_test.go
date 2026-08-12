@@ -71,6 +71,112 @@ var pendingStores = map[string]pendingStoreFactory{
 	"sqlite":    pendingSQLite,
 }
 
+// newTestPendingMeal builds the fixture PendingMeal shared by the
+// TestPendingStoreContract lifecycle stages.
+func newTestPendingMeal() types.PendingMeal {
+	return types.PendingMeal{
+		UserID:      "u1",
+		At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		RawText:     "200g frango, 2 ovos",
+		Confidence:  0.9,
+		ParserTier:  types.TierDeterministic,
+		ChannelMeta: map[string]string{"chat_id": "42"},
+		Resolved: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "frango", Quantity: 200, Unit: "g", NormalizedGrams: 200},
+				Match:  types.FoodMatch{FoodID: "f1", Name: "Frango", Source: "taco"},
+			},
+		},
+		Pending: []types.ResolvedItem{
+			{
+				Parsed: types.ParsedItem{RawPhrase: "ovos", Quantity: 2, Unit: "un", NormalizedGrams: 0},
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+// assertPendingMealSaveAndGet verifies that a pending meal is absent before
+// Save, and that Get returns it faithfully afterwards.
+func assertPendingMealSaveAndGet(ctx context.Context, t *testing.T, s ports.PendingStore, pm types.PendingMeal) {
+	t.Helper()
+
+	// Get before save → ErrNotFound.
+	if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("Get before Save: expected ErrNotFound, got %v", err)
+	}
+
+	// Save.
+	if err := s.Save(ctx, pm); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Get after save.
+	got, err := s.Get(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Get after Save: %v", err)
+	}
+	if got.RawText != pm.RawText {
+		t.Errorf("RawText = %q, want %q", got.RawText, pm.RawText)
+	}
+	if got.Confidence != pm.Confidence {
+		t.Errorf("Confidence = %f, want %f", got.Confidence, pm.Confidence)
+	}
+	if len(got.Resolved) != 1 {
+		t.Errorf("len(Resolved) = %d, want 1", len(got.Resolved))
+	}
+	if len(got.Pending) != 1 {
+		t.Errorf("len(Pending) = %d, want 1", len(got.Pending))
+	}
+	if got.ChannelMeta["chat_id"] != "42" {
+		t.Errorf("ChannelMeta[chat_id] = %q, want %q", got.ChannelMeta["chat_id"], "42")
+	}
+}
+
+// assertPendingMealReplaceAndDelete verifies replace-on-Save semantics and
+// the Delete → ErrNotFound → idempotent-Delete lifecycle tail.
+func assertPendingMealReplaceAndDelete(ctx context.Context, t *testing.T, s ports.PendingStore, pm types.PendingMeal) {
+	t.Helper()
+
+	// Replace semantics.
+	pm2 := pm
+	pm2.RawText = "updated"
+	if err := s.Save(ctx, pm2); err != nil {
+		t.Fatalf("Save (replace): %v", err)
+	}
+	got, _ := s.Get(ctx, "u1")
+	if got.RawText != "updated" {
+		t.Errorf("after replace: RawText = %q, want %q", got.RawText, "updated")
+	}
+
+	// Delete.
+	if err := s.Delete(ctx, "u1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Get after delete → ErrNotFound.
+	if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
+		t.Errorf("Get after Delete: expected ErrNotFound, got %v", err)
+	}
+
+	// Delete is idempotent.
+	if err := s.Delete(ctx, "u1"); err != nil {
+		t.Errorf("Delete (idempotent): %v", err)
+	}
+}
+
+// assertPendingStoreLifecycle drives the full Save → Get → Delete →
+// ErrNotFound lifecycle against a single PendingStore implementation.
+func assertPendingStoreLifecycle(t *testing.T, s ports.PendingStore) {
+	t.Helper()
+
+	ctx := context.Background()
+	pm := newTestPendingMeal()
+
+	assertPendingMealSaveAndGet(ctx, t, s, pm)
+	assertPendingMealReplaceAndDelete(ctx, t, s, pm)
+}
+
 // TestPendingStoreContract verifies that every PendingStore implementation
 // obeys the same Save → Get → Delete → ErrNotFound lifecycle.
 func TestPendingStoreContract(t *testing.T) {
@@ -78,85 +184,7 @@ func TestPendingStoreContract(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, cleanup := factory(t)
 			defer cleanup()
-
-			ctx := context.Background()
-			pm := types.PendingMeal{
-				UserID:      "u1",
-				At:          time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
-				RawText:     "200g frango, 2 ovos",
-				Confidence:  0.9,
-				ParserTier:  types.TierDeterministic,
-				ChannelMeta: map[string]string{"chat_id": "42"},
-				Resolved: []types.ResolvedItem{
-					{
-						Parsed: types.ParsedItem{RawPhrase: "frango", Quantity: 200, Unit: "g", NormalizedGrams: 200},
-						Match:  types.FoodMatch{FoodID: "f1", Name: "Frango", Source: "taco"},
-					},
-				},
-				Pending: []types.ResolvedItem{
-					{
-						Parsed: types.ParsedItem{RawPhrase: "ovos", Quantity: 2, Unit: "un", NormalizedGrams: 0},
-					},
-				},
-				CreatedAt: time.Now().UTC(),
-			}
-
-			// Get before save → ErrNotFound.
-			if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
-				t.Errorf("Get before Save: expected ErrNotFound, got %v", err)
-			}
-
-			// Save.
-			if err := s.Save(ctx, pm); err != nil {
-				t.Fatalf("Save: %v", err)
-			}
-
-			// Get after save.
-			got, err := s.Get(ctx, "u1")
-			if err != nil {
-				t.Fatalf("Get after Save: %v", err)
-			}
-			if got.RawText != pm.RawText {
-				t.Errorf("RawText = %q, want %q", got.RawText, pm.RawText)
-			}
-			if got.Confidence != pm.Confidence {
-				t.Errorf("Confidence = %f, want %f", got.Confidence, pm.Confidence)
-			}
-			if len(got.Resolved) != 1 {
-				t.Errorf("len(Resolved) = %d, want 1", len(got.Resolved))
-			}
-			if len(got.Pending) != 1 {
-				t.Errorf("len(Pending) = %d, want 1", len(got.Pending))
-			}
-			if got.ChannelMeta["chat_id"] != "42" {
-				t.Errorf("ChannelMeta[chat_id] = %q, want %q", got.ChannelMeta["chat_id"], "42")
-			}
-
-			// Replace semantics.
-			pm2 := pm
-			pm2.RawText = "updated"
-			if err := s.Save(ctx, pm2); err != nil {
-				t.Fatalf("Save (replace): %v", err)
-			}
-			got, _ = s.Get(ctx, "u1")
-			if got.RawText != "updated" {
-				t.Errorf("after replace: RawText = %q, want %q", got.RawText, "updated")
-			}
-
-			// Delete.
-			if err := s.Delete(ctx, "u1"); err != nil {
-				t.Fatalf("Delete: %v", err)
-			}
-
-			// Get after delete → ErrNotFound.
-			if _, err := s.Get(ctx, "u1"); !errors.Is(err, types.ErrNotFound) {
-				t.Errorf("Get after Delete: expected ErrNotFound, got %v", err)
-			}
-
-			// Delete is idempotent.
-			if err := s.Delete(ctx, "u1"); err != nil {
-				t.Errorf("Delete (idempotent): %v", err)
-			}
+			assertPendingStoreLifecycle(t, s)
 		})
 	}
 }

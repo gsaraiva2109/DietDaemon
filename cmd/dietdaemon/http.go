@@ -17,6 +17,7 @@ const (
 	defaultRequestBodyLimit = 1 << 20
 	uploadRequestBodyLimit  = 5 << 20
 	contentSecurityPolicy   = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+	headerXRequestID        = "X-Request-ID"
 )
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -35,11 +36,11 @@ func newHTTPHandler(next http.Handler, cfg *config.Config) http.Handler {
 
 func withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get("X-Request-ID")
+		requestID := r.Header.Get(headerXRequestID)
 		if !validRequestID(requestID) {
 			requestID = newRequestID()
 		}
-		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set(headerXRequestID, requestID)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -104,7 +105,7 @@ func observeRequests(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		slog.Info("http request", "status", status, "duration", time.Since(started), "method", r.Method, "route", routePattern(r), "request_id", w.Header().Get("X-Request-ID"))
+		slog.Info("http request", "status", status, "duration", time.Since(started), "method", r.Method, "route", routePattern(r), "request_id", w.Header().Get(headerXRequestID))
 	})
 }
 
@@ -172,7 +173,7 @@ func cors(next http.Handler, cfg *config.Config) http.Handler {
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+		w.Header().Set("Access-Control-Expose-Headers", headerXRequestID)
 		w.Header().Add("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")

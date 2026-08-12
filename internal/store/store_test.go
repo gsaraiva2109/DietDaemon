@@ -167,6 +167,14 @@ func TestCustomFoodLifecycle(t *testing.T) {
 		BasisGrams: 200,
 		Macros:     types.Macros{Calories: 400, Protein: 20, Carbs: 60, Fat: 10, Fiber: 8},
 	}
+	food := assertCustomFoodCreate(t, s, input)
+	assertCustomFoodVisibility(t, s, food)
+	assertCustomFoodValidation(t, s, input)
+	assertCustomFoodUpdateAndDelete(t, s, food, input)
+}
+
+func assertCustomFoodCreate(t *testing.T, s *Store, input types.CustomFoodInput) types.FoodDetail {
+	t.Helper()
 	food, err := s.CreateCustomFood(ctx(), "custom-owner", input)
 	if err != nil {
 		t.Fatalf("CreateCustomFood: %v", err)
@@ -180,7 +188,11 @@ func TestCustomFoodLifecycle(t *testing.T) {
 	if !food.InLibrary {
 		t.Fatal("custom food is not in its owner's library")
 	}
+	return food
+}
 
+func assertCustomFoodVisibility(t *testing.T, s *Store, food types.FoodDetail) {
+	t.Helper()
 	if _, err := s.LookupFood(ctx(), "custom-owner", "homemade oat bar"); err != nil {
 		t.Fatalf("canonical alias lookup: %v", err)
 	}
@@ -202,14 +214,20 @@ func TestCustomFoodLifecycle(t *testing.T) {
 			t.Fatal("custom food was returned for vector indexing")
 		}
 	}
+}
 
+func assertCustomFoodValidation(t *testing.T, s *Store, input types.CustomFoodInput) {
+	t.Helper()
 	if _, err := s.CreateCustomFood(ctx(), "custom-owner", input); !errors.Is(err, types.ErrConflict) {
 		t.Fatalf("duplicate canonical alias error = %v, want ErrConflict", err)
 	}
 	if _, err := s.CreateCustomFood(ctx(), "custom-owner", types.CustomFoodInput{Name: "bad", BasisGrams: 100, Macros: types.Macros{Calories: -1}}); err == nil {
 		t.Fatal("negative custom nutrition unexpectedly succeeded")
 	}
+}
 
+func assertCustomFoodUpdateAndDelete(t *testing.T, s *Store, food types.FoodDetail, input types.CustomFoodInput) {
+	t.Helper()
 	updated, err := s.UpdateCustomFood(ctx(), "custom-owner", food.FoodID, types.CustomFoodInput{
 		Name:       "Updated Oat Bar",
 		BasisGrams: 50,
@@ -303,14 +321,11 @@ func TestUserUpsertGet(t *testing.T) {
 // Meal save + read (round-trip)
 // ---------------------------------------------------------------------------
 
-func TestSaveAndRecentMeals(t *testing.T) {
-	s, cleanup := tempDB(t)
-	defer cleanup()
-
-	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
-
+// newRoundTripMeal builds the fixture meal shared by TestSaveAndRecentMeals'
+// save and read-back assertions.
+func newRoundTripMeal() types.Meal {
 	now := time.Date(2026, 6, 17, 18, 30, 0, 0, time.UTC)
-	meal := types.Meal{
+	return types.Meal{
 		ID:         "meal-1",
 		UserID:     "u1",
 		At:         now,
@@ -361,6 +376,41 @@ func TestSaveAndRecentMeals(t *testing.T) {
 			},
 		},
 	}
+}
+
+// assertMealItemRoundTrip verifies item i of a saved-then-reloaded meal
+// round-trips: macros exactly, per100g approximately (reconstructed).
+func assertMealItemRoundTrip(t *testing.T, i int, gi, want types.ResolvedItem) {
+	t.Helper()
+	if gi.Parsed.RawPhrase != want.Parsed.RawPhrase {
+		t.Errorf("item %d raw_phrase: got %q, want %q", i, gi.Parsed.RawPhrase, want.Parsed.RawPhrase)
+	}
+	if gi.Parsed.Quantity != want.Parsed.Quantity {
+		t.Errorf("item %d quantity: got %f, want %f", i, gi.Parsed.Quantity, want.Parsed.Quantity)
+	}
+	if gi.Parsed.Unit != want.Parsed.Unit {
+		t.Errorf("item %d unit: got %q, want %q", i, gi.Parsed.Unit, want.Parsed.Unit)
+	}
+	if gi.Match.FoodID != want.Match.FoodID {
+		t.Errorf("item %d food_id: got %q, want %q", i, gi.Match.FoodID, want.Match.FoodID)
+	}
+	if gi.Macros != want.Macros {
+		t.Errorf("item %d macros: got %+v, want %+v", i, gi.Macros, want.Macros)
+	}
+	// Per100g should be reconstructed approximately.
+	if gi.Match.Per100g.Calories < want.Match.Per100g.Calories-0.01 ||
+		gi.Match.Per100g.Calories > want.Match.Per100g.Calories+0.01 {
+		t.Errorf("item %d per100g kcal: got %f, want %f", i, gi.Match.Per100g.Calories, want.Match.Per100g.Calories)
+	}
+}
+
+func TestSaveAndRecentMeals(t *testing.T) {
+	s, cleanup := tempDB(t)
+	defer cleanup()
+
+	mustUser(t, s, types.User{ID: "u1", CreatedAt: time.Now().UTC()})
+
+	meal := newRoundTripMeal()
 
 	if err := s.SaveMeal(ctx(), meal); err != nil {
 		t.Fatalf("SaveMeal: %v", err)
@@ -385,29 +435,8 @@ func TestSaveAndRecentMeals(t *testing.T) {
 		t.Fatalf("expected 2 items, got %d", len(got.Items))
 	}
 
-	// Verify item 0: macros should round-trip exactly.
 	for i, want := range meal.Items {
-		gi := got.Items[i]
-		if gi.Parsed.RawPhrase != want.Parsed.RawPhrase {
-			t.Errorf("item %d raw_phrase: got %q, want %q", i, gi.Parsed.RawPhrase, want.Parsed.RawPhrase)
-		}
-		if gi.Parsed.Quantity != want.Parsed.Quantity {
-			t.Errorf("item %d quantity: got %f, want %f", i, gi.Parsed.Quantity, want.Parsed.Quantity)
-		}
-		if gi.Parsed.Unit != want.Parsed.Unit {
-			t.Errorf("item %d unit: got %q, want %q", i, gi.Parsed.Unit, want.Parsed.Unit)
-		}
-		if gi.Match.FoodID != want.Match.FoodID {
-			t.Errorf("item %d food_id: got %q, want %q", i, gi.Match.FoodID, want.Match.FoodID)
-		}
-		if gi.Macros != want.Macros {
-			t.Errorf("item %d macros: got %+v, want %+v", i, gi.Macros, want.Macros)
-		}
-		// Per100g should be reconstructed approximately.
-		if gi.Match.Per100g.Calories < want.Match.Per100g.Calories-0.01 ||
-			gi.Match.Per100g.Calories > want.Match.Per100g.Calories+0.01 {
-			t.Errorf("item %d per100g kcal: got %f, want %f", i, gi.Match.Per100g.Calories, want.Match.Per100g.Calories)
-		}
+		assertMealItemRoundTrip(t, i, got.Items[i], want)
 	}
 }
 
@@ -509,58 +538,53 @@ func TestFoodLibraryRoundTrip(t *testing.T) {
 		t.Fatalf("UpsertFood arroz: %v", err)
 	}
 
-	// Lookup via exact alias (normalized).
-	match, err := s.LookupFood(ctx(), "u1", "Frângó") // accented — must normalize
-	if err != nil {
-		t.Fatalf("LookupFood frango: %v", err)
-	}
-	if match.FoodID != "frango" {
-		t.Fatalf("expected frango, got %s", match.FoodID)
-	}
-
-	// Lookup via English alias.
-	match, err = s.LookupFood(ctx(), "u1", "rice")
-	if err != nil {
-		t.Fatalf("LookupFood rice: %v", err)
-	}
-	if match.FoodID != "arroz" {
-		t.Fatalf("expected arroz, got %s", match.FoodID)
-	}
+	assertFoodLookupByAlias(t, s, "Frângó", "frango") // accented — must normalize
+	assertFoodLookupByAlias(t, s, "rice", "arroz")
 
 	// Lookup non-existent → ErrNoMatch.
-	_, err = s.LookupFood(ctx(), "u1", "pizza")
-	if !errors.Is(err, types.ErrNoMatch) {
+	if _, err := s.LookupFood(ctx(), "u1", "pizza"); !errors.Is(err, types.ErrNoMatch) {
 		t.Fatalf("expected ErrNoMatch, got %v", err)
 	}
 
 	// Record queries on frango to boost frequency.
-	for i := 0; i < 5; i++ {
-		if err := s.RecordFoodQuery(ctx(), "u1", "frango"); err != nil {
+	bumpFoodQueryCount(t, s, "u1", "frango", 5)
+	// frango should still be findable after frequency bumps.
+	assertFoodLookupByAlias(t, s, "chicken", "frango")
+	// arroz with zero queries should also work.
+	assertFoodLookupByAlias(t, s, "arroz", "arroz")
+
+	assertAliasFirstWriterWins(t, s, frango, arroz)
+}
+
+// assertFoodLookupByAlias looks up phrase and requires it resolve to
+// wantFoodID.
+func assertFoodLookupByAlias(t *testing.T, s *Store, phrase, wantFoodID string) {
+	t.Helper()
+	match, err := s.LookupFood(ctx(), "u1", phrase)
+	if err != nil {
+		t.Fatalf("LookupFood %s: %v", phrase, err)
+	}
+	if match.FoodID != wantFoodID {
+		t.Fatalf("expected %s, got %s", wantFoodID, match.FoodID)
+	}
+}
+
+// bumpFoodQueryCount records n queries against phrase for userID.
+func bumpFoodQueryCount(t *testing.T, s *Store, userID, phrase string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := s.RecordFoodQuery(ctx(), userID, phrase); err != nil {
 			t.Fatalf("RecordFoodQuery: %v", err)
 		}
 	}
-	// frango should still be findable after frequency bumps.
-	match, err = s.LookupFood(ctx(), "u1", "chicken")
-	if err != nil {
-		t.Fatalf("LookupFood chicken after record: %v", err)
-	}
-	if match.FoodID != "frango" {
-		t.Fatalf("expected frango, got %s", match.FoodID)
-	}
+}
 
-	// arroz with zero queries should also work.
-	match, err = s.LookupFood(ctx(), "u1", "arroz")
-	if err != nil {
-		t.Fatalf("LookupFood arroz: %v", err)
-	}
-	if match.FoodID != "arroz" {
-		t.Fatalf("expected arroz, got %s", match.FoodID)
-	}
-
-	// Verify frequency in the DB directly (both foods match the alias "comida",
-	// but PK constraint means only one can own it — insert arroz first, then
-	// verify frango cannot steal the alias because INSERT OR IGNORE does not
-	// replace).
+// assertAliasFirstWriterWins verifies frequency in the DB directly (both
+// foods match the alias "comida", but PK constraint means only one can own
+// it — insert arroz first, then verify frango cannot steal the alias
+// because INSERT OR IGNORE does not replace).
+func assertAliasFirstWriterWins(t *testing.T, s *Store, frango, arroz types.FoodMatch) {
+	t.Helper()
 	if err := s.UpsertFood(ctx(), "u1", arroz, []string{"comida"}); err != nil {
 		t.Fatalf("add comida alias to arroz: %v", err)
 	}
@@ -568,13 +592,7 @@ func TestFoodLibraryRoundTrip(t *testing.T) {
 		t.Fatalf("add comida alias to frango: %v", err)
 	}
 	// "comida" still maps to arroz (first writer wins with INSERT OR IGNORE).
-	match, err = s.LookupFood(ctx(), "u1", "comida")
-	if err != nil {
-		t.Fatalf("LookupFood comida: %v", err)
-	}
-	if match.FoodID != "arroz" {
-		t.Fatalf("alias should stick to first writer (arroz), got %s", match.FoodID)
-	}
+	assertFoodLookupByAlias(t, s, "comida", "arroz")
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +621,16 @@ func TestSearchCatalogUnscopedToLibrary(t *testing.T) {
 		t.Fatalf("RecordFoodQuery: %v", err)
 	}
 
-	// Browsing with no query returns every catalog food, ordered by name.
+	assertCatalogBrowseAll(t, s)
+	assertCatalogSourceFilter(t, s)
+	assertCatalogTextQuery(t, s)
+	assertCatalogPagination(t, s)
+}
+
+// assertCatalogBrowseAll checks that browsing with no query returns every
+// catalog food, ordered by name, with correct per-food library state.
+func assertCatalogBrowseAll(t *testing.T, s *Store) {
+	t.Helper()
 	all, err := s.SearchCatalog(ctx(), "u1", "", "", 20, 0)
 	if err != nil {
 		t.Fatalf("SearchCatalog: %v", err)
@@ -621,8 +648,10 @@ func TestSearchCatalogUnscopedToLibrary(t *testing.T) {
 	if fd := byID["feijao-lib"]; !fd.InLibrary || fd.QueryCount != 1 {
 		t.Errorf("logged food should be in library with query_count 1: %+v", fd)
 	}
+}
 
-	// Source filter.
+func assertCatalogSourceFilter(t *testing.T, s *Store) {
+	t.Helper()
 	tacoOnly, err := s.SearchCatalog(ctx(), "u1", "", "taco", 20, 0)
 	if err != nil {
 		t.Fatalf("SearchCatalog source=taco: %v", err)
@@ -630,8 +659,12 @@ func TestSearchCatalogUnscopedToLibrary(t *testing.T) {
 	if len(tacoOnly) != 2 {
 		t.Fatalf("expected 2 taco foods, got %d: %+v", len(tacoOnly), tacoOnly)
 	}
+}
 
-	// Full-text query against the global catalog, including catalog-only foods.
+// assertCatalogTextQuery checks full-text query against the global catalog,
+// including catalog-only foods.
+func assertCatalogTextQuery(t *testing.T, s *Store) {
+	t.Helper()
 	matches, err := s.SearchCatalog(ctx(), "u1", "Frango", "", 20, 0)
 	if err != nil {
 		t.Fatalf("SearchCatalog q=Frango: %v", err)
@@ -639,8 +672,10 @@ func TestSearchCatalogUnscopedToLibrary(t *testing.T) {
 	if len(matches) != 1 || matches[0].FoodID != "frango-cat" {
 		t.Fatalf("expected only frango-cat to match, got %+v", matches)
 	}
+}
 
-	// Limit/offset paginate consistently.
+func assertCatalogPagination(t *testing.T, s *Store) {
+	t.Helper()
 	page, err := s.SearchCatalog(ctx(), "u1", "", "", 1, 1)
 	if err != nil {
 		t.Fatalf("SearchCatalog paged: %v", err)
@@ -1214,6 +1249,16 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 		t.Fatalf("UpsertFood arroz: %v", err)
 	}
 
+	list := assertPendingAliasAddAndList(t, s)
+	assertPendingAliasCrossUserIsolation(t, s, list[0].ID)
+	assertPendingAliasConfirmFlow(t, s, list[0].ID)
+	assertPendingAliasRejectFlow(t, s)
+}
+
+// assertPendingAliasAddAndList adds a pending alias for u1 and confirms it
+// shows up in u1's list with the expected fields.
+func assertPendingAliasAddAndList(t *testing.T, s *Store) []types.PendingAlias {
+	t.Helper()
 	if err := s.AddPendingAlias(ctx(), "u1", "frango grelhado", "frango", 0.95); err != nil {
 		t.Fatalf("AddPendingAlias: %v", err)
 	}
@@ -1225,8 +1270,13 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 	if len(list) != 1 || list[0].Phrase != "frango grelhado" || list[0].FoodID != "frango" || list[0].MatchScore != 0.95 {
 		t.Fatalf("unexpected pending list: %+v", list)
 	}
+	return list
+}
 
-	// A different user must not see it.
+// assertPendingAliasCrossUserIsolation confirms a different user cannot see
+// or confirm u1's pending alias.
+func assertPendingAliasCrossUserIsolation(t *testing.T, s *Store, pendingID string) {
+	t.Helper()
 	mustUser(t, s, types.User{ID: "u2", CreatedAt: time.Now().UTC()})
 	otherList, err := s.ListPendingAliases(ctx(), "u2")
 	if err != nil {
@@ -1237,12 +1287,17 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 	}
 
 	// Confirming as the wrong user fails.
-	if err := s.ConfirmPendingAlias(ctx(), "u2", list[0].ID); !errors.Is(err, types.ErrNotFound) {
+	if err := s.ConfirmPendingAlias(ctx(), "u2", pendingID); !errors.Is(err, types.ErrNotFound) {
 		t.Errorf("ConfirmPendingAlias wrong user: expected ErrNotFound, got %v", err)
 	}
+}
 
-	// Confirm promotes it into food_aliases and removes the pending row.
-	if err := s.ConfirmPendingAlias(ctx(), "u1", list[0].ID); err != nil {
+// assertPendingAliasConfirmFlow confirms a pending alias promotes it into
+// food_aliases and removes the pending row, and that re-confirming an
+// unknown ID is ErrNotFound.
+func assertPendingAliasConfirmFlow(t *testing.T, s *Store, pendingID string) {
+	t.Helper()
+	if err := s.ConfirmPendingAlias(ctx(), "u1", pendingID); err != nil {
 		t.Fatalf("ConfirmPendingAlias: %v", err)
 	}
 	match, err := s.LookupFood(ctx(), "u1", "frango grelhado")
@@ -1252,7 +1307,7 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 	if match.FoodID != "frango" {
 		t.Errorf("expected frango, got %s", match.FoodID)
 	}
-	list, err = s.ListPendingAliases(ctx(), "u1")
+	list, err := s.ListPendingAliases(ctx(), "u1")
 	if err != nil {
 		t.Fatalf("ListPendingAliases after confirm: %v", err)
 	}
@@ -1264,12 +1319,16 @@ func TestPendingAliasRoundTrip(t *testing.T) {
 	if err := s.ConfirmPendingAlias(ctx(), "u1", "does-not-exist"); !errors.Is(err, types.ErrNotFound) {
 		t.Errorf("ConfirmPendingAlias unknown id: expected ErrNotFound, got %v", err)
 	}
+}
 
-	// Reject removes the row without promoting it.
+// assertPendingAliasRejectFlow confirms reject removes the row without
+// promoting it, and that rejecting an unknown ID is ErrNotFound.
+func assertPendingAliasRejectFlow(t *testing.T, s *Store) {
+	t.Helper()
 	if err := s.AddPendingAlias(ctx(), "u1", "arroz cozido", "arroz", 0.93); err != nil {
 		t.Fatalf("AddPendingAlias 2: %v", err)
 	}
-	list, err = s.ListPendingAliases(ctx(), "u1")
+	list, err := s.ListPendingAliases(ctx(), "u1")
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListPendingAliases before reject: %v %+v", err, list)
 	}

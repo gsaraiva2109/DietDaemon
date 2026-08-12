@@ -49,9 +49,22 @@ func seedUser(t *testing.T, st *store.Store, userID string) {
 // so the backup this test takes reflects genuine application writes.
 func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 	t.Helper()
-	ctx := context.Background()
 	now := time.Now().UTC()
 
+	seedMeals(t, st, userID, now)
+	seedRollups(t, st, userID)
+	seedWeight(t, st, userID, now)
+	seedMeasurements(t, st, userID, now)
+	seedSleep(t, st, userID)
+	seedWorkouts(t, st, userID)
+	seedWater(t, st, userID)
+	seedFasts(t, st, userID, now)
+	seedPhoto(t, st, userID, now)
+}
+
+func seedMeals(t *testing.T, st *store.Store, userID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	meals := []types.Meal{
 		{
 			ID: "meal-1", UserID: userID, At: time.Date(2024, 1, 10, 8, 0, 0, 0, time.UTC),
@@ -72,7 +85,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("SaveMeal: %v", err)
 		}
 	}
+}
 
+func seedRollups(t *testing.T, st *store.Store, userID string) {
+	t.Helper()
+	ctx := context.Background()
 	rollups := []types.DailyRollup{
 		{UserID: userID, Date: "2024-01-10", Consumed: types.Macros{Calories: 300, Protein: 10, Carbs: 50, Fat: 5, Fiber: 4}, Targets: types.Macros{Calories: 2000, Protein: 150, Carbs: 200, Fat: 60, Fiber: 30}},
 		{UserID: userID, Date: "2024-01-11", Consumed: types.Macros{Calories: 500, Protein: 32, Carbs: 30, Fat: 18, Fiber: 6}, Targets: types.Macros{Calories: 2000, Protein: 150, Carbs: 200, Fat: 60, Fiber: 30}},
@@ -82,14 +99,22 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("UpsertRollup: %v", err)
 		}
 	}
+}
 
+func seedWeight(t *testing.T, st *store.Store, userID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	for i, date := range []string{"2024-01-10", "2024-01-11"} {
 		w := types.WeightEntry{ID: fmt.Sprintf("weight-%d", i+1), UserID: userID, Date: date, WeightKg: 70.5 + float64(i), Note: "n", CreatedAt: now}
 		if _, err := st.LogWeight(ctx, w); err != nil {
 			t.Fatalf("LogWeight: %v", err)
 		}
 	}
+}
 
+func seedMeasurements(t *testing.T, st *store.Store, userID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	for i, date := range []string{"2024-01-10", "2024-01-11"} {
 		m := types.MeasurementEntry{
 			ID: fmt.Sprintf("meas-%d", i+1), UserID: userID, Date: date,
@@ -100,7 +125,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("LogMeasurement: %v", err)
 		}
 	}
+}
 
+func seedSleep(t *testing.T, st *store.Store, userID string) {
+	t.Helper()
+	ctx := context.Background()
 	sleepLogs := []types.SleepLog{
 		{ID: "sleep-1", UserID: userID, SleepAt: "2024-01-09T23:00:00Z", WakeAt: &wake, Quality: "good", Note: "n"},
 		{ID: "sleep-2", UserID: userID, SleepAt: "2024-01-10T23:00:00Z", Quality: "fair"},
@@ -110,7 +139,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("LogSleep: %v", err)
 		}
 	}
+}
 
+func seedWorkouts(t *testing.T, st *store.Store, userID string) {
+	t.Helper()
+	ctx := context.Background()
 	workouts := []types.Workout{
 		{
 			ID: "workout-1", UserID: userID, Name: "Leg day", DurationMin: 60, Intensity: "high", Note: "n",
@@ -124,7 +157,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("LogWorkout: %v", err)
 		}
 	}
+}
 
+func seedWater(t *testing.T, st *store.Store, userID string) {
+	t.Helper()
+	ctx := context.Background()
 	waterLogs := []types.WaterLog{
 		{ID: "water-1", UserID: userID, AmountML: 250, LoggedAt: "2024-01-10T09:00:00Z", Note: "n"},
 		{ID: "water-2", UserID: userID, AmountML: 500, LoggedAt: "2024-01-10T15:00:00Z"},
@@ -134,7 +171,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 			t.Fatalf("LogWater: %v", err)
 		}
 	}
+}
 
+func seedFasts(t *testing.T, st *store.Store, userID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	if err := st.StartFast(ctx, types.Fast{ID: "fast-1", UserID: userID, StartAt: time.Date(2024, 1, 12, 20, 0, 0, 0, time.UTC), TargetHours: 16, CreatedAt: now}); err != nil {
 		t.Fatalf("StartFast (open): %v", err)
 	}
@@ -144,7 +185,11 @@ func seedAllEntities(t *testing.T, st *store.Store, userID string) {
 	if _, err := st.EndFast(ctx, userID, "fast-2", time.Date(2024, 1, 9, 12, 0, 0, 0, time.UTC), true); err != nil {
 		t.Fatalf("EndFast: %v", err)
 	}
+}
 
+func seedPhoto(t *testing.T, st *store.Store, userID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
 	if err := st.UploadPhoto(ctx, types.ProgressPhoto{
 		ID: "photo-1", UserID: userID, Date: "2024-01-10", View: "front", MimeType: "image/png",
 		Data: bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 10), CreatedAt: now,
@@ -162,14 +207,17 @@ func countRows(t *testing.T, st *store.Store, table, userID string) int {
 	return n
 }
 
-func TestRestoreCLI_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	srcDBPath := filepath.Join(dir, "src.db")
-	targetDBPath := filepath.Join(dir, "target.db")
-	backupDir := filepath.Join(dir, "backup")
+// seedSourceAndBackup seeds a source store with real production writes
+// across all 9 trackable entities and backs it up to a fresh local disk dir
+// via internal/backup, returning the temp dir, the source DB path, and the
+// backup dir.
+func seedSourceAndBackup(t *testing.T) (dir, srcDBPath, backupDir string) {
+	t.Helper()
+	dir = t.TempDir()
+	srcDBPath = filepath.Join(dir, "src.db")
+	backupDir = filepath.Join(dir, "backup")
 	ctx := context.Background()
 
-	// 1. Seed a source store with real production writes across all 9 entities.
 	srcStore := newTestStore(t, srcDBPath)
 	seedUser(t, srcStore, testUserID)
 	seedAllEntities(t, srcStore, testUserID)
@@ -178,7 +226,6 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 		t.Fatalf("SetBackupConfig: %v", err)
 	}
 
-	// 2. Back it up to a local disk dir via internal/backup.
 	localDst, err := localdisk.New(backupDir)
 	if err != nil {
 		t.Fatalf("localdisk.New: %v", err)
@@ -188,21 +235,12 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 		t.Fatalf("backup RunOnce: %v", err)
 	}
 
-	// 3. Restore into a second, empty target store via the CLI's run().
-	targetStore := newTestStore(t, targetDBPath)
-	seedUser(t, targetStore, testUserID)
-	if err := targetStore.Close(); err != nil {
-		t.Fatalf("close target seed store: %v", err)
-	}
+	return dir, srcDBPath, backupDir
+}
 
-	if err := run(ctx, testUserID, targetDBPath, "local", backupDir, "", "", "", "", "", false); err != nil {
-		t.Fatalf("restore run: %v", err)
-	}
-
-	// 4. Assert restored data matches what was written to the source.
-	assertStore := newTestStore(t, targetDBPath)
-
-	meals, err := assertStore.GetMealsInRange(ctx, testUserID, "1970-01-01", "2100-01-01")
+func assertRestoredMeals(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	meals, err := st.GetMealsInRange(ctx, testUserID, "1970-01-01", "2100-01-01")
 	if err != nil {
 		t.Fatalf("GetMealsInRange: %v", err)
 	}
@@ -218,32 +256,44 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	if total := meal2.Total(); total.Calories != 500 || total.Protein != 32 {
 		t.Errorf("meal-2 restored totals = %+v, want kcal=500 protein=32", total)
 	}
+}
 
-	rollups, err := assertStore.GetRollups(ctx, testUserID, "1970-01-01", "2100-01-01")
+func assertRestoredRollups(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	rollups, err := st.GetRollups(ctx, testUserID, "1970-01-01", "2100-01-01")
 	if err != nil {
 		t.Fatalf("GetRollups: %v", err)
 	}
 	if len(rollups) != 2 {
 		t.Fatalf("restored rollups = %d, want 2", len(rollups))
 	}
+}
 
-	weight, err := assertStore.ListWeight(ctx, testUserID, 100000)
+func assertRestoredWeight(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	weight, err := st.ListWeight(ctx, testUserID, 100000)
 	if err != nil {
 		t.Fatalf("ListWeight: %v", err)
 	}
 	if len(weight) != 2 {
 		t.Fatalf("restored weight = %d, want 2", len(weight))
 	}
+}
 
-	measurements, err := assertStore.ListMeasurements(ctx, testUserID, 100000)
+func assertRestoredMeasurements(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	measurements, err := st.ListMeasurements(ctx, testUserID, 100000)
 	if err != nil {
 		t.Fatalf("ListMeasurements: %v", err)
 	}
 	if len(measurements) != 2 {
 		t.Fatalf("restored measurements = %d, want 2", len(measurements))
 	}
+}
 
-	sleep, err := assertStore.ListSleep(ctx, testUserID, 100)
+func assertRestoredSleep(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	sleep, err := st.ListSleep(ctx, testUserID, 100)
 	if err != nil {
 		t.Fatalf("ListSleep: %v", err)
 	}
@@ -259,8 +309,11 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	if sleep1.WakeAt == nil || *sleep1.WakeAt != wake {
 		t.Errorf("sleep-1 restored WakeAt = %v, want %s", sleep1.WakeAt, wake)
 	}
+}
 
-	workouts, err := assertStore.GetWorkoutsInRangeWithExercises(ctx, testUserID, "1970-01-01", "2100-01-01")
+func assertRestoredWorkouts(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	workouts, err := st.GetWorkoutsInRangeWithExercises(ctx, testUserID, "1970-01-01", "2100-01-01")
 	if err != nil {
 		t.Fatalf("GetWorkoutsInRangeWithExercises: %v", err)
 	}
@@ -279,16 +332,22 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	if workout1.Exercises[0].Sets == nil || *workout1.Exercises[0].Sets != 3 {
 		t.Errorf("workout-1 restored sets = %v, want 3", workout1.Exercises[0].Sets)
 	}
+}
 
-	water, err := assertStore.GetWaterInRange(ctx, testUserID, "1970-01-01", "2100-01-01")
+func assertRestoredWater(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	water, err := st.GetWaterInRange(ctx, testUserID, "1970-01-01", "2100-01-01")
 	if err != nil {
 		t.Fatalf("GetWaterInRange: %v", err)
 	}
 	if len(water) != 2 {
 		t.Fatalf("restored water = %d, want 2", len(water))
 	}
+}
 
-	fasts, err := assertStore.ListFasts(ctx, testUserID, 100)
+func assertRestoredFasts(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	fasts, err := st.ListFasts(ctx, testUserID, 100)
 	if err != nil {
 		t.Fatalf("ListFasts: %v", err)
 	}
@@ -304,29 +363,32 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	if fast2.EndAt == nil || !fast2.Completed {
 		t.Errorf("fast-2 restored EndAt/Completed = %v/%v, want set/true", fast2.EndAt, fast2.Completed)
 	}
+}
 
-	photos, err := assertStore.ListPhotoMetadata(ctx, testUserID)
+func assertRestoredPhotos(t *testing.T, ctx context.Context, st *store.Store) {
+	t.Helper()
+	photos, err := st.ListPhotoMetadata(ctx, testUserID)
 	if err != nil {
 		t.Fatalf("ListPhotoMetadata: %v", err)
 	}
 	if len(photos) != 1 {
 		t.Fatalf("restored photos = %d, want 1", len(photos))
 	}
-	full, err := assertStore.GetPhotoData(ctx, testUserID, photos[0].ID)
+	full, err := st.GetPhotoData(ctx, testUserID, photos[0].ID)
 	if err != nil {
 		t.Fatalf("GetPhotoData: %v", err)
 	}
 	if !bytes.Equal(full.Data, bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 10)) {
 		t.Errorf("restored photo data mismatch")
 	}
+}
 
-	if err := assertStore.Close(); err != nil {
-		t.Fatalf("close assert store: %v", err)
-	}
-
-	// 5. Re-running restore against the same target must be a no-op: no
-	// error, and no duplicate rows for any entity.
-	if err := run(ctx, testUserID, targetDBPath, "local", backupDir, "", "", "", "", "", false); err != nil {
+// assertIdempotentSecondRestore re-runs restore against the same target and
+// asserts it is a no-op: no error, and no duplicate rows for any entity.
+func assertIdempotentSecondRestore(t *testing.T, ctx context.Context, targetDBPath, backupDir string) {
+	t.Helper()
+	cfg := types.BackupConfig{UserID: testUserID, Destination: "local"}
+	if err := run(ctx, targetDBPath, backupDir, cfg, false); err != nil {
 		t.Fatalf("second restore run: %v", err)
 	}
 
@@ -342,31 +404,54 @@ func TestRestoreCLI_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestRestoreCLI_DryRun(t *testing.T) {
-	dir := t.TempDir()
-	srcDBPath := filepath.Join(dir, "src.db")
-	backupDir := filepath.Join(dir, "backup")
+func TestRestoreCLI_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
-	srcStore := newTestStore(t, srcDBPath)
-	seedUser(t, srcStore, testUserID)
-	seedAllEntities(t, srcStore, testUserID)
-	if err := srcStore.SetBackupConfig(ctx, types.BackupConfig{UserID: testUserID, Enabled: true, Destination: "local", IntervalHrs: 24}); err != nil {
-		t.Fatalf("SetBackupConfig: %v", err)
+	// 1-2. Seed a source store and back it up to a local disk dir.
+	dir, _, backupDir := seedSourceAndBackup(t)
+	targetDBPath := filepath.Join(dir, "target.db")
+
+	// 3. Restore into a second, empty target store via the CLI's run().
+	targetStore := newTestStore(t, targetDBPath)
+	seedUser(t, targetStore, testUserID)
+	if err := targetStore.Close(); err != nil {
+		t.Fatalf("close target seed store: %v", err)
 	}
-	localDst, err := localdisk.New(backupDir)
-	if err != nil {
-		t.Fatalf("localdisk.New: %v", err)
+
+	cfg := types.BackupConfig{UserID: testUserID, Destination: "local"}
+	if err := run(ctx, targetDBPath, backupDir, cfg, false); err != nil {
+		t.Fatalf("restore run: %v", err)
 	}
-	if err := backup.New(srcStore, localDst, nil, time.Hour).RunOnce(ctx, testUserID); err != nil {
-		t.Fatalf("backup RunOnce: %v", err)
+
+	// 4. Assert restored data matches what was written to the source.
+	assertStore := newTestStore(t, targetDBPath)
+	assertRestoredMeals(t, ctx, assertStore)
+	assertRestoredRollups(t, ctx, assertStore)
+	assertRestoredWeight(t, ctx, assertStore)
+	assertRestoredMeasurements(t, ctx, assertStore)
+	assertRestoredSleep(t, ctx, assertStore)
+	assertRestoredWorkouts(t, ctx, assertStore)
+	assertRestoredWater(t, ctx, assertStore)
+	assertRestoredFasts(t, ctx, assertStore)
+	assertRestoredPhotos(t, ctx, assertStore)
+	if err := assertStore.Close(); err != nil {
+		t.Fatalf("close assert store: %v", err)
 	}
+
+	// 5. Re-running restore against the same target must be a no-op.
+	assertIdempotentSecondRestore(t, ctx, targetDBPath, backupDir)
+}
+
+func TestRestoreCLI_DryRun(t *testing.T) {
+	ctx := context.Background()
+	dir, _, backupDir := seedSourceAndBackup(t)
 
 	// A non-existent -db path proves dry-run never opens the store: if it
 	// did, store.New would fail trying to migrate a file in a directory
 	// that doesn't exist.
 	missingDBPath := filepath.Join(dir, "does", "not", "exist", "target.db")
-	if err := run(ctx, testUserID, missingDBPath, "local", backupDir, "", "", "", "", "", true); err != nil {
+	cfg := types.BackupConfig{UserID: testUserID, Destination: "local"}
+	if err := run(ctx, missingDBPath, backupDir, cfg, true); err != nil {
 		t.Fatalf("dry-run should not error even with an unreachable -db path: %v", err)
 	}
 }

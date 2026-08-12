@@ -12,6 +12,28 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+func checkExtractLabelRequest(t *testing.T, req visionRequest, wantB64 string) {
+	t.Helper()
+	if req.Model != "llava" {
+		t.Errorf("model = %q, want llava", req.Model)
+	}
+	if !strings.Contains(req.Prompt, "nutrition facts label") {
+		t.Errorf("prompt missing labelextract prompt: %q", req.Prompt)
+	}
+	if len(req.Images) != 1 || req.Images[0] != wantB64 {
+		t.Errorf("images = %v, want [%s]", req.Images, wantB64)
+	}
+	if req.Images[0] != wantB64 || strings.HasPrefix(req.Images[0], "data:") {
+		t.Errorf("images[0] must be bare base64, no data: prefix")
+	}
+	if req.Stream {
+		t.Error("stream must be false")
+	}
+	if req.Format != "json" {
+		t.Errorf("format = %q, want json", req.Format)
+	}
+}
+
 func TestExtractLabel(t *testing.T) {
 	img := []byte("fake-jpeg-bytes")
 	wantB64 := base64.StdEncoding.EncodeToString(img)
@@ -25,24 +47,7 @@ func TestExtractLabel(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != "llava" {
-			t.Errorf("model = %q, want llava", req.Model)
-		}
-		if !strings.Contains(req.Prompt, "nutrition facts label") {
-			t.Errorf("prompt missing labelextract prompt: %q", req.Prompt)
-		}
-		if len(req.Images) != 1 || req.Images[0] != wantB64 {
-			t.Errorf("images = %v, want [%s]", req.Images, wantB64)
-		}
-		if req.Images[0] != wantB64 || strings.HasPrefix(req.Images[0], "data:") {
-			t.Errorf("images[0] must be bare base64, no data: prefix")
-		}
-		if req.Stream {
-			t.Error("stream must be false")
-		}
-		if req.Format != "json" {
-			t.Errorf("format = %q, want json", req.Format)
-		}
+		checkExtractLabelRequest(t, req, wantB64)
 
 		_ = json.NewEncoder(w).Encode(generateResponse{
 			Response: `{"name":"Oats","basis_grams":100,"calories":389,"protein_g":16.9,"carbs_g":66.3,"fat_g":6.9,"fiber_g":10.6,"low_confidence_fields":[],"unreadable":false}`,

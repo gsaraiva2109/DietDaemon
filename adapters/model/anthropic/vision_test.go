@@ -12,6 +12,43 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+func checkExtractLabelRequest(t *testing.T, req visionRequest, wantB64 string) {
+	t.Helper()
+	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+		t.Fatalf("unexpected message shape: %+v", req.Messages)
+	}
+	imgBlock := req.Messages[0].Content[0]
+	if imgBlock.Type != "image" || imgBlock.Source == nil {
+		t.Fatalf("content[0] = %+v, want image block", imgBlock)
+	}
+	if imgBlock.Source.MediaType != "image/jpeg" {
+		t.Errorf("media_type = %q, want image/jpeg", imgBlock.Source.MediaType)
+	}
+	if imgBlock.Source.Data != wantB64 {
+		t.Errorf("image data mismatch")
+	}
+	textBlock := req.Messages[0].Content[1]
+	if textBlock.Type != "text" || !strings.Contains(textBlock.Text, "nutrition facts label") {
+		t.Errorf("content[1] = %+v, want the labelextract prompt", textBlock)
+	}
+}
+
+func checkExtractLabelDraft(t *testing.T, draft types.NutritionLabelDraft) {
+	t.Helper()
+	if draft.Name == nil || *draft.Name != "Oats" {
+		t.Errorf("Name = %v, want Oats", draft.Name)
+	}
+	if draft.Calories == nil || *draft.Calories != 389 {
+		t.Errorf("Calories = %v, want 389", draft.Calories)
+	}
+	if len(draft.LowConfidenceFields) != 1 || draft.LowConfidenceFields[0] != "fiber_g" {
+		t.Errorf("LowConfidenceFields = %v, want [fiber_g]", draft.LowConfidenceFields)
+	}
+	if draft.Unreadable {
+		t.Error("Unreadable = true, want false")
+	}
+}
+
 func TestExtractLabel(t *testing.T) {
 	img := []byte("fake-jpeg-bytes")
 	wantB64 := base64.StdEncoding.EncodeToString(img)
@@ -28,23 +65,7 @@ func TestExtractLabel(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
-			t.Fatalf("unexpected message shape: %+v", req.Messages)
-		}
-		imgBlock := req.Messages[0].Content[0]
-		if imgBlock.Type != "image" || imgBlock.Source == nil {
-			t.Fatalf("content[0] = %+v, want image block", imgBlock)
-		}
-		if imgBlock.Source.MediaType != "image/jpeg" {
-			t.Errorf("media_type = %q, want image/jpeg", imgBlock.Source.MediaType)
-		}
-		if imgBlock.Source.Data != wantB64 {
-			t.Errorf("image data mismatch")
-		}
-		textBlock := req.Messages[0].Content[1]
-		if textBlock.Type != "text" || !strings.Contains(textBlock.Text, "nutrition facts label") {
-			t.Errorf("content[1] = %+v, want the labelextract prompt", textBlock)
-		}
+		checkExtractLabelRequest(t, req, wantB64)
 
 		_ = json.NewEncoder(w).Encode(messagesResponse{
 			Content: []contentBlock{{Type: "text", Text: `{"name":"Oats","basis_grams":100,"calories":389,"protein_g":16.9,"carbs_g":66.3,"fat_g":6.9,"fiber_g":10.6,"low_confidence_fields":["fiber_g"],"unreadable":false}`}},
@@ -57,18 +78,7 @@ func TestExtractLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractLabel: %v", err)
 	}
-	if draft.Name == nil || *draft.Name != "Oats" {
-		t.Errorf("Name = %v, want Oats", draft.Name)
-	}
-	if draft.Calories == nil || *draft.Calories != 389 {
-		t.Errorf("Calories = %v, want 389", draft.Calories)
-	}
-	if len(draft.LowConfidenceFields) != 1 || draft.LowConfidenceFields[0] != "fiber_g" {
-		t.Errorf("LowConfidenceFields = %v, want [fiber_g]", draft.LowConfidenceFields)
-	}
-	if draft.Unreadable {
-		t.Error("Unreadable = true, want false")
-	}
+	checkExtractLabelDraft(t, draft)
 }
 
 func checkExtractPlanRequest(t *testing.T, req visionRequest, pages []types.PlanImagePage) {

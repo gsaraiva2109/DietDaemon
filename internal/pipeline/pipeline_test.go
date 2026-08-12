@@ -177,11 +177,16 @@ func resolved(name string, m types.Macros) types.ResolvedItem {
 func TestHandleLogsMealAndReplies(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330, Protein: 62})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 
 	msg := types.InboundMessage{
 		UserID:      "u1",
@@ -224,11 +229,16 @@ func portionPending(name string, per100g types.Macros, qty float64, unit string)
 func TestClarificationHoldsMealAndAsks(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
-		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	msg := types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}}
 	if err := e.Handle(context.Background(), msg); err != nil {
 		t.Fatalf("Handle error = %v", err)
@@ -245,11 +255,16 @@ func TestClarificationHoldsMealAndAsks(t *testing.T) {
 func TestClarificationPortionCompletesMeal(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
-		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155, Protein: 13}, 2, "unit")}, need: 1},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	ctx := context.Background()
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
@@ -276,11 +291,16 @@ func newPendingEggsCase(t *testing.T) (*Engine, *fakeStore, *fakeReplier, contex
 	t.Helper()
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
-		fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "eggs"}}, conf: 0.9},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{portionPending("eggs", types.Macros{Calories: 155}, 2, "unit")}, need: 1},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	ctx := context.Background()
 	_ = e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "2 eggs", ChannelMeta: map[string]string{"chat_id": "42"}})
 	return e, st, rp, ctx
@@ -323,10 +343,16 @@ func TestClarificationUnknownFoodCorrected(t *testing.T) {
 		// Correction re-resolves to a known food with a weight.
 		return []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 165})}, 0
 	}}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "xyz"}}, conf: 0.5},
-		res, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "xyz"}}, conf: 0.5},
+		Resolver:    res,
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	ctx := context.Background()
 	if err := e.Handle(ctx, types.InboundMessage{UserID: "u1", Text: "xyz", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
@@ -345,7 +371,16 @@ func TestClarificationUnknownFoodCorrected(t *testing.T) {
 func TestHandleEmptyText(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil)
+	e := New(Config{
+		Parser:      fakeParser{},
+		Resolver:    fakeResolver{},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	if err := e.Handle(context.Background(), types.InboundMessage{UserID: "u1", Text: "  ", ChannelMeta: map[string]string{"chat_id": "42"}}); err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
@@ -364,7 +399,17 @@ func TestTargetCommandSetsGoals(t *testing.T) {
 	if err := reg.Register(commands.NewTargetCommand(st)); err != nil {
 		t.Fatalf("Register error = %v", err)
 	}
-	e := New(fakeParser{}, fakeResolver{}, st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, reg, nil)
+	e := New(Config{
+		Parser:      fakeParser{},
+		Resolver:    fakeResolver{},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+		Registry:    reg,
+	})
 
 	msg := types.InboundMessage{UserID: "u1", Text: "/target kcal=3000 protein=180 carbs=350 fat=90", ChannelMeta: map[string]string{"chat_id": "42"}}
 	if err := e.Handle(context.Background(), msg); err != nil {
@@ -385,11 +430,16 @@ func TestTargetCommandSetsGoals(t *testing.T) {
 func TestRollupAccumulates(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 	at := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
 		msg := types.InboundMessage{UserID: "u1", At: at, Text: "100g rice", ChannelMeta: map[string]string{"chat_id": "42"}}
@@ -411,11 +461,16 @@ func TestPersistMealPropagatesTargetsError(t *testing.T) {
 	st := newFakeStore()
 	st.targetsErr = errors.New("targets backend unavailable")
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 
 	_, err := e.LogMealFromItems(context.Background(), "u1", time.Now(), "100g rice", 0.95,
 		[]types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})})
@@ -434,11 +489,16 @@ func TestPersistMealPropagatesSaveError(t *testing.T) {
 	st := newFakeStore()
 	st.saveErr = errors.New("db unavailable")
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "rice"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 
 	_, err := e.LogMealFromItems(context.Background(), "u1", time.Now(), "100g rice", 0.95,
 		[]types.ResolvedItem{resolved("rice", types.Macros{Calories: 100})})
@@ -455,7 +515,17 @@ func TestCommandDispatchPrecedesOverPendingClarification(t *testing.T) {
 	if err := reg.Register(commands.NewTargetCommand(st)); err != nil {
 		t.Fatalf("Register error = %v", err)
 	}
-	e := New(fakeParser{}, fakeResolver{}, st, pending, rp, time.UTC, 0.6, "telegram", nil, reg, nil)
+	e := New(Config{
+		Parser:      fakeParser{},
+		Resolver:    fakeResolver{},
+		Store:       st,
+		Pending:     pending,
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+		Registry:    reg,
+	})
 
 	// Seed a pending clarification for the user — if the pending path ran
 	// first, "/target ..." would be misread as a clarification answer.
@@ -489,11 +559,16 @@ func TestCommandDispatchPrecedesOverPendingClarification(t *testing.T) {
 func TestCallbackButtonPassthroughSkipsClarificationAndParsing(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 
 	msg := types.InboundMessage{
 		UserID:      "u1",
@@ -514,11 +589,16 @@ func TestCallbackButtonPassthroughSkipsClarificationAndParsing(t *testing.T) {
 func TestChannelAutoRegistersUserOnFirstMessage(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", nil, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "chicken"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("chicken", types.Macros{Calories: 330})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+	})
 
 	msg := types.InboundMessage{UserID: "channel-123", Text: "200g chicken", ChannelMeta: map[string]string{"chat_id": "42"}}
 	if err := e.Handle(context.Background(), msg); err != nil {
@@ -555,10 +635,17 @@ func sttFailureCase(t *testing.T, tc Transcriber, audio string) (*fakeStore, *fa
 	t.Helper()
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{}, fakeResolver{},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{},
+		Resolver:    fakeResolver{},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+		Transcriber: tc,
+	})
 	msg := types.InboundMessage{
 		UserID:      "u1",
 		Kind:        types.MessageAudio,
@@ -578,11 +665,17 @@ func sttSuccessCase(t *testing.T, parsed []types.ParsedItem, out []types.Resolve
 	t.Helper()
 	st := newFakeStore()
 	rp := &fakeReplier{}
-	e := New(
-		fakeParser{items: parsed, conf: 0.95},
-		fakeResolver{out: out},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: parsed, conf: 0.95},
+		Resolver:    fakeResolver{out: out},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+		Transcriber: tc,
+	})
 	msg := types.InboundMessage{
 		UserID:      "u1",
 		Kind:        types.MessageAudio,
@@ -666,11 +759,17 @@ func TestSTTLocalePreservesExisting(t *testing.T) {
 	st := newFakeStore()
 	rp := &fakeReplier{}
 	tc := fakeTranscriber{text: "200g poulet", locale: "fr"}
-	e := New(
-		fakeParser{items: []types.ParsedItem{{RawPhrase: "poulet"}}, conf: 0.95},
-		fakeResolver{out: []types.ResolvedItem{resolved("poulet", types.Macros{Calories: 250})}},
-		st, newFakePending(), rp, time.UTC, 0.6, "telegram", tc, nil, nil,
-	)
+	e := New(Config{
+		Parser:      fakeParser{items: []types.ParsedItem{{RawPhrase: "poulet"}}, conf: 0.95},
+		Resolver:    fakeResolver{out: []types.ResolvedItem{resolved("poulet", types.Macros{Calories: 250})}},
+		Store:       st,
+		Pending:     newFakePending(),
+		Replier:     rp,
+		Loc:         time.UTC,
+		Threshold:   0.6,
+		ChannelName: "telegram",
+		Transcriber: tc,
+	})
 	msg := types.InboundMessage{
 		UserID:      "u1",
 		Kind:        types.MessageAudio,
