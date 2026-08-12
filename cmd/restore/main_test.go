@@ -14,6 +14,22 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/internal/store"
 )
 
+func TestBuildBackupConfig(t *testing.T) {
+	got := buildBackupConfig("user-1", "s3", "alice", "bucket", "prefix", "region", "endpoint")
+	want := types.BackupConfig{
+		UserID:      "user-1",
+		Destination: "s3",
+		LocalSubdir: "alice",
+		S3Bucket:    "bucket",
+		S3Prefix:    "prefix",
+		S3Region:    "region",
+		S3Endpoint:  "endpoint",
+	}
+	if got != want {
+		t.Fatalf("buildBackupConfig = %+v, want %+v", got, want)
+	}
+}
+
 const testUserID = "user-1"
 
 var wake = "2024-01-10T07:00:00Z"

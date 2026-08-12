@@ -56,19 +56,23 @@ func main() {
 	ctx, stop := cmdutil.SignalContext(context.Background())
 	defer stop()
 
-	cfg := types.BackupConfig{
-		UserID:      *userID,
-		Destination: *destination,
-		LocalSubdir: *subdir,
-		S3Bucket:    *s3Bucket,
-		S3Prefix:    *s3Prefix,
-		S3Region:    *s3Region,
-		S3Endpoint:  *s3Endpoint,
-	}
+	cfg := buildBackupConfig(*userID, *destination, *subdir, *s3Bucket, *s3Prefix, *s3Region, *s3Endpoint)
 
 	if err := run(ctx, *dbPath, *dir, cfg, *dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "restore: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func buildBackupConfig(userID, destination, subdir, s3Bucket, s3Prefix, s3Region, s3Endpoint string) types.BackupConfig {
+	return types.BackupConfig{
+		UserID:      userID,
+		Destination: destination,
+		LocalSubdir: subdir,
+		S3Bucket:    s3Bucket,
+		S3Prefix:    s3Prefix,
+		S3Region:    s3Region,
+		S3Endpoint:  s3Endpoint,
 	}
 }
 

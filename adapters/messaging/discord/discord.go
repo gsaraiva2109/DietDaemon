@@ -227,32 +227,44 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		default:
 		}
 
-		pl, err := readGatewayPayload(conn)
-		if err != nil {
+		keepGoing, seq := a.readAndDispatch(ctx, conn, ch, lastSeq)
+		lastSeq = seq
+		if !keepGoing {
 			return
 		}
-		if pl.S != nil {
-			lastSeq = pl.S
-		}
-
-		switch pl.Op {
-		case gatewayOpDispatch:
-			switch pl.T {
-			case "MESSAGE_CREATE":
-				if !a.handleMessageCreate(ctx, pl, ch) {
-					return
-				}
-			case "INTERACTION_CREATE":
-				if !a.handleInteractionCreate(ctx, pl, ch) {
-					return
-				}
-			}
-
-		case gatewayOpHeartbeat:
-			// Server requests heartbeat — respond immediately.
-			a.sendHeartbeat(conn, lastSeq)
-		}
 	}
+}
+
+// readAndDispatch reads one gateway payload and routes it to the
+// appropriate handler, returning false when gatewayLoop should exit.
+func (a *Adapter) readAndDispatch(ctx context.Context, conn *websocket.Conn, ch chan<- types.InboundMessage, lastSeq *int) (bool, *int) {
+	pl, err := readGatewayPayload(conn)
+	if err != nil {
+		return false, lastSeq
+	}
+	if pl.S != nil {
+		lastSeq = pl.S
+	}
+
+	switch pl.Op {
+	case gatewayOpDispatch:
+		return a.dispatchEvent(ctx, pl, ch), lastSeq
+	case gatewayOpHeartbeat:
+		// Server requests heartbeat — respond immediately.
+		a.sendHeartbeat(conn, lastSeq)
+	}
+	return true, lastSeq
+}
+
+// dispatchEvent routes a DISPATCH payload to its event-specific handler.
+func (a *Adapter) dispatchEvent(ctx context.Context, pl gatewayPayload, ch chan<- types.InboundMessage) bool {
+	switch pl.T {
+	case "MESSAGE_CREATE":
+		return a.handleMessageCreate(ctx, pl, ch)
+	case "INTERACTION_CREATE":
+		return a.handleInteractionCreate(ctx, pl, ch)
+	}
+	return true
 }
 
 // connectGateway resolves the gateway URL, dials the websocket, and reads
