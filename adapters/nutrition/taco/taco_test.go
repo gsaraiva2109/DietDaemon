@@ -71,12 +71,7 @@ func testResolve(t *testing.T, src *Source) {
 // ---------------------------------------------------------------------------
 
 func TestCSVLoadAndResolve(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "testdata", "taco_sample.csv")
-	src, err := New(path)
-	if err != nil {
-		t.Fatalf("New csv: %v", err)
-	}
-	testResolve(t, src)
+	testResolve(t, newTestSource(t))
 }
 
 // ---------------------------------------------------------------------------
@@ -277,69 +272,81 @@ func TestOfficialSpreadsheetLayoutNoDataRows(t *testing.T) {
 // FetchBulk
 // ---------------------------------------------------------------------------
 
-func TestFetchBulk(t *testing.T) {
+// wantFetchBulkRows is the number of data rows in testdata/taco_sample.csv.
+const wantFetchBulkRows = 15
+
+// newTestSource loads the shared CSV fixture used by most tests in this
+// file, failing the test immediately if the load errors.
+func newTestSource(t *testing.T) *Source {
+	t.Helper()
 	path := filepath.Join("..", "..", "..", "testdata", "taco_sample.csv")
 	src, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	const wantRows = 15 // data rows in testdata/taco_sample.csv
+	return src
+}
 
-	t.Run("no filter emits everything", func(t *testing.T) {
-		var got []types.FoodMatch
-		err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
-			got = append(got, fm)
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
-		}
-		if len(got) != wantRows {
-			t.Errorf("got %d rows, want %d", len(got), wantRows)
-		}
+func TestFetchBulkNoFilter(t *testing.T) {
+	src := newTestSource(t)
 
-		names := make(map[string]bool, len(got))
-		for _, fm := range got {
-			names[fm.Name] = true
-		}
-		for _, want := range []string{"Frango grelhado", "Feijão carioca cozido"} {
-			if !names[want] {
-				t.Errorf("expected %q among emitted foods", want)
-			}
-		}
+	var got []types.FoodMatch
+	err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
+		got = append(got, fm)
+		return nil
 	})
+	if err != nil {
+		t.Fatalf("FetchBulk: %v", err)
+	}
+	if len(got) != wantFetchBulkRows {
+		t.Errorf("got %d rows, want %d", len(got), wantFetchBulkRows)
+	}
 
-	t.Run("MaxRows truncates", func(t *testing.T) {
-		n := 0
-		err := src.FetchBulk(context.Background(), ports.BulkFilter{MaxRows: 3}, func(fm types.FoodMatch) error {
-			n++
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("FetchBulk: %v", err)
+	names := make(map[string]bool, len(got))
+	for _, fm := range got {
+		names[fm.Name] = true
+	}
+	for _, want := range []string{"Frango grelhado", "Feijão carioca cozido"} {
+		if !names[want] {
+			t.Errorf("expected %q among emitted foods", want)
 		}
-		if n != 3 {
-			t.Errorf("got %d rows, want 3 (MaxRows)", n)
-		}
-	})
+	}
+}
 
-	t.Run("emit error aborts early", func(t *testing.T) {
-		wantErr := errors.New("boom")
-		n := 0
-		err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
-			n++
-			if n == 2 {
-				return wantErr
-			}
-			return nil
-		})
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("FetchBulk error = %v, want %v", err, wantErr)
-		}
-		if n != 2 {
-			t.Errorf("emitted %d items after error, want exactly 2 (stop on error)", n)
-		}
+func TestFetchBulkMaxRows(t *testing.T) {
+	src := newTestSource(t)
+
+	n := 0
+	err := src.FetchBulk(context.Background(), ports.BulkFilter{MaxRows: 3}, func(fm types.FoodMatch) error {
+		n++
+		return nil
 	})
+	if err != nil {
+		t.Fatalf("FetchBulk: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("got %d rows, want 3 (MaxRows)", n)
+	}
+}
+
+func TestFetchBulkEmitErrorAborts(t *testing.T) {
+	src := newTestSource(t)
+
+	wantErr := errors.New("boom")
+	n := 0
+	err := src.FetchBulk(context.Background(), ports.BulkFilter{}, func(fm types.FoodMatch) error {
+		n++
+		if n == 2 {
+			return wantErr
+		}
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("FetchBulk error = %v, want %v", err, wantErr)
+	}
+	if n != 2 {
+		t.Errorf("emitted %d items after error, want exactly 2 (stop on error)", n)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -347,15 +354,8 @@ func TestFetchBulk(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIndependentLoads(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "testdata", "taco_sample.csv")
-	s1, err := New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s2, err := New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s1 := newTestSource(t)
+	s2 := newTestSource(t)
 
 	ctx := context.Background()
 	fm1, _ := s1.Resolve(ctx, types.ParsedItem{RawPhrase: "arroz branco cozido"})

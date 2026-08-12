@@ -99,20 +99,52 @@ func TestHTTPHandlerSecurityHeadersAndHSTS(t *testing.T) {
 	}
 }
 
+type corsTestCase struct {
+	name       string
+	handler    http.Handler
+	method     string
+	origin     string
+	wantStatus int
+	wantCORS   bool
+}
+
+func assertCORSStatusAndOrigin(t *testing.T, rec *httptest.ResponseRecorder, allowed string, tt corsTestCase) {
+	t.Helper()
+	if rec.Code != tt.wantStatus || (rec.Header().Get("Access-Control-Allow-Origin") == allowed) != tt.wantCORS {
+		t.Fatalf("response = %d, headers %v", rec.Code, rec.Header())
+	}
+}
+
+func assertCORSCredentialedHeaders(t *testing.T, rec *httptest.ResponseRecorder, wantCORS bool) {
+	t.Helper()
+	if !wantCORS {
+		return
+	}
+	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" || !strings.Contains(rec.Header().Get("Vary"), "Origin") {
+		t.Fatalf("missing credentialed CORS headers: %v", rec.Header())
+	}
+	if rec.Header().Get("Access-Control-Expose-Headers") != "X-Request-ID" {
+		t.Fatalf("missing request ID exposure header: %v", rec.Header())
+	}
+}
+
+func assertCORSPreflightHeaders(t *testing.T, rec *httptest.ResponseRecorder, method string) {
+	t.Helper()
+	if method != http.MethodOptions {
+		return
+	}
+	if rec.Header().Get("Access-Control-Allow-Methods") == "" || rec.Header().Get("Access-Control-Allow-Headers") == "" {
+		t.Fatalf("missing preflight headers: %v", rec.Header())
+	}
+}
+
 func TestHTTPCORS(t *testing.T) {
 	allowed := "https://app.example.com"
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) })
 	allowedHandler := newHTTPHandler(next, &config.Config{CORSAllowedOrigins: []string{allowed}})
 	noCORSHandler := newHTTPHandler(next, &config.Config{})
 
-	for _, tt := range []struct {
-		name       string
-		handler    http.Handler
-		method     string
-		origin     string
-		wantStatus int
-		wantCORS   bool
-	}{
+	for _, tt := range []corsTestCase{
 		{name: "allowed request", handler: allowedHandler, method: http.MethodGet, origin: allowed, wantStatus: http.StatusAccepted, wantCORS: true},
 		{name: "allowed preflight", handler: allowedHandler, method: http.MethodOptions, origin: allowed, wantStatus: http.StatusNoContent, wantCORS: true},
 		{name: "disallowed", handler: allowedHandler, method: http.MethodGet, origin: "https://other.example.com", wantStatus: http.StatusAccepted},
@@ -125,18 +157,9 @@ func TestHTTPCORS(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			tt.handler.ServeHTTP(rec, req)
-			if rec.Code != tt.wantStatus || (rec.Header().Get("Access-Control-Allow-Origin") == allowed) != tt.wantCORS {
-				t.Fatalf("response = %d, headers %v", rec.Code, rec.Header())
-			}
-			if tt.wantCORS && (rec.Header().Get("Access-Control-Allow-Credentials") != "true" || !strings.Contains(rec.Header().Get("Vary"), "Origin")) {
-				t.Fatalf("missing credentialed CORS headers: %v", rec.Header())
-			}
-			if tt.wantCORS && rec.Header().Get("Access-Control-Expose-Headers") != "X-Request-ID" {
-				t.Fatalf("missing request ID exposure header: %v", rec.Header())
-			}
-			if tt.method == http.MethodOptions && (rec.Header().Get("Access-Control-Allow-Methods") == "" || rec.Header().Get("Access-Control-Allow-Headers") == "") {
-				t.Fatalf("missing preflight headers: %v", rec.Header())
-			}
+			assertCORSStatusAndOrigin(t, rec, allowed, tt)
+			assertCORSCredentialedHeaders(t, rec, tt.wantCORS)
+			assertCORSPreflightHeaders(t, rec, tt.method)
 		})
 	}
 }

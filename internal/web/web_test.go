@@ -59,6 +59,22 @@ func TestHandlerReturnsBrandedNotFoundForUnknownNavigation(t *testing.T) {
 	}
 }
 
+func TestHandlerCachesRealAssetsImmutably(t *testing.T) {
+	h, err := Handler()
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/favicon.ico", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control = %q, want immutable caching", got)
+	}
+}
+
 func TestHandlerKeepsMissingAssetsAndNonHTMLRequestsAsNotFound(t *testing.T) {
 	h, err := Handler()
 	if err != nil {

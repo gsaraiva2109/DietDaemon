@@ -194,7 +194,19 @@ func buildRuntime(cfg *config.Config, st *store.Store) (*appRuntime, error) {
 		return nil, err
 	}
 	suggestEngine := suggest.New(st, completion, cfg.Location)
-	engine := pipeline.New(parser, res, st, pend, message, cfg.Location, cfg.ConfidenceThreshold, cfg.MessagingAdapter, transcriber, registry, i18nBundle)
+	engine := pipeline.New(pipeline.Config{
+		Parser:      parser,
+		Resolver:    res,
+		Store:       st,
+		Pending:     pend,
+		Replier:     message,
+		Loc:         cfg.Location,
+		Threshold:   cfg.ConfidenceThreshold,
+		ChannelName: cfg.MessagingAdapter,
+		Transcriber: transcriber,
+		Registry:    registry,
+		I18n:        i18nBundle,
+	})
 	if err := registerPipelineCommands(registry, st, engine, res, suggestEngine); err != nil {
 		return nil, err
 	}

@@ -203,45 +203,18 @@ func (a *Adapter) Receive(ctx context.Context) (<-chan types.InboundMessage, err
 func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessage) {
 	defer close(ch)
 
-	// Resolve gateway URL.
-	gatewayURL, err := a.fetchGatewayURL(ctx)
-	if err != nil {
-		return
-	}
-
-	conn, err := a.dialWebSocket(ctx, gatewayURL)
+	conn, heartbeatInterval, err := a.connectGateway(ctx)
 	if err != nil {
 		return
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Read HELLO.
-	hello, err := readGatewayPayload(conn)
-	if err != nil {
-		return
-	}
-	var hd helloData
-	_ = json.Unmarshal(hello.D, &hd)
-
 	// Start heartbeat goroutine.
 	heartbeatCtx, cancelBeat := context.WithCancel(ctx)
 	defer cancelBeat()
-	go a.heartbeat(heartbeatCtx, conn, hd.HeartbeatInterval)
+	go a.heartbeat(heartbeatCtx, conn, heartbeatInterval)
 
-	// Send IDENTIFY.
-	identify := gatewayPayload{
-		Op: gatewayOpIdentify,
-		D: mustMarshal(identifyData{
-			Token: a.token,
-			Properties: identifyProperties{
-				OS:      "linux",
-				Browser: "dietdaemon",
-				Device:  "dietdaemon",
-			},
-			Intents: gatewayIntentMessageContent,
-		}),
-	}
-	if err := writeGatewayFrame(conn, identify); err != nil {
+	if err := a.identifyGateway(conn); err != nil {
 		return
 	}
 
@@ -254,86 +227,159 @@ func (a *Adapter) gatewayLoop(ctx context.Context, ch chan<- types.InboundMessag
 		default:
 		}
 
-		pl, err := readGatewayPayload(conn)
-		if err != nil {
+		keepGoing, seq := a.readAndDispatch(ctx, conn, ch, lastSeq)
+		lastSeq = seq
+		if !keepGoing {
 			return
 		}
-		if pl.S != nil {
-			lastSeq = pl.S
-		}
+	}
+}
 
-		switch pl.Op {
-		case gatewayOpDispatch:
-			switch pl.T {
-			case "MESSAGE_CREATE":
-				var msg messageCreateData
-				if err := json.Unmarshal(pl.D, &msg); err != nil {
-					continue
-				}
-				// Skip own messages.
-				if msg.Author.Bot {
-					continue
-				}
-				select {
-				case ch <- types.InboundMessage{
-					UserID: msg.Author.ID,
-					At:     time.Now().UTC(),
-					Kind:   types.MessageText,
-					Text:   msg.Content,
-					ChannelMeta: map[string]string{
-						"channel_id": msg.ChannelID,
-						"message_id": msg.ID,
-					},
-				}:
-				case <-ctx.Done():
-					return
-				}
+// readAndDispatch reads one gateway payload and routes it to the
+// appropriate handler, returning false when gatewayLoop should exit.
+func (a *Adapter) readAndDispatch(ctx context.Context, conn *websocket.Conn, ch chan<- types.InboundMessage, lastSeq *int) (bool, *int) {
+	pl, err := readGatewayPayload(conn)
+	if err != nil {
+		return false, lastSeq
+	}
+	if pl.S != nil {
+		lastSeq = pl.S
+	}
 
-			case "INTERACTION_CREATE":
-				var interaction interactionCreateData
-				if err := json.Unmarshal(pl.D, &interaction); err != nil {
-					continue
-				}
-				// Skip bot interactions.
-				if interaction.Member != nil && interaction.Member.User.Bot {
-					continue
-				}
-				if interaction.Data.CustomID == "" {
-					continue
-				}
+	switch pl.Op {
+	case gatewayOpDispatch:
+		return a.dispatchEvent(ctx, pl, ch), lastSeq
+	case gatewayOpHeartbeat:
+		// Server requests heartbeat — respond immediately.
+		a.sendHeartbeat(conn, lastSeq)
+	}
+	return true, lastSeq
+}
 
-				userID := ""
-				if interaction.Member != nil {
-					userID = interaction.Member.User.ID
-				}
-				if userID == "" {
-					continue // No identifiable user.
-				}
+// dispatchEvent routes a DISPATCH payload to its event-specific handler.
+func (a *Adapter) dispatchEvent(ctx context.Context, pl gatewayPayload, ch chan<- types.InboundMessage) bool {
+	switch pl.T {
+	case "MESSAGE_CREATE":
+		return a.handleMessageCreate(ctx, pl, ch)
+	case "INTERACTION_CREATE":
+		return a.handleInteractionCreate(ctx, pl, ch)
+	}
+	return true
+}
 
-				log.Printf("discord: received interaction %s = %q", interaction.ID, interaction.Data.CustomID)
+// connectGateway resolves the gateway URL, dials the websocket, and reads
+// the initial HELLO frame, returning the connection and heartbeat interval.
+// On error, any partially opened connection is closed.
+func (a *Adapter) connectGateway(ctx context.Context) (*websocket.Conn, int, error) {
+	gatewayURL, err := a.fetchGatewayURL(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 
-				select {
-				case ch <- types.InboundMessage{
-					UserID: userID,
-					At:     time.Now().UTC(),
-					Kind:   types.MessageText,
-					Text:   interaction.Data.CustomID,
-					ChannelMeta: map[string]string{
-						"channel_id":        interaction.ChannelID,
-						"is_callback":       "true",
-						"interaction_id":    interaction.ID,
-						"interaction_token": interaction.Token,
-					},
-				}:
-				case <-ctx.Done():
-					return
-				}
-			}
+	conn, err := a.dialWebSocket(ctx, gatewayURL)
+	if err != nil {
+		return nil, 0, err
+	}
 
-		case gatewayOpHeartbeat:
-			// Server requests heartbeat — respond immediately.
-			a.sendHeartbeat(conn, lastSeq)
-		}
+	hello, err := readGatewayPayload(conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, 0, err
+	}
+	var hd helloData
+	_ = json.Unmarshal(hello.D, &hd)
+
+	return conn, hd.HeartbeatInterval, nil
+}
+
+// identifyGateway sends the IDENTIFY payload for this adapter's bot token.
+func (a *Adapter) identifyGateway(conn *websocket.Conn) error {
+	identify := gatewayPayload{
+		Op: gatewayOpIdentify,
+		D: mustMarshal(identifyData{
+			Token: a.token,
+			Properties: identifyProperties{
+				OS:      "linux",
+				Browser: "dietdaemon",
+				Device:  "dietdaemon",
+			},
+			Intents: gatewayIntentMessageContent,
+		}),
+	}
+	return writeGatewayFrame(conn, identify)
+}
+
+// handleMessageCreate processes a MESSAGE_CREATE dispatch payload. It
+// returns false if ctx was cancelled while delivering the message, signaling
+// that gatewayLoop should exit.
+func (a *Adapter) handleMessageCreate(ctx context.Context, pl gatewayPayload, ch chan<- types.InboundMessage) bool {
+	var msg messageCreateData
+	if err := json.Unmarshal(pl.D, &msg); err != nil {
+		return true
+	}
+	// Skip own messages.
+	if msg.Author.Bot {
+		return true
+	}
+	select {
+	case ch <- types.InboundMessage{
+		UserID: msg.Author.ID,
+		At:     time.Now().UTC(),
+		Kind:   types.MessageText,
+		Text:   msg.Content,
+		ChannelMeta: map[string]string{
+			"channel_id": msg.ChannelID,
+			"message_id": msg.ID,
+		},
+	}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// handleInteractionCreate processes an INTERACTION_CREATE dispatch payload.
+// It returns false if ctx was cancelled while delivering the interaction,
+// signaling that gatewayLoop should exit.
+func (a *Adapter) handleInteractionCreate(ctx context.Context, pl gatewayPayload, ch chan<- types.InboundMessage) bool {
+	var interaction interactionCreateData
+	if err := json.Unmarshal(pl.D, &interaction); err != nil {
+		return true
+	}
+	// Skip bot interactions.
+	if interaction.Member != nil && interaction.Member.User.Bot {
+		return true
+	}
+	if interaction.Data.CustomID == "" {
+		return true
+	}
+
+	userID := ""
+	if interaction.Member != nil {
+		userID = interaction.Member.User.ID
+	}
+	if userID == "" {
+		return true // No identifiable user.
+	}
+
+	log.Printf("discord: received interaction %s = %q", interaction.ID, interaction.Data.CustomID)
+
+	select {
+	case ch <- types.InboundMessage{
+		UserID: userID,
+		At:     time.Now().UTC(),
+		Kind:   types.MessageText,
+		Text:   interaction.Data.CustomID,
+		ChannelMeta: map[string]string{
+			"channel_id":        interaction.ChannelID,
+			"is_callback":       "true",
+			"interaction_id":    interaction.ID,
+			"interaction_token": interaction.Token,
+		},
+	}:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

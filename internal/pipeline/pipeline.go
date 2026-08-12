@@ -89,28 +89,45 @@ type Engine struct {
 	idgen func() string
 }
 
-// New builds an Engine. loc is the default timezone used for daily rollup
-// boundaries; threshold is the confidence below which a reply nudges the user
-// to double-check amounts. pending holds the clarification loop's state.
-// channelName is the messaging adapter identifier used for user_channels mapping.
-// transcriber is optional (nil = audio messages receive a "text only" reply).
-// registry dispatches bot commands; i18n resolves locale-aware strings.
-func New(p Parser, r Resolver, s MealStore, pending PendingStore, replier Replier, loc *time.Location, threshold float64, channelName string, transcriber Transcriber, registry *commands.Registry, i18nbundle *i18n.Bundle) *Engine {
+// Config holds the dependencies and settings New needs to build an Engine.
+// Loc is the default timezone used for daily rollup boundaries; Threshold is
+// the confidence below which a reply nudges the user to double-check amounts.
+// Pending holds the clarification loop's state. ChannelName is the messaging
+// adapter identifier used for user_channels mapping. Transcriber is optional
+// (nil = audio messages receive a "text only" reply). Registry dispatches bot
+// commands; I18n resolves locale-aware strings.
+type Config struct {
+	Parser      Parser
+	Resolver    Resolver
+	Store       MealStore
+	Pending     PendingStore
+	Replier     Replier
+	Loc         *time.Location
+	Threshold   float64
+	ChannelName string
+	Transcriber Transcriber
+	Registry    *commands.Registry
+	I18n        *i18n.Bundle
+}
+
+// New builds an Engine from cfg. See Config's doc comment for field semantics.
+func New(cfg Config) *Engine {
+	loc := cfg.Loc
 	if loc == nil {
 		loc = time.UTC
 	}
 	return &Engine{
-		parser:      p,
-		resolver:    r,
-		store:       s,
-		pending:     pending,
-		replier:     replier,
-		transcriber: transcriber,
+		parser:      cfg.Parser,
+		resolver:    cfg.Resolver,
+		store:       cfg.Store,
+		pending:     cfg.Pending,
+		replier:     cfg.Replier,
+		transcriber: cfg.Transcriber,
 		loc:         loc,
-		threshold:   threshold,
-		channelName: channelName,
-		registry:    registry,
-		i18n:        i18nbundle,
+		threshold:   cfg.Threshold,
+		channelName: cfg.ChannelName,
+		registry:    cfg.Registry,
+		i18n:        cfg.I18n,
 		now:         time.Now,
 		idgen:       id.New,
 	}

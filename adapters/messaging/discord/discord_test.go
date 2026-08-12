@@ -159,6 +159,133 @@ func TestGatewayLoopProtocolAndEvents(t *testing.T) {
 	awaitClosed(t, ch)
 }
 
+func TestConnectGatewayFetchURLError(t *testing.T) {
+	a := New("tok123")
+	a.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })
+	if _, _, err := a.connectGateway(t.Context()); err == nil {
+		t.Fatal("connectGateway returned nil error")
+	}
+}
+
+func TestConnectGatewayDialError(t *testing.T) {
+	a := New("tok123")
+	a.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"url":"wss://gateway.discord.gg"}`)), Header: make(http.Header)}, nil
+	})
+	a.dialWebSocket = func(context.Context, string) (*websocket.Conn, error) { return nil, errors.New("dial fail") }
+	if _, _, err := a.connectGateway(t.Context()); err == nil {
+		t.Fatal("connectGateway returned nil error")
+	}
+}
+
+func TestConnectGatewayHelloReadError(t *testing.T) {
+	server, connections := newGatewayServer(t)
+	a := newGatewayAdapter(t, server)
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := a.connectGateway(t.Context())
+		result <- err
+	}()
+	conn := receiveConnection(t, connections)
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close gateway: %v", err)
+	}
+	if err := <-result; err == nil {
+		t.Fatal("connectGateway returned nil error")
+	}
+}
+
+func TestGatewayLoopIdentifyWriteError(t *testing.T) {
+	server, connections := newGatewayServer(t)
+	a := newGatewayAdapter(t, server)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ch, err := a.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	conn := receiveConnection(t, connections)
+	sendGatewayPayload(t, conn, gatewayPayload{Op: 10, D: json.RawMessage(`{"heartbeat_interval":60000}`)})
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close gateway: %v", err)
+	}
+	awaitClosed(t, ch)
+}
+
+func TestGatewayLoopContextCancelledBetweenReads(t *testing.T) {
+	server, connections := newGatewayServer(t)
+	a := newGatewayAdapter(t, server)
+	ctx, cancel := context.WithCancel(t.Context())
+	ch, err := a.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	conn := receiveConnection(t, connections)
+	sendGatewayPayload(t, conn, gatewayPayload{Op: 10, D: json.RawMessage(`{"heartbeat_interval":60000}`)})
+	receiveGatewayPayload(t, conn) // consume IDENTIFY
+	cancel()
+	sendGatewayPayload(t, conn, gatewayPayload{Op: gatewayOpHeartbeat})
+	awaitClosed(t, ch)
+}
+
+func TestHandleMessageCreateMalformedJSON(t *testing.T) {
+	a := New("token")
+	ch := make(chan types.InboundMessage, 1)
+	pl := gatewayPayload{D: json.RawMessage(`not json`)}
+	if got := a.handleMessageCreate(t.Context(), pl, ch); !got {
+		t.Fatalf("handleMessageCreate = %v, want true", got)
+	}
+}
+
+func TestHandleMessageCreateContextCancelledDuringSend(t *testing.T) {
+	a := New("token")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ch := make(chan types.InboundMessage)
+	pl := gatewayPayload{D: json.RawMessage(`{"author":{"id":"user"},"content":"hi"}`)}
+	if got := a.handleMessageCreate(ctx, pl, ch); got {
+		t.Fatalf("handleMessageCreate = %v, want false", got)
+	}
+}
+
+func TestHandleInteractionCreateMalformedJSON(t *testing.T) {
+	a := New("token")
+	ch := make(chan types.InboundMessage, 1)
+	pl := gatewayPayload{D: json.RawMessage(`not json`)}
+	if got := a.handleInteractionCreate(t.Context(), pl, ch); !got {
+		t.Fatalf("handleInteractionCreate = %v, want true", got)
+	}
+}
+
+func TestHandleInteractionCreateEmptyCustomID(t *testing.T) {
+	a := New("token")
+	ch := make(chan types.InboundMessage, 1)
+	pl := gatewayPayload{D: json.RawMessage(`{"member":{"user":{"id":"user"}},"data":{"custom_id":""}}`)}
+	if got := a.handleInteractionCreate(t.Context(), pl, ch); !got {
+		t.Fatalf("handleInteractionCreate = %v, want true", got)
+	}
+}
+
+func TestHandleInteractionCreateNoIdentifiableUser(t *testing.T) {
+	a := New("token")
+	ch := make(chan types.InboundMessage, 1)
+	pl := gatewayPayload{D: json.RawMessage(`{"data":{"custom_id":"action"}}`)}
+	if got := a.handleInteractionCreate(t.Context(), pl, ch); !got {
+		t.Fatalf("handleInteractionCreate = %v, want true", got)
+	}
+}
+
+func TestHandleInteractionCreateContextCancelledDuringSend(t *testing.T) {
+	a := New("token")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ch := make(chan types.InboundMessage)
+	pl := gatewayPayload{D: json.RawMessage(`{"member":{"user":{"id":"user"}},"data":{"custom_id":"action"}}`)}
+	if got := a.handleInteractionCreate(ctx, pl, ch); got {
+		t.Fatalf("handleInteractionCreate = %v, want false", got)
+	}
+}
+
 func newGatewayServer(t *testing.T) (*httptest.Server, <-chan *websocket.Conn) {
 	t.Helper()
 	connections := make(chan *websocket.Conn, 1)

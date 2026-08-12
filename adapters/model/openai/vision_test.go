@@ -12,6 +12,24 @@ import (
 	"github.com/gsaraiva2109/dietdaemon/core/types"
 )
 
+func checkExtractLabelRequest(t *testing.T, req visionRequest, wantDataURI string) {
+	t.Helper()
+	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+		t.Fatalf("unexpected message shape: %+v", req.Messages)
+	}
+	textPart := req.Messages[0].Content[0]
+	if textPart.Type != "text" || !strings.Contains(textPart.Text, "nutrition facts label") {
+		t.Errorf("content[0] = %+v, want the labelextract prompt", textPart)
+	}
+	imgPart := req.Messages[0].Content[1]
+	if imgPart.Type != "image_url" || imgPart.ImageURL == nil || imgPart.ImageURL.URL != wantDataURI {
+		t.Errorf("content[1] = %+v, want image_url %q", imgPart, wantDataURI)
+	}
+	if req.ResponseFormat == nil || req.ResponseFormat.Type != "json_object" {
+		t.Errorf("response_format = %+v, want json_object", req.ResponseFormat)
+	}
+}
+
 func TestExtractLabel(t *testing.T) {
 	img := []byte("fake-jpeg-bytes")
 	wantDataURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(img)
@@ -28,20 +46,7 @@ func TestExtractLabel(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
-			t.Fatalf("unexpected message shape: %+v", req.Messages)
-		}
-		textPart := req.Messages[0].Content[0]
-		if textPart.Type != "text" || !strings.Contains(textPart.Text, "nutrition facts label") {
-			t.Errorf("content[0] = %+v, want the labelextract prompt", textPart)
-		}
-		imgPart := req.Messages[0].Content[1]
-		if imgPart.Type != "image_url" || imgPart.ImageURL == nil || imgPart.ImageURL.URL != wantDataURI {
-			t.Errorf("content[1] = %+v, want image_url %q", imgPart, wantDataURI)
-		}
-		if req.ResponseFormat == nil || req.ResponseFormat.Type != "json_object" {
-			t.Errorf("response_format = %+v, want json_object", req.ResponseFormat)
-		}
+		checkExtractLabelRequest(t, req, wantDataURI)
 
 		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
 			Message chatMessage `json:"message"`

@@ -15,21 +15,7 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 	defer cleanup()
 
 	const total = 1200
-	foods := make([]types.FoodMatch, total)
-	for i := range total {
-		foods[i] = types.FoodMatch{
-			FoodID:      fmt.Sprintf("bulk-%d", i),
-			Name:        fmt.Sprintf("Food %d", i),
-			Source:      "usda",
-			Per100g:     types.Macros{Calories: float64(i % 800), Protein: 1, Carbs: 2, Fat: 3, Fiber: 0.5},
-			Category:    "test-category",
-			Brand:       "test-brand",
-			Barcode:     fmt.Sprintf("barcode-%d", i),
-			ImageURL:    "https://example.com/img.png",
-			ServingSize: 100,
-			ServingUnit: "g",
-		}
-	}
+	foods := buildBulkFoods(total)
 
 	if err := s.BulkUpsertFoods(ctx(), foods); err != nil {
 		t.Fatalf("BulkUpsertFoods: %v", err)
@@ -43,7 +29,36 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 		t.Fatalf("expected %d foods, got %d", total, count)
 	}
 
-	// Spot-check a few rows.
+	assertBulkSpotCheck(t, s)
+	assertBulkUpsertIsIdempotentUpdate(t, s, total)
+	assertBulkImportHasNoUserSideEffects(t, s)
+}
+
+// buildBulkFoods returns n synthetic FoodMatch fixtures for bulk-upsert
+// round-trip tests.
+func buildBulkFoods(n int) []types.FoodMatch {
+	foods := make([]types.FoodMatch, n)
+	for i := range n {
+		foods[i] = types.FoodMatch{
+			FoodID:      fmt.Sprintf("bulk-%d", i),
+			Name:        fmt.Sprintf("Food %d", i),
+			Source:      "usda",
+			Per100g:     types.Macros{Calories: float64(i % 800), Protein: 1, Carbs: 2, Fat: 3, Fiber: 0.5},
+			Category:    "test-category",
+			Brand:       "test-brand",
+			Barcode:     fmt.Sprintf("barcode-%d", i),
+			ImageURL:    "https://example.com/img.png",
+			ServingSize: 100,
+			ServingUnit: "g",
+		}
+	}
+	return foods
+}
+
+// assertBulkSpotCheck spot-checks a few of the rows written by
+// TestBulkUpsertFoodsRoundTrip.
+func assertBulkSpotCheck(t *testing.T, s *Store) {
+	t.Helper()
 	for _, i := range []int{0, 500, 1199} {
 		got, err := s.GetFood(ctx(), fmt.Sprintf("bulk-%d", i))
 		if err != nil {
@@ -53,8 +68,12 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 			t.Fatalf("GetFood bulk-%d: unexpected row %+v", i, got)
 		}
 	}
+}
 
-	// Re-run with overlapping IDs but changed data — must update, not duplicate.
+// assertBulkUpsertIsIdempotentUpdate re-runs BulkUpsertFoods with
+// overlapping IDs but changed data — it must update, not duplicate.
+func assertBulkUpsertIsIdempotentUpdate(t *testing.T, s *Store, total int) {
+	t.Helper()
 	updated := []types.FoodMatch{
 		{FoodID: "bulk-0", Name: "Updated Food 0", Source: "usda", Per100g: types.Macros{Calories: 899}},
 		{FoodID: "bulk-500", Name: "Updated Food 500", Source: "usda", Per100g: types.Macros{Calories: 899}},
@@ -63,6 +82,7 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 		t.Fatalf("BulkUpsertFoods (update pass): %v", err)
 	}
 
+	var count int
 	if err := s.db.Get(&count, "SELECT COUNT(*) FROM foods"); err != nil {
 		t.Fatalf("count foods after update: %v", err)
 	}
@@ -77,8 +97,12 @@ func TestBulkUpsertFoodsRoundTrip(t *testing.T) {
 	if got.Name != "Updated Food 0" || got.Per100g.Calories != 899 {
 		t.Fatalf("expected updated row, got %+v", got)
 	}
+}
 
-	// Proves "global-only": no per-user side effects from a bulk import.
+// assertBulkImportHasNoUserSideEffects proves "global-only": no per-user
+// side effects from a bulk import.
+func assertBulkImportHasNoUserSideEffects(t *testing.T, s *Store) {
+	t.Helper()
 	var statsCount, aliasCount int
 	if err := s.db.Get(&statsCount, "SELECT COUNT(*) FROM user_food_stats"); err != nil {
 		t.Fatalf("count user_food_stats: %v", err)
