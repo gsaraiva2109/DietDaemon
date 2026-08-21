@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0-alpha.11](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.10...v0.2.0-alpha.11) (2026-08-21)
+
+
+### Fixes
+
+* **ci:** correct Trivy docker-scan SARIF category in pr.yml ([#312](https://github.com/gsaraiva2109/DietDaemon/issues/312)) ([757d672](https://github.com/gsaraiva2109/DietDaemon/commit/757d672f88e750914ea3d983221dc32a81d33241)), closes [#311](https://github.com/gsaraiva2109/DietDaemon/issues/311)
+* **ci:** scan docker image on PRs to fix code-scanning config warning ([#299](https://github.com/gsaraiva2109/DietDaemon/issues/299)) ([2a91ebe](https://github.com/gsaraiva2109/DietDaemon/commit/2a91ebea73b908d3106b781a40a17e2bcccb0c4a))
+* **deps:** update go dependencies ([#306](https://github.com/gsaraiva2109/DietDaemon/issues/306)) ([251a918](https://github.com/gsaraiva2109/DietDaemon/commit/251a918ff2e6866de8a97ea55d761011e8d34513))
+* **deps:** update go dependencies ([#309](https://github.com/gsaraiva2109/DietDaemon/issues/309)) ([8731e97](https://github.com/gsaraiva2109/DietDaemon/commit/8731e97adc396238be6056ff156e5357a1e5b886))
+* **deps:** update go dependencies ([#314](https://github.com/gsaraiva2109/DietDaemon/issues/314)) ([642de95](https://github.com/gsaraiva2109/DietDaemon/commit/642de954a33839aee77653e43d5ccadf41eeea3d))
+* **deps:** update module golang.org/x/net to v0.57.0 ([#303](https://github.com/gsaraiva2109/DietDaemon/issues/303)) ([adb8365](https://github.com/gsaraiva2109/DietDaemon/commit/adb83650cd0881a43aba2c23032330d68f45a884))
+* **go:** resolve all open SonarQube Go issues ([#310](https://github.com/gsaraiva2109/DietDaemon/issues/310)) ([57b2835](https://github.com/gsaraiva2109/DietDaemon/commit/57b2835bc126a38ff6fc333849fe2994d5426bb8))
+* **web:** resolve all SonarQube tsx issues ([#307](https://github.com/gsaraiva2109/DietDaemon/issues/307)) ([cb96fed](https://github.com/gsaraiva2109/DietDaemon/commit/cb96fed85ad9797eb66171e78f1595c622647ed2))
+
 ## [0.2.0-alpha.10](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.9...v0.2.0-alpha.10) (2026-08-08)
 
 
