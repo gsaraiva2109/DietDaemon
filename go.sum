@@ -223,6 +223,8 @@ github.com/resend/resend-go/v3 v3.13.0 h1:aydbku+HZFalHUQtKWP8XjVEY80iQBUYLKTtoK
 github.com/resend/resend-go/v3 v3.13.0/go.mod h1:iI7VA0NoGjWvsNii5iNC5Dy0llsI3HncXPejhniYzwE=
 github.com/resend/resend-go/v3 v3.15.0 h1:dheREEG4h17w/z4W9RZlZ/VodSWbmi1I/ylylNyu+SM=
 github.com/resend/resend-go/v3 v3.15.0/go.mod h1:iI7VA0NoGjWvsNii5iNC5Dy0llsI3HncXPejhniYzwE=
+github.com/resend/resend-go/v3 v3.16.0 h1:t0Z/7k2sxnJGw8SjsCM9O8qkq3YRRHzTxWQNjhF2KhE=
+github.com/resend/resend-go/v3 v3.16.0/go.mod h1:iI7VA0NoGjWvsNii5iNC5Dy0llsI3HncXPejhniYzwE=
 github.com/richardlehane/mscfb v1.0.7 h1:oeoiM0WE79vHwE8RpIYYvIAc8ajTH2mb6UZm55/+EB0=
 github.com/richardlehane/mscfb v1.0.7/go.mod h1:pe0+IUIc0AHh0+teNzBlJCtSyZdFOGgV4ZK9bsoV+Jo=
 github.com/richardlehane/msoleps v1.0.6 h1:9BvkpjvD+iUBalUY4esMwv6uBkfOip/Lzvd93jvR9gg=
