@@ -8,7 +8,7 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 2 — build static Go binaries with the dashboard embedded.
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 WORKDIR /src
 
 COPY go.mod go.sum ./
