@@ -168,6 +168,7 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
+          category: 'trivy-image-scan'
 
       - name: Generate SBOM (CycloneDX)
         uses: aquasecurity/trivy-action@v0.36.0

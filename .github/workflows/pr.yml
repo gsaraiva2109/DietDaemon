@@ -250,7 +250,7 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
-          category: '.github/workflows/pr.yml:docker'
+          category: 'trivy-image-scan'
 
   sonarqube:
     name: SonarQube Scan
