@@ -1,0 +1,12 @@
+name: Setup Go
+description: Install the pinned Go toolchain
+inputs:
+  go-version:
+    description: Go version to install
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7.0.0
+      with:
+        go-version: ${{ inputs.go-version }}
