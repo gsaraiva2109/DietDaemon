@@ -91,3 +91,4 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
+          category: 'trivy-image-scan'
