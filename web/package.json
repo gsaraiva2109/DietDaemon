@@ -20,7 +20,7 @@
     "@assistant-ui/react": "^0.15.0",
     "@assistant-ui/react-markdown": "^0.14.5",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
-    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/browser": "^14.0.0",
     "@tanstack/react-query": "^5.101.0",
     "assistant-stream": "^0.3.25",
     "html-to-image": "^1.11.13",
@@ -45,7 +45,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^5.0.0",
     "concurrently": "^10.0.0",
     "eslint": "^10.7.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -57,6 +57,6 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.0"
   }
 }
