@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0-alpha.11](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.10...v0.2.0-alpha.11) (2026-09-03)
+
+
+### Fixes
+
+* **ci:** correct Trivy docker-scan SARIF category in pr.yml ([#312](https://github.com/gsaraiva2109/DietDaemon/issues/312)) ([757d672](https://github.com/gsaraiva2109/DietDaemon/commit/757d672f88e750914ea3d983221dc32a81d33241)), closes [#311](https://github.com/gsaraiva2109/DietDaemon/issues/311)
+* **ci:** scan docker image on PRs to fix code-scanning config warning ([#299](https://github.com/gsaraiva2109/DietDaemon/issues/299)) ([2a91ebe](https://github.com/gsaraiva2109/DietDaemon/commit/2a91ebea73b908d3106b781a40a17e2bcccb0c4a))
+* **ci:** unify Trivy image scan SARIF category across workflows ([#336](https://github.com/gsaraiva2109/DietDaemon/issues/336)) ([879b4ee](https://github.com/gsaraiva2109/DietDaemon/commit/879b4eea0119a2caf72f07820393cf0aef9a4a86)), closes [#335](https://github.com/gsaraiva2109/DietDaemon/issues/335)
+* **deps:** update go dependencies ([#306](https://github.com/gsaraiva2109/DietDaemon/issues/306)) ([251a918](https://github.com/gsaraiva2109/DietDaemon/commit/251a918ff2e6866de8a97ea55d761011e8d34513))
+* **deps:** update go dependencies ([#309](https://github.com/gsaraiva2109/DietDaemon/issues/309)) ([8731e97](https://github.com/gsaraiva2109/DietDaemon/commit/8731e97adc396238be6056ff156e5357a1e5b886))
+* **deps:** update go dependencies ([#314](https://github.com/gsaraiva2109/DietDaemon/issues/314)) ([642de95](https://github.com/gsaraiva2109/DietDaemon/commit/642de954a33839aee77653e43d5ccadf41eeea3d))
+* **deps:** update go dependencies ([#324](https://github.com/gsaraiva2109/DietDaemon/issues/324)) ([4067bd5](https://github.com/gsaraiva2109/DietDaemon/commit/4067bd57f1761f7572d72f4f3c93987caabfc6e6))
+* **deps:** update go dependencies ([#329](https://github.com/gsaraiva2109/DietDaemon/issues/329)) ([ae8144a](https://github.com/gsaraiva2109/DietDaemon/commit/ae8144a351c86f45a62bfa3623512f7794cbafbb))
+* **deps:** update go dependencies ([#340](https://github.com/gsaraiva2109/DietDaemon/issues/340)) ([097cd0a](https://github.com/gsaraiva2109/DietDaemon/commit/097cd0a97d37dbdec0261595e6f0f06c3de9a24c))
+* **deps:** update go dependencies ([#345](https://github.com/gsaraiva2109/DietDaemon/issues/345)) ([22c7da3](https://github.com/gsaraiva2109/DietDaemon/commit/22c7da32c57521b7391667e73a0777d29020d0e0))
+* **deps:** update go dependencies ([#349](https://github.com/gsaraiva2109/DietDaemon/issues/349)) ([16f34fe](https://github.com/gsaraiva2109/DietDaemon/commit/16f34fe7721a9499756d0a021914a8034fc6ebdf))
+* **deps:** update module github.com/aws/aws-sdk-go-v2/service/sesv2 to v1.69.1 ([#341](https://github.com/gsaraiva2109/DietDaemon/issues/341)) ([ca12142](https://github.com/gsaraiva2109/DietDaemon/commit/ca121426ed2059051c32d88bd35847276c9b402b))
+* **deps:** update module github.com/go-webauthn/webauthn to v0.18.0 ([#333](https://github.com/gsaraiva2109/DietDaemon/issues/333)) ([0885fc8](https://github.com/gsaraiva2109/DietDaemon/commit/0885fc81a5136f9643cdf2527504c5e899c4bf68))
+* **deps:** update module github.com/resend/resend-go/v3 to v3.16.0 ([#321](https://github.com/gsaraiva2109/DietDaemon/issues/321)) ([b13b29d](https://github.com/gsaraiva2109/DietDaemon/commit/b13b29dd486b544dba0c4dc93afac11965ce5b31))
+* **deps:** update module github.com/resend/resend-go/v3 to v4 ([#325](https://github.com/gsaraiva2109/DietDaemon/issues/325)) ([6224e3a](https://github.com/gsaraiva2109/DietDaemon/commit/6224e3ab27ea6560fac6f511848b069ac02de7ff))
+* **deps:** update module github.com/resend/resend-go/v3 to v4 ([#327](https://github.com/gsaraiva2109/DietDaemon/issues/327)) ([3d20caa](https://github.com/gsaraiva2109/DietDaemon/commit/3d20caa6cddb91820996082788fe8e65796b403a))
+* **deps:** update module golang.org/x/net to v0.57.0 ([#303](https://github.com/gsaraiva2109/DietDaemon/issues/303)) ([adb8365](https://github.com/gsaraiva2109/DietDaemon/commit/adb83650cd0881a43aba2c23032330d68f45a884))
+* **deps:** update npm dependencies ([#350](https://github.com/gsaraiva2109/DietDaemon/issues/350)) ([f1b8371](https://github.com/gsaraiva2109/DietDaemon/commit/f1b837124a1f2d2895b668585c46768f755a52bd))
+* **go:** resolve all open SonarQube Go issues ([#310](https://github.com/gsaraiva2109/DietDaemon/issues/310)) ([57b2835](https://github.com/gsaraiva2109/DietDaemon/commit/57b2835bc126a38ff6fc333849fe2994d5426bb8))
+* **web:** resolve all SonarQube tsx issues ([#307](https://github.com/gsaraiva2109/DietDaemon/issues/307)) ([cb96fed](https://github.com/gsaraiva2109/DietDaemon/commit/cb96fed85ad9797eb66171e78f1595c622647ed2))
+
 ## [0.2.0-alpha.10](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.9...v0.2.0-alpha.10) (2026-08-08)
 
 
