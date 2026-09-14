@@ -87,7 +87,7 @@ describe('AppShell', () => {
     expect(screen.queryByText(/verify/i)).not.toBeInTheDocument()
   })
 
-  it('preloads a route module on hover, for both the desktop sidebar and the mobile bottom bar', () => {
+  it('preloads a route module on hover, for both the desktop sidebar and the mobile bottom bar', async () => {
     renderShell()
 
     // Every nav link (desktop sidebar or mobile bottom bar) wires an
@@ -96,6 +96,14 @@ describe('AppShell', () => {
     const [desktopLink, mobileLink] = screen.getAllByRole('link', { name: /Foods/ })
     expect(() => fireEvent.mouseEnter(desktopLink)).not.toThrow()
     expect(() => fireEvent.mouseEnter(mobileLink)).not.toThrow()
+
+    // The hover handler's import() is fire-and-forget in the component (by
+    // design, for real prefetching). Await the same cached promise here so
+    // it settles before this file's jsdom environment is torn down -
+    // otherwise it's a race that a loaded/slow runner can lose (module
+    // resolves after teardown -> EnvironmentTeardownError), even though a
+    // fast local machine always wins it.
+    await import('@/routes/Foods')
   })
 
   it('links point at their expected routes', () => {
