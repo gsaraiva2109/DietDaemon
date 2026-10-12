@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-# Prerequisites: Go 1.26+, Node 22+, Docker (optional)
+# Prerequisites: Go 1.27+, Node 22+, Docker (optional)
 git clone https://github.com/gsaraiva2109/dietdaemon.git
 cd dietdaemon
 
@@ -18,7 +18,7 @@ npm ci
 npm run build    # produces dist/ that Go embeds
 
 # Local checks, including Conventional Commit validation
-go install honnef.co/go/tools/cmd/staticcheck@2026.1
+go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
 pre-commit install
 ```
 
