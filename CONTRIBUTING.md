@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-# Prerequisites: Go 1.26+, Node 22+, Docker (optional)
+# Prerequisites: Go 1.27+, Node 22+, Docker (optional)
 git clone https://github.com/gsaraiva2109/dietdaemon.git
 cd dietdaemon
 
