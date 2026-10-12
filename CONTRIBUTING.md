@@ -18,7 +18,7 @@ npm ci
 npm run build    # produces dist/ that Go embeds
 
 # Local checks, including Conventional Commit validation
-go install honnef.co/go/tools/cmd/staticcheck@2026.1
+go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
 pre-commit install
 ```
 
