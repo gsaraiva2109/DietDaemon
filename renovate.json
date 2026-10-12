@@ -20,6 +20,22 @@
       "platformAutomerge": true
     }
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Go tools installed by version in CI, the Makefile and the contributor docs",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^Makefile$/",
+        "/^CONTRIBUTING\\.md$/"
+      ],
+      "matchStrings": [
+        "(?<depName>honnef\\.co/go/tools)/cmd/staticcheck@(?<currentValue>v[0-9][^\\s'\"]*)",
+        "(?<depName>golang\\.org/x/vuln)/cmd/govulncheck@(?<currentValue>v[0-9][^\\s'\"]*)"
+      ],
+      "datasourceTemplate": "go"
+    }
+  ],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]

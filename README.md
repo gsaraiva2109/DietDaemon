@@ -1,7 +1,7 @@
 # DietDaemon
 
 [![CI](https://github.com/gsaraiva2109/dietdaemon/actions/workflows/main.yml/badge.svg)](https://github.com/gsaraiva2109/dietdaemon/actions/workflows/main.yml)
-[![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
+[![Go 1.27](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Self-hosted nutrition and macro tracker. Log meals by sending natural text or voice
