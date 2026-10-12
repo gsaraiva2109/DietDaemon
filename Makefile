@@ -91,7 +91,7 @@ staticcheck:
 
 govulncheck:
 	@echo ">> running govulncheck..."
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 # ============================================================
 # AI (optional)
