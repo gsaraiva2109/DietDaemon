@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-alpha.12](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.11...v0.2.0-alpha.12) (2026-11-14)
+
+
+### Fixes
+
+* **deps:** update go dependencies ([#374](https://github.com/gsaraiva2109/DietDaemon/issues/374)) ([c68d3bb](https://github.com/gsaraiva2109/DietDaemon/commit/c68d3bb240a4e97aca5ab694501792c1d81c7f67))
+
 ## [0.2.0-alpha.11](https://github.com/gsaraiva2109/DietDaemon/compare/v0.2.0-alpha.10...v0.2.0-alpha.11) (2026-11-14)
 
 
