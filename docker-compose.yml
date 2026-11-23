@@ -38,7 +38,7 @@ services:
 
   # Opt-in Postgres: docker compose --profile postgres up
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     container_name: dietdaemon-postgres
     restart: unless-stopped
     environment:
