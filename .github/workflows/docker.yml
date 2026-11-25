@@ -70,7 +70,7 @@ jobs:
           provenance: false
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.1.3
+        uses: sigstore/cosign-installer@v4.1.4
 
       - name: Sign image
         run: cosign sign --yes "${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
@@ -87,7 +87,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4.39.3
+        uses: github/codeql-action/upload-sarif@v4.39.5
         if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
